@@ -3,8 +3,8 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
-## 2026.10.0 — unreleased
-<!-- The exporter/release stamps the date here; the release fails while this says "unreleased". -->
+## 2026.10.0 — 2026-10-18
+<!-- The date is the tag date; release.yml refuses a heading that says "unreleased". If the release slips, re-stamp, re-sync and re-tag. -->
 
 First public release.
 
