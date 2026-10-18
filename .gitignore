@@ -1,0 +1,15 @@
+# build outputs
+bridge/build/
+bridge/build-*/
+*.so
+*.o
+*.a
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+# local play state
+runs/
+.venv/

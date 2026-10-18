@@ -1,0 +1,93 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    name: bridge (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-latest]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake build-essential git
+      - name: Configure (strict BuildID, tests on, Zydis from source)
+        run: cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCK3_STRICT_BUILD_ID=ON -DBUILD_BRIDGE_TESTS=ON
+      - name: Build library + native unit tests
+        run: cmake --build bridge/build --target ck3_bridge test_json_helpers test_script_block_parser test_instance_paths test_game_date test_war_history -- -j"$(nproc)"
+      - name: Run native unit tests
+        run: |
+          set -e
+          for t in test_json_helpers test_script_block_parser test_instance_paths test_game_date test_war_history; do
+            echo "== $t"; ./bridge/build/$t
+          done
+      - name: Library sanity
+        run: |
+          file bridge/build/libck3_bridge.so
+          nm -D bridge/build/libck3_bridge.so | grep -c ' T ' | xargs echo "exported symbols:"
+          # must not depend on anything outside glibc/libstdc++/pthread/dl/rt
+          ldd bridge/build/libck3_bridge.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libck3_bridge-${{ matrix.os }}
+          path: bridge/build/libck3_bridge.so
+          retention-days: 7
+
+  python:
+    name: python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[test]"
+      - name: Unit tests (server suite + CLI)
+        run: python -m pytest
+      - name: CLI smoke (no game)
+        run: |
+          ck3agent version
+          ck3agent config
+          # doctor must report cleanly without a game: exit 1, never a traceback
+          set +e; ck3agent doctor; rc=$?; set -e
+          test "$rc" = 1
+
+  package:
+    name: wheel + sdist
+    runs-on: ubuntu-latest
+    needs: [python]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build
+      - run: python -m build
+      - name: Install the wheel in a clean venv and run it
+        run: |
+          python -m venv /tmp/v && /tmp/v/bin/pip install -q dist/*.whl
+          /tmp/v/bin/ck3agent version
+          test "$(cat VERSION)" = "$(/tmp/v/bin/python -c 'import ck3agent; print(ck3agent.__version__)')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+          retention-days: 7

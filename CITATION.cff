@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use ck3agent in research, please cite it as below."
+title: "ck3agent: an LLM agent that plays Crusader Kings III by steering the game's native AI"
+type: software
+authors:
+  - family-names: Stebbins
+    given-names: Harrison
+version: 2026.10.0
+date-released: "2026-10-17"
+license: Apache-2.0
+repository-code: "https://github.com/skullbloc/ck3agent"
+url: "https://github.com/skullbloc/ck3agent"
+keywords:
+  - large language models
+  - game AI
+  - Crusader Kings III
+  - MCP
+  - agents
+abstract: >-
+  ck3agent hooks Crusader Kings III's AI subsystem with an in-process bridge
+  (LD_PRELOAD shared library) and exposes game state and steering through a
+  Model Context Protocol server, so a language model can replace the game's
+  strategic decision-making while the native AI executes. Released as a
+  research tool with a Linux bridge pinned to one game build.

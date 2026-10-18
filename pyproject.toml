@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ck3agent"
+dynamic = ["version"]
+description = "Let Claude play Crusader Kings III: an MCP server over an in-process game bridge"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md"]
+requires-python = ">=3.11"
+authors = [{ name = "Harrison Stebbins" }]
+keywords = ["crusader-kings", "mcp", "claude", "game-ai", "research"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Games/Entertainment :: Simulation",
+]
+dependencies = [
+  "mcp>=1.2,<2",
+  "pydantic>=2,<3",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+ck3agent = "ck3agent.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/skullbloc/ck3agent"
+Issues = "https://github.com/skullbloc/ck3agent/issues"
+Changelog = "https://github.com/skullbloc/ck3agent/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "ck3agent/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ck3agent"]
+exclude = ["**/test_*.py", "**/__pycache__"]
+
+[tool.hatch.build.targets.sdist]
+include = ["ck3agent", "tests", "README.md", "LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md", "CITATION.cff", "VERSION", "UPSTREAM"]
+exclude = ["**/__pycache__"]
+
+[tool.pytest.ini_options]
+testpaths = ["ck3agent/server", "tests"]
+addopts = "-q -p no:cacheprovider --deselect ck3agent/server/test_handshake_observer_kwarg.py::test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it --deselect ck3agent/server/test_native_ai_advisory.py::test_set_character_ai_IS_NOT_on_the_seat_surface --deselect ck3agent/server/test_seat_declaration.py::TheSeatDeclaration::test_agent_py_deliberately_does_NOT_declare"

@@ -1,0 +1,102 @@
+# Tag push `vYYYY.MM.N` → build the bridge on the oldest supported Ubuntu,
+# build the wheel, assemble the Linux tarball, attest provenance, and open a
+# DRAFT GitHub Release. A human clicks Publish.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04      # oldest glibc we build against (2.35)
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must equal VERSION
+        run: |
+          ver="$(cat VERSION)"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$ver" != "$tag" ]; then
+            echo "::error::tag v$tag does not match VERSION $ver"; exit 1
+          fi
+          echo "VER=$ver" >> "$GITHUB_ENV"
+
+      - name: Build deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake build-essential git binutils
+
+      - name: Build bridge (strict BuildID, Zydis from source)
+        run: |
+          cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCK3_STRICT_BUILD_ID=ON -DBUILD_BRIDGE_TESTS=ON
+          cmake --build bridge/build --target ck3_bridge test_json_helpers -- -j"$(nproc)"
+          ./bridge/build/test_json_helpers
+
+      - name: Split debug info
+        run: |
+          cd bridge/build
+          objcopy --only-keep-debug libck3_bridge.so libck3_bridge.so.debug
+          strip --strip-debug --strip-unneeded libck3_bridge.so
+          objcopy --add-gnu-debuglink=libck3_bridge.so.debug libck3_bridge.so
+          ls -la libck3_bridge.so libck3_bridge.so.debug
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel + sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+          python -m venv /tmp/v && /tmp/v/bin/pip install -q dist/*.whl && /tmp/v/bin/ck3agent version
+
+      - name: Assemble tarball
+        run: |
+          set -e
+          name="ck3agent-${VER}-linux-x86_64"
+          d="out/$name"
+          mkdir -p "$d/lib" "$d/share" "$d/wheels"
+          cp bridge/build/libck3_bridge.so "$d/lib/"
+          cp re/rtti/trigger_subclasses.csv "$d/share/"
+          cp dist/*.whl "$d/wheels/"
+          cp installer/install.sh installer/uninstall.sh "$d/"
+          cp LICENSE NOTICE THIRD_PARTY_LICENSES.md VERSION UPSTREAM CITATION.cff "$d/"
+          cp installer/README.txt "$d/README.txt"
+          chmod +x "$d"/*.sh
+          tar -C out -czf "out/$name.tar.gz" "$name"
+          cp bridge/build/libck3_bridge.so.debug "out/libck3_bridge-${VER}.so.debug"
+          cp dist/*.whl dist/*.tar.gz out/
+          (cd out && sha256sum *.tar.gz *.whl *.debug > SHA256SUMS)
+          ls -la out
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            out/*.tar.gz
+            out/*.whl
+            out/*.debug
+
+      - name: Release notes from CHANGELOG
+        run: |
+          # the section for this version, up to the next "## " heading
+          awk -v ver="$VER" '
+            /^## / { on = index($0, ver) > 0; if (on) { print; next } }
+            on { print }
+          ' CHANGELOG.md > out/notes.md
+          if [ ! -s out/notes.md ]; then echo "CHANGELOG.md has no section for $VER" > out/notes.md; fi
+          cat out/notes.md
+
+      - name: Draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${VER}" \
+            --draft \
+            --title "ck3agent ${VER}" \
+            --notes-file out/notes.md \
+            out/*.tar.gz out/*.whl out/*.debug out/SHA256SUMS
