@@ -159,6 +159,11 @@ enum class ReleaseSubjectState : uint8_t {
     //: So this state means: update the primary, because the claim really is gone, but
     //: record NOTHING about a release that did not happen.
     UndoneClaim = 3,
+
+    //: rc2 B6: the ruler died and its heir is the HUMAN PLAYER, so the handoff
+    //: unbound the seat. Not Corpse, so handoff_subject never recovers it and
+    //: the handoff does not retry the player every tick.
+    HeirIsPlayer = 4,
 };
 
 inline const char* release_subject_state_name(ReleaseSubjectState s) {
@@ -168,6 +173,7 @@ inline const char* release_subject_state_name(ReleaseSubjectState s) {
         case ReleaseSubjectState::Alive:  return "alive";
         case ReleaseSubjectState::Corpse: return "corpse";
         case ReleaseSubjectState::UndoneClaim: return "undone_claim";
+        case ReleaseSubjectState::HeirIsPlayer: return "heir_is_player";
         default:                          return "unknown";
     }
 }

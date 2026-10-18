@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Windows/macOS port
+    url: https://github.com/skullbloc/ck3agent/blob/main/docs/porting/README.md
+    about: How to help with the port, and what to report.
+  - name: Security vulnerability
+    url: https://github.com/skullbloc/ck3agent/security/advisories/new
+    about: Report privately. Do not open a public issue.

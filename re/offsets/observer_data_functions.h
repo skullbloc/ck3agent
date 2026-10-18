@@ -341,8 +341,7 @@ constexpr uintptr_t FUN_SAVE_RELOADER_CTOR     = 0x464c1f0;  // raw — HIGH
 // CJominiMultiplayerLobbyView class + ownership chain (ck-dq7ym.8, 2026-05-22)
 //
 // Recovered by static byte-scan of the CK3 binary
-// (/home/admin/workspace/ck3proj/root/ck3proj/ck3/binaries/ck3,
-//  BuildID e61ff2642f07094defd140fcc98e078d42541275).
+// (binaries/ck3, BuildID e61ff2642f07094defd140fcc98e078d42541275).
 //
 // Convention: file_offset == raw VA for the .text segment (LOAD 0x161b000+).
 // For the RW segment (LOAD 0xb64c130 file → 0xb64d130 vaddr), runtime VA =

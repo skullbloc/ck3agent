@@ -46,6 +46,12 @@ namespace bridge {
 
 // Declared in bridge.h; redeclared so this TU stays engine-free.
 extern FILE* g_logfile;
+// Defined in instance_paths.cpp (see default_path()).
+const char* instance_state_dir() __attribute__((weak));
+FILE* instance_state_fopen(const char* name, const char* mode) __attribute__((weak));
+}  // namespace bridge
+#include "private_fopen.h"   // rc2 B1: explicit-path locks opened 0600, O_NOFOLLOW
+namespace bridge {
 
 #define PLOG(fmt, ...) do { \
     if (g_logfile) { fprintf(g_logfile, "[CK3-Bridge] " fmt, ##__VA_ARGS__); fflush(g_logfile); } \
@@ -53,8 +59,26 @@ extern FILE* g_logfile;
 
 namespace {
 
-constexpr const char* kDefaultPath = "/tmp/ck3-personality-locks.json";
-std::string g_path CK3_EARLY_INIT = kDefaultPath;
+constexpr const char* kLegacyPath = "/tmp/ck3-personality-locks.json";
+std::string g_path CK3_EARLY_INIT;   // empty: default_path()
+
+// rc2 B1: the default lives in the instance state dir. Weak so host tests that
+// do not link instance_paths.cpp keep the legacy literal.
+const std::string& default_path() {
+    static const std::string p = instance_state_dir
+        ? std::string(instance_state_dir()) + "/ck3-personality-locks.json"
+        : std::string(kLegacyPath);
+    return p;
+}
+const char* cur_path() { return g_path.empty() ? default_path().c_str() : g_path.c_str(); }
+
+// rc2 B1: the default file is opened through the verified state-dir fd
+// (O_NOFOLLOW), never by path. An explicit path (tests) is opened as given.
+FILE* open_locks(const char* mode) {
+    if (g_path.empty() && instance_state_fopen)
+        return instance_state_fopen("ck3-personality-locks.json", mode);
+    return private_fopen(cur_path(), mode);   // rc2 B1: 0600, O_NOFOLLOW
+}
 
 // The identity the writer stamps. A LEAF lock: this mutex is taken while
 // g_personality_lock_mutex is already held (the writer) and while the identity
@@ -103,13 +127,13 @@ bool scan_uint_field(const char* json, const char* key, uint32_t* out) {
 // Slurp the file. Returns empty on any failure (absent, too big, unreadable).
 std::vector<char> read_file() {
     std::vector<char> empty;
-    FILE* f = fopen(g_path.c_str(), "r");
+    FILE* f = open_locks("r");
     if (!f) return empty;
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (fsize <= 0 || fsize > 1024 * 1024) {
-        PLOG("personality locks: bad file size %ld at %s\n", fsize, g_path.c_str());
+        PLOG("personality locks: bad file size %ld at %s\n", fsize, cur_path());
         fclose(f);
         return empty;
     }
@@ -145,10 +169,10 @@ void set_personality_locks_identity(const WorldIdentity& id) {
 }
 
 void set_personality_locks_path(const char* path) {
-    g_path = (path && path[0]) ? path : kDefaultPath;
+    g_path = (path && path[0]) ? path : "";
 }
 
-const char* personality_locks_path() { return g_path.c_str(); }
+const char* personality_locks_path() { return cur_path(); }
 
 // ---------------------------------------------------------------------------
 // Write
@@ -165,9 +189,9 @@ void save_personality_locks_locked() {
         id = g_id;
     }
 
-    FILE* f = fopen(g_path.c_str(), "w");
+    FILE* f = open_locks("w");
     if (!f) {
-        PLOG("save_personality_locks: failed to open %s for writing\n", g_path.c_str());
+        PLOG("save_personality_locks: failed to open %s for writing\n", cur_path());
         return;
     }
 
@@ -204,7 +228,7 @@ void save_personality_locks_locked() {
     fprintf(f, "}}");
     fclose(f);
     PLOG("save_personality_locks: saved %zu entries to %s (world=%s)\n",
-         g_personality_locks.size(), g_path.c_str(),
+         g_personality_locks.size(), cur_path(),
          id.empty() ? "none declared" : id.save_sha256.c_str());
 }
 
@@ -217,7 +241,7 @@ bool peek_personality_locks_identity(WorldIdentity* out) {
     if (buf.empty()) return false;
     if (!parse_header(buf.data(), out)) {
         PLOG("personality locks: %s carries no world header — it names no save and "
-             "will never be restored (ck-9fc3)\n", g_path.c_str());
+             "will never be restored (ck-9fc3)\n", cur_path());
         return false;
     }
     return true;
@@ -230,7 +254,7 @@ size_t load_personality_locks_from_disk() {
 
     const char* locks_start = strstr(json, "\"locks\"");
     if (!locks_start) {
-        PLOG("load_personality_locks: no \"locks\" key found in %s\n", g_path.c_str());
+        PLOG("load_personality_locks: no \"locks\" key found in %s\n", cur_path());
         return 0;
     }
     const char* p = strchr(locks_start + 7, '{');
@@ -299,7 +323,7 @@ size_t load_personality_locks_from_disk() {
         if (p && *p == '}') p++;
     }
 
-    PLOG("load_personality_locks: loaded %zu entries from %s\n", loaded, g_path.c_str());
+    PLOG("load_personality_locks: loaded %zu entries from %s\n", loaded, cur_path());
     return loaded;
 }
 

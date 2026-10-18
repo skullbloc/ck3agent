@@ -53,6 +53,10 @@ class Gateway:
         if action == "get_ai_evaluations":
             # the GLOBAL controller, deliberately disagreeing with the per-char one
             return {"ai_controller": {"ai_enabled": True}}
+        if action == "query_character":
+            # a BOUND ruler: since rc2 B6 whoami blocks no_ruler_bound when
+            # character_id=0 resolves to nothing, and carries no agency then.
+            return {"character": {"id": 30853, "alive": True}}
         return {}
 
     async def write(self, action, params=None):

@@ -1,0 +1,12 @@
+# Source of truth for repository labels (apply with `gh label create` or a label-sync action).
+- {name: good first issue, color: 7057ff, description: Small and scoped, no game needed}
+- {name: needs-live-test, color: d93f0b, description: Needs a run against the real game}
+- {name: offsets, color: b60205, description: re/offsets or signatures}
+- {name: bridge, color: 0052cc, description: C++ bridge}
+- {name: python, color: 3572a5, description: CLI or MCP server}
+- {name: docs, color: 0075ca, description: Documentation}
+- {name: "port:windows", color: 5319e7, description: Windows port}
+- {name: "port:macos", color: 5319e7, description: macOS port}
+- {name: game-version, color: fbca04, description: A new CK3 patch}
+- {name: needs-port, color: c5def5, description: Merged here, not yet ported upstream}
+- {name: ported-upstream, color: 0e8a16, description: Ported upstream}

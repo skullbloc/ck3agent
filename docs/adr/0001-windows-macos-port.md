@@ -1,7 +1,7 @@
 # ADR 0001 — Porting the bridge to Windows and macOS
 
 - **Status:** proposed (design of record for releases after 2026.10.0)
-- **Date:** 2026-10-17
+- **Date:** 2026-10-17; amended 2026-10-18 (see "Review amendments")
 - **Applies to:** `bridge/` (the in-process game bridge), `re/offsets/`, the
   `ck3agent` CLI and the release pipeline
 - **Decision owners:** ck3agent maintainers; contributors doing the port
@@ -15,6 +15,128 @@ records how the bridge is expected to reach Windows and macOS, in what order,
 and which questions must be answered before port code is worth writing. Items
 marked *verify* have not been checked by anyone on the project; they are
 prerequisites, not facts.
+
+## Review amendments 2026-10-18
+
+Corrections from the 2026.10.0-rc1 review. Where they conflict with the
+sections below, they win. The `W*`/`M*` milestone table is superseded by the
+phased plan at the end of this section; its ids stay for cross-reference.
+
+**Design corrections**
+
+- **Container layouts differ per ABI.** Field offsets are not the only thing
+  that moves. `std::string` is 32 bytes (libstdc++, 15-char SSO), 24 (libc++,
+  22-char SSO) or 32 (MSVC, 15-char SSO), each with its own field order.
+  `std::map` is 48, 24 and 16 bytes. `std::function`, `unordered_map` and
+  `shared_ptr` control blocks differ too. These are textbook sizes; the P3
+  probe measures them, nothing is assumed. The Itanium ABI reuses tail padding
+  of a base class for derived members and MSVC does not, so a derived field
+  can sit at a different offset from identical declarations. Windows is LLP64
+  (`long` is 4 bytes, `wchar_t` 2) and bitfield packing differs. So the 1,757
+  struct-field offsets (about 59% of the header) are a candidate set that
+  needs one reader per ABI (`os/abi/{itanium_libstdcxx,itanium_libcxx,msvc}`),
+  not a validator over the Linux readers.
+- **No `longjmp` out of a vectored handler.** It is unsafe on Windows. The
+  2,441 `safe_read` sites use `ReadProcessMemory` (as the `os::safe_read` row
+  already says). The ~273 direct dereferences use recovery by `Rip` rewrite:
+  the region records a resume address and stack pointer thread-locally, the
+  handler sets `CONTEXT.Rip`/`Rsp` to them and returns
+  `EXCEPTION_CONTINUE_EXECUTION`, and the region reports failure. Same rule as
+  today: protected bodies own no resources. This replaces the `os::guarded_region`
+  Windows cell.
+- **Trampolines need unwind data.** Code in `VirtualAlloc`ed pages has no
+  `RUNTIME_FUNCTION`, so an exception or stack walk that crosses it
+  fail-fasts. Register each trampoline with `RtlAddFunctionTable`, with unwind
+  codes matching the relocated prologue.
+- **CFG, CET and MSVC inlining are per-hook questions, not per-process ones.**
+  For each hook record: is the call site CFG-checked, is the replacement a
+  valid call target, does the trampoline pair `call`/`ret` the way a shadow
+  stack accepts. A function the Linux bridge hooks may be inlined, folded by
+  identical COMDAT folding (two functions, one address) or split by the
+  compiler on MSVC. Existence and uniqueness are checked before a hook is
+  planned. `tools/inspect_binary.py` reports the process-level flags.
+- **Signing is a W0 decision.** A `version.dll` next to a game is the textbook
+  sideload pattern, so Defender, SmartScreen and Smart App Control will react.
+  Decide signed (OV/EV certificate) or documented-unsigned, and what the
+  installer tells the user, before P2 starts, not at packaging time.
+- **A second identity witness, everywhere.** The SHA-256 of the image file on
+  disk joins the ELF BuildID, PE `RSDS` and Mach-O `LC_UUID`. Those can be
+  re-linked, stripped or (`/Brepro`) not time-derived; a file hash cannot
+  drift unnoticed. The bridge computes it off the init path, publishes it as a
+  witness (`observed_image_sha256`) and compares it with `IMAGE_SHA256` in
+  `offset_version.h`. Reference for Linux 1.18.3.1:
+  `5c99966cc6829e25ed65cdda74bbc0548f91cd318010cdb61bffa6d1f3abede8`.
+- **PE address convention, defined now.** An offset under `re/offsets/windows/`
+  is an RVA: address minus the module load base (`GetModuleHandleW(NULL)`),
+  the same meaning as the Linux base-relative offsets. Ghidra imports a PE at
+  its optional-header `ImageBase`, so the Ghidra address is `ImageBase + RVA`.
+  Never a file offset. `offset_version.h` records `IMAGE_BASE` beside the
+  identity constants, and `inspect_binary` prints both.
+- **One pinned game version on every platform:** 1.18.3.1, via the Steam
+  rollback branch, so the Linux bridge stays the reference. The cross-binary
+  anchor transfer tool and the patch-adapt tool are the same tool. No rollback
+  branch on a platform means no port to that platform (kill trigger below).
+- **Observe-only first.** Steering tools on a platform that has not reached P6
+  return a typed refusal, `unavailable_on_platform`, naming the platform and
+  the phase that unlocks them. The tool surface stays identical on all
+  platforms; handlers refuse, they do not vanish.
+
+**Development without a Windows or macOS machine**
+
+SteamCMD downloads both depots from Linux (`+@sSteamCmdForcePlatformType
+windows|macos`, app 1158310), so most of W0/M0 is a static read.
+`tools/inspect_binary.py` prints what those questions need, and the
+`binary-report` issue template collects its output without anyone sharing a
+binary. The Windows build runs under Proton on Linux (`docs/porting/proton-runbook.md`):
+Wine implements VEH/SEH, loader order and `WINEDLLOVERRIDES` proxy DLLs, and
+loopback TCP reaches the host Python. A `clang-cl` + `xwin` cross-build gives
+the MSVC ABI locally. Limits; Proton evidence is MEDIUM until re-run on real
+Windows:
+
+- Wine does not enforce CFG or CET, so a hook that passes there can fail-fast
+  on Windows.
+- Loader lock and `DllMain` ordering follow Wine's loader, not Windows'.
+- No Defender, no Smart App Control, no SmartScreen.
+- Steam starts the game through its own launcher chain; the Proton chain is not
+  the Windows one, and the Steam overlay differs.
+- `SendInput` is Wine's X11 translation.
+- Faults reach Wine's SEH as translated Unix signals; fault ordering and the
+  state in `CONTEXT` can differ from Windows.
+
+**Hybrid path (works today).** A Windows or macOS user runs Claude on their
+machine and the Linux game on a Linux host or VM over the network
+(`docs/claude-desktop.md`). It needs no port and stays supported.
+
+**macOS: deferred, not dropped.** The macOS build is Intel-only and runs under
+Rosetta on Apple Silicon. Apple ends general Rosetta support after macOS 27;
+whether a games carve-out follows is undefined. macOS is about 2% of Steam.
+Shipping needs a paid Developer ID, notarization and rented Mac hardware.
+Steam launches CK3 with `DYLD_INSERT_LIBRARIES` (`steamloader.dylib`), so dyld
+insertion works at least from Steam's loader: evidence, not proof. Do M0 (one
+day, static, `inspect_binary` on the Mach-O) now. Revisit when Windows has
+shipped, a Mac contributor exists, and the macOS 28 games carve-out is known.
+
+**Phased plan** (one experienced contributor; ranges widen with RE uncertainty)
+
+| # | Work | Effort | Done when | Kill / stop trigger |
+|---|---|---|---|---|
+| P0 | Static spikes from Linux: depots, W0/M0 answers | 3-5 days | `binary-report` answers filled for Windows and macOS; Ghidra imports the PE | Anti-tamper or integrity check found |
+| P1 | Windows Ghidra project; anchor transfer by RTTI names, string xrefs, registration tables, BSim | 3-5 wks | Every anchor in `re/offsets/` has a Windows candidate or a documented gap | Transfer below ~40% of anchors with no new method |
+| P2 | `bridge/src/os/` layer; stub CI on `windows-latest` and `macos-14` | 2-3 wks (parallel with P1) | Linux acceptance unchanged; engine-free tests pass on 3 OSes | Linux behaviour changes |
+| P3 | Proton bring-up; layout probe over the 1,757 field offsets, per-ABI readers | 2-3 wks | Probe report: `agreed`/`disagreed`/`unwitnessed` per field | Under ~40% field agreement |
+| P4 | Proxy DLL loads and refuses under Proton | 1-2 wks | `match` on 1.18.3.1, `REFUSED` and no listener on any other build | No 1.18.3.1 rollback branch on Windows |
+| P5 | Observe parity | 3-5 wks | Every `query_*` equals the Linux bridge on the reference save (scripted diff) | Parity below half the tools at 2x estimate |
+| P6 | Hooks and steering | 3-5 wks | Live scenarios give Linux outcomes (research-tree harness; to be published) | A hook class cannot be made unwind- and CFG-safe |
+| P7 | Real-Windows validation on a rented GPU VM; signed zip + `install.ps1` | 2-3 wks | P4-P6 repeated on Windows; installer tested | Proton result does not reproduce on Windows |
+
+Windows preview: 15-20 weeks from start (about 2027.03 for a November 2026
+start); parity: 24-30. macOS is not scheduled.
+
+`re/findings/<platform>/` and `bridge/harness/` (cited below) exist in the
+research checkout only. The `re/scripts` and `re/findings` subset behind the
+string-anchor/RTTI method ships under `re/`: the tools, the two anchor
+procedures and how to run them on a new binary are in
+[re/README.md](../../re/README.md).
 
 ## Context
 
@@ -33,9 +155,9 @@ mechanism it uses is Linux-specific, and most of them are load-bearing:
 | Hooks | vtable slot swaps (`install_main_tick_hooks()` in `bridge/src/bridge_init.cpp` patches `CAIMAN_VTABLE`); inline trampolines via `install_hook()` in `bridge/src/hooks.cpp`, which decodes the prologue with Zydis and allocates RWX pages within ±2 GB (`alloc_rwx_near()`, `mmap`); call-site rel32 patches (`arm_score_hook()` in `bridge/src/ai_eval_hook.cpp`) |
 | Runtime offset recovery | `bridge/src/runtime_resolver.cpp`: Itanium-ABI RTTI walks (`find_typeinfo()`, `find_vtable()`), byte-pattern scans (`resolve_signatures()`, matcher in `bridge/src/sig_scanner.cpp`, 34 patterns in `re/offsets/signatures.h`), RIP-relative anchors (`resolve_rip_anchors()`), all x86-64 via Zydis 5.0.0 |
 | Launcher bypass | `bridge/src/launcher_bypass.cpp` interposes `execve`/`execvp`/`posix_spawn` through `dlsym(RTLD_NEXT, …)`, rewrites a path ending in `/launcher/dowser` to the game binary and re-injects `LD_PRELOAD` into the child's `envp` |
-| IPC | `bridge/src/ipc_server.cpp`: an `AF_UNIX` listener (`server_loop()`), a reader thread (`reader_loop()`), NDJSON frames, a typed handshake; the path is `/tmp/ck3-agent.sock` or `/tmp/ck3-inst/<id>/agent.sock` from `bridge/src/instance_paths.cpp` (`CK3_INSTANCE_ID`) |
+| IPC | `bridge/src/ipc_server.cpp`: an `AF_UNIX` listener (`server_loop()`), a reader thread (`reader_loop()`), NDJSON frames, a typed handshake; the path is `RUN/agent.sock` or `RUN/inst/<id>/agent.sock` (`CK3_INSTANCE_ID`), where `RUN` is the private per-user `$XDG_RUNTIME_DIR/ck3agent`, from `bridge/src/instance_paths.cpp`; `CK3_INSTANCE_LAYOUT=legacy` keeps the old `/tmp` paths |
 | UI input | `bridge/src/action_handlers.cpp` `dlopen`s `libX11.so.6` / `libXtst.so.6` for `XTestFakeMotionEvent` / `XTestFakeButtonEvent`, with `/dev/uinput` as the fallback |
-| Threads, logs | `std::thread`; `SYS_gettid` in `bridge/include/thread_registry.h`; logs under `/tmp` (`instance_paths.cpp`) |
+| Threads, logs | `std::thread`; `SYS_gettid` in `bridge/include/thread_registry.h`; logs under `RUN` (`instance_paths.cpp`) |
 | Build | CMake, `-D_GNU_SOURCE`, Zydis fetched and built from source when the prebuilt `lib64/` is absent (`bridge/CMakeLists.txt`), RapidJSON header-only; native unit tests behind `BUILD_BRIDGE_TESTS` |
 | Python side | pure Python (`mcp`, `pydantic`, 3.11+). `ck3agent/cli.py` (`setup`, `doctor`, `launch`, `serve`, `run`, …) reads the ELF BuildID itself (`ck3agent/_elf.py`), sets `LD_PRELOAD` in `cmd_launch()`, and probes the socket path from `ck3agent/server/instance.py` |
 
@@ -101,7 +223,7 @@ directly once the layer exists. The interface is deliberately small:
 | `os::transport` (listen/accept/read/write) | `AF_UNIX` | TCP loopback (see IPC section) | `AF_UNIX` (socket path under `~/Library/Application Support/ck3agent/`; the 104-byte `sun_path` limit is tighter than Linux's 108) |
 | `os::thread_id()`, thread naming | `SYS_gettid`, `pthread_setname_np` | `GetCurrentThreadId`, `SetThreadDescription` | `pthread_threadid_np`, `pthread_setname_np` (self only) |
 | `os::watchdog` | `SIGALRM` | a timer thread + `QueueUserAPC`/flag polling (no `SIGALRM` on Windows) | `SIGALRM` as Linux |
-| `os::paths` | `/tmp/ck3-inst/<id>/…` | `%LOCALAPPDATA%\ck3agent\inst\<id>\…` | `~/Library/Application Support/ck3agent/inst/<id>/…`, logs in `~/Library/Logs/ck3agent/` |
+| `os::paths` | `$XDG_RUNTIME_DIR/ck3agent/inst/<id>/…` | `%LOCALAPPDATA%\ck3agent\inst\<id>\…` | `~/Library/Application Support/ck3agent/inst/<id>/…`, logs in `~/Library/Logs/ck3agent/` |
 | `os::early_init` priority | `CK3_EARLY_INIT` / `init_priority(101)` | `#pragma init_seg(lib)` on the TUs that carry witnesses; the `bridge/test/test_init_order.cpp` invariant needs a PE equivalent (walk `.CRT$XC*`) | as Linux (Clang) |
 | `os::input` | XTest, `/dev/uinput` | `SendInput` | `CGEventPost` (needs Accessibility/TCC approval for the game process; *verify* whether posting to one's own process is exempt) |
 
@@ -241,7 +363,7 @@ mirroring the Linux `g_prev_sigsegv_action` chain.
 - **Same loop.** investigate → validate (two sources for MEDIUM, three or a
   decompile for HIGH) → record with confidence and evidence in the comment →
   implement → test against a live game. Findings go to
-  `re/findings/<platform>/re_<system>.md`.
+  `re/findings/<platform>/re_<system>.md` (research checkout; see amendments).
 - **Layout.** `re/offsets/<platform>/{ck3_offsets.h, signatures.h,
   observer_data_functions.h, offset_version.h}`, with `re/offsets/linux/`
   created by moving the present files (CMake's include path follows
@@ -327,7 +449,7 @@ mirroring the Linux `g_prev_sigsegv_action` chain.
   `VERSION`. `installer/install.sh` keeps its Linux-only `uname` gate; the
   other platforms get their own installers.
 
-## Milestones
+## Milestones (superseded by the phased plan in "Review amendments")
 
 Effort is for one experienced contributor with the Linux bridge as reference
 and Ghidra familiarity; ranges are wide because the RE is the uncertain part.
@@ -338,8 +460,8 @@ and Ghidra familiarity; ranges are wide because the RE is the uncertain part.
 | W1 | Platform layer + Windows build | `bridge/src/os/` exists, Linux build is behaviourally unchanged (the 2026.10 Linux acceptance suite is green), `windows-latest` builds the DLL and the engine-free tests pass | 2–3 wks |
 | W2 | Loads and refuses | The proxy DLL loads in `ck3.exe`, `is_ck3_process()` is true only there, identity is read, the bridge log shows `REFUSED` on a wrong build and `match` on the target, and a wrong build leaves no listener. `ck3agent doctor` reports the chain on Windows | 1–2 wks |
 | W3 | Read-only observe | Globals (`GAME_STATE_ROOT`, `AI_ENABLED_FLAG`, the manager singletons) and enough struct offsets for the `query_*` handlers; the layout-probe report exists; on the reference save every `query_*` tool returns values equal to the Linux bridge's (a scripted diff, not a glance) | 3–5 wks |
-| W4 | Hooks and steering | `install_main_tick_hooks()` on the MSVC vtable, the inline hooks, the personality writes; the harness scenarios under `bridge/harness/` pass on Windows with the same outcomes as Linux | 3–5 wks |
-| W5 | Full tool surface, installer, CI | All 11 MCP tools behave as on Linux; signed (or documented-unsigned) zip installer; `release.yml` publishes the Windows archive; `ck3agent launch/doctor` work for a Steam install | 2–4 wks |
+| W4 | Hooks and steering | `install_main_tick_hooks()` on the MSVC vtable, the inline hooks, the personality writes; the live scenarios (research checkout `bridge/harness/`, not published) pass on Windows with the same outcomes as Linux | 3–5 wks |
+| W5 | Full tool surface, installer, CI | Every registered MCP tool behaves as on Linux; signed (or documented-unsigned) zip installer; `release.yml` publishes the Windows archive; `ck3agent launch/doctor` work for a Steam install | 2–4 wks |
 | M0 | macOS verification spike | Hardened-runtime and entitlement answer, `lipo -archs`, launcher chain, crash-reporter/mach-port behaviour, Ghidra import | 1 wk |
 | M1 | Injection path | Either `DYLD_INSERT_LIBRARIES` or the relauncher copies, re-signs and starts the game with the dylib loaded; `LC_UUID` identity read; refusal path works | 1–3 wks |
 | M2 | Observe | As W3; expected to go faster because the Itanium RTTI walk and the vtable order carry over | 2–4 wks |
@@ -388,8 +510,9 @@ weeks. These are ranges for elapsed engineering time, not calendar promises.
   Linux) has an MSVC analogue; `init_seg` is the tool and
   `bridge/test/test_init_order.cpp` needs a PE reader.
 - **Local-port exposure on Windows.** The token stops other local users, not a
-  process running as the same user. That matches the Linux socket's 0666
-  posture and is acceptable for a research tool, but must be stated.
+  process running as the same user. That is weaker than the Linux
+  default (a 0600 socket plus a peer-uid check) and matches only the legacy
+  0666 layout; acceptable for a research tool, but it must be stated.
 - Open: does CK3 on macOS start a launcher process at all? What minimum
   Windows/macOS versions does the game require (they set ours)? Does the
   Windows `ck3.exe` have a stripped `.reloc` (affects the Ghidra image base)?

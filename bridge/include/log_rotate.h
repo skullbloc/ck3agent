@@ -24,6 +24,8 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace bridge {
@@ -77,8 +79,14 @@ struct LogCoverage {
 // reopen it empty. `*fp` is updated in place. Returns what actually happened —
 // never a bare bool, because "rotated" and "rotated WITHOUT keeping the old
 // window" are different events and a caller must be able to say which.
+//
+// rc2 B1: the reopen is open(O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, mode)
+// dup2'd onto the live stream's fd, not freopen(path, "w"): freopen follows a
+// symlink planted at the path and takes its mode from the umask. The FILE*
+// itself never changes (other threads hold it). If the fresh file cannot be
+// created the stream keeps writing where it was.
 inline RotateResult rotate_log(const char* path, FILE** fp,
-                               long max_bytes, int archives) {
+                               long max_bytes, int archives, mode_t mode = 0600) {
     RotateResult r;
     if (!path || !fp || !*fp) return r;
     const long sz = ftell(*fp);
@@ -101,8 +109,18 @@ inline RotateResult rotate_log(const char* path, FILE** fp,
     r.archived = (rename(path, to) == 0);
     if (!r.archived) r.err = errno;
 
-    FILE* nf = freopen(path, "w", *fp);
-    if (nf) *fp = nf;
+    fflush(*fp);
+    if (!r.archived) ::unlink(path);     // O_EXCL needs the name free
+    const int nfd = ::open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode);
+    if (nfd >= 0) {
+        const int ofd = fileno(*fp);
+        const int fl = ::fcntl(ofd, F_GETFD);
+        if (::dup2(nfd, ofd) >= 0) {
+            if (fl >= 0) ::fcntl(ofd, F_SETFD, fl);
+            fseek(*fp, 0, SEEK_SET);         // drop the cached offset of the old file
+        }
+        ::close(nfd);
+    }
     return r;
 }
 

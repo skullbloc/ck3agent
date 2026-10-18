@@ -1419,8 +1419,8 @@ bool execute_scripted_effect_intent(Intent* intent) {
         {
             char buf[176];
             snprintf(buf, sizeof(buf),
-                     "scripted_effect '%.80s' resolved (resolve_only; template=%p) — Execute available behind allow-list (resolve_only=false)",
-                     effect_name, tpl);
+                     "scripted_effect '%.80s' resolved (resolve_only) — Execute available behind allow-list (resolve_only=false)",
+                     effect_name);   // rc2 B2: no template VA in a client string
             intent->console_output = buf;
         }
         IQLOG("Scripted-effect intent RESOLVED (resolve_only): '%s' template=%p\n",
@@ -1481,8 +1481,8 @@ bool execute_scripted_effect_intent(Intent* intent) {
     {
         char buf[160];
         snprintf(buf, sizeof(buf),
-                 "scripted_effect '%.80s' walked on actor %u (template=%p)",
-                 effect_name, intent->actor_id & 0xFFFFFF, tpl);
+                 "scripted_effect '%.80s' walked on actor %u",
+                 effect_name, intent->actor_id & 0xFFFFFF);   // rc2 B2: no VA
         intent->console_output = buf;
     }
     IQLOG("Scripted-effect intent EXECUTED (pinned-frame walk): actor=%u effect='%s' template=%p\n",

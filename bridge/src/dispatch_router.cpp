@@ -1579,10 +1579,14 @@ bool do_get_controlled_roster(const char* /*params_json*/, std::string* out) {
 // state and crash a LATER tick — outside any per-handler sigsetjmp net, so the
 // crash-net cannot contain it. To protect autonomous runs, they are DISABLED by
 // default and return a clean rejection. Enable ONE AT A TIME for controlled
-// validation by listing the action name in /tmp/ck3-enabled-writes (the file is
+// validation by listing the action name in <state dir>/ck3-enabled-writes (the file is
 // re-read on every call, so no relaunch needed). Once a write is proven safe,
 // either keep it in that file or remove it from this list.
 // =============================================================================
+// <state dir>/ck3-enabled-writes: /tmp in legacy layout, else the private dir.
+// Opened through the verified state-dir fd (O_NOFOLLOW), never by path.
+static constexpr const char* kEnabledWritesName = "ck3-enabled-writes";
+
 static bool experimental_write_enabled(const char* action) {
     static const char* kExperimental[] = {
         // hire_mercenary REMOVED 2026-06-18 — VALIDATED working (live: company 17
@@ -1635,20 +1639,33 @@ static bool experimental_write_enabled(const char* action) {
     bool is_exp = false;
     for (const char* e : kExperimental) if (strcmp(action, e) == 0) { is_exp = true; break; }
     if (!is_exp) return true;  // not gated
-    FILE* f = fopen("/tmp/ck3-enabled-writes", "r");
+    FILE* f = bridge::instance_state_fopen(kEnabledWritesName, "r");
     if (!f) return false;
-    char buf[1024]; size_t n = fread(buf, 1, sizeof(buf) - 1, f); fclose(f);
-    buf[n] = '\0';
-    return strstr(buf, action) != nullptr;
+    // rc2 B1: an exact line match (surrounding whitespace ignored), not a
+    // substring: "scheme_action_x" must not enable "scheme_action".
+    char line[256];
+    bool on = false;
+    const size_t alen = strlen(action);
+    while (!on && fgets(line, sizeof line, f)) {
+        const char* b = line;
+        while (*b == ' ' || *b == '\t') ++b;
+        size_t len = strlen(b);
+        while (len && (b[len - 1] == '\n' || b[len - 1] == '\r' ||
+                       b[len - 1] == ' ' || b[len - 1] == '\t')) --len;
+        on = (len == alen && memcmp(b, action, alen) == 0);
+    }
+    fclose(f);
+    return on;
 }
 
 // =============================================================================
 // Action-Log JSONL Tap (overlay-v2 §2.2)
 //
-// Append-only feed of state-mutating bridge RPCs: {ts, game_date, verb, args, result}.
-// Lives at <telemetry>/action_log.jsonl — per-instance since ck-qn03, the
-// legacy /tmp/ck3-telemetry on the default instance. One line per executed action verb;
-// reads/queries and bridge-management RPCs are excluded. The overlay renderer
+// Append-only feed of state-mutating bridge RPCs:
+// {ts, game_date, session_id, kind, verb, args, result}. kind is "action" or
+// "management" (clock, per-character AI, steering flags; see action_log_kind).
+// Lives at <telemetry>/action_log.jsonl (per instance since ck-qn03). Reads
+// and diagnostic management RPCs are excluded. The overlay renderer
 // humanizes these verbs into the kill-feed; the run monitor consumes them as
 // clip-candidate signals.
 // =============================================================================
@@ -2061,22 +2078,33 @@ bool do_board_admin(const char* params_json, std::string* out) {
     return true;
 }
 
-static bool is_action_verb_for_log(const char* action_type) {
-    if (!action_type || !action_type[0]) return false;
+// rc2 B8: the clock, per-character AI and steering-flag verbs are logged with
+// kind "management"; other management verbs and reads are not logged.
+static const char* action_log_kind(const char* action_type) {
+    if (!action_type || !action_type[0]) return nullptr;
+    static const char* const kLoggedMgmt[] = {
+        "pause_game", "unpause_game", "pause", "set_pause", "set_speed",
+        "set_character_ai", "set_character_subsystems",
+        "set_offgoal_veto", "set_force_offensive_stance",
+    };
+    for (const char* m : kLoggedMgmt)
+        if (strcmp(action_type, m) == 0) return "management";
     // Exclude pure game-state queries.
-    if (is_game_state_query(action_type)) return false;
+    if (is_game_state_query(action_type)) return nullptr;
     // Exclude read families by prefix.
-    if (strncmp(action_type, "query_", 6) == 0) return false;
-    if (strncmp(action_type, "list_", 5) == 0) return false;
-    if (strncmp(action_type, "get_", 4) == 0) return false;
-    if (strncmp(action_type, "probe_", 6) == 0) return false;
-    // Exclude bridge-management and read helpers.
-    if (is_bridge_management_verb(action_type)) return false;
-    return true;
+    if (strncmp(action_type, "query_", 6) == 0) return nullptr;
+    if (strncmp(action_type, "list_", 5) == 0) return nullptr;
+    if (strncmp(action_type, "get_", 4) == 0) return nullptr;
+    if (strncmp(action_type, "probe_", 6) == 0) return nullptr;
+    // Exclude the remaining bridge-management and read helpers.
+    if (is_bridge_management_verb(action_type)) return nullptr;
+    return "action";
 }
 
-static void emit_action_log(const char* verb, const char* args_json, const char* result_json) {
+static void emit_action_log(const char* verb, const char* kind, const char* args_json,
+                            const char* result_json) {
     if (!verb || !verb[0]) return;
+    Session* session = current_session();
 
     // Build the JSONL line. args_json and result_json are already JSON objects
     // when populated; splice them raw. Fall back to {} / null on empty/malformed.
@@ -2086,29 +2114,37 @@ static void emit_action_log(const char* verb, const char* args_json, const char*
     line += format_action_log_timestamp();
     line += "\",\"game_date\":\"";
     line += format_action_log_game_date();
-    line += "\",\"verb\":\"";
-    for (const char* p = verb; *p; ++p) {
-        if (*p == '"' || *p == '\\') line += '\\';
-        if (static_cast<unsigned char>(*p) < 0x20) {
-            char esc[8];
-            snprintf(esc, sizeof(esc), "\\u%04x", static_cast<unsigned char>(*p));
-            line += esc;
-        } else {
-            line += *p;
+    auto append_escaped = [&line](const char* str) {
+        for (const char* p = str; *p; ++p) {
+            if (*p == '"' || *p == '\\') line += '\\';
+            if (static_cast<unsigned char>(*p) < 0x20) {
+                char esc[8];
+                snprintf(esc, sizeof(esc), "\\u%04x", static_cast<unsigned char>(*p));
+                line += esc;
+            } else {
+                line += *p;
+            }
         }
-    }
+    };
+    line += "\",\"session_id\":\"";
+    append_escaped(session ? session->session_id.c_str() : "");
+    line += "\",\"kind\":\"";
+    line += kind;
+    line += "\",\"verb\":\"";
+    append_escaped(verb);
     line += "\",\"args\":";
     line += (args_json && args_json[0] == '{') ? args_json : "{}";
     line += ",\"result\":";
     line += (result_json && result_json[0] == '{') ? result_json : "null";
     line += "}";
 
+    if (!bridge::instance_private_dir_ok()) return;   // rc2 B1: no writes in an untrusted dir
     std::lock_guard<std::mutex> lock(g_action_log_mutex);
     // ck-qn03: the telemetry sink follows the instance, so two episodes on one
     // host do not interleave their action logs into one file.
-    ::mkdir(bridge::instance_telemetry_dir(), 0777);
+    ::mkdir(bridge::instance_telemetry_dir(), bridge::instance_dir_mode());
     std::string log_path = std::string(bridge::instance_telemetry_dir()) + "/action_log.jsonl";
-    FILE* f = ::fopen(log_path.c_str(), "a");
+    FILE* f = bridge::instance_open_private_log(log_path.c_str(), false);
     if (f) {
         ::fputs(line.c_str(), f);
         ::fputc('\n', f);
@@ -2357,6 +2393,8 @@ static bool case_set_pause(const char* params_json, std::string* /*response_out*
     return true;
 }
 
+static bool refuse_debug_verb(const char* verb, std::string* response_out);
+
 // --- Query dispatch (new tool schema names): the `query` meta-router ---
 static bool case_query_meta(const char* params_json, std::string* response_out) {
     const char* query_type = json_get_string(params_json, "type");
@@ -2411,16 +2449,23 @@ static bool case_query_meta(const char* params_json, std::string* response_out) 
     if (strcmp(query_type, "succession") == 0) {
         return do_query_succession(params_json, response_out);
     }
+    // rc2 B2: debug query types. Refused (and their handlers not linked)
+    // unless built with CK3_BRIDGE_DEBUG_VERBS.
+    if (refuse_debug_verb(query_type, response_out)) return false;
+#ifdef CK3_BRIDGE_DEBUG_VERBS
     if (strcmp(query_type, "memory_probe") == 0) {
         return do_query_memory_probe(params_json, response_out);
     }
+#endif
     if (strcmp(query_type, "character_memories") == 0
             || strcmp(query_type, "memories") == 0) {
         return do_query_character_memories(params_json, response_out);
     }
+#ifdef CK3_BRIDGE_DEBUG_VERBS
     if (strcmp(query_type, "resolve_global") == 0) {
         return do_query_resolve_global(params_json, response_out);
     }
+#endif
 
     if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] query: unknown type '%s'\n", query_type);
     return false;
@@ -2449,6 +2494,55 @@ static bool fail_if_no_context(const char* action_name, std::string* response_ou
     return false;
 }
 
+// rc2 B2: raw memory reads (memory_probe, resolve_global), X/uinput input
+// injection (inject_mouse_click, select_observe_default), the debug console
+// (execute_console_command) and raw client pointers handed to the engine
+// (set_cb_selector_override) are COMPILED OUT unless built with
+// CK3_BRIDGE_DEBUG_VERBS (CMake option, OFF): their action_registry.inc lines
+// and handler bodies are #ifdef'd, so a default build does not link them.
+// This list only words the refusal; test_debug_verbs checks it equals the set
+// the define adds to action_registry.inc.
+static const char* const kDebugVerbs[] = {
+    "memory_probe", "resolve_global", "inject_mouse_click",
+    "select_observe_default", "execute_console_command",
+    "set_cb_selector_override",
+};
+
+bool debug_verb_compiled_out(const char* verb) {
+#ifdef CK3_BRIDGE_DEBUG_VERBS
+    (void)verb;
+    return false;
+#else
+    if (!verb) return false;
+    for (const char* d : kDebugVerbs)
+        if (strcmp(verb, d) == 0) return true;
+    return false;
+#endif
+}
+
+static bool refuse_debug_verb(const char* verb, std::string* response_out) {
+#ifdef CK3_BRIDGE_DEBUG_VERBS
+    (void)verb; (void)response_out;
+    return false;
+#else
+    for (const char* d : kDebugVerbs) {
+        if (strcmp(verb, d) != 0) continue;
+        if (g_logfile) fprintf(g_logfile,
+            "[CK3-Bridge] %s refused: unavailable_in_release\n", verb);
+        if (response_out) {
+            ResponseBuilder r; r.begin_object();
+            r.key("success"); r.value_bool(false);
+            r.key("action");  r.value_string(verb);
+            r.key("error");   r.value_string("unavailable_in_release");
+            r.end_object();
+            *response_out = r.take();
+        }
+        return true;
+    }
+    return false;
+#endif
+}
+
 // =============================================================================
 // Action Dispatch (JSON command -> engine function call)
 // =============================================================================
@@ -2456,6 +2550,7 @@ static bool fail_if_no_context(const char* action_name, std::string* response_ou
 bool dispatch_action(const char* action_type, const char* params_json,
                      std::string* response_out) {
     if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Action: %s params: %s\n", action_type, params_json);
+    if (refuse_debug_verb(action_type, response_out)) return false;
 
     // M1: per-session ownership + mode choke point.  Read-only actions are
     // allowed for everyone.  Mutations are refused in observe mode.  Mutations
@@ -2604,7 +2699,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
     }
 
     // Safety gate: unverified Execute-path writes are disabled unless explicitly
-    // enabled in /tmp/ck3-enabled-writes (see experimental_write_enabled above).
+    // enabled in <state dir>/ck3-enabled-writes (see experimental_write_enabled above).
     if (!experimental_write_enabled(action_type)) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] experimental write GATED (disabled): %s\n", action_type);
         if (response_out) {
@@ -2616,7 +2711,9 @@ bool dispatch_action(const char* action_type, const char* params_json,
                 "This write path is unverified and gated for safety (it could crash "
                 "the game). Rely on the native AI instead (e.g. it seats councillors "
                 "on its own with the Council subsystem ON). For controlled validation, "
-                "enable it by adding its action name to /tmp/ck3-enabled-writes.");
+                "add its action name, one per line, to the file in enabled_writes_file.");
+            r.key("enabled_writes_file"); r.value_string(
+                (std::string(bridge::instance_state_dir()) + "/" + kEnabledWritesName).c_str());
             r.end_object();
             *response_out = r.take();
         }
@@ -2716,9 +2813,9 @@ bool dispatch_action_with_response(const char* action_type, const char* params_j
     }
 
     // overlay-v2 §2.2: tap executed state-mutating action verbs into the JSONL feed.
-    if (is_action_verb_for_log(action_type)) {
+    if (const char* kind = action_log_kind(action_type)) {
         const char* result = response_out ? response_out->c_str() : resp.c_str();
-        emit_action_log(action_type, params_json, result);
+        emit_action_log(action_type, kind, params_json, result);
     }
 
     return ok;

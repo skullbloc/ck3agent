@@ -56,6 +56,11 @@ namespace bridge {
 
 // Declared in bridge.h; redeclared so this TU stays engine-free.
 extern FILE* g_logfile;
+// instance_paths.cpp; weak so host targets that do not link it still link.
+mode_t instance_dir_mode() __attribute__((weak));
+}  // namespace bridge
+#include "private_fopen.h"   // rc2 B1: carrier opened 0600, O_NOFOLLOW
+namespace bridge {
 
 #define BLOG(fmt, ...) do { \
     if (g_logfile) { fprintf(g_logfile, "[CK3-Bridge][board] " fmt, ##__VA_ARGS__); fflush(g_logfile); } \
@@ -231,7 +236,7 @@ struct Carrier {
 // Read the whole carrier. Caller holds g_carrier_mu.
 bool read_carrier_locked(Carrier* out) {
     if (g_path.empty()) return false;
-    FILE* f = fopen(g_path.c_str(), "r");
+    FILE* f = private_fopen(g_path.c_str(), "r");
     if (!f) return false;
     out->present = true;
 
@@ -299,7 +304,7 @@ void record_drop_locked(int err) {
 // Append one already-rendered record. Caller holds g_carrier_mu.
 void append_locked(const std::string& record) {
     if (g_path.empty()) return;
-    FILE* f = fopen(g_path.c_str(), "a");
+    FILE* f = private_fopen(g_path.c_str(), "a");
     if (!f) {
         // ERRNO FIRST: BLOG clobbers it, and a reason of "Success" reads as no
         // failure at all — the one string a degraded surface must never carry.
@@ -372,7 +377,8 @@ std::string resolve_path_locked(const std::string& episode_id) {
     struct stat st;
     if (stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) return std::string();
     const std::string state = dir + "/state";
-    ::mkdir(state.c_str(), 0777);
+    // rc2 B1: 0700 (0777 legacy). Weak: host targets without instance_paths get 0700.
+    ::mkdir(state.c_str(), instance_dir_mode ? instance_dir_mode() : 0700);
     return state + "/board-" + component + ".jsonl";
 }
 
@@ -540,7 +546,7 @@ void board_carrier_begin(const std::string& episode_id) {
     // this episode's, which is worse than an empty one because it is
     // plausible. fclose is checked for the same reason every other write here
     // is: a close that fails is a write that did not land.
-    if (FILE* f = fopen(g_path.c_str(), "w")) {
+    if (FILE* f = private_fopen(g_path.c_str(), "w")) {
         if (fclose(f) != 0) record_drop_locked(errno);
     } else {
         const int err = errno;

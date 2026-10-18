@@ -1,0 +1,49 @@
+version = 1
+SPDX-PackageName = "ck3agent"
+SPDX-PackageSupplier = "Harrison Stebbins"
+SPDX-PackageDownloadLocation = "https://github.com/skullbloc/ck3agent"
+
+# Later annotations win over earlier ones.
+
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Harrison Stebbins and ck3agent contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "docs/**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Harrison Stebbins and ck3agent contributors"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+# These ship in the wheel, so they are Apache-2.0 like the code.
+[[annotations]]
+path = "ck3agent/protocol/*.md"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Harrison Stebbins and ck3agent contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "bridge/third_party/rapidjson/**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2015 THL A29 Limited, a Tencent company, and Milo Yip"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "bridge/third_party/rapidjson/msinttypes/**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2006-2013 Alexander Chemeris"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "bridge/third_party/zydis/**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2014-2024 Florian Bernd, Joel Hoener"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "bridge/third_party/stb_image.h"
+precedence = "closest"
+SPDX-FileCopyrightText = "2017 Sean Barrett"
+SPDX-License-Identifier = "MIT OR Unlicense"

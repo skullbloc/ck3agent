@@ -1,0 +1,36 @@
+name: New game version
+description: CK3 updated and the bridge refuses to load
+labels: ["game-version"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Each CK3 patch needs new offsets, which need reverse engineering: days
+        to weeks after the patch, not hours. No ETA is promised. Meanwhile pin
+        the game to 1.18.3.1 (Steam, Properties, Betas). One report per version
+        is enough; add details to the existing issue.
+  - type: input
+    id: game
+    attributes:
+      label: Game version
+      placeholder: "1.19.0.1"
+    validations:
+      required: true
+  - type: input
+    id: buildid
+    attributes:
+      label: BuildID
+      description: "`readelf -n <ck3 binary>`, or the line in the bridge log."
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ck3agent doctor
+      render: text
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Help
+      options:
+        - label: I can do reverse engineering and want to help (CONTRIBUTING, section 6).

@@ -741,16 +741,16 @@ static bool send_event_to_agent(const EventInfo& event) {
         "\"title\":\"%s\","
         "\"description\":\"%s\","
         "\"options\":[",
-        event.event_id,
+        json_escape(event.event_id).c_str(),     // rc2: game text, escaped
         event.target_char_id,
-        event.title,
-        event.description);
+        json_escape(event.title).c_str(),
+        json_escape(event.description).c_str());
 
     for (int i = 0; i < event.option_count && i < 8; i++) {
         if (i > 0) buf[pos++] = ',';
         pos += snprintf(buf + pos, sizeof(buf) - pos,
             "{\"index\":%d,\"text\":\"%s\"}",
-            i, event.option_texts[i]);
+            i, json_escape(event.option_texts[i]).c_str());
     }
 
     pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");

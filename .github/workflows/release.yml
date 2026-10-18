@@ -1,6 +1,5 @@
-# Tag push `vYYYY.MM.N` → build the bridge on the oldest supported Ubuntu,
-# build the wheel, assemble the Linux tarball, attest provenance, and open a
-# DRAFT GitHub Release. A human clicks Publish.
+# Tag push vYYYY.MM.N: CI on the tagged sha, then build (read-only) and
+# publish (write) a DRAFT GitHub Release. A human clicks Publish.
 name: release
 
 on:
@@ -8,25 +7,53 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: ubuntu-22.04      # oldest glibc we build against (2.35)
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
+  # CI must pass for this exact sha: run it here as a reusable workflow
+  # (no race with the push-to-main run, no API polling).
+  ci:
+    uses: ./.github/workflows/ci.yml
 
-      - name: Tag must equal VERSION
+  build:
+    needs: ci
+    runs-on: ubuntu-22.04      # oldest supported glibc
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Versions agree with the tag
         run: |
-          ver="$(cat VERSION)"
           tag="${GITHUB_REF_NAME#v}"
-          if [ "$ver" != "$tag" ]; then
-            echo "::error::tag v$tag does not match VERSION $ver"; exit 1
+          file_ver="$(cat VERSION)"
+          py_ver="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' ck3agent/_version.py)"
+          meta_ver="$(sed -n 's/^RELEASE_VERSION = "\(.*\)"$/\1/p' ck3agent/_bridge_meta.py)"
+          echo "tag=$tag VERSION=$file_ver _version.py=$py_ver _bridge_meta.py=$meta_ver"
+          for v in "$file_ver" "$py_ver" "$meta_ver"; do
+            if [ "$v" != "$tag" ]; then echo "::error::version mismatch against tag $tag"; exit 1; fi
+          done
+          echo "VER=$tag" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+
+      - name: Release notes from CHANGELOG
+        run: |
+          mkdir -p out
+          awk -v ver="$VER" '/^## /{ on = ($2 == ver) } on && !/^<!--/' CHANGELOG.md > out/notes.md
+          if [ ! -s out/notes.md ]; then echo "::error::CHANGELOG.md has no section for $VER"; exit 1; fi
+          if head -n1 out/notes.md | grep -qi unreleased; then
+            echo "::error::CHANGELOG heading for $VER still says unreleased"; exit 1
           fi
-          echo "VER=$ver" >> "$GITHUB_ENV"
+          cat >> out/notes.md <<EOF
+
+          Debug symbols: rename \`libck3_bridge-${VER}.so.debug\` to \`libck3_bridge.so.debug\` and put it beside \`libck3_bridge.so\`.
+          Verify downloads against \`SHA256SUMS\` and \`gh attestation verify\` (docs/getting-started.md).
+          EOF
 
       - name: Build deps
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake build-essential git binutils
@@ -34,8 +61,8 @@ jobs:
       - name: Build bridge (strict BuildID, Zydis from source)
         run: |
           cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCK3_STRICT_BUILD_ID=ON -DBUILD_BRIDGE_TESTS=ON
-          cmake --build bridge/build --target ck3_bridge test_json_helpers -- -j"$(nproc)"
-          ./bridge/build/test_json_helpers
+          cmake --build bridge/build -- -j"$(nproc)"
+          (cd bridge/build && ctest --output-on-failure)
 
       - name: Split debug info
         run: |
@@ -45,63 +72,84 @@ jobs:
           objcopy --add-gnu-debuglink=libck3_bridge.so.debug libck3_bridge.so
           ls -la libck3_bridge.so libck3_bridge.so.debug
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
       - name: Build wheel + sdist
         run: |
-          python -m pip install --upgrade pip build
-          python -m build
+          python -m pip install build==1.6.1 hatchling==1.32.4
+          python -m build --no-isolation
           python -m venv /tmp/v && /tmp/v/bin/pip install -q dist/*.whl && /tmp/v/bin/ck3agent version
 
       - name: Assemble tarball
         run: |
           set -e
           name="ck3agent-${VER}-linux-x86_64"
-          d="out/$name"
+          d="stage/$name"
           mkdir -p "$d/lib" "$d/share" "$d/wheels"
           cp bridge/build/libck3_bridge.so "$d/lib/"
-          cp re/rtti/trigger_subclasses.csv "$d/share/"
+          cp ck3agent/data/trigger_subclasses.csv "$d/share/"
           cp dist/*.whl "$d/wheels/"
+          # runtime dependencies for every supported Python, so the tarball installs offline
+          # (the same script installer/test_install.sh bundles with)
+          installer/bundle_wheels.sh "$d/wheels" dist/*.whl
           cp installer/install.sh installer/uninstall.sh "$d/"
           cp LICENSE NOTICE THIRD_PARTY_LICENSES.md VERSION UPSTREAM CITATION.cff "$d/"
           cp installer/README.txt "$d/README.txt"
           chmod +x "$d"/*.sh
-          tar -C out -czf "out/$name.tar.gz" "$name"
+          # reproducible: fixed order, owner and mtime (tagged commit time), no gzip timestamp
+          tar -C stage --owner=0 --group=0 --numeric-owner --sort=name \
+              --mtime="@${SOURCE_DATE_EPOCH}" -cf - "$name" | gzip -n -9 > "out/$name.tar.gz"
           cp bridge/build/libck3_bridge.so.debug "out/libck3_bridge-${VER}.so.debug"
           cp dist/*.whl dist/*.tar.gz out/
-          (cd out && sha256sum *.tar.gz *.whl *.debug > SHA256SUMS)
-          ls -la out
+          (cd out && sha256sum -- *.tar.gz *.whl *.debug > SHA256SUMS && cat SHA256SUMS)
 
-      # GitHub only stores attestations for public repos (or paid plans); on the
-      # private pre-release repo this step fails with "Feature not available",
-      # so it must not block the draft. On the public repo it succeeds and
-      # `gh attestation verify` works (docs/install.md).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-out
+          path: out/
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-out
+          path: out
+
+      # GitHub stores attestations only for public repos (or paid plans).
+      # Skipped on the private pre-release repo; fatal everywhere else.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
-        continue-on-error: true
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             out/*.tar.gz
             out/*.whl
             out/*.debug
 
-      - name: Release notes from CHANGELOG
-        run: |
-          # the section for this version, up to the next "## " heading
-          awk -v ver="$VER" '
-            /^## / { on = index($0, ver) > 0; if (on) { print; next } }
-            on { print }
-          ' CHANGELOG.md > out/notes.md
-          if [ ! -s out/notes.md ]; then echo "CHANGELOG.md has no section for $VER" > out/notes.md; fi
-          cat out/notes.md
-
       - name: Draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "v${VER}" \
-            --draft \
-            --title "ck3agent ${VER}" \
-            --notes-file out/notes.md \
-            out/*.tar.gz out/*.whl out/*.debug out/SHA256SUMS
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          files=(out/*.tar.gz out/*.whl out/*.debug out/SHA256SUMS)
+          # `gh release view` does not return drafts, so look in the list
+          state="$(gh release list --limit 200 --json tagName,isDraft --jq ".[] | select(.tagName==\"$tag\") | .isDraft")"
+          if [ "$state" = false ]; then
+            echo "::error::$tag is already published; refusing to touch it"; exit 1
+          elif [ "$state" = true ]; then
+            gh release upload "$tag" --clobber "${files[@]}"
+            gh release edit "$tag" --title "ck3agent $ver" --notes-file out/notes.md
+          else
+            gh release create "$tag" --draft --verify-tag --title "ck3agent $ver" --notes-file out/notes.md "${files[@]}"
+          fi

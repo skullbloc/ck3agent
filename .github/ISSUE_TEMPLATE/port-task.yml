@@ -1,0 +1,62 @@
+name: Port task
+description: Propose or claim a task from the Windows/macOS port plan (ADR 0001).
+title: "[port] <phase>: <task>"
+labels: ["port"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Phases P0 to P7 are in `docs/adr/0001-windows-macos-port.md`; ways to help are in `docs/porting/README.md`.
+        Check the open `port` issues first. Say in the issue when you start, so two people do not do the same task.
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - "P0 static spikes"
+        - "P1 Windows Ghidra project and anchor transfer"
+        - "P2 os/ layer and CI"
+        - "P3 Proton bring-up and layout probe"
+        - "P4 DLL loads and refuses"
+        - "P5 observe parity"
+        - "P6 hooks and steering"
+        - "P7 real-Windows validation and installer"
+        - "macOS M0"
+        - "Not sure"
+    validations:
+      required: true
+  - type: input
+    id: task
+    attributes:
+      label: Task
+      description: 'One sentence, for example "PE RTTI walker in Python over RTTICompleteObjectLocator".'
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: A check someone else can run. Name the test, the report or the diff.
+    validations:
+      required: true
+  - type: dropdown
+    id: needs
+    attributes:
+      label: What it needs
+      options:
+        - Linux only, no game
+        - Linux with the Linux game
+        - Windows depot via SteamCMD (static)
+        - Proton on Linux
+        - Real Windows
+        - A Mac
+    validations:
+      required: true
+  - type: checkboxes
+    id: claim
+    attributes:
+      label: Claim
+      options:
+        - label: I will work on this.
+        - label: I read `docs/porting/README.md` and will not share game binaries.
+          required: true

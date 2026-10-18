@@ -427,6 +427,51 @@ std::vector<std::string> ipc_reconcile_declared_world(const WorldIdentity& decla
     return erased;
 }
 
+#ifndef CK3_BRIDGE_VERSION
+#define CK3_BRIDGE_VERSION "unknown"
+#endif
+
+// rc2 provenance: release version, wire-protocol tag, and every env var the
+// bridge reads ("" when unset). Keep the list in step with getenv() calls in
+// bridge/src. Secrets are reported as "<set>", never echoed.
+static std::string handshake_provenance_fields() {
+    static const char* const kKeys[] = {
+        "CK3_PIPELINE_MODE", "CK3_EPISODE_MODE", "CK3_EPISODE_ID", "CK3_EPISODE_ARM",
+        "CK3_EPISODE_GAME_SPEED", "CK3_EPISODE_DIR", "CK3_EPISODE_HORIZON_START",
+        "CK3_EPISODE_HORIZON_END", "CK3_EP_MAX_DETACH_S",
+        "CK3_BUDGET_ENFORCE", "CK3_BUDGET_PER_AGENT_PER_YEAR",
+        "CK3_BOARD_ENABLED", "CK3_BOARD_CARRIER_PATH", "CK3_BOARD_MAX_POST_BYTES",
+        "CK3_BOARD_MAX_POSTS_PER_EPISODE", "CK3_BOARD_MAX_POSTS_PER_FLUSH",
+        "CK3_BOARD_ADMIN_TOKEN",
+        "CK3_STRICT_BUILD_ID", "CK3_BRIDGE_STRICT", "CK3_SUPPRESS_AUTO_UNPAUSE",
+        "CK3_INSTANCE_LAYOUT", "CK3_INSTANCE_ID", "CK3_INSTANCE_ROOT", "CK3_INSTANCE_DIR",
+        "CK3_BRIDGE_SOCKET", "CK3_TELE", "CK3_BRIDGE_LOG", "CK3_BRIDGE_LOG_ARCHIVE_DIR",
+        "CK3_BRIDGE_SEND_TIMEOUT_MS", "CK3_BRIDGE_TRACE", "CK3_AI_WATCH",
+        "CK3_LAW_TRIGGER_HARVEST", "CK3_TRIGGER_CATALOGUE_CSV",
+        "CK3_UNAVAIL_ANOMALY_WALL_S", "CK3_UNAVAIL_EXCLUSION_FRACTION", "CK3_UNAVAIL_X_DAYS",
+        "BRIDGE_DISTRUST_INNER_CB_VALIDITY", "BRIDGE_NO_PER_CB_OUTER_TRIGGER",
+        "BRIDGE_NO_STAGE2_GROUP_TRIGGER", "BRIDGE_NO_STAGE3_KIND_RELATION_MODE",
+    };
+    std::string o = "\"bridge_version\":\"";
+    o += bridge::json_escape_min(CK3_BRIDGE_VERSION);
+    o += "\",\"bridge_protocol\":\"v8-2026-03-20\",\"instance_layout\":\"";
+    o += bridge::instance_layout();
+    o += "\",\"effective_config\":{";
+    bool first = true;
+    for (const char* k : kKeys) {
+        const char* v = getenv(k);
+        std::string val = v ? v : "";
+        if (!val.empty() && strstr(k, "TOKEN")) val = "<set>";
+        if (!first) o += ',';
+        first = false;
+        o += '"'; o += k; o += "\":\"";
+        o += bridge::json_escape_min(val);
+        o += '"';
+    }
+    o += '}';
+    return o;
+}
+
 // M1: parse a handshake frame and create/attach a Session to the slot.
 // Legacy clients (protocol_version < 2 or absent) get an implicit control
 // session so single-agent clients keep working.  Unknown protocol majors are
@@ -449,7 +494,7 @@ static HandshakeResult handle_handshake_for_slot(int idx, uint32_t read_gen,
     using namespace rapidjson;
     HandshakeResult result;
     Document doc;
-    doc.Parse(line.c_str());
+    doc.Parse<rapidjson::kParseIterativeFlag>(line.c_str());
     if (doc.HasParseError() || !doc.IsObject()) return result;
 
     const Value* vtype = doc.HasMember("type") ? &doc["type"] : nullptr;
@@ -1043,7 +1088,7 @@ static bool try_inline_safe_query(const std::string& msg,
                                   bridge::Session* session) {
     // Parse the envelope with rapidjson
     rapidjson::Document envelope;
-    envelope.Parse(msg.c_str());
+    envelope.Parse<rapidjson::kParseIterativeFlag>(msg.c_str());
     if (envelope.HasParseError() || !envelope.IsObject()) return false;
 
     // Must have "actions" array
@@ -1345,7 +1390,7 @@ static bool try_inline_safe_query(const std::string& msg,
 // caller should fall through to its normal queue path.
 static bool try_game_thread_paused_rejection(const std::string& msg) {
     rapidjson::Document envelope;
-    envelope.Parse(msg.c_str());
+    envelope.Parse<rapidjson::kParseIterativeFlag>(msg.c_str());
     if (envelope.HasParseError() || !envelope.IsObject()) return false;
     if (!envelope.HasMember("actions") || !envelope["actions"].IsArray()) return false;
 
@@ -1455,7 +1500,7 @@ static bool try_game_thread_paused_rejection(const std::string& msg) {
 // caller should fall through to its normal queue path.
 static bool try_queue_fallthrough_rejection(const std::string& msg) {
     rapidjson::Document envelope;
-    envelope.Parse(msg.c_str());
+    envelope.Parse<rapidjson::kParseIterativeFlag>(msg.c_str());
     if (envelope.HasParseError() || !envelope.IsObject()) return false;
     if (!envelope.HasMember("actions") || !envelope["actions"].IsArray()) return false;
 
@@ -1506,7 +1551,12 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
         }
         resp += build_envelope_clock_fragment();  // #123: "tick":N,"game_date":"..."
         resp += ',';
-        if (!registered) {
+        if (!registered && bridge::debug_verb_compiled_out(action_type)) {
+            // rc2 B2: same shape as dispatch_router.cpp:refuse_debug_verb.
+            resp += "\"success\":false,\"error\":\"unavailable_in_release\",\"action\":\"";
+            resp += action_type;
+            resp += "\"}";
+        } else if (!registered) {
             // D1-C fast-fail: same shape as dispatch_action's unknown tail.
             resp += "\"success\":false,\"error\":\"unknown_action\",\"action\":\"";
             resp += action_type;
@@ -1684,9 +1734,37 @@ static void reader_loop() {
             g_send_target_gen = cur_gen;
             std::string& line_buf = line_bufs[idx];
 
+            bool dropped = false;
             for (ssize_t i = 0; i < n; i++) {
-                if (read_buf[i] != '\n') { line_buf += read_buf[i]; continue; }
+                if (read_buf[i] != '\n') {
+                    line_buf += read_buf[i];
+                    // rc2 B9: an unbounded line is a memory DoS on the game.
+                    if (line_buf.size() > bridge::kMaxLineBytes) {
+                        if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                            "[CK3-Bridge] slot=%d dropped: line exceeds %zu bytes\n",
+                            idx, bridge::kMaxLineBytes);
+                        std::lock_guard<std::mutex> lock(g_client_mutex);
+                        if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen)
+                            release_slot_locked(idx, "line too long");
+                        dropped = true;
+                        break;
+                    }
+                    continue;
+                }
                 if (line_buf.empty()) continue;
+                // rc2 B9: deep nesting overflows the stack in RapidJSON's
+                // recursive Accept(). Refuse the line before any parse.
+                if (bridge::json_depth_exceeds(line_buf.data(), line_buf.size(),
+                                               bridge::kMaxJsonDepth)) {
+                    if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                        "[CK3-Bridge] slot=%d line refused: nesting deeper than %d\n",
+                        idx, bridge::kMaxJsonDepth);
+                    static const char kTooDeep[] =
+                        "{\"type\":\"error\",\"error\":\"json_too_deep\"}";
+                    send_to_slot(idx, cur_gen, kTooDeep, sizeof(kTooDeep) - 1);
+                    line_buf.clear();
+                    continue;
+                }
 
                 // N2 (surface audit 2026-08-01): an ACTIONS envelope is never a
                 // handshake. Without the "actions" exclusion, a misframed
@@ -1734,7 +1812,7 @@ static void reader_loop() {
                     // class of defect this bead exists to end.
                     char ack_buf[4096];
                     const int ack_len = snprintf(ack_buf, sizeof(ack_buf),
-                        "{\"type\":\"handshake_ack\",\"bridge_version\":\"v8-2026-03-20\","
+                        "{\"type\":\"handshake_ack\","
                         "\"binary_build_id\":\"%s\","
                         "\"observed_build_id\":\"%s\","
                         "\"build_id_status\":\"%s\","
@@ -1807,8 +1885,15 @@ static void reader_loop() {
                                     "will see no build provenance\n",
                                     ack_len, sizeof(ack_buf));
                     }
+                    // rc2: splice the provenance fields in after "type". Built
+                    // separately because env values are unbounded.
+                    static const char kAckHead[] = "{\"type\":\"handshake_ack\",";
+                    std::string ack(kAckHead);
+                    ack += handshake_provenance_fields();
+                    ack += ',';
+                    ack += ack_buf + (sizeof(kAckHead) - 1);
                     // Targeted reply to the connecting slot only (not broadcast).
-                    send_to_slot(idx, cur_gen, ack_buf, strlen(ack_buf));
+                    send_to_slot(idx, cur_gen, ack.data(), ack.size());
                     if (hs_result.session) {
                         std::lock_guard<std::mutex> lock(g_client_mutex);
                         if (g_clients[idx].gen == cur_gen) g_clients[idx].handshaked = true;
@@ -1942,6 +2027,7 @@ static void reader_loop() {
                 }
                 line_buf.clear();
             }
+            if (dropped) std::string().swap(line_buf);   // free the 1 MiB
             g_send_target_slot = -1;
         }
     }
@@ -2156,6 +2242,26 @@ static void server_loop() {
         g_accept_loop_last_accept_ts.store(ipc_monotonic_secs(), std::memory_order_relaxed);
         g_accept_loop_total_accepts.fetch_add(1, std::memory_order_relaxed);
 
+        // rc2 B1: only our own uid may talk to the bridge (legacy: any uid).
+        {
+            struct ucred pc;
+            socklen_t pc_len = sizeof(pc);
+            const bool have = getsockopt(client, SOL_SOCKET, SO_PEERCRED, &pc, &pc_len) == 0;
+            if (!bridge::instance_peer_admitted(have, have ? pc.uid : 0, geteuid(),
+                                                bridge::instance_layout_is_legacy())) {
+                if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                    "[CK3-Bridge] REFUSED connection fd=%d: peer uid=%d pid=%d, "
+                    "bridge uid=%d%s\n", client, have ? (int)pc.uid : -1,
+                    have ? (int)pc.pid : -1, (int)geteuid(),
+                    have ? "" : " (SO_PEERCRED failed)");
+                static const char kRefused[] =
+                    "{\"type\":\"error\",\"error\":\"peer_uid_refused\"}\n";
+                (void)send(client, kRefused, sizeof(kRefused) - 1, MSG_NOSIGNAL | MSG_DONTWAIT);
+                close(client);
+                continue;
+            }
+        }
+
         if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Agent connected (fd=%d)\n", client);
 
         // ck-multiclient: adopt the new connection into a free (or reclaimable
@@ -2274,7 +2380,6 @@ bool start_ipc_server(const char* socket_path) {
     // only at the call sites) keeps any future caller on the namespaced path.
     if (!socket_path || !*socket_path) socket_path = bridge::instance_socket_path();
     bridge::instance_make_dirs();   // the parent dir must exist before bind()
-    strncpy(g_socket_path, socket_path, sizeof(g_socket_path) - 1);
 
     // Allow send timeout override via environment variable
     const char* timeout_env = getenv("CK3_BRIDGE_SEND_TIMEOUT_MS");
@@ -2286,8 +2391,32 @@ bool start_ipc_server(const char* socket_path) {
         }
     }
 
-    // Remove stale socket file
-    unlink(socket_path);
+    // rc2 B1: no listener in an unverified private dir, or over a path another
+    // user owns. Refuse loudly rather than bind somewhere an attacker chose.
+    auto refuse = [&](const char* why) {
+        if (bridge::g_logfile) {
+            fprintf(bridge::g_logfile,
+                    "[CK3-Bridge] REFUSED to listen on %s: %s. No IPC server.\n",
+                    socket_path, why);
+            fflush(bridge::g_logfile);
+        }
+        fprintf(stderr, "[CK3-Bridge] REFUSED to listen on %s: %s\n", socket_path, why);
+        return false;
+    };
+    if (!bridge::instance_private_dir_ok())
+        return refuse(bridge::instance_private_dir_error());
+    if (strlen(socket_path) >= sizeof(((struct sockaddr_un*)nullptr)->sun_path))
+        return refuse("path longer than sun_path");
+    {
+        struct stat st;
+        if (lstat(socket_path, &st) == 0) {
+            if (st.st_uid != geteuid()) return refuse("existing path owned by another user");
+            if (!S_ISSOCK(st.st_mode)) return refuse("existing path is not a socket");
+            if (unlink(socket_path) != 0) return refuse(strerror(errno));
+        } else if (errno != ENOENT) {
+            return refuse(strerror(errno));
+        }
+    }
 
     // Create socket
     g_server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -2303,17 +2432,16 @@ bool start_ipc_server(const char* socket_path) {
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
 
     if (bind(g_server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Failed to bind socket: %s\n", strerror(errno));
+        const int e = errno;
         close(g_server_fd);
         g_server_fd = -1;
-        return false;
+        return refuse(strerror(e));
     }
+    strncpy(g_socket_path, socket_path, sizeof(g_socket_path) - 1);
 
-    // Allow cross-user connections (admin MCP connecting to gaming's socket).
-    // Users 'gaming' and 'admin' are in different groups, so group-only (0770)
-    // is insufficient. Use 0666 (rw for all) — minimum needed for Unix sockets.
-    // Execute permission is not required for socket files.
-    chmod(socket_path, 0666);
+    // User layout: owner only. Legacy (CK3_INSTANCE_LAYOUT=legacy): 0666 for
+    // the two-user lab, where 'admin' connects to the socket 'gaming' owns.
+    chmod(socket_path, bridge::instance_layout_is_legacy() ? 0666 : 0600);
 
     // Listen. Only one agent is serviced at a time (single g_client_fd slot),
     // but the listen backlog is intentionally larger: if the accept-thread

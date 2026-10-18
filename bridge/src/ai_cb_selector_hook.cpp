@@ -361,6 +361,11 @@ static void on_ai_cb_selector(void* result_buf, void* ai_ctrl, int rng) {
 // slot — Path B' is single-character-per-call by design.
 // =============================================================================
 
+// rc2 B2: the IPC verb takes three raw 64-bit pointers from the client and
+// the engine later calls vtable[0x10] through them (re_ai_cb_selector_consumer.md),
+// so it is a debug verb: compiled in only with CK3_BRIDGE_DEBUG_VERBS. The
+// in-process arming in intent_dispatch.cpp (engine-resolved pointers) stays.
+#ifdef CK3_BRIDGE_DEBUG_VERBS
 static uint64_t parse_u64_str(const char* s) {
     if (!s || !s[0]) return 0;
     int base = 10;
@@ -444,6 +449,7 @@ bool do_set_cb_selector_override(const char* params_json,
     }
     return true;
 }
+#endif  // CK3_BRIDGE_DEBUG_VERBS
 
 // =============================================================================
 // Initialization — called once from bridge_init.cpp deferred init.

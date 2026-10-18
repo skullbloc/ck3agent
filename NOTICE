@@ -1,12 +1,12 @@
 ck3agent
-Copyright 2026 Harrison Stebbins
+Copyright 2026 Harrison Stebbins and ck3agent contributors
 Published by skullbloc (https://github.com/skullbloc)
 
-This product includes software developed as part of the ck3agent research
-project. It is licensed under the Apache License, Version 2.0 (see LICENSE).
-Documentation under docs/ is licensed CC BY 4.0 (see LICENSE-docs).
+Licensed under the Apache License, Version 2.0 (see LICENSE). Documentation
+under docs/ is licensed CC BY 4.0 (see LICENSE-docs). REUSE.toml declares the
+license of every path.
 
-Third-party components and their licenses are listed in THIRD_PARTY_LICENSES.md.
+Third-party components and their licenses: THIRD_PARTY_LICENSES.md.
 
 Crusader Kings III is a trademark of Paradox Interactive AB. This project is
 not affiliated with or endorsed by Paradox Interactive. It contains no game

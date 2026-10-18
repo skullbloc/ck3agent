@@ -192,13 +192,16 @@ bool world_epoch_observe(const WorldFingerprint& fp) {
     }
 
     if (reload) {
+        // rc2 B2: the game-state pointers go to the log line only; `why` is a
+        // reason string and carries no process address.
+        wlog("[CK3-Bridge] WORLD-RELOAD fingerprint: gs=%p <- gs=%p\n",
+             reinterpret_cast<void*>(fp.game_state_ptr),
+             reinterpret_cast<void*>(prev_eff.game_state_ptr));
         char why[192];
         snprintf(why, sizeof(why),
-                 "%s (gs=%p start_year=%u date=%d <- gs=%p start_year=%u date=%d)",
+                 "%s (start_year=%u date=%d <- start_year=%u date=%d)",
                  reason,
-                 reinterpret_cast<void*>(fp.game_state_ptr),
                  static_cast<unsigned>(fp.start_date_year), fp.game_date,
-                 reinterpret_cast<void*>(prev_eff.game_state_ptr),
                  static_cast<unsigned>(prev_eff.start_date_year), prev_eff.game_date);
         invalidate_world_caches(why);
     }

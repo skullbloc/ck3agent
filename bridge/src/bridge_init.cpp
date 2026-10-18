@@ -719,6 +719,7 @@ uintptr_t lookup_title_obj(uint32_t title_id);
 uintptr_t resolve_title_realm(uintptr_t char_addr);
 uint32_t  char_get_id(void* character);
 int       get_title_tier(uintptr_t title_ptr);
+uint32_t  get_player_character_id();   // rc2 B6: PLAYER_CHAR_ID (dispatch_router.cpp)
 // TASK B: monthly telemetry emitter (defined in query_handlers.cpp).
 void      emit_monthly_telemetry(int32_t raw_date);
 extern fn_get_ai_controller g_get_ai_ctrl;
@@ -916,17 +917,30 @@ void bridge_init() {
     // opened. On the default instance every answer is the historical literal,
     // so a bridge launched the old way behaves exactly as it always did.
     bridge::instance_paths_init();
-    g_logfile = fopen(bridge::instance_bridge_log(), "w");
-    blog("[CK3-Bridge][instance] id=%s socket=%s telemetry=%s log=%s%s\n",
-         bridge::instance_id(), bridge::instance_socket_path(),
+    // rc2 B1: 0600, no symlink follow, fresh inode. Not opened at all when the
+    // private dir failed verification; the refusal goes to stderr instead.
+    if (bridge::instance_private_dir_ok()) {
+        g_logfile = bridge::instance_open_private_log(bridge::instance_bridge_log(), true);
+    } else {
+        fprintf(stderr, "[CK3-Bridge] instance refused: %s (no log, no socket)\n",
+                bridge::instance_private_dir_error());
+    }
+    blog("[CK3-Bridge][instance] id=%s layout=%s socket=%s telemetry=%s log=%s%s%s\n",
+         bridge::instance_id(), bridge::instance_layout(), bridge::instance_socket_path(),
          bridge::instance_telemetry_dir(), bridge::instance_bridge_log(),
          bridge::instance_id_was_refused()
-             ? "  (CK3_INSTANCE_ID REFUSED: not a slug — fell back to default)" : "");
+             ? "  (CK3_INSTANCE_ID REFUSED: not a slug — nothing bound)" : "",
+         bridge::instance_layout_was_refused()
+             ? "  (CK3_INSTANCE_LAYOUT REFUSED: want user|legacy — nothing bound)" : "");
 
     // ck-6kvq.9 (G11): resolve pipeline_mode ONCE, from CK3_PIPELINE_MODE.
     // DEFAULT legacy — a bridge built with the flush loop in it and no env var
     // set must be indistinguishable from the pre-change bridge.
     bridge::pipeline_init_from_env();
+    // rc2 B6: the registry refuses the human player's character on every bind
+    // path (claim, swap, succession handoff). It reads PLAYER_CHAR_ID lazily.
+    bridge::g_session_registry.set_player_character_source(
+        [] { return bridge::get_player_character_id(); });
     // ck-6kvq.10 (§2.7): resolve the EPISODE policy — mode, id, and the two
     // unavailability numbers. FREE PLAY IS THE DEFAULT, and a free-play bridge
     // behaves exactly as the pre-change one: no claim pin, no episode abort on a
@@ -1502,6 +1516,20 @@ static void check_controlled_handoff() {
         // Clear stale council lock for the dead ruler.
         council_lock_remove(ctrl);
 
+        // rc2 B6: THE HUMAN INHERITED. The handoff must not bind the player:
+        // unbind the seat (typed reason heir_is_player, published in
+        // sessions_json and get_tick_info) and let the agent pick another
+        // ruler. The registry refuses the player on every bind path too; this
+        // is where the refusal becomes an unbound seat rather than a seat left
+        // pointing at a corpse.
+        const uint32_t player = bridge::g_session_registry.player_character_id();
+        if (player != 0 && (heir & 0xFFFFFFu) == player) {
+            bridge::g_session_registry.unbind_for_player_heir(session, ctrl, heir);
+            s_handoff_backoff.erase(sid);
+            any_change = true;
+            continue;
+        }
+
         // Transfer session ownership: SWAP corpse -> heir, then promote.
         //
         // ck-handoff-swap. This was `claim_character(heir)` followed by
@@ -1566,6 +1594,7 @@ static void check_controlled_handoff() {
                         uint32_t cand = safe_read<uint32_t>(harr + hi * 4) & 0xFFFFFF;
                         if (cand == 0 || cand == 0xFFFFFF) continue;
                         if (cand == intended_heir || cand == ctrl) continue;
+                        if (player != 0 && cand == player) continue;   // rc2 B6
                         void* cand_cc = lookup_character(cand);
                         if (!cand_cc || is_sentinel(cand_cc)) continue;
                         if (!g_char_is_alive(cand_cc)) continue;
@@ -2117,7 +2146,8 @@ if (bridge::ai_watch_requested()) {
             const char* path = bridge::instance_bridge_log();
             const bridge::RotateResult rr =
                 bridge::rotate_log(path, &bridge::g_logfile,
-                                   LOG_MAX_BYTES, LOG_ARCHIVES);
+                                   LOG_MAX_BYTES, LOG_ARCHIVES,
+                                   bridge::instance_layout_is_legacy() ? 0644 : 0600);
             if (rr.archived) {
                 s_log_coverage.archives = LOG_ARCHIVES;
                 const unsigned long long win_start =
@@ -2792,8 +2822,7 @@ static void dll_init() {
     // pressure-vessel helpers, CK3 itself). NO C++ runtime calls — async-safe
     // syscalls only, in case static initializers downstream are the regression.
     {
-        int fd = open("/tmp/ck3_bridge_boot.log",
-                      O_WRONLY | O_CREAT | O_APPEND, 0644);
+        int fd = bridge::instance_open_boot_log();   // rc2: only with CK3_BRIDGE_BOOT_LOG=1
         if (fd >= 0) {
             char buf[512];
             char exe[256] = {0};

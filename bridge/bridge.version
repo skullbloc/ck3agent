@@ -1,0 +1,17 @@
+/* libck3_bridge.so dynamic exports (ld --version-script).
+ *
+ * Only the LD_PRELOAD exec-family interposers (src/launcher_bypass.cpp).
+ * Nothing else is looked up by name: the bridge's dlsym calls are RTLD_NEXT
+ * for these four and private dlopen handles for libX11/libXtst; hook targets
+ * (hook_ai_*, lobby_view_ctor_hook) are installed by address. Add a symbol
+ * here only if something resolves it by name.
+ */
+{
+  global:
+    execve;
+    execvp;
+    posix_spawn;
+    posix_spawnp;
+  local:
+    *;
+};

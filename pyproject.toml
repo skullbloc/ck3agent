@@ -16,12 +16,12 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Games/Entertainment :: Simulation",
 ]
 dependencies = [
@@ -48,9 +48,15 @@ packages = ["ck3agent"]
 exclude = ["**/test_*.py", "**/__pycache__"]
 
 [tool.hatch.build.targets.sdist]
-include = ["ck3agent", "tests", "README.md", "LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md", "CITATION.cff", "VERSION", "UPSTREAM"]
+include = ["/ck3agent", "/tests", "/tools", "/docs", "/README.md", "/LICENSE", "/NOTICE", "/THIRD_PARTY_LICENSES.md", "/CITATION.cff", "/VERSION", "/UPSTREAM"]  # anchored: no nested README.md
 exclude = ["**/__pycache__"]
 
 [tool.pytest.ini_options]
 testpaths = ["ck3agent/server", "tests"]
+# deselected: ck3agent/server/test_handshake_observer_kwarg.py::test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it
+#   reads bridge/harness/client.py, which does not ship
+# deselected: ck3agent/server/test_native_ai_advisory.py::test_set_character_ai_IS_NOT_on_the_seat_surface
+#   imports scripts/registered_prompts.py, which does not ship
+# deselected: ck3agent/server/test_seat_declaration.py::TheSeatDeclaration::test_agent_py_deliberately_does_NOT_declare
+#   reads agent.py, the retired loop, which does not ship
 addopts = "-q -p no:cacheprovider --deselect ck3agent/server/test_handshake_observer_kwarg.py::test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it --deselect ck3agent/server/test_native_ai_advisory.py::test_set_character_ai_IS_NOT_on_the_seat_surface --deselect ck3agent/server/test_seat_declaration.py::TheSeatDeclaration::test_agent_py_deliberately_does_NOT_declare"

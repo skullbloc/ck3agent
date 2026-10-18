@@ -22,7 +22,7 @@ const char* json_get_string(const char* json, const char* key) {
     if (!json || !key) return nullptr;
 
     rapidjson::Document doc;
-    doc.Parse(json);
+    doc.Parse<rapidjson::kParseIterativeFlag>(json);
     if (doc.HasParseError() || !doc.IsObject()) return nullptr;
 
     auto it = doc.FindMember(key);
@@ -51,7 +51,7 @@ int json_get_int(const char* json, const char* key) {
     if (!json || !key) return -1;
 
     rapidjson::Document doc;
-    doc.Parse(json);
+    doc.Parse<rapidjson::kParseIterativeFlag>(json);
     if (doc.HasParseError() || !doc.IsObject()) return -1;
 
     auto it = doc.FindMember(key);
@@ -80,7 +80,7 @@ bool json_get_bool(const char* json, const char* key, bool default_val) {
     if (!json || !key) return default_val;
 
     rapidjson::Document doc;
-    doc.Parse(json);
+    doc.Parse<rapidjson::kParseIterativeFlag>(json);
     if (doc.HasParseError() || !doc.IsObject()) return default_val;
 
     auto it = doc.FindMember(key);
@@ -105,7 +105,7 @@ bool json_get_bool_strict(const char* json, const char* key, bool* out) {
     if (!json || !key || !out) return false;
 
     rapidjson::Document doc;
-    doc.Parse(json);
+    doc.Parse<rapidjson::kParseIterativeFlag>(json);
     if (doc.HasParseError() || !doc.IsObject()) return false;
 
     auto it = doc.FindMember(key);
@@ -124,7 +124,7 @@ bool json_has_key(const char* json, const char* key) {
     if (!json || !key) return false;
 
     rapidjson::Document doc;
-    doc.Parse(json);
+    doc.Parse<rapidjson::kParseIterativeFlag>(json);
     if (doc.HasParseError() || !doc.IsObject()) return false;
 
     if (doc.HasMember(key)) return true;

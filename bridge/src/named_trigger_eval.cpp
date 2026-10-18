@@ -119,16 +119,20 @@ static std::unordered_map<std::string,
                           TriggerCatalogueEntry>        g_cat_by_class CK3_EARLY_INIT;
 static std::unordered_map<std::string, std::string>     g_cat_by_keyword CK3_EARLY_INIT;
 
-static const char* const k_catalogue_search_paths[] = {
-    // Operator override.
-    nullptr,  // filled from env at runtime
-    // Canonical worktree layouts. The bridge runs from /tmp/libck3_bridge.so
-    // and CK3's CWD varies, so we search a handful of well-known prefixes.
-    "./re/rtti/trigger_subclasses.csv",
-    "../re/rtti/trigger_subclasses.csv",
-    "/home/admin/gc/ck3proj/re/rtti/trigger_subclasses.csv",
-    "/home/admin/workspace/ck3proj/re/rtti/trigger_subclasses.csv",
-};
+// Catalogue search order: $CK3_TRIGGER_CATALOGUE_CSV, the repo layout
+// relative to CK3's CWD, then the installed data dir.
+static std::vector<std::string> catalogue_search_paths() {
+    static constexpr const char kRel[] = "/ck3agent/share/trigger_subclasses.csv";
+    std::vector<std::string> v = {
+        "./re/rtti/trigger_subclasses.csv",
+        "../re/rtti/trigger_subclasses.csv",
+    };
+    const char* xdg = std::getenv("XDG_DATA_HOME");
+    if (xdg && xdg[0] == '/') v.push_back(std::string(xdg) + kRel);
+    const char* home = std::getenv("HOME");
+    if (home && home[0] == '/') v.push_back(std::string(home) + "/.local/share" + kRel);
+    return v;
+}
 
 // Curated alias table for the ADR smoke-test keywords plus a few obvious
 // neighbours. The catalogue contains mangled class names like
@@ -283,12 +287,9 @@ static size_t load_catalogue_locked() {
     const char* env_path = std::getenv("CK3_TRIGGER_CATALOGUE_CSV");
     bool opened = try_open(env_path, f);
     if (!opened) {
-        for (size_t i = 1;  // skip the env-var slot
-             i < sizeof(k_catalogue_search_paths) / sizeof(*k_catalogue_search_paths);
-             ++i) {
-            if (try_open(k_catalogue_search_paths[i], f)) {
-                ADLOG("NAMED_TRIGGER: loaded catalogue from %s\n",
-                      k_catalogue_search_paths[i]);
+        for (const std::string& path : catalogue_search_paths()) {
+            if (try_open(path.c_str(), f)) {
+                ADLOG("NAMED_TRIGGER: loaded catalogue from %s\n", path.c_str());
                 opened = true;
                 break;
             }

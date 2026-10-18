@@ -28,6 +28,7 @@
 
 // _GNU_SOURCE is already set globally by the bridge CMake target via
 // target_compile_definitions; do not redefine.
+#include "instance_paths.h"   // instance_open_boot_log
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -81,10 +82,9 @@ static void resolve_self_so_path() {
     g_self_so_resolved.store(true, std::memory_order_release);
 }
 
-// Append a line to /tmp/ck3_bridge_boot.log. Uses raw syscalls so it's
-// safe from any context (signal handler, pre-main, in-exec). The file is
-// opened with O_APPEND on every call so concurrent writers from sibling
-// PIDs don't stomp on each other.
+// Append a line to the boot log (instance_open_boot_log: only when
+// CK3_BRIDGE_BOOT_LOG=1, in every build). Raw syscalls, so safe pre-main and in-exec.
+// O_APPEND per call so sibling PIDs don't stomp on each other.
 static void bootlog(const char* fmt, ...) {
     char buf[1024];
     va_list ap;
@@ -93,8 +93,7 @@ static void bootlog(const char* fmt, ...) {
     va_end(ap);
     if (n <= 0) return;
     if (static_cast<size_t>(n) >= sizeof(buf)) n = sizeof(buf) - 1;
-    int fd = open("/tmp/ck3_bridge_boot.log",
-                  O_WRONLY | O_CREAT | O_APPEND, 0644);
+    int fd = bridge::instance_open_boot_log();
     if (fd < 0) return;
     ssize_t w = write(fd, buf, static_cast<size_t>(n));
     (void)w;

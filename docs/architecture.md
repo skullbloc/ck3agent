@@ -1,85 +1,103 @@
 # Architecture
 
+How the pieces fit, for contributors and for debugging below the tools.
+
+## Prerequisites
+
+- [Glossary](glossary.md) for the terms used here.
+
+## The two halves
+
 ```
-┌──────────────────────── CK3 process ────────────────────────┐   ┌──────── agent side ────────┐
-│ ck3 (Paradox's binary, unmodified on disk)                   │   │ ck3agent serve (MCP server) │
-│   libck3_bridge.so   ← LD_PRELOAD                            │   │   15 tools over stdio/HTTP  │
-│   · constructor fires, verifies /proc/self/exe is `ck3`      │   │   bridge_client.py          │
-│   · reads the ELF BuildID, compares to offset_version.h      │   └──────────┬──────────────────┘
-│   · validates offset groups against live memory              │              │ NDJSON
-│   · installs vtable hooks on the AI tick and a few handlers  │   /tmp/ck3-agent.sock (AF_UNIX)
-│   · IPC server thread: NDJSON request/response + pushes  ────┼──────────────┘
-│   · dispatch_router.cpp: ~hundreds of query/action handlers  │   Claude Code │ Claude Desktop │ ck3agent run
-└──────────────────────────────────────────────────────────────┘
+CK3 process                                  agent side
+  ck3 (unmodified on disk)                     ck3agent serve (MCP server, stdio or HTTP)
+  libck3_bridge.so  <- LD_PRELOAD                15 tools -> bridge_client.py
+    hooks the AI tick, reads memory,                    |
+    applies writes on the game thread                   |
+    IPC thread  <---- NDJSON over a Unix socket --------+
+                                                Claude Code | Claude Desktop | ck3agent run
 ```
 
-## The library / consumer split
-
-The bridge is a **library**: it exposes game state and accepts commands over
-IPC and knows nothing about language models. The agent side is a
-**consumer**: it reads state, reasons, and sends steering commands and knows
-nothing about memory layouts. The contract between reverse-engineering work
-and bridge code is `re/offsets/ck3_offsets.h`; the contract between bridge
-and consumer is the handler table in `bridge/src/dispatch_router.cpp`, which
-`docs/reference/tool-reference.md` is generated from.
+The bridge is a library: it exposes game state and accepts commands, and
+knows nothing about language models. The agent side reads, reasons and
+steers, and knows nothing about memory layouts. Two contracts sit between
+them: `re/offsets/ck3_offsets.h`, from reverse engineering to the bridge, and
+the handler table in `bridge/src/action_registry.inc`, from the bridge to the agent.
 
 ## Inside the game
 
-* **Loading.** `LD_PRELOAD` puts the library in every process the launch
-  chain starts. The constructor (`bridge_init.cpp`) only proceeds in a process
-  whose executable is named `ck3`; in the Paradox launcher it instead
-  interposes `execve`/`posix_spawn` (`launcher_bypass.cpp`) so the game is
-  started directly with the library re-injected.
-* **Identity.** `runtime_resolver.cpp` reads the `NT_GNU_BUILD_ID` note of the
-  loaded binary and compares it to the one the offsets were derived from.
-  Release builds are strict: a mismatch logs a refusal and stops before any
-  memory is touched through offsets.
-* **Validation.** `offset_validator.cpp` smoke-tests groups of offsets against
-  live memory before hooks are installed; more than 30 % failing groups puts
-  the bridge in a read-only degraded mode.
-* **Hooks.** Vtable hooks on the AI manager's tick and on a handful of engine
-  functions (war declaration, war score, scheme creation, council tasks,
-  marriage evaluation). Steering is applied *inside* the AI tick, on the game
-  thread, from a queue the IPC thread fills — the bridge never calls engine
-  code from its own thread.
-* **Reads.** Memory reads are guarded (a SIGSEGV recovery point around every
-  raw access); a bad pointer produces an error envelope, not a crash.
-* **Writes.** Personality axes and subsystem toggles are written into the AI's
-  own data structures; explicit actions go through the engine's interaction
-  and war-creation paths so the game's validation runs.
-* **Signatures.** `re/offsets/signatures.h` holds 34 byte patterns resolved at
-  load with the Zydis decoder for functions whose addresses must not be
-  hard-coded.
+1. **Load.** `LD_PRELOAD` puts the library in every process the launch
+   starts. The constructor in `bridge_init.cpp` proceeds only in the `ck3`
+   executable. In the Paradox launcher, `launcher_bypass.cpp` interposes
+   `execve`, `execvp`, `posix_spawn` and `posix_spawnp` to start the game directly.
+2. **Identify.** `runtime_resolver.cpp` compares the binary's ELF BuildID with
+   the one the offsets came from. Release builds refuse a mismatch before
+   hooking anything or opening the socket.
+3. **Validate.** `offset_validator.cpp` smoke-tests offset groups against live
+   memory. If over 30 % fail, the bridge enters degraded mode: read-only, vtable hooks off.
+4. **Hook.** Vtable hooks on the AI tick and a few engine functions: war
+   declaration, war score, schemes, council tasks, marriage evaluation.
+5. **Serve.** The IPC thread answers bridge-internal reads at once. Game-state
+   reads run only while the game is paused, when no AI workers are running.
+   Writes and engine calls run on the game thread. Raw reads
+   sit behind a SIGSEGV recovery point, so a bad pointer yields an error, not a crash.
 
 ## The agent side
 
-* **`ck3agent/server/mcp_server.py`** registers the 15 tools with FastMCP and
-  shapes every result into `{ok, data, error, tick, game_date}`.
-* **`tools.py`** and **`redesign.py`** map tool calls to bridge handlers
-  (domains for `query`, `what` for `discover`, subjects for `inspect`, intents
-  for `do`) and own the pause/unpause choreography around reads and writes.
-* **`bridge_client.py` / `async_bridge_client.py`** speak the NDJSON protocol
-  (framing, request ids, the v2 handshake with observe/control modes).
-* **`instance.py`** resolves socket/log/telemetry paths, with
-  `CK3_INSTANCE_ID` namespacing for several games on one host.
-* **`cli.py`** is the product shell: setup, doctor, launch, serve, run.
+| Module | Role |
+|--------|------|
+| `ck3agent/server/mcp_server.py` | registers the 15 tools with FastMCP; owns the socket and pause handling |
+| `ck3agent/server/tools.py` | maps the six original tools to bridge actions: `observe`, `query`, `discover`, `steer`, `intent`, `pass_turn` |
+| `ck3agent/server/redesign.py` | the nine goal-shaped tools: `observe_v2`, `inspect`, `cbs`, `plan_war`, `succession_plan`, `set_phase`, `declare_war`, `do`, `session`. Also their envelope, the `set_phase` presets and the `do` intent table. No I/O; it calls the bridge through a gateway that sets and restores pause state. |
+| `ck3agent/server/bridge_client.py`, `async_bridge_client.py` | NDJSON framing, request ids, the v2 handshake in observe or control mode |
+| `ck3agent/server/instance.py` | socket, log and telemetry paths, per `CK3_INSTANCE_ID` |
+| `ck3agent/cli.py` | `setup`, `doctor`, `launch`, `serve`, `run`, `config`, `hook-state` |
+
+## Response envelopes
+
+The nine `redesign.py` tools return:
+
+| Field | Always | Meaning |
+|-------|:-----:|---------|
+| `ok` | yes | false if `errors` is non-empty or `blocked` is set |
+| `tool` | yes | the tool name |
+| `result` | yes | the payload, always an object |
+| `blocked` | yes | `null`, or why the call was refused: `{gate, class, severity, retryable, summary}`, often with `fix` and `raw_reason` |
+| `warnings` | yes | list of `{code, detail}`; known limitations carry `is_known_limitation` |
+| `errors` | yes | list; non-empty means a partial or failed read |
+| `bridge_health` | yes | `ok`, or `hung` when the bridge is unreachable |
+| `verdict` | writes | `applied` or a typed rejection |
+| `applied` | writes | `verdict == "applied"` |
+| `actor` | when known | the character the call acted as |
+| `game` | when known | `{tick, date, paused, speed}` |
+| `delta` | some reads | what changed since the last call |
+| `pending` | deferred writes | what to read back to confirm |
+
+The six `tools.py` tools return the original shape: `{ok, data, tick, game_date}`
+on success, plus `resolved_character_id` when known, and
+`{ok: false, error: {code, message}, tick, game_date}` on failure. They do not
+manage pause state: their game-state reads return `game_unpaused` while time runs.
 
 ## Steering, not scripting
 
-The model does not play the game click by click. It asserts a posture
-(`set_phase`) that sets the 10 personality axes (boldness, greed, honour, …)
-and the subsystem toggles (declare war, marriages, schemes, …) the native AI
-reads every tick, and occasionally forces one specific action after
-validating it (`declare_war`, `do`). Execution — raising armies,
-sieges, counter-offers — stays with the game's AI. This is why a cycle is
-cheap (a handful of tool calls) and why the game stays coherent when the
-model is slow or absent.
+The model sets a posture: 10 personality axes and subsystem toggles that the
+native AI reads every tick. It forces a specific action only after
+validating it, with `declare_war` from a `plan_war` row or with `do`. Armies,
+sieges and counter-offers stay with the game's AI. That keeps a cycle cheap
+and keeps the game coherent when the model is slow.
 
 ## Research instrumentation
 
-The bridge also carries the authors' experiment machinery: an episode policy,
-a decision-budget ledger, a game-speed pin, a shared append-only board, pause
-and clock witnesses, and a per-session "seat" declaration in the handshake.
-All of it is compiled in, gated by `CK3_EPISODE_*` / `CK3_BOARD_*` /
-`CK3_BUDGET_*` environment variables, and inert when they are unset. See
-[research.md](research.md).
+The bridge also carries experiment machinery: episode policy, a decision
+budget, a speed pin, a shared board and a per-session seat declaration. It is
+compiled in and inert unless its environment variables are set. See
+[research notes](research.md).
+
+## Check it worked
+
+`ck3agent doctor` walks this chain in the order above.
+
+## If it fails
+
+The bridge log names the step that stopped: `REFUSED` for identify,
+`DEGRADED MODE` for validate, or a hook install error for hook.
