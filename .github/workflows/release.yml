@@ -73,8 +73,13 @@ jobs:
           (cd out && sha256sum *.tar.gz *.whl *.debug > SHA256SUMS)
           ls -la out
 
+      # GitHub only stores attestations for public repos (or paid plans); on the
+      # private pre-release repo this step fails with "Feature not available",
+      # so it must not block the draft. On the public repo it succeeds and
+      # `gh attestation verify` works (docs/install.md).
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
+        continue-on-error: true
         with:
           subject-path: |
             out/*.tar.gz

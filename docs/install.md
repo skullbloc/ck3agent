@@ -49,6 +49,9 @@ sha256sum -c SHA256SUMS --ignore-missing
 gh attestation verify ck3agent-2026.10.0-linux-x86_64.tar.gz --repo skullbloc/ck3agent
 ```
 
+(Attestations exist only for releases built while the repository was public;
+`SHA256SUMS` is always there.)
+
 ## Building from source
 
 See [building.md](building.md).
