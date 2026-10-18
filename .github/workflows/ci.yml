@@ -26,7 +26,7 @@ jobs:
         os: [ubuntu-22.04, ubuntu-latest]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build deps
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake build-essential git binutils
       - name: Configure (strict BuildID, tests on, Zydis from source)
@@ -83,8 +83,8 @@ jobs:
         python: ["3.11", "3.12", "3.13", "3.14"]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
@@ -101,8 +101,8 @@ jobs:
         python: ["3.11", "3.12", "3.13", "3.14"]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install build==1.6.1 hatchling==1.32.4
@@ -148,14 +148,14 @@ jobs:
     continue-on-error: true   # first release: never run on MSVC/Apple clang yet; drop once green
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure (platform layer only, MSVC)
         run: cmake -S bridge -B bridge/build -DCK3_PLATFORM=windows -DBUILD_BRIDGE_TESTS=ON
       - name: Build the stub target
         run: cmake --build bridge/build --config Release --target ck3_os test_os_stubs
       - name: Stub contract test
         run: ctest --test-dir bridge/build -C Release --output-on-failure
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
@@ -174,14 +174,14 @@ jobs:
     continue-on-error: true   # first release: never run on MSVC/Apple clang yet; drop once green
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure (platform layer only, Apple clang)
         run: cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=Release -DCK3_PLATFORM=macos -DBUILD_BRIDGE_TESTS=ON
       - name: Build the stub target
         run: cmake --build bridge/build --config Release --target ck3_os test_os_stubs
       - name: Stub contract test
         run: ctest --test-dir bridge/build -C Release --output-on-failure
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
@@ -197,7 +197,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Every PR commit carries Signed-off-by
