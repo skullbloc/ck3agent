@@ -25,7 +25,7 @@ classifiers = [
   "Topic :: Games/Entertainment :: Simulation",
 ]
 dependencies = [
-  "mcp>=1.2,<2",
+  "mcp>=1.2,<3",
   "pydantic>=2,<3",
 ]
 
