@@ -77,6 +77,33 @@ int main() {
     row("live_log_is_empty_after_rotation", slurp(path) == "",
         "writing continues into a fresh file");
 
+    // 2b. rc2 B1: the fresh file is 0600 whatever the umask (freopen took the
+    //     umask: 0666 here), the FILE* other threads hold is the same object,
+    //     and writes land in the NEW file, not the archive.
+    {
+        const mode_t old_umask = umask(0);
+        FILE* before = fp;
+        fputs("second window\n", fp); fflush(fp);
+        bridge::rotate_log(path.c_str(), &fp, 4, 3);
+        umask(old_umask);
+        struct stat st;
+        row("fresh_log_is_0600_not_umask",
+            stat(path.c_str(), &st) == 0 && (st.st_mode & 0777) == 0600,
+            "reopened with an explicit 0600, not freopen's umask-derived mode");
+        row("fresh_log_keeps_the_FILE_pointer", fp == before,
+            "dup2 onto the live fd; a reopened FILE* would dangle in other threads");
+        fputs("third\n", fp); fflush(fp);
+        row("writes_land_in_the_fresh_file",
+            slurp(path) == "third\n" &&
+            slurp(path + ".1").find("third") == std::string::npos,
+            "the cached offset of the old file is dropped");
+        // Put the ring back the way section 3 expects: .1 = first window.
+        rename((path + ".2").c_str(), (path + ".1").c_str());
+        fclose(fp);
+        fp = fopen(path.c_str(), "w");
+        if (!fp) { printf("NOT EVALUABLE: cannot recreate the log\n"); cleanup(dir); return 3; }
+    }
+
     // 3. THE RING SHIFTS THE RIGHT WAY. .1 must be the NEWEST archive. A ring
     //    shifted the wrong way silently overwrites the newest with the oldest —
     //    and would still pass rows 2 and 4.

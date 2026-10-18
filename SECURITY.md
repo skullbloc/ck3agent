@@ -1,23 +1,60 @@
 # Security
 
-ck3agent loads a shared library into a game process you own and exposes that
-process's memory over a local Unix socket. Please keep these in mind:
+ck3agent loads a library into a game you own and exposes that process's
+memory to a local client. This page states what it protects, what it does
+not, and how to report a problem.
 
-* **The socket is local and unauthenticated.** Anything that can connect to
-  `/tmp/ck3-agent.sock` can read game state and steer the game. Do not expose
-  it beyond your machine. `ck3agent serve --transport http` binds to
-  127.0.0.1 by default; put an SSH tunnel in front of it, never a public port.
-* **The bridge accepts a debug-console passthrough action** (`execute_console_command`
-  on the socket, with a deny list for state-granting cheats). It is not
-  exposed as an MCP tool in this release, but anything on the socket can send
-  it. It is not a sandbox.
-* **Scripted runs** (`ck3agent run`) hand the model an allow-list of the MCP
-  tools and `sleep`; `--yolo` disables permission prompts entirely. Use it only
-  in a directory you are happy for an unattended agent to work in.
-* The bridge **never contacts the network** and the Python side only talks to
-  the local socket and (through your MCP host) to Anthropic.
+## Threat model
 
-To report a vulnerability, open a
-[private security advisory](https://github.com/skullbloc/ck3agent/security/advisories/new)
-on GitHub. Please do not file public issues for security problems. You can
-expect an acknowledgement within a week.
+- **Single user.** Any process running as you can read and steer the game.
+  Do not share the login.
+- **The socket.** The bridge socket is in your private runtime directory
+  (`$XDG_RUNTIME_DIR/ck3agent`), mode 0600. The bridge refuses to bind unless
+  that directory and every parent above it belong to you or root. It rejects
+  peers whose uid is not the game's. The MCP server and the live-state hook
+  check the socket's owner and the peer's uid before they send anything. If
+  the instance settings are invalid, neither side picks a fallback path: the
+  bridge does not bind and the hook reports the bridge offline. Both sides
+  strip the same surrounding whitespace from `CK3_INSTANCE_LAYOUT` and
+  `CK3_INSTANCE_ID`, so they accept and refuse the same values.
+  `CK3_INSTANCE_LAYOUT=legacy` turns all of this off: a 0666 socket in `/tmp`
+  that any local user can reach.
+- **Bridge files.** Every file the bridge writes (logs and their archives,
+  flag and lock files, telemetry, the experiment's board and session files)
+  is created 0600 (0644 in the legacy layout), tightened if it already exists,
+  and opened without following a symlink at its own name. They live in the private directory,
+  except where you point a `CK3_*` path variable elsewhere. A boot log is
+  written only with `CK3_BRIDGE_BOOT_LOG=1`; it goes to `/tmp` only with
+  `CK3_INSTANCE_LAYOUT=legacy` as well.
+- **HTTP has no authentication.** `ck3agent serve --transport http` binds to
+  127.0.0.1 and refuses another host without `--allow-remote`. Reach it
+  through an SSH tunnel, never an open port.
+- **Game text is untrusted.** Names, titles and event text come from saves and
+  mods and reach the model. The play protocol and the live-state hook mark
+  them as data. A crafted save or mod can still try to steer the model.
+- **Unattended runs.** `--dangerously-skip-permissions` lets the model run any
+  tool without asking. Combined with untrusted game text, that is code
+  execution as you. Use it only in a disposable VM.
+- **Debug verbs.** `memory_probe` and `resolve_global` read raw memory.
+  `inject_mouse_click` and `select_observe_default` send synthetic mouse
+  clicks. `execute_console_command` passes commands to the game console.
+  `set_cb_selector_override` hands client-supplied pointers to the engine.
+  Release builds leave out their registry entries and handler code, so these
+  verbs do not exist in a release `.so`. Calling one returns
+  `error: unavailable_in_release`. They are compiled in only when the bridge
+  is built with `CK3_BRIDGE_DEBUG_VERBS=ON`, and then anything that can reach
+  the socket can use them. Release replies also carry no process memory
+  addresses; debug builds add some to diagnostic fields.
+- **Network.** The bridge never opens a network connection. The Python side
+  talks to the local socket and, through your MCP host, to Anthropic.
+- **Single-player only.** Do not use ck3agent in multiplayer, Ironman or
+  achievement runs.
+
+**Out of scope:** attacks that already need your user account, the game's
+own code, Steam, and your MCP host.
+
+## Reporting a vulnerability
+
+Open a [private security advisory](https://github.com/skullbloc/ck3agent/security/advisories/new).
+Do not file public issues for security problems. We acknowledge within 7 days
+and aim to fix within 90 days.

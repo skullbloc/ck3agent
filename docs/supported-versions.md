@@ -1,43 +1,48 @@
-# Supported versions
+# Your game updated: what now?
 
-| ck3agent | CK3 build | Platform | BuildID |
-|----------|-----------|----------|---------|
-| 2026.10.0 | 1.18.3.1 (Crane) | Linux x86_64, Steam native | `e61ff2642f07094defd140fcc98e078d42541275` |
+Each ck3agent release supports exactly one CK3 build. After a Steam update,
+the bridge refuses to load until a matching release exists. The game itself
+still runs normally.
 
-The bridge reads game memory through offsets derived by reverse engineering
-one specific binary (`re/offsets/ck3_offsets.h`, ~7,400 lines with confidence
-and evidence per entry). A different binary — another patch, the Windows
-build under Proton, a beta branch — has different addresses, and reading
-through the wrong ones ranges from silently wrong answers to a crash.
+| ck3agent | CK3 build | BuildID |
+|----------|-----------|---------|
+| 2026.10.0 | 1.18.3.1, Linux native (Steam) | `e61ff2642f07094defd140fcc98e078d42541275` |
 
-So the bridge **refuses to load** on any other BuildID: it logs
+Why: the bridge reads game memory at addresses found by reverse engineering
+one binary. On another binary those addresses are wrong, which gives wrong
+answers or a crash.
 
-```
-[CK3-Bridge] REFUSED: unsupported CK3 build.
-[CK3-Bridge]   this bridge supports CK3 1.18.3.1 (linux), BuildID e61ff264…
-[CK3-Bridge]   the running binary has BuildID …
-```
+## Prerequisites
 
-opens no socket, hooks nothing, and the game runs unmodified. `ck3agent
-setup` and `ck3agent doctor` make the same check from the ELF file before you
-launch.
+- Steam with CK3 installed.
 
-## When CK3 updates
+## Steps
 
-Each game patch needs a new ck3agent release with re-derived offsets. Until
-one exists:
+1. **Back up your saves** before any version change. They are in
+   `~/.local/share/Paradox Interactive/Crusader Kings III/save games/`.
+2. **Roll back.** In Steam: right-click Crusader Kings III, Properties,
+   Betas. Choose the branch named after 1.18.3.1 if one is offered.
+3. **Stop further updates.** Properties, Updates, Automatic updates: "Only
+   update this game when I launch it". `ck3agent launch` starts the binary
+   directly, not through Steam's Play button.
+4. **Watch for a matching release.** On GitHub: Watch, Custom, Releases on
+   [skullbloc/ck3agent](https://github.com/skullbloc/ck3agent).
 
-* Keep the old binary. Steam's `Betas` tab often offers previous versions;
-  pin CK3 to 1.18.3.1 there.
-* `CK3_STRICT_BUILD_ID=0 ck3agent launch --unsupported` loosens the check.
-  This is unsupported: some reads may work by luck, others will not, and a
-  crash is possible. Do not report bugs from a loosened run.
+### Running anyway (unsupported)
 
-## How to tell what you have
-
-```
-ck3agent doctor
+```bash
+ck3agent launch --continue --allow-unsupported-build
 ```
 
-reads the BuildID from the installed binary and compares it; the game's own
-version string is in `launcher/launcher-settings.json` next to the binary.
+Some reads work, others return wrong values, and the game may crash or write
+a corrupted save. Back up the save first. Do not report bugs from these runs.
+
+## Check it worked
+
+`ck3agent doctor` reports the CK3 build as supported.
+
+## If it fails
+
+- No 1.18.3.1 branch under Betas: wait for a new release, or run unsupported.
+- The bridge log shows `REFUSED: unsupported CK3 build` and the BuildID it
+  found. Include those lines in any issue about a new game version.

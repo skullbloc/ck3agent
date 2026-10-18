@@ -1,0 +1,73 @@
+name: Offset finding
+description: Report an offset, signature or vtable slot you derived for a specific binary.
+title: "[offset] <platform> <name>"
+labels: ["port", "offset-finding"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One finding per issue. Offsets are load-base-relative (PE: RVA, not file offset; see ADR 0001).
+        Do not attach binaries, PDBs, Ghidra projects or long decompilations. Quote a few lines at most.
+        A wrong HIGH is worse than a missing one, so grade honestly.
+  - type: input
+    id: what
+    attributes:
+      label: What it is
+      description: Struct field, function, global, vtable slot or signature, with the Linux name if there is one.
+      placeholder: "CCharacter.gold (Linux 0x1A0)"
+    validations:
+      required: true
+  - type: input
+    id: offset
+    attributes:
+      label: Offset and kind
+      placeholder: "0x1A0 (struct field), or 0x0123ABC0 (RVA, function)"
+    validations:
+      required: true
+  - type: input
+    id: value
+    attributes:
+      label: Value or shape observed
+      description: For a field, the type and an example value on a named save. For a function, the prologue bytes or signature.
+    validations:
+      required: true
+  - type: input
+    id: identity
+    attributes:
+      label: Binary identity
+      description: SHA-256 from `inspect_binary`, plus game version and platform.
+      placeholder: "sha256 5c99..., 1.18.3.1, windows"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence sources
+      description: List each independent source (decompile, core dump read, string xref, RTTI walk, live probe) and what it showed. Say how to reproduce.
+    validations:
+      required: true
+  - type: dropdown
+    id: confidence
+    attributes:
+      label: Confidence
+      description: "HIGH: three or more sources, or verified in a decompile. MEDIUM: two sources or structural inference. LOW: one source."
+      options:
+        - HIGH
+        - MEDIUM
+        - LOW
+    validations:
+      required: true
+  - type: textarea
+    id: conflicts
+    attributes:
+      label: Conflicts (optional)
+      description: Does this disagree with an existing entry or the Linux value? Say which, and why you think this is right.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirm
+      options:
+        - label: I did not attach or link the game binary, a PDB or a Ghidra project.
+          required: true
+        - label: This does not replace a HIGH entry with a lower-confidence one.
+          required: true

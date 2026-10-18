@@ -233,6 +233,7 @@ struct WarSlotInfo {
     uint32_t attacker_id;
     uint32_t defender_id;
     uint32_t cb_type_ref;
+    std::string cb_type;          // rc2 B2: name of the CB type at war+0xA0
     int32_t  start_date;
     bool     is_ended;
 };
@@ -267,6 +268,12 @@ static std::vector<WarSlotInfo> enumerate_war_db() {
         info.attacker_id = safe_read<uint32_t>(wp + 0x228) & 0xFFFFFF;
         info.defender_id = safe_read<uint32_t>(wp + 0x22C) & 0xFFFFFF;
         info.cb_type_ref = safe_read<uint32_t>(wp + 0xA0);
+        if (uintptr_t cbt = safe_read<uintptr_t>(wp + ck3::war_obj::CB_TYPE_REF);
+            cbt && is_mapped(cbt)) {
+            const char* nm = nullptr;
+            size_t nl = 0;
+            if (read_db_obj_name(cbt, nm, nl) && nm) info.cb_type.assign(nm, nl);
+        }
         info.start_date  = safe_read<int32_t>(wp + 0x80);
         info.is_ended    = safe_read<uint8_t>(wp + ck3::war_obj::IS_ENDED) != 0;
         out.push_back(info);
@@ -378,9 +385,11 @@ static void emit_pending_entry(ResponseBuilder& r, uintptr_t entry_ptr) {
         }
     }
 
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
     char buf[32];
     snprintf(buf, sizeof(buf), "0x%lx", entry_ptr);
     r.key("entry_ptr"); r.value_string(buf);
+#endif
     r.end_object();
 }
 
@@ -460,11 +469,13 @@ bool do_list_pending_interactions(const char* /*params_json*/, std::string* resp
     r.end_array();
 
     r.key("count"); r.value_int(emitted);
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
     {
         char mgr_hex[32];
         snprintf(mgr_hex, sizeof(mgr_hex), "0x%lx", mgr);
         r.key("manager_ptr"); r.value_string(mgr_hex);
     }
+#endif
     emit_pending_mgr_scan_stats(r);
     r.end_object();
     if (response_out) *response_out = r.take();
@@ -521,18 +532,22 @@ bool do_probe_war_orphans(const char* /*params_json*/, std::string* response_out
     r.key("diagnostic"); r.begin_object();
     r.key("active_wars_offsets_trustworthy"); r.value_bool(active_wars_trustworthy);
     r.key("game_state_mapped"); r.value_bool(raw.mapped_gs);
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
     {
         char buf[32];
         snprintf(buf, sizeof(buf), "0x%lx", raw.arr_ptr);
         r.key("active_wars_ptr_raw"); r.value_string(buf);
     }
+#endif
     r.key("active_wars_capacity_raw"); r.value_int(raw.capacity);
     r.key("active_wars_count_raw"); r.value_int(raw.count);
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
     {
         char buf[32];
         snprintf(buf, sizeof(buf), "0x%lx", raw.allocator);
         r.key("active_wars_allocator_raw"); r.value_string(buf);
     }
+#endif
     r.key("note"); r.value_string(
         "SF3 orphan detection disabled: ck-ltsh proved the ACTIVE_WARS_* "
         "offsets in ck3_offsets.h are on the wrong struct. WAR_DB scan is "
@@ -551,13 +566,19 @@ bool do_probe_war_orphans(const char* /*params_json*/, std::string* response_out
         r.key("db_slot"); r.value_uint(w.slot_index);
         r.key("attacker"); r.value_uint(w.attacker_id);
         r.key("defender"); r.value_uint(w.defender_id);
-        r.key("cb_type_ref"); r.value_uint(w.cb_type_ref);
+        // rc2 B2: the CB type by name. The raw field is the low half of a
+        // CCasusBelliType* (war+0xA0 is a uint64 pointer), so it and war_ptr
+        // are debug-only.
+        if (!w.cb_type.empty()) { r.key("cb_type"); r.value_string(w.cb_type.c_str()); }
         r.key("start_date"); r.value_int(w.start_date);
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
+        r.key("cb_type_ref"); r.value_uint(w.cb_type_ref);
         {
             char buf[32];
             snprintf(buf, sizeof(buf), "0x%lx", w.war_ptr);
             r.key("war_ptr"); r.value_string(buf);
         }
+#endif
         r.end_object();
         active_count++;
     }
@@ -918,14 +939,19 @@ bool do_probe_gate_4_slots(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    // Build params for query_trigger_result
-    char forwarded[512];
-    snprintf(forwarded, sizeof(forwarded),
-             "{\"interaction_type\":\"%s\",\"actor_id\":%d,\"target_id\":%d,\"trigger_slot\":\"all\"}",
-             interaction_name.c_str(), actor_id, target_id);
+    // Build params for query_trigger_result. ResponseBuilder escapes the
+    // client's name (rc2: it used to be spliced into the JSON with %s).
+    ResponseBuilder fw;
+    fw.begin_object();
+    fw.key("interaction_type"); fw.value_string(interaction_name.c_str(), interaction_name.size());
+    fw.key("actor_id");         fw.value_int(actor_id);
+    fw.key("target_id");        fw.value_int(target_id);
+    fw.key("trigger_slot");     fw.value_string("all");
+    fw.end_object();
+    const std::string forwarded = fw.take();
 
     std::string inner;
-    bool ok = do_query_trigger_result(forwarded, &inner);
+    bool ok = do_query_trigger_result(forwarded.c_str(), &inner);
 
     ResponseBuilder r;
     r.begin_object();

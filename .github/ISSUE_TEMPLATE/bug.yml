@@ -1,0 +1,61 @@
+name: Bug report
+description: Something fails on a supported setup
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Supported setup only: CK3 1.18.3.1, Linux native, Steam. For a new game
+        patch use "New game version". Security problems: use a private advisory.
+  - type: textarea
+    id: version
+    attributes:
+      label: ck3agent --version
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ck3agent doctor
+      description: Full output.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distro and version
+      placeholder: Fedora 44, Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: launch
+    attributes:
+      label: Launch method
+      options:
+        - ck3agent launch
+        - Steam launch option (LD_PRELOAD)
+        - Other (explain below)
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Bridge log tail
+      description: Last ~50 lines. `ck3agent doctor` prints the path.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, what you expected, how to reproduce
+    validations:
+      required: true
+  - type: checkboxes
+    id: strict
+    attributes:
+      label: Checks
+      options:
+        - label: This is not an --allow-unsupported-build run (no CK3_STRICT_BUILD_ID=0, no --unsupported).
+          required: true

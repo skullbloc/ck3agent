@@ -2905,6 +2905,7 @@ bool do_set_speed(const char* params_json) {
     if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Game speed set to %d\n", speed);
     return true;
 }
+#ifdef CK3_BRIDGE_DEBUG_VERBS  // rc2 B2: input injection is compiled out of release builds
 
 // =============================================================================
 // X11 Mouse Click Injection (ck-77pb, rewritten under ck-vfj7)
@@ -3449,6 +3450,7 @@ bool do_select_observe_default(const char* params_json, std::string* response_ou
     }
     return success;
 }
+#endif  // CK3_BRIDGE_DEBUG_VERBS (rc2 B2)
 
 // =============================================================================
 // AI Subsystem Toggle
@@ -5141,6 +5143,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
 //
 // Returns synchronously by polling for intent completion (up to 5 seconds).
 
+#ifdef CK3_BRIDGE_DEBUG_VERBS  // rc2 B2: the debug console is compiled out of release builds
 bool do_execute_console_command(const char* params_json, std::string* response_out) {
     const char* command = json_get_string(params_json, "command");
     if (!command || !command[0]) {
@@ -5228,6 +5231,7 @@ bool do_execute_console_command(const char* params_json, std::string* response_o
 
     return intent_succeeded;
 }
+#endif  // CK3_BRIDGE_DEBUG_VERBS (rc2 B2)
 
 // =============================================================================
 // Scripted Effect Dispatch (ck-7ejs)
@@ -6629,11 +6633,13 @@ bool do_enter_observe_mode(const char* /*params_json*/, std::string* response_ou
         // is itself a useful state signal for the caller.
         r.key("success");             r.value_bool(captured);
         r.key("singleton_captured");  r.value_bool(captured);
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
         if (captured) {
             char hex[32];
             snprintf(hex, sizeof(hex), "0x%lx", reinterpret_cast<uintptr_t>(lobby));
             r.key("lobby_view_ptr");  r.value_string(hex);
         }
+#endif
         r.key("unpaused");            r.value_bool(unpaused);
         if (!captured) {
             r.key("reason");          r.value_string("lobby_view_not_constructed");

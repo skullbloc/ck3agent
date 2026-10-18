@@ -27,13 +27,23 @@ paths) — and ``scripts/test_multi_instance.py`` pins all three against each
 other. A fourth, private copy of the naming is the failure this design is
 guarding against; do not add one.
 
-THE DEFAULT INSTANCE IS THE LEGACY HOST
-=======================================
-``CK3_INSTANCE_ID`` unset, empty, or ``default`` resolves to the *historical*
-paths, byte for byte. That is not a nicety: the live campaign, the self-heal
-probe, the overlay poller, the watchdog and every runbook in ``docs/`` name
-those paths, and an episode-isolation bead has no business moving them. A
-non-default id moves everything under ``$CK3_INSTANCE_ROOT/<id>/``.
+TWO LAYOUTS (rc2 B1)
+====================
+``CK3_INSTANCE_LAYOUT`` selects where the default instance lives:
+
+  * unset or ``user``: a per-user private dir, ``$XDG_RUNTIME_DIR/ck3agent``,
+    else ``/run/user/<euid>/ck3agent``, else ``~/.local/state/ck3agent``.
+    Created 0700 and verified. The bridge binds its socket 0600 and refuses
+    peers with another uid; clients refuse a socket they do not own.
+  * ``legacy``: the historical ``/tmp`` paths, byte for byte (socket 0666, any
+    peer uid). The research hosts set this; their runbooks name those paths.
+
+Any other value raises ``InvalidInstanceLayout`` (and a non-slug id raises
+``InvalidInstanceId``). The bridge refuses the same inputs by binding nothing,
+so a client must treat the exception as "bridge offline", never fall back to a
+guessed path. A non-default id moves
+everything under ``$CK3_INSTANCE_ROOT/<id>/`` (default root: ``/tmp/ck3-inst``
+legacy, ``<user base>/inst`` user).
 
 PRECEDENCE, in order
 ====================
@@ -41,7 +51,7 @@ PRECEDENCE, in order
      ``CK3_BRIDGE_LOG``, ``CK3_CONTROL_DIR``) — always wins, so an operator can
      still point one client at one odd path;
   2. the instance id, if it is not the default;
-  3. the legacy literal.
+  3. the layout default.
 
 An id that does not match `ID_RE` is REFUSED (``InvalidInstanceId``) rather than
 sanitised. A silently-rewritten id is how two "different" instances end up
@@ -53,6 +63,9 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import socket as _socket
+import stat as _stat
+import struct
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Mapping, Optional
@@ -60,7 +73,10 @@ from typing import Mapping, Optional
 # ── the naming constants ────────────────────────────────────────────────────
 
 DEFAULT_INSTANCE_ID = "default"
-DEFAULT_INSTANCE_ROOT = "/tmp/ck3-inst"
+DEFAULT_INSTANCE_ROOT = "/tmp/ck3-inst"     # legacy layout only
+
+LAYOUT_USER = "user"
+LAYOUT_LEGACY = "legacy"
 
 #: Legacy singletons — what the default instance resolves to, unchanged.
 LEGACY_SOCKET = "/tmp/ck3-agent.sock"
@@ -84,17 +100,124 @@ ENV_SOCKET = "CK3_BRIDGE_SOCKET"
 ENV_TELEMETRY = "CK3_TELE"
 ENV_BRIDGE_LOG = "CK3_BRIDGE_LOG"
 ENV_CONTROL_DIR = "CK3_CONTROL_DIR"
+ENV_LAYOUT = "CK3_INSTANCE_LAYOUT"
+
+
+#: rc2 B1: the whitespace stripped from `CK3_INSTANCE_LAYOUT` and
+#: `CK3_INSTANCE_ID`, leading and trailing only. ASCII, spelled out rather than
+#: `str.strip()`'s Unicode set, because instance_paths.cpp (`is_ws`) and
+#: ck3_instance.sh strip exactly these six. If the three disagree, one side
+#: accepts a value the other refuses, and the client dials a path the bridge
+#: never bound.
+_WS = " \t\n\r\f\v"
 
 
 class InvalidInstanceId(ValueError):
     """An instance id that is not a `ID_RE` slug. Never sanitised — see module doc."""
 
 
+class InvalidInstanceLayout(ValueError):
+    """`CK3_INSTANCE_LAYOUT` is neither unset, `user` nor `legacy`."""
+
+
+class UntrustedPath(OSError):
+    """A private dir or socket failed its ownership check."""
+
+
+def layout(env: Optional[Mapping[str, str]] = None) -> str:
+    """`user` (default) or `legacy`, from `CK3_INSTANCE_LAYOUT`."""
+    raw = ((os.environ if env is None else env).get(ENV_LAYOUT) or "").strip(_WS)
+    if raw in ("", LAYOUT_USER):
+        return LAYOUT_USER
+    if raw == LAYOUT_LEGACY:
+        return LAYOUT_LEGACY
+    raise InvalidInstanceLayout(
+        f"{ENV_LAYOUT}={raw!r}: want unset, {LAYOUT_USER!r} or {LAYOUT_LEGACY!r}")
+
+
+def user_base(env: Optional[Mapping[str, str]] = None) -> str:
+    """The per-user private dir. Mirrors instance_paths.cpp:user_base()."""
+    env = os.environ if env is None else env
+    xdg = env.get("XDG_RUNTIME_DIR") or ""
+    if xdg.startswith("/"):
+        return str(Path(xdg) / "ck3agent")
+    run = f"/run/user/{os.geteuid()}"
+    if os.path.isdir(run):
+        return f"{run}/ck3agent"
+    home = env.get("HOME")
+    if not home:
+        import pwd
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+    return str(Path(home) / ".local" / "state" / "ck3agent")
+
+
+def verify_private_dir(path: str) -> None:
+    """Raise `UntrustedPath` unless `path` is a dir owned by euid, no g/o write."""
+    st = os.lstat(path)
+    if not _stat.S_ISDIR(st.st_mode):
+        raise UntrustedPath(f"{path}: not a directory")
+    if st.st_uid != os.geteuid():
+        raise UntrustedPath(f"{path}: owned by uid {st.st_uid}, not {os.geteuid()}")
+    if st.st_mode & 0o022:
+        raise UntrustedPath(f"{path}: group/other writable")
+    # Ours but readable by others: tighten to 0700; a failed chmod is a
+    # refusal (mirror of instance_paths.cpp:verify_private).
+    if st.st_mode & 0o077:
+        try:
+            os.chmod(path, 0o700)
+        except OSError as e:
+            raise UntrustedPath(f"{path}: chmod 0700: {e.strerror}") from e
+
+
+def verify_chain(path: str) -> None:
+    """Raise `UntrustedPath` unless every ancestor of `path` (symlinks resolved)
+    is owned by root or euid, and any group/other-writable one is sticky.
+    Mirror of instance_paths.cpp:verify_chain()."""
+    real = os.path.realpath(path)
+    parts = [p for p in real.split("/") if p]
+    pre = "/"
+    for i in range(len(parts) + 1):
+        if i:
+            pre = "/" + "/".join(parts[:i])
+        st = os.lstat(pre)
+        if not _stat.S_ISDIR(st.st_mode):
+            raise UntrustedPath(f"{pre}: not a directory")
+        if st.st_uid not in (0, os.geteuid()):
+            raise UntrustedPath(f"{pre}: ancestor owned by uid {st.st_uid}")
+        if st.st_mode & 0o022 and not st.st_mode & _stat.S_ISVTX:
+            raise UntrustedPath(f"{pre}: ancestor group/other writable and not sticky")
+
+
+def check_socket_owner(path: str, env: Optional[Mapping[str, str]] = None) -> None:
+    """Refuse (`UntrustedPath`) a socket not owned by this uid. No-op in legacy."""
+    if layout(env) == LAYOUT_LEGACY:
+        return
+    st = os.lstat(path)
+    if not _stat.S_ISSOCK(st.st_mode):
+        raise UntrustedPath(f"{path}: not a socket")
+    # euid, like the bridge (instance_paths.cpp, ipc_server.cpp): the socket
+    # and the peer credential both carry an effective uid.
+    if st.st_uid != os.geteuid():
+        raise UntrustedPath(f"{path}: owned by uid {st.st_uid}, not {os.geteuid()}")
+
+
+def check_peer(sock: "_socket.socket", env: Optional[Mapping[str, str]] = None) -> None:
+    """Refuse (`UntrustedPath`) a connected peer with another uid. No-op in legacy."""
+    if layout(env) == LAYOUT_LEGACY:
+        return
+    if not hasattr(_socket, "SO_PEERCRED"):
+        raise UntrustedPath("cannot read the bridge's peer credentials on this platform")
+    raw = sock.getsockopt(_socket.SOL_SOCKET, _socket.SO_PEERCRED, struct.calcsize("3i"))
+    _pid, uid, _gid = struct.unpack("3i", raw)
+    if uid != os.geteuid():
+        raise UntrustedPath(f"bridge peer uid {uid}, not {os.geteuid()}")
+
+
 def normalise_id(raw: Optional[str]) -> str:
     """`None`/empty -> `default`; otherwise validate and return unchanged."""
     if raw is None:
         return DEFAULT_INSTANCE_ID
-    raw = raw.strip()
+    raw = raw.strip(_WS)
     if not raw:
         return DEFAULT_INSTANCE_ID
     if not ID_RE.match(raw):
@@ -148,6 +271,12 @@ class InstancePaths:
     #: CK3's own user-data directory *inside* `xdg_data_home` (None when the
     #: instance inherits the user's).
     game_user_dir: Optional[str]
+    #: `user` or `legacy`.
+    layout: str = LAYOUT_USER
+    #: The bridge's flag/lock files (`/tmp` legacy, the private dir user).
+    state_dir: str = "/tmp"
+    #: The private dir the user layout verifies; None in legacy.
+    private_dir: Optional[str] = None
 
     # -- convenience ---------------------------------------------------------
 
@@ -184,6 +313,7 @@ class InstancePaths:
         """
         e = {
             ENV_ID: self.instance_id,
+            ENV_LAYOUT: self.layout,
             ENV_ROOT: self.root,
             ENV_SOCKET: self.socket,
             ENV_TELEMETRY: self.telemetry_dir,
@@ -195,22 +325,26 @@ class InstancePaths:
         return e
 
     def mkdirs(self) -> "InstancePaths":
-        """Create every directory this instance writes into. Idempotent."""
-        for d in (self.instance_dir, self.telemetry_dir, self.control_dir):
-            Path(d).mkdir(parents=True, exist_ok=True)
-        Path(self.socket).parent.mkdir(parents=True, exist_ok=True)
-        Path(self.bridge_log).parent.mkdir(parents=True, exist_ok=True)
-        # 0777 on the control dir preserves the legacy two-user contract
-        # (CLAUDE.md "Shared directory"): `admin` writes commands a daemon
-        # running as another user reads. Applied only to a NAMED instance's own
-        # directory — /tmp/ck3-shared already exists on the campaign host with
-        # whatever mode the operator gave it, and widening that silently is not
-        # this bead's business.
-        if not self.is_default:
-            try:
-                os.chmod(self.control_dir, 0o777)
-            except OSError:
-                pass
+        """Create every directory this instance writes into. Idempotent.
+
+        User layout: the private dir (and a named instance's dir) is created
+        0700 and verified first, leaf and ancestors; `UntrustedPath` if it
+        fails (including a chmod that cannot tighten it).
+        """
+        mode = 0o777 if self.layout == LAYOUT_LEGACY else 0o700
+        if self.private_dir:
+            Path(self.private_dir).mkdir(mode=mode, parents=True, exist_ok=True)
+            verify_private_dir(self.private_dir)
+            verify_chain(self.private_dir)
+            if not self.is_default:
+                Path(self.instance_dir).mkdir(mode=mode, parents=True, exist_ok=True)
+                verify_private_dir(self.instance_dir)
+                verify_chain(self.instance_dir)
+        else:
+            Path(self.instance_dir).mkdir(mode=mode, parents=True, exist_ok=True)
+        for d in (self.telemetry_dir, self.control_dir,
+                  str(Path(self.socket).parent), str(Path(self.bridge_log).parent)):
+            Path(d).mkdir(mode=mode, parents=True, exist_ok=True)
         return self
 
 
@@ -218,19 +352,25 @@ def resolve(instance_id: Optional[str] = None,
             env: Optional[Mapping[str, str]] = None) -> InstancePaths:
     """Resolve every path for `instance_id` (default: `$CK3_INSTANCE_ID`).
 
-    Pure: reads `env` (default `os.environ`), touches no filesystem.
+    Reads `env` (default `os.environ`); creates nothing. The user layout's base
+    dir checks whether `/run/user/<euid>` exists, like the bridge does.
     """
     env = os.environ if env is None else env
+    lay = layout(env)
+    legacy = lay == LAYOUT_LEGACY
     iid = normalise_id(instance_id if instance_id is not None else env.get(ENV_ID))
-    root = env.get(ENV_ROOT) or DEFAULT_INSTANCE_ROOT
+    base = None if legacy else user_base(env)
+    root = env.get(ENV_ROOT) or (DEFAULT_INSTANCE_ROOT if legacy else f"{base}/inst")
     inst_dir = str(Path(root) / iid)
     default = iid == DEFAULT_INSTANCE_ID
 
-    def pick(override_key: str, legacy: str, member: str) -> str:
+    def pick(override_key: str, legacy_path: str, member: str) -> str:
         ov = env.get(override_key)
         if ov:
             return ov
-        return legacy if default else str(Path(inst_dir) / member)
+        if not default:
+            return str(Path(inst_dir) / member)
+        return legacy_path if legacy else f"{base}/{member}"
 
     xdg = None if default else str(Path(inst_dir) / "xdg")
     return InstancePaths(
@@ -241,11 +381,15 @@ def resolve(instance_id: Optional[str] = None,
         telemetry_dir=pick(ENV_TELEMETRY, LEGACY_TELEMETRY_DIR, "telemetry"),
         bridge_log=pick(ENV_BRIDGE_LOG, LEGACY_BRIDGE_LOG, "bridge.log"),
         control_dir=pick(ENV_CONTROL_DIR, LEGACY_CONTROL_DIR, "shared"),
-        headless_dir=LEGACY_HEADLESS_DIR if default else str(Path(inst_dir) / "headless"),
+        headless_dir=(str(Path(inst_dir) / "headless") if not default
+                      else LEGACY_HEADLESS_DIR if legacy else f"{base}/headless"),
         wayland_name=LEGACY_WAYLAND_NAME if default else f"wayland-ck3-{iid}",
         xdg_data_home=xdg,
         game_user_dir=(None if default
                        else str(Path(xdg) / "Paradox Interactive" / "Crusader Kings III")),
+        layout=lay,
+        state_dir="/tmp" if legacy else (base if default else inst_dir),
+        private_dir=base,
     )
 
 

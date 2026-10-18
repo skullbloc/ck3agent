@@ -1,59 +1,74 @@
 # Playing with Claude Code
 
-Claude Code is the supported interactive host: it runs on Linux next to the
-game, starts the MCP server itself, and the play protocol lives in a
-`CLAUDE.md` it reads automatically.
+Claude Code is the supported host. It starts the MCP server and reads the play
+protocol from `CLAUDE.md` in the play directory.
+
+## Prerequisites
+
+- [Getting started](getting-started.md) done, with the game running.
 
 ## The play directory
 
-`ck3agent setup` creates it (default `~/ck3agent-play`):
+| File | Purpose |
+|------|---------|
+| `.mcp.json` | starts the `ck3` MCP server (`ck3agent serve`) |
+| `CLAUDE.md` | the play protocol. Edit it to add a persona, goal or house rules. `ck3agent setup --force` restores it. |
+| `.claude/settings.json` | the live-state hook and the tool allow-list |
+| `runs/` | output of `ck3agent run` |
 
-```
-.mcp.json                 → {"mcpServers": {"ck3": {"command": "ck3agent", "args": ["serve"]}}}
-CLAUDE.md                 → the play protocol (tools, pause discipline, the cycle)
-.claude/settings.json     → a UserPromptSubmit hook: `ck3agent hook-state`
-runs/                     → logs from `ck3agent run`
-```
+**Permissions.** Setup merges `"permissions": {"allow": ["mcp__ck3", "Bash(sleep:*)"]}`
+into `.claude/settings.json` and keeps your other settings. The `ck3` tools
+and the wait between cycles then run without a prompt. Remove the entries to
+be asked each time, or run `ck3agent setup --no-allow`.
 
-You can edit `CLAUDE.md` freely: add a persona, a goal, house rules, a
-narration style. Re-run `ck3agent setup --force` to get the stock version back.
+**Live-state hook.** Before each prompt, `ck3agent hook-state` adds a short
+state block. While the game is paused it covers the ruler, wars, succession,
+factions, schemes and council. While the game runs it shows the date, speed,
+the ruler's id or `none`, wars, and what it could not read. It reports the
+bridge-wide ruler, which is Claude's only when one session is bound. Turn it
+off with `ck3agent setup --no-hook`.
 
-## The live-state hook
+## Steps
 
-`ck3agent hook-state` runs before every prompt and prints a short
-"Live game state" block (date, ruler, gold, wars, succession, factions,
-schemes, council) that Claude Code injects into context. It has a 2.5 s
-budget and degrades to a one-line note when the game is unpaused or the
-bridge is away, so it never blocks a turn. Disable it with
-`ck3agent setup --no-hook --force` or by deleting the hook from
-`.claude/settings.json`.
+1. `cd ~/ck3agent-play && claude`
+2. If no ruler is bound, Claude asks which one to take. See
+   [choose the ruler](getting-started.md#4-choose-the-ruler-claude-plays).
+3. Ask for what you want: "brief me", "play until 1080 and keep the realm
+   intact", "we are at war with Norway, what are my options?".
+4. Claude runs cycles: observe, decide, act, narrate, wait. Press Esc to
+   interrupt and redirect.
 
-## A session
+## Time and cost
 
-1. `ck3agent launch --continue --wait 120` (or launch via Steam with
-   `LD_PRELOAD`), load a save.
-2. `cd ~/ck3agent-play && claude`.
-3. Ask for what you want: "observe and brief me", "play until 1080, keep the
-   succession intact", "we are at war with Norway, what are my options".
+| Measured 2026-10-18, claude-opus-5-5, one observe-only cycle (observe, observe_v2, health; 5 turns, no writes) | Per cycle |
+|------|------|
+| Wall time | 10 seconds (model latency only; a play cycle adds the `sleep` you choose) |
+| Game time at speed 3 | 4 days while paused reads ran; a play cycle adds the `sleep` you choose |
+| Tokens (input / output) | 120,049 (mostly cached) / 451 |
+| Cost at API prices | $0.20; a full play cycle with writes and a `plan_war` read costs more, unmeasured |
 
-Claude follows the cycle in `CLAUDE.md`: pause, read, decide, unpause, act,
-narrate, wait (`sleep` in Bash), repeat. Approve the `ck3` tools and
-`Bash(sleep:*)` when prompted, or pre-approve them in
-`.claude/settings.json`:
+A cycle is a handful of tool calls. On a subscription plan, long sessions
+count against your usage limits.
 
-```json
-{ "permissions": { "allow": ["mcp__ck3", "Bash(sleep:*)"] } }
-```
+## Stopping
 
-## Tips
+| To | Do | Then |
+|----|----|------|
+| interrupt | Esc | Claude stops mid-cycle. |
+| end cleanly | say "stop" | Claude pauses the game and reports. Say "release control" to hand the ruler back to the game's AI. |
+| quit | `/exit` | The game stays paused or running as it was. The ruler keeps Claude's last personality values until the game rewrites them. |
 
-* Writes need the game unpaused and some raw reads need it paused; the
-  redesigned tools handle that, and `session(action="pause"|"unpause")` is the
-  manual lever. If Claude seems stuck, it is usually waiting on a pause state.
-* `session` caps speed at 3 and refuses 4–5 at war or near a succession;
-  faster outruns the reads.
-* `ck3agent doctor` from another terminal diagnoses a dead bridge without
-  disturbing the session.
-* One control session at a time. A second Claude Code session in the same
-  play directory shares the bridge, which is fine for reading but confusing
-  for writing.
+## Check it worked
+
+- Claude's replies name the ruler and the current game date.
+- `session(action="whoami")` returns the ruler you chose.
+
+## If it fails
+
+- No `ck3` tools: start `claude` inside the play directory, and check that
+  `ck3agent` is on `PATH`.
+- `game_unpaused`: `observe`, `query` and `discover` need the game paused.
+  Ask Claude to pause first, as the protocol says.
+- Run one Claude session per game. Two sessions can both write; the last write wins.
+- Anything else: `ck3agent doctor` in another terminal, then
+  [troubleshooting](troubleshooting.md).

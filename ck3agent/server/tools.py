@@ -1907,7 +1907,7 @@ def get_tool_definitions() -> list[dict]:
                     },
                     "enabled": {
                         "type": "boolean",
-                        "description": "For action=auto_events: true = auto-respond with option 0.",
+                        "description": "For action=auto_events: true = while no session is open the bridge clears the event pause and picks no option.",
                         "default": True,
                     },
                 },
@@ -1965,10 +1965,10 @@ def get_tool_definitions() -> list[dict]:
                 "API cannot express. Bypasses interaction validation. "
                 "Examples: 'AI.declare_war 30966' (AI.* delegation) or read-only "
                 "diagnostics like 'charinfo 30966'. "
-                "NOTE: state-granting verbs such as add_claim, add_pressed_claim, add_title_claim, "
-                "add_gold, add_piety, give_title, add_trait, add_realm_law, add_doctrine are "
-                "DENY-LISTED at the agent layer per the write-action legitimacy audit and will be "
-                "Refused. Create claims via the legitimate fabricate path "
+                "NOTE: release builds of the bridge compile this verb out and answer "
+                "error=unavailable_in_release; it exists only in builds made with "
+                "CK3_BRIDGE_DEBUG_VERBS. Do not use it to grant state (add_claim, add_gold, "
+                "give_title, add_trait, ...). Create claims via the legitimate fabricate path "
                 "(act type=\"council_task\", task=\"task_fabricate_claim\"), not the console."
             ),
             "input_schema": {

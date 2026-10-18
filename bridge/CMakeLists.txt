@@ -1,18 +1,124 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Release version: a public release tree carries a VERSION file one level up
-# (written by release/export.py, CalVer "2026.10.0"); the research checkout has
-# none and keeps the historical 0.1.0.
+# Release version: ../VERSION in a public tree (written by release/export.py,
+# CalVer "2026.10.0"); the research checkout has none and keeps 0.1.0.
+# CK3_BRIDGE_VERSION is the full string; project() gets its numeric prefix so
+# a suffixed version ("2026.10.0rc2") still configures.
 set(CK3_BRIDGE_VERSION "0.1.0")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION")
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" _ck3_ver)
     string(STRIP "${_ck3_ver}" CK3_BRIDGE_VERSION)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION")
 endif()
-project(ck3_bridge VERSION ${CK3_BRIDGE_VERSION} LANGUAGES CXX C)
+if(NOT CK3_BRIDGE_VERSION MATCHES "^([0-9]+(\\.[0-9]+)*)")
+    message(FATAL_ERROR "VERSION '${CK3_BRIDGE_VERSION}' does not start with a number")
+endif()
+project(ck3_bridge VERSION ${CMAKE_MATCH_1} LANGUAGES CXX C)
+# Global, so every target that compiles the handshake code sees it.
+add_compile_definitions(CK3_BRIDGE_VERSION="${CK3_BRIDGE_VERSION}")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PLATFORM LAYER — BEGIN (docs/adr/0001-windows-macos-port.md, phase P2)
+#
+# CK3_PLATFORM picks the one bridge/src/os/<platform>/ implementation that is
+# compiled (interfaces: include/os/os.h).
+#
+#   linux    the default and the only platform that builds the bridge. The
+#            layer is a separate static library, ck3_os, that ck3_bridge does
+#            NOT link yet: libck3_bridge.so is built exactly as before, from
+#            the same sources with the same flags and the same four exports.
+#            Routing the bridge through bridge::os is the rest of P2.
+#   windows  build ONLY ck3_os (typed-refusal stubs) and its test, then stop:
+#   macos    the rest of this file is the Linux bridge and is never reached.
+#            The windows-latest and macos-14 CI legs are the proof the stubs
+#            compile with MSVC and Apple clang.
+#
+# Tests (BUILD_BRIDGE_TESTS, declared with the other tests further down; read
+# here from the cache): test_os_linux_adapters on linux, plus both stub TUs
+# compiled as strict C++17 by the host compiler (test_os_stubs_windows,
+# test_os_stubs_macos); test_os_stubs on windows/macos.
+# ═════════════════════════════════════════════════════════════════════════════
+set(CK3_PLATFORM "linux" CACHE STRING "Platform layer implementation: linux|windows|macos")
+set_property(CACHE CK3_PLATFORM PROPERTY STRINGS linux windows macos)
+if(NOT CK3_PLATFORM MATCHES "^(linux|windows|macos)$")
+    message(FATAL_ERROR "CK3_PLATFORM='${CK3_PLATFORM}': must be linux, windows or macos")
+endif()
+if(CK3_PLATFORM STREQUAL "linux" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "CK3_PLATFORM=linux on a ${CMAKE_SYSTEM_NAME} host: the bridge "
+        "is Linux-only. Configure with -DCK3_PLATFORM=windows or -DCK3_PLATFORM=macos "
+        "to build the platform-layer stubs.")
+endif()
+message(STATUS "ck3 platform layer: ${CK3_PLATFORM}")
+
+if(MSVC)
+    set(CK3_OS_WARNINGS /W4 /permissive-)
+else()
+    set(CK3_OS_WARNINGS -Wall -Wextra)
+endif()
+
+if(CK3_PLATFORM STREQUAL "linux")
+    add_library(ck3_os STATIC src/os/os_common.cpp src/os/linux/os_linux.cpp)
+    # The adapters forward to bridge code (bridge.h, instance_paths.cpp,
+    # build_id_witness.cpp); a consumer links those sources itself, so ck3_os
+    # never carries a second copy of them.
+    target_compile_definitions(ck3_os PRIVATE _GNU_SOURCE)
+else()
+    add_library(ck3_os STATIC src/os/os_common.cpp src/os/${CK3_PLATFORM}/stubs.cpp)
+    set_target_properties(ck3_os PROPERTIES CXX_EXTENSIONS OFF)
+endif()
+target_include_directories(ck3_os PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(ck3_os PRIVATE ${CK3_OS_WARNINGS})
+
+if(BUILD_BRIDGE_TESTS)
+    enable_testing()
+    if(CK3_PLATFORM STREQUAL "linux")
+        find_package(Threads REQUIRED)
+        add_executable(test_os_linux_adapters
+            src/os/test/test_os_linux_adapters.cpp
+            src/instance_paths.cpp
+            src/build_id_witness.cpp
+        )
+        target_link_libraries(test_os_linux_adapters PRIVATE ck3_os Threads::Threads ${CMAKE_DL_LIBS})
+        target_compile_definitions(test_os_linux_adapters PRIVATE
+            CK3_BRIDGE_VERSION_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/bridge.version")
+        target_compile_options(test_os_linux_adapters PRIVATE -O2 ${CK3_OS_WARNINGS})
+        # ck3 is PIE; the image-base checks need a PIE main executable too.
+        target_link_options(test_os_linux_adapters PRIVATE -pie)
+        add_test(NAME test_os_linux_adapters COMMAND test_os_linux_adapters)
+
+        foreach(_p windows macos)
+            add_executable(test_os_stubs_${_p}
+                src/os/test/test_os_stubs.cpp
+                src/os/os_common.cpp
+                src/os/${_p}/stubs.cpp
+            )
+            target_include_directories(test_os_stubs_${_p} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+            target_compile_definitions(test_os_stubs_${_p} PRIVATE CK3_OS_EXPECT_PLATFORM="${_p}")
+            set_target_properties(test_os_stubs_${_p} PROPERTIES CXX_EXTENSIONS OFF)
+            target_compile_options(test_os_stubs_${_p} PRIVATE -pedantic-errors -Werror ${CK3_OS_WARNINGS})
+            add_test(NAME test_os_stubs_${_p} COMMAND test_os_stubs_${_p})
+        endforeach()
+    else()
+        add_executable(test_os_stubs src/os/test/test_os_stubs.cpp)
+        target_link_libraries(test_os_stubs PRIVATE ck3_os)
+        target_compile_definitions(test_os_stubs PRIVATE CK3_OS_EXPECT_PLATFORM="${CK3_PLATFORM}")
+        set_target_properties(test_os_stubs PROPERTIES CXX_EXTENSIONS OFF)
+        target_compile_options(test_os_stubs PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_stubs COMMAND test_os_stubs)
+    endif()
+endif()
+
+if(NOT CK3_PLATFORM STREQUAL "linux")
+    return()   # windows/macos: the platform layer is all there is to build
+endif()
+# ═════════════════════════════════════════════════════════════════════════════
+# PLATFORM LAYER — END
+# ═════════════════════════════════════════════════════════════════════════════
 
 # Build as shared library (.so) for LD_PRELOAD injection
 add_library(ck3_bridge SHARED
@@ -128,14 +234,10 @@ add_custom_target(gen_provenance ALL
 add_dependencies(ck3_bridge gen_provenance)
 target_include_directories(ck3_bridge PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
-# Zydis x86-64 instruction decoder (built locally in third_party/zydis)
-set(ZYDIS_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zydis)
-
 target_include_directories(ck3_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-    ${ZYDIS_PREFIX}/include
 )
 
 # We need pthreads for the IPC server thread
@@ -145,34 +247,76 @@ target_link_libraries(ck3_bridge PRIVATE Threads::Threads)
 # Link dl for dlopen/dlsym (ASLR base resolution)
 target_link_libraries(ck3_bridge PRIVATE ${CMAKE_DL_LIBS})
 
-# Link Zydis + Zycore. Two sources, same version (Zydis 5.0.0 / Zycore 1.5.2):
-#   * the research checkout carries prebuilt static libraries in
-#     third_party/zydis/lib64 (built on this host, MIT, no source) and links
-#     them verbatim;
-#   * a public release tree ships no binaries, so when lib64/ is absent the
-#     same Zydis commit is fetched and built from source. The commit is the one
-#     whose ZYDIS_VERSION / ZYCORE_VERSION macros match the vendored headers.
+# Zydis 5.0.0 + Zycore 1.5.2. Exactly one header set per build:
+#   vendored (default when lib64/ exists): third_party/zydis/lib64 + include/.
+#   source (public tree, or -DCK3_ZYDIS_FROM_SOURCE=ON): pinned archives;
+#     the vendored include/ is never on the path.
+# The pin is the Zydis commit whose include/ matches the vendored headers byte
+# for byte (a95bb71, the rc1 pin, differs in 7 files). Configure fails if the
+# two sets drift apart.
+set(ZYDIS_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zydis)
+option(CK3_ZYDIS_FROM_SOURCE "Build Zydis from the pinned archive even if lib64/ exists" OFF)
 if(EXISTS "${ZYDIS_PREFIX}/lib64/libZydis.a" AND NOT CK3_ZYDIS_FROM_SOURCE)
+    target_include_directories(ck3_bridge PRIVATE ${ZYDIS_PREFIX}/include)
     target_link_libraries(ck3_bridge PRIVATE
         ${ZYDIS_PREFIX}/lib64/libZydis.a
         ${ZYDIS_PREFIX}/lib64/libZycore.a
     )
 else()
     include(FetchContent)
+    if(POLICY CMP0135)
+        cmake_policy(SET CMP0135 NEW)   # extracted files get extraction mtime
+    endif()
+    # Zycore is a submodule of Zydis, so the Zydis archive lacks it. Fetched
+    # at the submodule commit; SOURCE_SUBDIR has no CMakeLists.txt, so this
+    # only downloads. Zydis adds it through ZYAN_ZYCORE_PATH.
+    FetchContent_Declare(zycore
+        URL      https://github.com/zyantific/zycore-c/archive/75a36c45ae1ad382b0f4e0ede0af84c11ee69928.tar.gz
+        URL_HASH SHA256=c24ebd402d0ce83cd54f08e68189e68d54e3b5938f65ca972dfdbac89757139b
+        SOURCE_SUBDIR _populate_only
+    )
+    FetchContent_MakeAvailable(zycore)
+    FetchContent_Declare(zydis
+        URL      https://github.com/zyantific/zydis/archive/9bfadd6a55fc92dbd37fa3ba089bf8b36622df4f.tar.gz
+        URL_HASH SHA256=2c168a83fc9f67c5abec287fde50d2b016757f159db8bf46aac138126d504edc
+    )
+    set(ZYAN_ZYCORE_PATH "${zycore_SOURCE_DIR}" CACHE PATH "" FORCE)
     set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
     set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(ZYDIS_BUILD_DOXYGEN OFF CACHE BOOL "" FORCE)
     set(ZYAN_FORCE_ASSERTS OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(zydis
-        GIT_REPOSITORY https://github.com/zyantific/zydis.git
-        GIT_TAG        a95bb71013436547f689fc0b380f48edf663066e   # master, ZYDIS_VERSION 5.0.0
-    )
     FetchContent_MakeAvailable(zydis)
-    # The vendored headers in third_party/zydis/include are the SAME version;
-    # the fetched tree's include dirs come first so there is one definition.
     target_link_libraries(ck3_bridge PRIVATE Zydis)
+    # Keep the build dir out of Zydis's assert strings.
+    foreach(_zt Zydis Zycore)
+        target_compile_options(${_zt} PRIVATE -fmacro-prefix-map=${FETCHCONTENT_BASE_DIR}/=)
+    endforeach()
+
+    # Vendored headers present (research checkout): they must equal the
+    # fetched ones, or the two build modes compile different decoders.
+    file(GLOB_RECURSE _vend_hdrs RELATIVE "${ZYDIS_PREFIX}/include"
+        "${ZYDIS_PREFIX}/include/*.h")
+    set(_skew "")
+    foreach(_h IN LISTS _vend_hdrs)
+        if(_h MATCHES "^Zycore/")
+            set(_up "${zycore_SOURCE_DIR}/include/${_h}")
+        else()
+            set(_up "${zydis_SOURCE_DIR}/include/${_h}")
+        endif()
+        file(MD5 "${ZYDIS_PREFIX}/include/${_h}" _a)
+        set(_b "missing")
+        if(EXISTS "${_up}")
+            file(MD5 "${_up}" _b)
+        endif()
+        if(NOT _a STREQUAL _b)
+            list(APPEND _skew "${_h}")
+        endif()
+    endforeach()
+    if(_skew)
+        message(FATAL_ERROR "third_party/zydis/include differs from the pinned "
+            "Zydis source in: ${_skew}. Update the pin or the vendored set.")
+    endif()
 endif()
-target_compile_definitions(ck3_bridge PRIVATE CK3_BRIDGE_VERSION="${CK3_BRIDGE_VERSION}")
 
 # Optional: abort bridge init on BuildID mismatch (no signature fallback)
 option(CK3_STRICT_BUILD_ID "Hard-fail on BuildID mismatch instead of falling back to signatures" OFF)
@@ -189,6 +333,46 @@ target_link_libraries(ck3_bridge PRIVATE rt)
 # Optimization: we want the hook functions to be fast
 target_compile_options(ck3_bridge PRIVATE -O2 -Wall -Wextra)
 
+# rc2 B2: debug verbs, compiled out unless ON: memory_probe, resolve_global,
+# inject_mouse_click, select_observe_default, execute_console_command,
+# set_cb_selector_override (their registry entries AND handler bodies), plus
+# every process VA in a reply. Default OFF; research builds pass
+# -DCK3_BRIDGE_DEBUG_VERBS=ON. test_debug_verbs pins the set; the
+# raw_pointer_inputs / no_va_output censuses below walk the handlers.
+option(CK3_BRIDGE_DEBUG_VERBS "Compile in the debug IPC verbs" OFF)
+# B9 defence in depth: every RapidJSON Parse without explicit flags is iterative.
+target_compile_definitions(ck3_bridge PRIVATE RAPIDJSON_PARSE_DEFAULT_FLAGS=kParseIterativeFlag)
+if(CK3_BRIDGE_DEBUG_VERBS)
+    target_compile_definitions(ck3_bridge PRIVATE CK3_BRIDGE_DEBUG_VERBS)
+endif()
+
+# Hardening. -U first: some toolchains predefine _FORTIFY_SOURCE.
+target_compile_options(ck3_bridge PRIVATE
+    -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -fcf-protection
+    # Keep the build host's paths out of __FILE__ (assert strings).
+    -fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=bridge/
+)
+target_link_options(ck3_bridge PRIVATE "LINKER:-z,relro,-z,now")
+
+# Exports: only the exec-family interposers listed in bridge.version.
+# Everything else is hidden at compile time; static archives (Zydis) at link.
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/bridge.version)
+    message(FATAL_ERROR "bridge/bridge.version is missing (linker version script)")
+endif()
+set_target_properties(ck3_bridge PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    C_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/bridge.version
+)
+# The interposers must stay default-visible for the version script to export them.
+set_source_files_properties(src/launcher_bypass.cpp PROPERTIES
+    COMPILE_OPTIONS -fvisibility=default)
+target_link_options(ck3_bridge PRIVATE
+    "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/bridge.version"
+    "LINKER:--exclude-libs,ALL"
+)
+
 # Don't link against standard C++ runtime startup — we use constructor/destructor attrs
 set_target_properties(ck3_bridge PROPERTIES
     OUTPUT_NAME "ck3_bridge"
@@ -200,32 +384,44 @@ install(TARGETS ck3_bridge LIBRARY DESTINATION lib)
 # -----------------------------------------------------------------------------
 # i386 no-op stub (ck-dq7ym.1)
 #
-# Built as a tiny 32-bit ELF .so so a single LD_PRELOAD list can satisfy both
-# the 32-bit pre-init shims (Steam's ubuntu12_32/steam-launch-wrapper) and the
-# 64-bit ck3 binary without ELFCLASS-mismatch warnings. See src/bridge_stub.c.
-#
-# Implementation: we drive a single gcc -m32 invocation through add_custom_command.
-# CMake's built-in cross-compile machinery wants a separate toolchain file per arch,
-# which is overkill for a 9 KB no-op. We use -nostdlib + a hand-rolled .init_array
-# entry so this builds on hosts without 32-bit glibc dev files (no crti.o needed).
+# A tiny 32-bit .so so one LD_PRELOAD list satisfies both Steam's 32-bit shims
+# and the 64-bit ck3 binary without ELFCLASS-mismatch warnings. One gcc -m32
+# call; -nostdlib + a hand-rolled .init_array, so no 32-bit glibc is needed.
+# Built only if the source exists and the compiler can target -m32, so 'all'
+# stays green without multilib.
 # -----------------------------------------------------------------------------
 set(BRIDGE_STUB_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_stub.c)
 set(BRIDGE_STUB_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libck3_bridge_stub.so)
+set(BRIDGE_STUB_FLAGS -m32 -shared -nostdlib -fPIC -O2 -Wall -Wextra)
+set(CK3_BRIDGE_STUB OFF)
+if(EXISTS ${BRIDGE_STUB_SOURCE})
+    # Probe with the real command: -m32 support is the only unknown.
+    execute_process(
+        COMMAND ${CMAKE_C_COMPILER} ${BRIDGE_STUB_FLAGS} ${BRIDGE_STUB_SOURCE}
+                -o ${CMAKE_CURRENT_BINARY_DIR}/m32_probe.so
+        RESULT_VARIABLE _m32_rc OUTPUT_QUIET ERROR_QUIET)
+    file(REMOVE ${CMAKE_CURRENT_BINARY_DIR}/m32_probe.so)
+    if(_m32_rc EQUAL 0)
+        set(CK3_BRIDGE_STUB ON)
+    else()
+        message(STATUS "ck3_bridge_stub: skipped, compiler cannot build -m32")
+    endif()
+else()
+    message(STATUS "ck3_bridge_stub: skipped, src/bridge_stub.c absent")
+endif()
 
-add_custom_command(
-    OUTPUT ${BRIDGE_STUB_OUTPUT}
-    COMMAND ${CMAKE_C_COMPILER}
-            -m32 -shared -nostdlib -fPIC
-            -O2 -Wall -Wextra
-            ${BRIDGE_STUB_SOURCE}
-            -o ${BRIDGE_STUB_OUTPUT}
-    DEPENDS ${BRIDGE_STUB_SOURCE}
-    COMMENT "Building i386 stub libck3_bridge_stub.so (ck-dq7ym.1)"
-    VERBATIM
-)
-add_custom_target(ck3_bridge_stub ALL DEPENDS ${BRIDGE_STUB_OUTPUT})
-
-install(FILES ${BRIDGE_STUB_OUTPUT} DESTINATION lib)
+if(CK3_BRIDGE_STUB)
+    add_custom_command(
+        OUTPUT ${BRIDGE_STUB_OUTPUT}
+        COMMAND ${CMAKE_C_COMPILER} ${BRIDGE_STUB_FLAGS}
+                ${BRIDGE_STUB_SOURCE} -o ${BRIDGE_STUB_OUTPUT}
+        DEPENDS ${BRIDGE_STUB_SOURCE}
+        COMMENT "Building i386 stub libck3_bridge_stub.so (ck-dq7ym.1)"
+        VERBATIM
+    )
+    add_custom_target(ck3_bridge_stub ALL DEPENDS ${BRIDGE_STUB_OUTPUT})
+    install(FILES ${BRIDGE_STUB_OUTPUT} DESTINATION lib)
+endif()
 
 # -----------------------------------------------------------------------------
 # Unit tests (opt-in). Currently covers ck-8xzy regression for json_get_string.
@@ -293,7 +489,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(test_clock_rate PRIVATE Threads::Threads)
     target_compile_options(test_clock_rate PRIVATE -O2 -Wall -Wextra)
@@ -306,7 +501,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(test_json_helpers PRIVATE Threads::Threads)
     target_compile_options(test_json_helpers PRIVATE -O2 -Wall -Wextra)
@@ -447,7 +641,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(swap_character_probe PRIVATE Threads::Threads)
     target_compile_options(swap_character_probe PRIVATE -O2 -Wall -Wextra)
@@ -476,7 +669,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_compile_options(unavail_forget_probe PRIVATE -O2 -Wall -Wextra)
 
@@ -488,7 +680,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(claimless_detach_probe PRIVATE Threads::Threads)
     target_compile_options(claimless_detach_probe PRIVATE -O2 -Wall -Wextra)
@@ -501,7 +692,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(rollback_state_probe PRIVATE Threads::Threads)
     target_compile_options(rollback_state_probe PRIVATE -O2 -Wall -Wextra)
@@ -518,7 +708,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_compile_options(ai_watch_drop_probe PRIVATE -O2 -Wall -Wextra)
 
@@ -530,7 +719,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(handoff_swap_probe PRIVATE Threads::Threads)
     target_compile_options(handoff_swap_probe PRIVATE -O2 -Wall -Wextra)
@@ -538,7 +726,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(test_session_registry PRIVATE Threads::Threads)
     target_compile_options(test_session_registry PRIVATE -O2 -Wall -Wextra)
@@ -556,7 +743,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(acceptance_n6_ownership PRIVATE Threads::Threads)
     target_compile_options(acceptance_n6_ownership PRIVATE -O2 -Wall -Wextra)
@@ -574,7 +760,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(test_client_slot PRIVATE Threads::Threads)
     target_compile_options(test_client_slot PRIVATE -O2 -Wall -Wextra)
@@ -593,7 +778,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_compile_definitions(test_client_slot_negative_control PRIVATE
         CK3_SLOT_LEGACY_FD_GUARD=1)
@@ -839,7 +1023,6 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
 
     add_executable(test_release_handler ${RELEASE_HANDLER_SOURCES})
@@ -861,6 +1044,66 @@ if(BUILD_BRIDGE_TESTS)
         CK3_RELEASE_LEGACY_ORDER=1)
     target_link_libraries(test_release_handler_negative_control PRIVATE Threads::Threads)
     target_compile_options(test_release_handler_negative_control PRIVATE -O2 -Wall -Wextra)
+
+    # rc2 B2: the debug verbs are compiled out and answer unavailable_in_release.
+    # Same sources as test_release_handler (the REAL dispatch_router.cpp). The
+    # negative control builds it with CK3_BRIDGE_DEBUG_VERBS and MUST fail.
+    set(DEBUG_VERBS_SOURCES ${RELEASE_HANDLER_SOURCES})
+    list(REMOVE_ITEM DEBUG_VERBS_SOURCES test/test_release_handler.cpp)
+    list(APPEND DEBUG_VERBS_SOURCES test/test_debug_verbs.cpp)
+    add_executable(test_debug_verbs ${DEBUG_VERBS_SOURCES})
+    target_include_directories(test_debug_verbs PRIVATE ${RELEASE_HANDLER_INCLUDES})
+    target_link_libraries(test_debug_verbs PRIVATE Threads::Threads)
+    target_compile_options(test_debug_verbs PRIVATE -O2 -Wall -Wextra)
+    add_executable(test_debug_verbs_negative_control ${DEBUG_VERBS_SOURCES})
+    target_include_directories(test_debug_verbs_negative_control PRIVATE
+        ${RELEASE_HANDLER_INCLUDES})
+    target_compile_definitions(test_debug_verbs_negative_control PRIVATE
+        CK3_BRIDGE_DEBUG_VERBS)
+    target_link_libraries(test_debug_verbs_negative_control PRIVATE Threads::Threads)
+    target_compile_options(test_debug_verbs_negative_control PRIVATE -O2 -Wall -Wextra)
+
+    # rc2 B1 + B9: the REAL ipc_server.cpp on a real socket — the peer-uid
+    # check is wired at accept(), the reader caps line length and nesting.
+    # Inherits ck3_bridge's compile definitions, so it parses with the
+    # library's RapidJSON default flags.
+    get_target_property(_ck3_bridge_defs ck3_bridge COMPILE_DEFINITIONS)
+    add_executable(test_ipc_wiring
+        test/test_ipc_wiring.cpp
+        src/ipc_server.cpp
+        ${SESSION_HOST_SOURCES}
+        src/instance_paths.cpp
+        src/pipeline_mode.cpp
+        src/json_helpers.cpp
+        src/client_slot.cpp
+        src/log_archive.cpp
+        src/build_id_witness.cpp
+    )
+    add_dependencies(test_ipc_wiring gen_provenance)
+    target_include_directories(test_ipc_wiring PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+        ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    if(_ck3_bridge_defs)
+        target_compile_definitions(test_ipc_wiring PRIVATE ${_ck3_bridge_defs})
+    endif()
+    target_link_libraries(test_ipc_wiring PRIVATE Threads::Threads)
+    target_compile_options(test_ipc_wiring PRIVATE -O2 -Wall -Wextra)
+
+    # rc2 B6: the succession handoff never binds the human player.
+    add_executable(test_handoff_player
+        test/test_handoff_player.cpp
+        ${SESSION_HOST_SOURCES}
+    )
+    target_include_directories(test_handoff_player PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+    )
+    target_link_libraries(test_handoff_player PRIVATE Threads::Threads)
+    target_compile_options(test_handoff_player PRIVATE -O2 -Wall -Wextra)
 
     # ck-6kvq.10 (R3 as REVERSED): unavailability accounting + the episode
     # policy. Pure, no engine deps, no CK3 binary.
@@ -992,7 +1235,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(test_world_epoch PRIVATE Threads::Threads)
     target_compile_options(test_world_epoch PRIVATE -O2 -Wall -Wextra)
@@ -1013,7 +1255,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(acceptance_world_reset PRIVATE Threads::Threads)
     target_compile_options(acceptance_world_reset PRIVATE -O2 -Wall -Wextra)
@@ -1039,7 +1280,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(acceptance_save_identity PRIVATE Threads::Threads)
     target_compile_options(acceptance_save_identity PRIVATE -O2 -Wall -Wextra)
@@ -1097,7 +1337,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(acceptance_board PRIVATE Threads::Threads)
     target_compile_options(acceptance_board PRIVATE -O2 -Wall -Wextra)
@@ -1116,7 +1355,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(board_witness_probe PRIVATE Threads::Threads)
     target_compile_options(board_witness_probe PRIVATE -O2 -Wall -Wextra)
@@ -1138,7 +1376,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(acceptance_session_resume PRIVATE Threads::Threads)
     target_compile_options(acceptance_session_resume PRIVATE -O2 -Wall -Wextra)
@@ -1153,7 +1390,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(acceptance_session_resume_negative_control PRIVATE Threads::Threads)
     target_compile_options(acceptance_session_resume_negative_control PRIVATE
@@ -1172,7 +1408,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(acceptance_session_resume_observer_negative_control
         PRIVATE Threads::Threads)
@@ -1202,7 +1437,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_link_libraries(acceptance_board_continuity PRIVATE Threads::Threads)
     target_compile_options(acceptance_board_continuity PRIVATE -O2 -Wall -Wextra)
@@ -1216,7 +1450,6 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${ZYDIS_PREFIX}/include
     )
     target_compile_definitions(acceptance_board_continuity_negative_control PRIVATE
         CK3_BOARD_NO_CARRIER_RESTORE=1)
@@ -1235,6 +1468,61 @@ endif()
         COMMENT "ck-hxh7 gate: world-scoped cache clears have callers"
         VERBATIM
     )
+
+    # Engine-free tests that run standalone and exit 0; `ctest` runs them.
+    enable_testing()
+    foreach(_t test_json_helpers test_script_block_parser test_instance_paths
+               test_game_date test_war_history test_clock_rate
+               test_flush_scheduler test_pipeline
+               test_debug_verbs test_ipc_wiring test_handoff_player)
+        add_test(NAME ${_t} COMMAND ${_t})
+    endforeach()
+    # rc2 B2: the ON build must fail the same assertions.
+    add_test(NAME test_debug_verbs_negative_control
+             COMMAND test_debug_verbs_negative_control)
+    set_tests_properties(test_debug_verbs_negative_control PROPERTIES WILL_FAIL TRUE)
+    # rc2 B1/B2 source censuses (python, no build products). Each has a
+    # selftest (known-bad text MUST be flagged) and the B2 ones a control that
+    # reads the tree as a debug build and MUST fail.
+    # Each script is spelled out: release/export.py's bridge/test census
+    # matches file names literally.
+    set(_census_private_file_opens ${CMAKE_CURRENT_SOURCE_DIR}/test/check_private_file_opens.py)
+    set(_census_raw_pointer_inputs ${CMAKE_CURRENT_SOURCE_DIR}/test/check_raw_pointer_inputs.py)
+    set(_census_no_va_output       ${CMAKE_CURRENT_SOURCE_DIR}/test/check_no_va_output.py)
+    foreach(_c private_file_opens raw_pointer_inputs no_va_output)
+        add_test(NAME ${_c}
+                 COMMAND ${CK3_PYTHON3} ${_census_${_c}} ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME ${_c}_selftest
+                 COMMAND ${CK3_PYTHON3} ${_census_${_c}} --selftest)
+    endforeach()
+    foreach(_c raw_pointer_inputs no_va_output)
+        add_test(NAME ${_c}_debug_control
+                 COMMAND ${CK3_PYTHON3} ${_census_${_c}} --include-debug
+                         ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(${_c}_debug_control PROPERTIES WILL_FAIL TRUE)
+    endforeach()
+
+    # rc2 B1 (ck-otj9): log rotation reopens O_EXCL|O_NOFOLLOW at 0600. Was
+    # run only by host acceptance_otj9.py. Exit 3 = cannot set up (skip).
+    # EXISTS: release/manifest.toml still excludes the probe from the public
+    # tree; drop that exclusion and the public ctest runs it too.
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test/log_rotate_probe.cpp)
+        add_executable(log_rotate_probe test/log_rotate_probe.cpp)
+        target_include_directories(log_rotate_probe PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+        add_test(NAME log_rotate_probe COMMAND log_rotate_probe)
+        set_tests_properties(log_rotate_probe PROPERTIES SKIP_RETURN_CODE 3)
+    endif()
+
+    # rc2 B2: the shipped .so carries none of the debug handlers.
+    if(NOT CK3_BRIDGE_DEBUG_VERBS)
+        add_test(NAME debug_verbs_not_linked
+                 COMMAND ${CK3_PYTHON3}
+                         ${CMAKE_CURRENT_SOURCE_DIR}/test/check_debug_verbs_not_linked.py
+                         $<TARGET_FILE:ck3_bridge>)
+    endif()
 endif()
 
 # -----------------------------------------------------------------------------

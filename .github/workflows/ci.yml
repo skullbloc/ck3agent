@@ -5,9 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call: {}   # release.yml runs this for the tagged sha
 
 permissions:
   contents: read
+
+env:
+  # Bridge ABI budget; the floors are asserted on the 22.04 leg (the release host).
+  MAX_EXPORTED_SYMBOLS: 12   # the bridge hides symbols now
+  GLIBC_FLOOR: "2.34"
+  GLIBCXX_FLOOR: "3.4.29"
 
 jobs:
   bridge:
@@ -19,26 +26,49 @@ jobs:
         os: [ubuntu-22.04, ubuntu-latest]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Build deps
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake build-essential git
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake build-essential git binutils
       - name: Configure (strict BuildID, tests on, Zydis from source)
         run: cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCK3_STRICT_BUILD_ID=ON -DBUILD_BRIDGE_TESTS=ON
-      - name: Build library + native unit tests
-        run: cmake --build bridge/build --target ck3_bridge test_json_helpers test_script_block_parser test_instance_paths test_game_date test_war_history -- -j"$(nproc)"
-      - name: Run native unit tests
+      - name: Build all targets
+        run: cmake --build bridge/build -j"$(nproc)"
+      - name: Native unit tests
+        working-directory: bridge/build
         run: |
-          set -e
-          for t in test_json_helpers test_script_block_parser test_instance_paths test_game_date test_war_history; do
-            echo "== $t"; ./bridge/build/$t
+          if ctest -N | grep -Eq 'Total Tests: [1-9]'; then
+            ctest --output-on-failure
+          else
+            echo "ctest found no tests; running the standalone binaries"
+            for t in test_json_helpers test_script_block_parser test_instance_paths test_game_date test_war_history; do
+              echo "== $t"; "./$t"
+            done
+          fi
+      - name: Library dependencies are allow-listed
+        run: |
+          so=bridge/build/libck3_bridge.so
+          file "$so"; ldd "$so"
+          bad=$(ldd "$so" | awk '{print $1}' | xargs -n1 basename \
+            | grep -Ev '^(libstdc\+\+\.so\.6|libm\.so\.6|libgcc_s\.so\.1|libc\.so\.6|ld-linux-x86-64\.so\.2|linux-vdso\.so\.1)$' || true)
+          if [ -n "$bad" ]; then echo "::error::unexpected dependencies: $bad"; exit 1; fi
+      - name: Exported symbol count
+        run: |
+          n=$(nm -D --defined-only bridge/build/libck3_bridge.so | grep -c ' T ' || true)
+          echo "exported symbols: $n (max $MAX_EXPORTED_SYMBOLS)"
+          if [ "$n" -gt "$MAX_EXPORTED_SYMBOLS" ]; then echo "::error::more than $MAX_EXPORTED_SYMBOLS exported symbols"; exit 1; fi
+      - name: Symbol version floors
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          so=bridge/build/libck3_bridge.so
+          for pair in "GLIBC:$GLIBC_FLOOR" "GLIBCXX:$GLIBCXX_FLOOR"; do
+            p=${pair%%:*}; floor=${pair#*:}
+            top=$(objdump -T "$so" | grep -F '*UND*' | grep -oE "${p}_[0-9]+(\.[0-9]+)*" | sed "s/^${p}_//" | sort -Vu | tail -1)
+            echo "$p: highest required ${top:-none}, floor $floor"
+            if [ -n "$top" ] && [ "$(printf '%s\n%s\n' "$floor" "$top" | sort -V | tail -1)" != "$floor" ]; then
+              echo "::error::${p}_${top} is above the floor ${floor}"; exit 1
+            fi
           done
-      - name: Library sanity
-        run: |
-          file bridge/build/libck3_bridge.so
-          nm -D bridge/build/libck3_bridge.so | grep -c ' T ' | xargs echo "exported symbols:"
-          # must not depend on anything outside glibc/libstdc++/pthread/dl/rt
-          ldd bridge/build/libck3_bridge.so
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libck3_bridge-${{ matrix.os }}
           path: bridge/build/libck3_bridge.so
@@ -50,44 +80,128 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[test]"
+      - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
       - name: Unit tests (server suite + CLI)
         run: python -m pytest
-      - name: CLI smoke (no game)
-        run: |
-          ck3agent version
-          ck3agent config
-          # doctor must report cleanly without a game: exit 1, never a traceback
-          set +e; ck3agent doctor; rc=$?; set -e
-          test "$rc" = 1
 
   package:
-    name: wheel + sdist
+    name: wheel (python ${{ matrix.python }})
     runs-on: ubuntu-latest
     needs: [python]
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.12"
-      - run: python -m pip install --upgrade pip build
-      - run: python -m build
-      - name: Install the wheel in a clean venv and run it
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install build==1.6.1 hatchling==1.32.4
+      - run: python -m build --no-isolation
+      - name: Smoke the installed wheel in a clean venv
         run: |
-          python -m venv /tmp/v && /tmp/v/bin/pip install -q dist/*.whl
-          /tmp/v/bin/ck3agent version
-          test "$(cat VERSION)" = "$(/tmp/v/bin/python -c 'import ck3agent; print(ck3agent.__version__)')"
-      - uses: actions/upload-artifact@v4
+          python -m venv "$RUNNER_TEMP/v"
+          V="$RUNNER_TEMP/v/bin"
+          "$V/pip" install -q dist/*.whl
+          cd "$RUNNER_TEMP"   # leave the checkout so the installed package is the one imported
+          test "$(cat "$GITHUB_WORKSPACE/VERSION")" = "$("$V/python" -c 'import ck3agent; print(ck3agent.__version__)')"
+          "$V/python" -c "import ck3agent; ck3agent.bootstrap_server(); import mcp_server"
+          "$V/ck3agent" version
+          "$V/ck3agent" config
+          # No game here: these must exit 1 cleanly, never with a traceback.
+          expect_clean_refusal() {
+            set +e; out=$("$@" 2>&1); rc=$?; set -e
+            echo "$out"
+            if [ "$rc" != 1 ]; then echo "::error::$* exited $rc, expected 1"; exit 1; fi
+            if grep -q Traceback <<<"$out"; then echo "::error::$* printed a traceback"; exit 1; fi
+          }
+          expect_clean_refusal "$V/ck3agent" doctor
+          CK3_BINARY="$(which python3)" expect_clean_refusal "$V/ck3agent" setup --play-dir "$(mktemp -d)" --no-hook
+      - if: matrix.python == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-dist
           path: dist/
           retention-days: 7
+
+  # The container matrix lives in installer.yml (one job per image, setup-python and
+  # build==1.6.1, a 15-minute budget per image); test_install.sh builds its own wheel.
+  installer:
+    uses: ./.github/workflows/installer.yml
+
+  # Platform layer (docs/adr/0001-windows-macos-port.md, phase P2). These legs
+  # build ONLY bridge/src/os/ (CK3_PLATFORM=windows|macos stops the CMake file
+  # before the Linux bridge) and run its stub test: the proof that the stubs
+  # compile with MSVC and Apple clang. No game, no bridge, no hooks.
+  platform-windows:
+    name: platform layer (windows-latest)
+    runs-on: windows-latest
+    continue-on-error: true   # first release: never run on MSVC/Apple clang yet; drop once green
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Configure (platform layer only, MSVC)
+        run: cmake -S bridge -B bridge/build -DCK3_PLATFORM=windows -DBUILD_BRIDGE_TESTS=ON
+      - name: Build the stub target
+        run: cmake --build bridge/build --config Release --target ck3_os test_os_stubs
+      - name: Stub contract test
+        run: ctest --test-dir bridge/build -C Release --output-on-failure
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
+      - name: tools/inspect_binary.py tests
+        run: python -m pytest tests/test_inspect_binary.py
+      # The server suite has never run on Windows. It reports here and does not
+      # gate (release.yml needs this workflow) until it is green on this OS;
+      # then drop continue-on-error. ADR 0001 P2: "engine-free tests pass on 3 OSes".
+      - name: Python unit tests (reporting, not gating)
+        continue-on-error: true
+        run: python -m pytest
+
+  platform-macos:
+    name: platform layer (macos-14)
+    runs-on: macos-14
+    continue-on-error: true   # first release: never run on MSVC/Apple clang yet; drop once green
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Configure (platform layer only, Apple clang)
+        run: cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=Release -DCK3_PLATFORM=macos -DBUILD_BRIDGE_TESTS=ON
+      - name: Build the stub target
+        run: cmake --build bridge/build --config Release --target ck3_os test_os_stubs
+      - name: Stub contract test
+        run: ctest --test-dir bridge/build -C Release --output-on-failure
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
+      - name: tools/inspect_binary.py tests
+        run: python -m pytest tests/test_inspect_binary.py
+      # As on Windows: never run on macOS before; reports, does not gate yet.
+      - name: Python unit tests (reporting, not gating)
+        continue-on-error: true
+        run: python -m pytest
+
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Every PR commit carries Signed-off-by
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"; head="${{ github.event.pull_request.head.sha }}"
+          bad=$(git log --format='%H %s' "$base..$head" --invert-grep --grep='^Signed-off-by: ' || true)
+          if [ -n "$bad" ]; then echo "::error::commits without Signed-off-by (see CONTRIBUTING):"; echo "$bad"; exit 1; fi

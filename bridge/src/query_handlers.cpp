@@ -895,9 +895,11 @@ bool do_query_character(const char* params_json, std::string* out) {
     if (safe_read_had_fault()) {
         r.key("degraded");    r.value_bool(true);
         r.key("fault_count"); r.value_int(safe_read_fault_count());
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
         char addr_buf[24];
         snprintf(addr_buf, sizeof(addr_buf), "0x%lx", safe_read_last_fault());
         r.key("fault_addr");  r.value_string(addr_buf);
+#endif
     }
     r.end_object();
 
@@ -1526,9 +1528,11 @@ bool do_query_realm(const char* params_json, std::string* out) {
     if (safe_read_had_fault()) {
         r.key("degraded");    r.value_bool(true);
         r.key("fault_count"); r.value_int(safe_read_fault_count());
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
         char addr_buf[24];
         snprintf(addr_buf, sizeof(addr_buf), "0x%lx", safe_read_last_fault());
         r.key("fault_addr");  r.value_string(addr_buf);
+#endif
     }
 
     r.end_object();
@@ -2494,9 +2498,9 @@ void emit_monthly_telemetry(int32_t raw_date) {
     std::string line = r.take();
 
     // --- Append to the JSONL file (best-effort; create the dir if needed) ---
-    ::mkdir(bridge::instance_telemetry_dir(), 0777);   // ck-qn03: per-instance
+    ::mkdir(bridge::instance_telemetry_dir(), bridge::instance_dir_mode());   // ck-qn03: per-instance
     std::string gen_path = std::string(bridge::instance_telemetry_dir()) + "/gen_current.jsonl";
-    FILE* f = ::fopen(gen_path.c_str(), "a");
+    FILE* f = bridge::instance_fopen_private(gen_path.c_str(), "a");   // rc2 B1: 0600, O_NOFOLLOW
     if (f) {
         ::fputs(line.c_str(), f);
         ::fputc('\n', f);
@@ -4849,9 +4853,11 @@ bool do_query_wars(const char* params_json, std::string* out) {
     if (safe_read_had_fault()) {
         r.key("degraded");    r.value_bool(true);
         r.key("fault_count"); r.value_int(safe_read_fault_count());
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
         char addr_buf[24];
         snprintf(addr_buf, sizeof(addr_buf), "0x%lx", safe_read_last_fault());
         r.key("fault_addr");  r.value_string(addr_buf);
+#endif
     }
 
     r.end_object();
@@ -7302,6 +7308,13 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
     // Controlled character info
     uint32_t ctrl_id = g_controlled_primary.load(std::memory_order_relaxed);
     r.key("controlled_character_id"); r.value_uint(ctrl_id);
+    // rc2 B6: why no ruler is bound, when the bridge itself unbound one
+    // ("heir_is_player": the human inherited the seat's ruler). "" otherwise.
+    {
+        const std::string why = ctrl_id == 0 ? g_session_registry.first_unbound_reason()
+                                             : std::string();
+        r.key("controlled_unbound_reason"); r.value_string(why.c_str());
+    }
     r.key("agent_mode"); r.value_bool(g_agent_mode.load(std::memory_order_relaxed));
 
     // Controlled-ruler liveness. controlled_character_id does NOT auto-update
@@ -8147,8 +8160,10 @@ void dv_evaluate(uintptr_t decision, uintptr_t scope_ctx, DvFields& f) {
 // it; on the NEXT bridge start (after the monitor relaunches the frozen game) we promote
 // the stranded in-flight hash into the persistent skip file. Each culprit freezes at
 // most ONCE, then is skipped forever. (re_resolution_decisions64.md)
-static const char* kDecisionInflightPath = "/tmp/ck3-decision-inflight";
-static const char* kDecisionSkipPath     = "/tmp/ck3-decision-skip";
+// rc2 B1: in the instance state dir (/tmp in legacy layout, else private),
+// opened through the verified state-dir fd (O_NOFOLLOW), never by path.
+static constexpr const char* kDecisionInflight = "ck3-decision-inflight";
+static constexpr const char* kDecisionSkip     = "ck3-decision-skip";
 static std::unordered_set<uint32_t> g_decision_skip CK3_EARLY_INIT;
 static bool g_decision_skip_loaded = false;
 static void load_decision_skip() {
@@ -8158,18 +8173,18 @@ static void load_decision_skip() {
     g_decision_skip.insert(0xcce24e04);  // seed: foster_integration_decision (self-heal-captured 2026-06-19)
     g_decision_skip.insert(0x5f86cc47);  // seed: create_armenian_empire_decision — froze game thread on #109 Surface-2 live check (2026-06-22); engine trigger-eval hangs with SIGALRM masked
     // Promote a stranded in-flight hash from a prior freeze, then clear the marker.
-    if (FILE* f = fopen(kDecisionInflightPath, "r")) {
+    if (FILE* f = bridge::instance_state_fopen(kDecisionInflight, "r")) {
         unsigned h = 0;
         if (fscanf(f, "%x", &h) == 1 && h) {
             g_decision_skip.insert(h);
-            if (FILE* sf = fopen(kDecisionSkipPath, "a")) { fprintf(sf, "%08x\n", h); fclose(sf); }
+            if (FILE* sf = bridge::instance_state_fopen(kDecisionSkip, "a")) { fprintf(sf, "%08x\n", h); fclose(sf); }
             if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] #64 promoted in-flight culprit hash 0x%08x to skip-list\n", h);
         }
         fclose(f);
-        remove(kDecisionInflightPath);
+        bridge::instance_state_unlink(kDecisionInflight);
     }
     // Load the persistent skip file.
-    if (FILE* sf = fopen(kDecisionSkipPath, "r")) {
+    if (FILE* sf = bridge::instance_state_fopen(kDecisionSkip, "r")) {
         unsigned h;
         while (fscanf(sf, "%x", &h) == 1) if (h) g_decision_skip.insert(h);
         fclose(sf);
@@ -8371,7 +8386,7 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
                     // trigger-eval hangs (game freezes), this marker survives the relaunch and
                     // load_decision_skip() promotes it to the skip-list next time. Cleared
                     // below on any return (success or caught fault) — only a true freeze strands it.
-                    if (FILE* mf = fopen(kDecisionInflightPath, "w")) {
+                    if (FILE* mf = bridge::instance_state_fopen(kDecisionInflight, "w")) {
                         fprintf(mf, "%08x\n", (unsigned)hash); fflush(mf); fclose(mf);
                     }
                     watchdog_arm(2);
@@ -8382,7 +8397,7 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
                     }
                     g_in_protected_region = false;
                     watchdog_disarm();
-                    remove(kDecisionInflightPath);   // eval returned (or faulted) → not a freeze culprit
+                    bridge::instance_state_unlink(kDecisionInflight);   // eval returned (or faulted) → not a freeze culprit
                     if (!eval_done) {
                         // hung or faulted on this decision — skip it, keep going.
                         f.eval_error = true;
@@ -13510,9 +13525,9 @@ bool do_query_cb_options(const char* params_json, std::string* out) {
         option_count <= 0 || option_count > 100) {
         if (out) {
             char buf[256];
+            // rc2 B2: no option_array_ptr (a process VA) in the reply.
             snprintf(buf, sizeof(buf),
-                     R"({"error":"no_cb_options","option_array_ptr":"0x%lx","option_count":%d})",
-                     option_array_ptr, option_count);
+                     R"({"error":"no_cb_options","option_count":%d})", option_count);
             *out = buf;
         }
         return false;
@@ -13744,12 +13759,14 @@ bool do_query_pending_events(const char* /*params_json*/, std::string* out) {
 
     // Diagnostic: dump queue address and nearby memory for RE validation
     {
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
         char diag[256];
         uintptr_t subsys_val = gs ? safe_read<uintptr_t>(gs + ck3::event_sys::GAME_STATE_SUBSYS_PTR) : 0;
         snprintf(diag, sizeof(diag), "gs=%p subsys=%p queue=%p list=%p count_addr=%p",
                  (void*)gs, (void*)subsys_val, (void*)queue,
                  (void*)event_list_ptr, queue ? (void*)(queue + ck3::event_sys::EVENT_LIST_COUNT) : nullptr);
         r.key("_diag_addrs"); r.value_string(diag);
+#endif
         // Also read next_id counter to verify we're at the right spot
         if (queue) {
             uint32_t next_id = safe_read<uint32_t>(queue + ck3::event_sys::EVENT_QUEUE_NEXT_ID);
@@ -13990,6 +14007,7 @@ bool do_query_event_probabilities(const char* /*params_json*/, std::string* out)
     if (out) *out = r.take();
     return true;
 }
+#ifdef CK3_BRIDGE_DEBUG_VERBS  // rc2 B2: raw memory reads (memory_probe, resolve_global) are compiled out of release builds
 
 // =============================================================================
 // memory_probe — General-purpose hex dump for RE validation
@@ -14395,6 +14413,7 @@ bool do_query_resolve_global(const char* params_json, std::string* out) {
     *out = r.take();
     return true;
 }
+#endif  // CK3_BRIDGE_DEBUG_VERBS (rc2 B2)
 
 // =============================================================================
 // query_trait_db — Enumerate all traits in the trait database with full metadata
@@ -17201,10 +17220,12 @@ bool do_query_trigger_slots(const char* params_json, std::string* out) {
     r.begin_object();
     r.key("success"); r.value_bool(true);
     r.key("interaction"); r.value_string(itype);
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
     {
         char hex[20]; snprintf(hex, sizeof(hex), "0x%lx", (unsigned long)idef);
         r.key("interaction_addr"); r.value_string(hex);
     }
+#endif
     r.key("ai_response_flag"); r.value_int(ai_flag);
     r.key("can_send_bypassed_for_ai"); r.value_bool(ai_flag != 0);
 

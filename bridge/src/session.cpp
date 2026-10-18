@@ -19,6 +19,12 @@
 
 namespace bridge {
 
+// instance_paths.cpp; weak so host targets that do not link it still link.
+mode_t instance_dir_mode() __attribute__((weak));
+}  // namespace bridge
+#include "private_fopen.h"   // rc2 B1: detach stamp opened 0600, O_NOFOLLOW
+namespace bridge {
+
 // Global state.
 thread_local ClientContext* g_current_client_context = nullptr;
 SessionRegistry g_session_registry CK3_EARLY_INIT;
@@ -145,6 +151,11 @@ std::string Session::to_json() const {
     json += std::to_string(heir_character_id);
     json += ",\"claimed_character_ids\":";
     append_char_id_array(json, claimed_character_ids);
+    // rc2 B6: "" unless the bridge itself unbound this seat.
+    json += ",\"unbound_reason\":";
+    append_json_string(json, unbound_reason);
+    json += ",\"unbound_heir_id\":";
+    json += std::to_string(unbound_heir_id);
     json += "}";
     return json;
 }
@@ -231,6 +242,14 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
         if (reason_out) *reason_out = "observe_mode";
         return false;
     }
+    // rc2 B6: never the human player's character, on ANY bind path.
+    if (const uint32_t pid = player_character_id(); pid && (char_id & 0xFFFFFFu) == pid) {
+        if (reason_out) *reason_out = "character_is_player";
+        if (g_logfile)
+            fprintf(g_logfile, "[CK3-Bridge] SESSION: claim of %u refused — it is the "
+                               "human player's character\n", char_id);
+        return false;
+    }
 
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = ownership_.find(char_id);
@@ -240,6 +259,8 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
                 std::lock_guard<std::mutex> slock(session->mutex);
                 session->claimed_character_ids.insert(char_id);
                 session->primary_character_id = char_id;
+                session->unbound_reason.clear();
+                session->unbound_heir_id = 0;
             }
             note_session_claim_locked(session);
             rebuild_legacy_mirrors_locked();
@@ -274,6 +295,8 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
         std::lock_guard<std::mutex> slock(session->mutex);
         session->claimed_character_ids.insert(char_id);
         session->primary_character_id = char_id;
+        session->unbound_reason.clear();
+        session->unbound_heir_id = 0;
     }
     note_session_claim_locked(session);
     rebuild_legacy_mirrors_locked();
@@ -361,6 +384,13 @@ bool SessionRegistry::swap_character(Session* session, uint32_t from,
         if (reason_out) *reason_out = "observe_mode";
         return false;
     }
+    // rc2 B6: a swap onto the human player is refused like a claim of it. The
+    // succession handoff is a swap, so this is what keeps the bridge from
+    // binding the player when the player inherits the seat's ruler.
+    if (const uint32_t pid = player_character_id(); pid && (to & 0xFFFFFFu) == pid) {
+        if (reason_out) *reason_out = "character_is_player";
+        return false;
+    }
     if (from == to) return true;            // nothing to move
 
     {
@@ -392,6 +422,8 @@ bool SessionRegistry::swap_character(Session* session, uint32_t from,
                 session->claimed_character_ids.erase(from);
                 session->claimed_character_ids.insert(to);
                 session->primary_character_id = to;
+                session->unbound_reason.clear();
+                session->unbound_heir_id = 0;
                 // DELIBERATELY NOT setting last_steered_character_id. That field
                 // exists so a session which released its own CORPSE can still be
                 // handed an heir (ck-7rk6); a swap is a deliberate switch away
@@ -412,6 +444,53 @@ bool SessionRegistry::swap_character(Session* session, uint32_t from,
 
     // NOT A SWAP — a net +1. The cap must see it, so take the claim path.
     return claim_character(session, to, reason_out);
+}
+
+uint32_t SessionRegistry::player_character_id() const {
+    const PlayerCharacterSource src = player_src_.load();
+    if (!src) return 0;
+    const uint32_t pid = src() & 0xFFFFFFu;
+    return (pid == 0xFFFFFFu) ? 0 : pid;
+}
+
+std::string SessionRegistry::first_unbound_reason() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& kv : sessions_) {
+        const Session& s = *kv.second;
+        if (!s.is_control()) continue;
+        std::lock_guard<std::mutex> slock(s.mutex);
+        if (s.primary_character_id == 0 && !s.unbound_reason.empty()) return s.unbound_reason;
+    }
+    return std::string();
+}
+
+// rc2 B6: the dead ruler's heir is the human player. Release the corpse (state
+// HeirIsPlayer, so the handoff never recovers it and never retries) and record
+// why, instead of binding the player.
+bool SessionRegistry::unbind_for_player_heir(Session* session, uint32_t dead,
+                                             uint32_t heir) {
+    if (!session) return false;
+    const bool released = release_character(session, dead, ReleaseSubjectState::HeirIsPlayer);
+    {
+        std::lock_guard<std::mutex> slock(session->mutex);
+        // A corpse the seat had already released (recovered by handoff_subject)
+        // must not be recovered again next tick.
+        if (!released && session->last_steered_character_id == dead)
+            session->last_release_state = ReleaseSubjectState::HeirIsPlayer;
+        session->unbound_reason  = "heir_is_player";
+        session->unbound_heir_id = heir;
+        session->heir_character_id = 0;
+        session->primary_title_id  = 0;
+    }
+    if (g_logfile) {
+        fprintf(g_logfile,
+                "[CK3-Bridge] HANDOFF_REFUSED heir_is_player: session %s, %u died and "
+                "its heir %u is the human player. Seat unbound (released=%d); the "
+                "agent must pick another ruler with session control.\n",
+                session->session_id.c_str(), dead, heir, released ? 1 : 0);
+        fflush(g_logfile);
+    }
+    return released;
 }
 
 bool SessionRegistry::release_character(Session* session, uint32_t char_id,
@@ -1247,11 +1326,12 @@ void session_publish_detach_state() {
     const long long since_epoch_s =
         static_cast<long long>(time(nullptr)) - static_cast<long long>(held_ms / 1000ull);
 
-    ::mkdir(state_dir.c_str(), 0777);
+    // rc2 B1: 0700 (0777 legacy). Weak: host targets without instance_paths get 0700.
+    ::mkdir(state_dir.c_str(), instance_dir_mode ? instance_dir_mode() : 0700);
     // Write-and-rename so the reader never sees a half-written integer: its parse
     // is unguarded bash arithmetic and a torn read would abort the run.
     const std::string tmp = path + ".tmp";
-    FILE* f = fopen(tmp.c_str(), "w");
+    FILE* f = private_fopen(tmp.c_str(), "w");
     if (!f) return;
     fprintf(f, "%lld\n", since_epoch_s);
     fclose(f);

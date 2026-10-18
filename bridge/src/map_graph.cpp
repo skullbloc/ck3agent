@@ -33,6 +33,7 @@
 // The baked-artifact struct layout is the single source of truth. Include it directly;
 // DO NOT redeclare the structs.
 #include "../tools/ck3mapgen/ck3map_format.h"
+#include "instance_paths.h"   // rc2 B1: state dir + verified fd
 
 #include <cstdint>
 #include <cstring>
@@ -293,14 +294,20 @@ static std::vector<uint32_t> resolve_seeds(const char* params_json, std::string*
 } // anonymous namespace
 
 // ───────────────────────────── Loader (called from bridge_init) ──────────────
-// Artifact path resolution: $CK3MAP_BIN, else /tmp/ck3map.bin. mmap read-only-private.
+// Artifact path resolution: $CK3MAP_BIN, else <state dir>/ck3map.bin. mmap read-only-private.
 void map_graph_init() {
     if (g_map.map_base) { munmap(g_map.map_base, g_map.map_size); }
     g_map = MapArtifact{};
 
+    // rc2 B1: the default is <state dir>/ck3map.bin (/tmp only in the legacy
+    // layout), opened through the verified state-dir fd; an explicit
+    // $CK3MAP_BIN is the operator's choice and is opened as given.
     const char* env_bin = getenv("CK3MAP_BIN");
-    std::string path = (env_bin && *env_bin) ? env_bin : "/tmp/ck3map.bin";
-    int fd = open(path.c_str(), O_RDONLY);
+    const bool explicit_bin = env_bin && *env_bin;
+    std::string path = explicit_bin ? std::string(env_bin)
+                                    : std::string(bridge::instance_state_dir()) + "/ck3map.bin";
+    int fd = explicit_bin ? open(path.c_str(), O_RDONLY | O_CLOEXEC)
+                          : bridge::instance_state_open_fd("ck3map.bin");
     if (fd < 0) {
         ADLOG("map_graph: artifact not found at %s — query_map_graph disabled\n", path.c_str());
         return;
@@ -371,7 +378,7 @@ bool do_query_map_graph(const char* params_json, std::string* out) {
     // mmap'd artifact array reads are clamped to the header counts, and mg_str() guarantees a
     // pool string is NUL-terminated within strpool_size before any strlen/strcmp/append.
     if (!g_map.ok) {
-        if (out) *out = R"({"error":"map_artifact_missing","hint":"build ck3map.bin via ck3mapgen and place at /tmp/ck3map.bin (or set $CK3MAP_BIN); bridge restart required"})";
+        if (out) *out = R"({"error":"map_artifact_missing","hint":"build ck3map.bin via ck3mapgen and place it in the bridge state dir (/tmp in the legacy layout) or set $CK3MAP_BIN; bridge restart required"})";
         return false;
     }
 

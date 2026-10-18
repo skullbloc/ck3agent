@@ -1,58 +1,63 @@
 # Connecting Claude Desktop
 
-Claude Desktop has no Linux build, and the bridge only runs on Linux, so
-Desktop connects from another machine (Mac or Windows) to the MCP server on
-the game machine.
+Use Claude Desktop instead of Claude Code. Desktop reaches the MCP server on
+the game machine through `mcp-remote`.
 
-## 1. Serve over HTTP on the game machine
+## Prerequisites
 
-```bash
-ck3agent serve --transport http --port 8000       # binds 127.0.0.1 only
-```
+- Game machine: [Getting started](getting-started.md) done, game running.
+- Desktop machine: Claude Desktop for macOS, Windows, or the Linux beta for
+  Ubuntu and Debian. Node.js 18 or newer, which provides `npx`.
+- Desktop on another machine: SSH access to the game machine.
 
-The endpoint is `http://127.0.0.1:8000/mcp` (streamable HTTP).
+## Steps
 
-## 2. Reach it from your desktop
+1. On the game machine, start the HTTP server:
 
-The server is unauthenticated, so do not open the port. Tunnel it:
+   ```bash
+   ck3agent serve --transport http --port 8000
+   ```
 
-```bash
-# on the desktop machine
-ssh -N -L 8000:127.0.0.1:8000 you@game-machine
-```
+   It binds to 127.0.0.1 and has no authentication. It prints the Desktop
+   config snippet and the SSH command for step 2. Never expose the port on a
+   network: a non-loopback `--host` is refused without `--allow-remote`.
 
-Now `http://127.0.0.1:8000/mcp` on the desktop reaches the game machine.
+2. If Desktop runs on another machine, open a tunnel from it:
 
-## 3. Add it to Claude Desktop
+   ```bash
+   ssh -N -L 8000:127.0.0.1:8000 you@game-machine
+   ```
 
-Either **Settings → Connectors → Add custom connector** with the URL above
-(works where your Desktop build accepts plain-HTTP localhost connectors), or
-the stdio shim in `claude_desktop_config.json`, which always works:
+3. Add the server to `claude_desktop_config.json` and restart Desktop. The
+   file is under Settings, Developer, Edit Config.
 
-```json
-{
-  "mcpServers": {
-    "ck3": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]
-    }
-  }
-}
-```
+   ```json
+   {
+     "mcpServers": {
+       "ck3": { "command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"] }
+     }
+   }
+   ```
 
-Restart Desktop; the `ck3` tools appear in the tools menu.
+   With the Linux beta on the game machine itself, skip steps 1 and 2 and use
+   `"command": "ck3agent", "args": ["serve"]`.
 
-## 4. Give it the protocol
+4. Create a Desktop Project and paste
+   [`ck3agent/protocol/CLAUDE-desktop.md`](../ck3agent/protocol/CLAUDE-desktop.md)
+   into its instructions. Desktop has no shell, so this variant plays one
+   cycle per message and leaves the game at speed 1 between messages.
 
-Desktop has no `CLAUDE.md`. Paste the contents of the play directory's
-`CLAUDE.md` into a Project's instructions (or into the first message). The
-pause discipline matters most: reads need the game paused, writes need it
-unpaused.
+5. Bind a ruler: "Who can you control?", then "Take control of <name>".
 
-## Notes
+## Check it worked
 
-* This path was designed on Linux and tested against the HTTP transport with
-  a generic MCP client; it has not been exercised from a Desktop build by the
-  maintainers in this release. Issues welcome.
-* The live-state hook is a Claude Code feature; in Desktop, start each turn
-  with `observe`.
+- The `ck3` tools appear in Desktop's tools menu.
+- "Brief me on the realm" returns the ruler's name and the game date.
+
+## If it fails
+
+- No tools: run `npx -y mcp-remote http://127.0.0.1:8000/mcp` in a terminal
+  on the Desktop machine. It prints the connection error.
+- Connection refused: the tunnel or `ck3agent serve` is not running.
+- Stale state: Desktop has no live-state hook. The Desktop protocol starts
+  every message with `observe`.

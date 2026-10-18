@@ -1,53 +1,103 @@
 # Scripted runs
 
-For research you often want the same thing many times, unattended: a
-starting prompt, a goal, a cycle budget, logs. `ck3agent run` does that with a
-headless Claude Code session (`claude -p`), which is the same mechanism the
-authors used for their own experiments.
+Run Claude unattended with a goal and a stopping rule, and keep a record.
+`ck3agent run` drives a headless Claude Code session (`claude -p`).
 
-```bash
-ck3agent launch --continue --wait 120
-ck3agent run --goal "Hold the kingdom together through the next succession." --cycles 60
-```
+## Prerequisites
 
-What happens:
+- [Getting started](getting-started.md) done.
+- A goal that names the AI ruler to play, or a ruler already bound. The run
+  prompt stops if neither is true.
+- For repeatable runs, a fixed save file per condition.
 
-1. The play directory's `.mcp.json` and `CLAUDE.md` are used as in an
-   interactive session.
-2. A starting prompt is rendered from `ck3agent/protocol/run-prompt.md` with
-   your `--goal` and `--cycles`, saved to `runs/<timestamp>.prompt.md`, and
-   passed to `claude -p`.
-3. The session's output streams to your terminal and to
-   `runs/<timestamp>.log`. The bridge's own action log is in
-   `/tmp/ck3-telemetry/action_log.jsonl` (override with `CK3_TELE`).
-4. The prompt asks the model to stop after the cycle budget and write a short
-   summary; `--max-turns N` is a hard cap on agentic turns on top of that.
+## Steps
 
-Options:
+1. Start the game from a known save:
+
+   ```bash
+   ck3agent launch --save ~/saves/start_867.ck3
+   ```
+
+   `--save` implies `--continue` and records the save's SHA-256, which the
+   run manifest copies. Without a fixed save, use `ck3agent launch --continue`.
+
+2. Start the run:
+
+   ```bash
+   ck3agent run --goal "Hold the kingdom together through the next succession." \
+                --cycles 60 --until-date 900.1.1 --wall-seconds 7200
+   ```
+
+   The run stops at the first limit reached: the cycle budget in the prompt,
+   `--max-turns`, the game date, or the wall-clock limit.
+
+3. To stop at a limit, `ck3agent run` sends Claude SIGINT, pauses the game,
+   and waits 30 seconds for Claude to finish its stream. Then it sends SIGTERM,
+   and after 10 more seconds SIGKILL.
+
+   The bridge lets only the session that bound a ruler release it. The MCP
+   server releases its session's rulers as soon as Claude Code signals it to
+   stop, but Claude Code kills it 500 ms later. So once Claude has exited,
+   `ck3agent run` resumes the server's session with the token the server
+   wrote when it connected (`<stamp>.session.json`, deleted afterwards) and
+   releases whatever that session still holds. Then it pauses the game and
+   checks that no ruler is bound. This also runs on Ctrl-C, SIGTERM and
+   SIGHUP, including a closed terminal: the manifest is written before
+   anything is printed. It does not run after `kill -9` to `ck3agent`; see
+   [If it fails](#if-it-fails).
+
+## Options
 
 | Flag | Meaning |
 |------|---------|
-| `--goal TEXT` | substituted for `{{goal}}` in the run prompt |
-| `--prompt-file FILE` | use this file as the entire starting prompt (`{{goal}}`/`{{cycles}}` still substituted) |
-| `--cycles N` | cycle budget written into the prompt (default 50) |
-| `--max-turns N` | `claude --max-turns`; hard stop |
+| `--goal TEXT` | replaces `{{goal}}` in the run prompt |
+| `--prompt-file FILE` | use FILE as the whole prompt; `{{goal}}` and `{{cycles}}` are still replaced |
+| `--cycles N` | cycle budget written into the prompt, default 50 |
+| `--max-turns N` | `claude --max-turns`, default 400, `0` for no cap |
+| `--until-date Y.M.D` | stop at this game date, checked every 15 seconds |
+| `--wall-seconds N` | stop after N seconds |
 | `--model NAME` | `claude --model` |
-| `--play-dir DIR` | another play directory (so runs can have different `CLAUDE.md`s) |
-| `--yolo` | `--dangerously-skip-permissions` instead of the allow-list (`mcp__ck3`, `Bash(sleep:*)`) |
-| `--quiet` | do not echo to stdout |
-| `-- <args>` | anything after `--` goes to `claude` unchanged |
+| `--play-dir DIR` | another play directory, for example one per condition |
+| `--quiet` | do not echo the session to the terminal |
+| `--no-game-check` | start even if the bridge socket is not up |
+| `--dangerously-skip-permissions` | no allow-list: Claude may run any tool. Only in a disposable VM; see [SECURITY.md](../SECURITY.md). The default allows `mcp__ck3` and `Bash(sleep:*)`. |
+| `-- ARGS` | passed to `claude` unchanged |
 
-## Reproducibility
+A stop by `--until-date` or `--wall-seconds` exits 0. Ctrl-C exits 130,
+SIGTERM 143, SIGHUP 129.
 
-This release keeps it minimal: the prompt and the transcript are saved, the
-bridge logs every action with the game date, and `ck3agent version` reports
-the bridge's supported BuildID. Save files, seeds and the model are yours to
-record; a convenient pattern is one play directory per condition with its own
-`CLAUDE.md`, and a shell loop over saves. Sealed, hashed result bundles are not
-part of this release.
+## What a run writes
 
-## Control conditions
+All under `<play dir>/runs/`, one timestamp per run (`-2`, `-3`, ... added
+when two runs start in the same second):
 
-A run with no model is just the game running with the bridge attached and no
-client connected (`ck3agent launch --continue --wait 300` and walk away). The bridge does not steer anything on its own; the native AI
-plays. Launch, let it run, and read the action log and the save.
+| File | Contents |
+|------|----------|
+| `<stamp>.prompt.md` | the exact prompt sent |
+| `<stamp>.jsonl` | the full transcript, `claude --output-format stream-json --verbose` |
+| `<stamp>.json` | the manifest: model, session id, Claude Code and ck3agent versions, the last launch record with any save hash, and whether its pid is the game's (`launch_check`). Also the start and end game date, usage, cost, exit code, stop reason, how Claude was stopped (`claude_stop`), the server's release, the release through its resumed session (`resumed_release`) and the teardown result |
+| `<stamp>.stderr.log` | Claude Code's stderr |
+| `<stamp>.tools.json` | the tools the MCP server serves: names, descriptions and input schemas, with a hash of them |
+| `<stamp>.release.json` | the claims the MCP server held at shutdown, and which ones it released |
+| `<stamp>.session.json` | the MCP server's current bridge session id and resume token, rewritten at every handshake including a reconnect. Mode 0600: the token is a credential for that session. `ck3agent run` resumes the session with it, releases what is left, then deletes the file; it is left behind only if `ck3agent` itself is SIGKILLed |
+| `<stamp>.actions.jsonl` | the bridge action-log lines written during the run |
+| `<stamp>.mcp.json` | the MCP config the run used |
+
+## Check it worked
+
+- `<stamp>.json` has `end_game_date`, `exit_code` and `stop_reason`.
+- The teardown has `release` ok: no ruler is bound.
+- `<stamp>.jsonl` ends with a `result` event only if Claude finished, or
+  stopped cleanly on SIGINT. Otherwise `result_event` is false, and usage and
+  cost read `unrecorded: terminated`, or `unrecorded: no result event` if
+  Claude exited by itself.
+
+## If it fails
+
+- `bridge socket not listening`: the game is not running. Launch it first.
+- No ruler bound: put the ruler's name in `--goal`, or bind one interactively first.
+- `teardown release: N still held by session ...`: neither the MCP server nor
+  the resumed session released it, for example after `kill -9` to
+  `ck3agent`. The manifest's `resumed_release.error` says why. Quit the game.
+
+Research use, controls and recorded variables: [research notes](research.md).

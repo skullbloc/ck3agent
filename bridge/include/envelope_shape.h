@@ -24,12 +24,40 @@
 // closes only the case where the line was never a request.
 #include "rapidjson/document.h"
 
+#include <cstddef>
+
 namespace bridge {
+
+// rc2 B9: limits checked on every socket line BEFORE any parse. RapidJSON's
+// Accept() (used to re-serialize params) recurses even when Parse() is
+// iterative, so depth is capped here, at the one choke point.
+constexpr size_t kMaxLineBytes = 1u << 20;   // 1 MiB; longer drops the client
+constexpr int    kMaxJsonDepth = 128;
+
+// True when [s, s+n) nests objects/arrays deeper than max_depth. Brackets
+// inside strings do not count. Malformed input is left to the parser.
+inline bool json_depth_exceeds(const char* s, size_t n, int max_depth) {
+    int depth = 0;
+    bool in_str = false, esc = false;
+    for (size_t i = 0; i < n; ++i) {
+        const char c = s[i];
+        if (in_str) {
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') in_str = false;
+            continue;
+        }
+        if (c == '"') in_str = true;
+        else if (c == '{' || c == '[') { if (++depth > max_depth) return true; }
+        else if (c == '}' || c == ']') { if (depth > 0) --depth; }
+    }
+    return false;
+}
 
 inline bool envelope_has_actions_array(const char* line) {
     if (!line) return false;
     rapidjson::Document d;
-    d.Parse(line);
+    d.Parse<rapidjson::kParseIterativeFlag>(line);
     if (d.HasParseError() || !d.IsObject()) return false;
     return d.HasMember("actions") && d["actions"].IsArray();
 }

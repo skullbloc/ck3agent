@@ -937,6 +937,7 @@ async def bridge_lifespan(server: FastMCP):
     client = AsyncBridgeClient()
     state = BridgeState()
     state._client = client
+    _record_session_at_handshake(client)   # rc2 B7: before the pre-bind claims anything
 
     EXPECTED_BRIDGE_VERSION = "v8-2026-03-20"
 
@@ -946,7 +947,8 @@ async def bridge_lifespan(server: FastMCP):
         ack = await _handshake_and_bind(client, state)
         if ack:
             state.handshake_info = ack
-            bv = ack.get("bridge_version", "unknown")
+            # rc2: "bridge_version" is the release version; the wire protocol tag moved to "bridge_protocol".
+            bv = ack.get("bridge_protocol") or ack.get("bridge_version", "unknown")
             bid = ack.get("binary_build_id", "unknown")
             orev = ack.get("offset_revision", "unknown")
             odate = ack.get("offset_date", "unknown")
@@ -968,9 +970,11 @@ async def bridge_lifespan(server: FastMCP):
         log.warning("Bridge not available — tools will return errors. "
                      "Start CK3 with bridge DLL and reconnect.")
 
+    _arm_exit_signals(state)            # rc2 B7: opt-in, see _release_on_exit
     try:
         yield state
     finally:
+        await _release_on_exit(state)
         if state._listener_task:
             state._listener_task.cancel()
             try:
@@ -980,6 +984,8 @@ async def bridge_lifespan(server: FastMCP):
         if state._client:
             await client.close()
         log.info("Bridge disconnected")
+        if _EXIT_SIGNAL:                # the stdin reader thread would hold exit until EOF
+            os._exit(128 + _EXIT_SIGNAL[0])
 
 
 # ---------------------------------------------------------------------------
@@ -1131,12 +1137,17 @@ async def _try_reconnect(state: BridgeState) -> bool:
     try:
         from async_bridge_client import AsyncBridgeClient
         old_client = state._client
+        resume = _reconnect_resume_token(old_client)
         if old_client:
             try:
                 await old_client.close()
             except Exception:
                 pass
         state._client = AsyncBridgeClient()
+        # rc2 B7 (cli-4): the new client's session is recorded like the first
+        # one, or CK3_SESSION_OUT keeps naming a session that no longer holds
+        # the claims and `ck3agent run` resumes the wrong one after a SIGKILL.
+        _record_session_at_handshake(state._client)
         connected = await state._client.connect()
         if connected:
             state.connected = True
@@ -1144,7 +1155,11 @@ async def _try_reconnect(state: BridgeState) -> bool:
             # "RELEASED and the session ERASED; the client must handshake"), so
             # the claim does NOT survive it. Re-bind here or the agent carries
             # on unbound for the rest of the episode with nothing saying so.
-            ack = await _handshake_and_bind(state._client, state)
+            # Under release-on-exit the old token is presented first: where the
+            # bridge kept the session (claims pinned) the claims stay on one
+            # session; where it destroyed it the bridge answers unknown_token
+            # and mints a fresh one, and the re-bind below claims again.
+            ack = await _handshake_and_bind(state._client, state, resume_token=resume)
             if ack:
                 state.handshake_info = ack
             if state._listener_task is None or state._listener_task.done():
@@ -1154,6 +1169,20 @@ async def _try_reconnect(state: BridgeState) -> bool:
     except Exception as e:
         log.error("Reconnect failed: %s: %s", type(e).__name__, e)
     return False
+
+
+def _reconnect_resume_token(old_client) -> Optional[str]:
+    """The previous session's resume token, presented on a reconnect ONLY when
+    release-on-exit is armed (`ck3agent run`). An experiment episode, which
+    never sets it, reconnects exactly as before."""
+    if not os.environ.get(RELEASE_ON_EXIT_ENV) or old_client is None:
+        return None
+    try:
+        ack = old_client.handshake_ack
+    except Exception:                                           # noqa: BLE001
+        return None
+    tok = ack.get("resume_token") if isinstance(ack, dict) else None
+    return tok if isinstance(tok, str) and tok else None
 
 
 async def _ensure_connected(state: BridgeState) -> dict[str, Any] | None:
@@ -1233,7 +1262,8 @@ def _agent_character_id() -> Optional[int]:
     return cid
 
 
-async def _handshake_and_bind(client, state) -> Optional[dict]:
+async def _handshake_and_bind(client, state,
+                              resume_token: Optional[str] = None) -> Optional[dict]:
     """Handshake at v2, then CLAIM the declared character before the first turn.
 
     WHY THE CLAIM IS HERE AND NOT IN THE PROMPT (ck-mxlt, e0's ruling
@@ -1269,11 +1299,16 @@ async def _handshake_and_bind(client, state) -> Optional[dict]:
     # ck-j6lk: DECLARE THE SEAT. This session is what an arm's agent acts
     # through, so it is a seat; the driver's steer-probe and speed-pin helpers
     # are control sessions that never claim and must not declare.
+    # rc2 B7 (cli-4): a reconnect under release-on-exit presents the old token.
+    resume = {"resume_token": resume_token} if resume_token else {}
     ack = await client.handshake(client_name=DEFAULT_CLIENT_NAME,
                                  mode=MODE_CONTROL,
-                                 **seat_declaration_kwargs())
+                                 **seat_declaration_kwargs(), **resume)
     if not ack:
         return ack
+    if resume_token:
+        log.info("reconnect presented its resume token: resumed=%s resume_status=%s session=%s",
+                 ack.get("resumed"), ack.get("resume_status"), ack.get("session_id"))
     cid = _agent_character_id()
     if cid is None:
         return ack                      # nothing declared: unchanged behaviour
@@ -2585,7 +2620,7 @@ async def game(action: str, speed: int = 3, enabled: bool = True) -> dict[str, A
     Args:
         action: Operation: pause, unpause, speed, auto_events.
         speed: For action=speed: game speed 1-5.
-        enabled: For action=auto_events: true = auto-respond with option 0.
+        enabled: For action=auto_events: true = while no session is open the bridge clears the event pause and picks no option.
     """
     state = _get_state()
     err = await _ensure_connected(state)
@@ -2838,10 +2873,19 @@ async def succession_plan(character_id: int = 0) -> dict[str, Any]:
 @mcp.tool()
 async def set_phase(phase: str = None, character_id: int = 0,
                     overrides: dict = None) -> dict[str, Any]:
-    """Assert your strategic posture by NAME; the engine sets the 10-axis genome and
-    subsystem toggles for you. You do NOT hand-tune ten integers. Re-pinning after a
-    succession is AUTOMATIC. phase=None reads the current genome. Subsystem toggles are
-    advisory (the engine does NOT enforce CallAllies) — the genome does the real work.
+    """Assert your strategic posture by NAME instead of hand-tuning ten integers.
+    phase=None reads the current genome. Nothing re-applies it after a succession:
+    call it again for the heir.
+
+    Each call writes, for the ruler: the 10 personality axes; DeclareWar/Decisions
+    subsystem toggles, which are bookkeeping the engine does NOT enforce; and
+    set_character_ai, re-enabling the native AI tick. phase='expansion' also arms
+    the off-goal war veto (AI-picked wars vetoed, declare_war wars not). The veto is
+    ONE process-wide flag: every controlled character of every session,
+    character_id ignored, never disarmed by another phase, on until
+    session(action='set_experimental', flag='off_goal_veto', enabled=false) or the
+    game exits. result.offgoal_veto_armed is true only when the bridge confirms
+    the write; see also offgoal_veto_scope.
 
     Args:
         phase: expansion|rebuild|succession_trough|stalled_siege|fragile_minority|
@@ -2973,17 +3017,33 @@ async def session(action: str, character_id: int = 0, speed: int = 3,
     looping); or set speed/pause. Speed is capped at 3; 4-5 while at war/near-succession
     is REFUSED. The human player can be a target but never an actor.
 
-    experimental_flags lists the default-OFF EXPERIMENTAL-unvalidated engine flags;
-    set_experimental(flag=<name>, enabled=bool) arms ONE for disposable-save validation
-    ONLY (off_goal_veto / break_alliance / force_offensive_stance). NEVER rely on an armed
-    flag on the live campaign until its live smoke passes — the bridge ships them inert.
+    With no ruler bound, whoami returns ok=false, blocked.gate='no_ruler_bound',
+    controlled=null, and blocked.measured.unbound_reason says why ('heir_is_player':
+    the human inherited; '': no reason recorded, as after a reconnect). So do
+    observe_v2, plan_war, declare_war, succession_plan, set_phase, do, inspect and
+    cbs when character_id is omitted. observe, query, discover, steer and intent are
+    not checked: they return ok=true with the bridge's empty or declined reply.
+    'actor_unresolved' means the read failed, not that nothing is bound. A seat whose
+    ruler became the human's character gets 'cannot_act_as_player'. control needs
+    character_id: 0 or omitted is refused (missing_character_id), never an unbind.
+
+    experimental_flags lists the EXPERIMENTAL-unvalidated engine flags, all OFF at
+    boot; set_experimental(flag=<name>, enabled=bool) arms or disarms ONE
+    (off_goal_veto / break_alliance / force_offensive_stance). set_phase('expansion')
+    also arms off_goal_veto, which is process-wide (every controlled character of
+    every session) until disarmed or the game exits. The bridge has no readback:
+    each flag's `live` is null and `last_written_here` is this server's last
+    confirmed write (another seat's write is not seen; null does not mean off).
 
     Args:
         action: control|release|whoami|speed|pause|unpause|health|auto_events|
             experimental_flags|set_experimental.
-        character_id: for control/release.
+        character_id: for control (required, > 0) and release.
         speed: 1-3 (4-5 refused while at war).
-        enabled: for auto_events AND set_experimental (arm/disarm the flag).
+        enabled: for auto_events AND set_experimental (arm/disarm the flag). The
+            bridge auto-handles events only while NO client socket is open, so never
+            while you are connected; it then clears the event pause, unpauses a
+            paused game, and picks no option.
         disable_native_ai: for control.
         flag: for set_experimental — off_goal_veto|break_alliance|force_offensive_stance.
     """
@@ -3117,8 +3177,25 @@ def _write_tool_surface_record() -> None:
                 via = "tool_manager._tools"
     except Exception:                                           # noqa: BLE001
         names, via = [], "unavailable"
+    # rc2 B7: what the MODEL is served, not just the names: FastMCP.list_tools()
+    # is the tools/list handler, so its output IS the surface (name, description,
+    # inputSchema). Run in a thread so an importer's running loop cannot block it.
+    schemas, schemas_via = None, "unavailable"
+    try:
+        import threading as _th
+        box: list = []
+        t = _th.Thread(target=lambda: box.append(asyncio.run(mcp.list_tools())), daemon=True)
+        t.start()
+        t.join(10)
+        if box:
+            schemas = sorted((x.model_dump(mode="json", by_alias=True, exclude_none=True)
+                              for x in box[0]), key=lambda d: d.get("name", ""))
+            schemas_via = "fastmcp.list_tools"
+    except Exception:                                           # noqa: BLE001
+        schemas, schemas_via = None, "unavailable"
     try:
         import datetime as _dt
+        import hashlib as _hl
         doc = {
             "criterion": "ck-jpej",
             "written_utc": _dt.datetime.now(_dt.timezone.utc).strftime(
@@ -3127,6 +3204,10 @@ def _write_tool_surface_record() -> None:
             "board_enabled": bool(_board_enabled()),
             "enumerated_via": via,
             "tools": names,
+            "schemas_via": schemas_via,
+            "schemas": schemas,
+            "schemas_sha256": (_hl.sha256(json.dumps(schemas, sort_keys=True).encode()).hexdigest()
+                               if schemas is not None else None),
         }
         pth = os.path.expanduser(out)
         os.makedirs(os.path.dirname(pth) or ".", exist_ok=True)
@@ -3136,7 +3217,173 @@ def _write_tool_surface_record() -> None:
         return
 
 
+# rc2 B7: RELEASE THIS SESSION'S OWN CLAIMS WHEN THE SERVER STOPS. The bridge
+# refuses a release from any session but the owner (not_owned_by_session), so
+# `ck3agent run`'s teardown cannot do it after the fact. Opt-in: the CLI sets
+# CK3_RELEASE_ON_EXIT to a record path. Never set in an experiment episode,
+# whose claims are pinned across a dropped socket by design.
+RELEASE_ON_EXIT_ENV = "CK3_RELEASE_ON_EXIT"
+#: Set beside it by the CLI: where the server writes its session id and resume
+#: token, so `ck3agent run` can resume THIS session and release what is left
+#: when the server is killed first (Claude Code SIGKILLs it 500 ms after SIGINT).
+SESSION_OUT_ENV = "CK3_SESSION_OUT"
+_EXIT_SIGNAL: list = []
+_EXIT_TASK: list = []          # (loop, main task, state), set by _arm_exit_signals
+_RELEASE: list = []            # the one release task; the lifespan's finally awaits it
+_STOPPER: list = []            # the task that releases, then cancels the main task
+
+
+def _on_exit_signal(signum, _frame):
+    """The first SIGINT/SIGTERM/SIGHUP starts the release AT ONCE on the running
+    loop, and only then is the main task cancelled. Claude Code sends SIGINT,
+    SIGTERM 100 ms later and SIGKILL 400 ms after that, so the release cannot
+    wait for the server to unwind first. Later signals are ignored."""
+    if not _EXIT_SIGNAL:
+        _EXIT_SIGNAL.append(int(signum))
+        if _EXIT_TASK:
+            _EXIT_TASK[0][0].call_soon_threadsafe(_begin_exit)
+
+
+def _begin_exit() -> None:
+    """On the loop: release first, then cancel the main task."""
+    loop, task, state = _EXIT_TASK[0]
+
+    async def _release_then_stop():
+        await _release_once(state)
+        task.cancel()
+
+    _STOPPER.append(loop.create_task(_release_then_stop()))    # held: the loop keeps only weak refs
+
+
+def _install_exit_signals() -> None:
+    """At import, so a signal during startup is held rather than fatal."""
+    import signal
+    import threading
+    if not os.environ.get(RELEASE_ON_EXIT_ENV) or threading.current_thread() is not threading.main_thread():
+        return
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, _on_exit_signal)
+
+
+def _arm_exit_signals(state: "BridgeState") -> None:
+    """In the lifespan, before it yields: from here a signal starts the release.
+    A signal held during startup starts it now."""
+    if os.environ.get(RELEASE_ON_EXIT_ENV) and not _EXIT_TASK:
+        _EXIT_TASK.append((asyncio.get_running_loop(), asyncio.current_task(), state))
+        log.info("release on exit armed")
+        if _EXIT_SIGNAL:
+            _begin_exit()
+
+
+def _record_session_at_handshake(client) -> None:
+    """Wrap client.handshake so each new session's id and resume token are on
+    disk (0600) before anything is claimed through it. _try_reconnect wraps
+    its new client too, so the file always names the current session."""
+    out = os.environ.get(SESSION_OUT_ENV)
+    if not out or not os.environ.get(RELEASE_ON_EXIT_ENV):
+        return
+    inner = client.handshake
+
+    async def handshake(*a, **kw):
+        ack = await inner(*a, **kw)
+        if isinstance(ack, dict) and ack.get("session_id") and ack.get("resume_token"):
+            import datetime as _dt
+            rec = {"session_id": ack["session_id"], "resume_token": ack["resume_token"],
+                   "pid": os.getpid(),
+                   "written_utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+            pth = os.path.expanduser(out)
+            tmp = f"{pth}.{os.getpid()}.tmp"
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps(rec) + "\n")
+                os.replace(tmp, pth)
+            except OSError as exc:
+                log.warning("could not record the session for release: %s", exc)
+        return ack
+
+    client.handshake = handshake
+
+
+# Handlers first: the CLI and its tests take the tool surface file as "the
+# server is up", and a SIGINT after that must not be fatal.
+_install_exit_signals()
 _write_tool_surface_record()
+
+
+async def _release_once(state: "BridgeState") -> None:
+    """Run the release at most once; a second caller waits for the first."""
+    import anyio
+    if not _RELEASE:
+        _RELEASE.append(asyncio.ensure_future(_release_on_exit_now(state)))
+    with anyio.CancelScope(shield=True):
+        await asyncio.shield(_RELEASE[0])
+
+
+async def _release_on_exit(state: "BridgeState") -> None:
+    """From the lifespan's finally: the release, unless the signal path ran it."""
+    if not os.environ.get(RELEASE_ON_EXIT_ENV) or state.mock_mode:
+        return
+    await _release_once(state)
+
+
+#: Snapshot rounds. A claim still in flight at the first snapshot shows up in a
+#: later one, so there are always two; after that a round that finds nothing new
+#: ends the loop. What a server killed mid-loop leaves, `ck3agent run` releases
+#: by resuming this session.
+RELEASE_ROUNDS = 5
+
+
+async def _release_on_exit_now(state: "BridgeState") -> None:
+    """Release every character THIS session holds; write what happened. Never raises."""
+    out = os.environ.get(RELEASE_ON_EXIT_ENV)
+    if not out or state.mock_mode:
+        return
+    import anyio
+    import signal
+    sid = getattr(state._client, "session_id", None) if state._client else None
+    rec: dict = {"trigger": (signal.Signals(_EXIT_SIGNAL[0]).name if _EXIT_SIGNAL else "shutdown"),
+                 "session_id": sid, "claims": None, "released": [], "refused": {},
+                 "held_after": None, "rounds": 0, "error": None}
+    tried: list = []
+    with anyio.CancelScope(shield=True), anyio.move_on_after(12) as scope:
+        try:
+            if not (state.connected and sid):
+                raise ConnectionError("no bridge session")
+            while True:
+                bs = await _send_and_wait(state, "get_bridge_state", {}, timeout=4.0)
+                bs = bs.get("data") if isinstance(bs.get("data"), dict) else bs
+                row = next((r for r in bs.get("sessions") or []
+                            if isinstance(r, dict) and r.get("session_id") == sid), None)
+                if row is None:
+                    raise LookupError(f"session {sid} not in get_bridge_state.sessions")
+                held = [int(c) for c in row.get("claimed_character_ids") or []]
+                rec["rounds"] += 1
+                rec["held_after"] = held
+                new = [c for c in held if c not in tried]
+                if (not new and rec["rounds"] >= 2) or rec["rounds"] > RELEASE_ROUNDS:
+                    break
+                for cid in new:
+                    tried.append(cid)
+                    r = await _send_and_wait(state, "release_character", {"character_id": cid},
+                                             timeout=4.0)
+                    if isinstance(r, dict) and r.get("success") is True:
+                        rec["released"].append(cid)
+                    else:
+                        rec["refused"][str(cid)] = (r.get("reason") or "no success") \
+                            if isinstance(r, dict) else repr(r)
+            rec["claims"] = tried
+        except Exception as exc:                                # noqa: BLE001
+            rec["error"] = f"{type(exc).__name__}: {exc}"
+            rec["claims"] = tried or None
+    if scope.cancelled_caught:
+        rec["error"] = "timed out after 12s"
+    try:
+        with open(os.path.expanduser(out), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, indent=1, sort_keys=True) + "\n")
+    except OSError:
+        pass
+    log.info("release on exit: %s", rec)
 
 
 # ---------------------------------------------------------------------------

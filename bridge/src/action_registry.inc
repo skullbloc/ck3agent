@@ -28,6 +28,13 @@
 // queues to g_msg_queue and, while paused, is refused with a typed
 // `game_paused` error by the reader's fall-through guard (N1 belt-and-braces)
 // instead of hanging.
+//
+// rc2 B2: DEBUG VERBS (raw memory reads, X/uinput input injection, the debug
+// console) are wrapped in #ifdef CK3_BRIDGE_DEBUG_VERBS here AND their handler
+// bodies are compiled out, so a default build neither dispatches, registers
+// nor links them. dispatch_router.cpp:refuse_debug_verb answers them with
+// error=unavailable_in_release. test_debug_verbs enumerates the set as the
+// difference between this table with and without the define.
 
 // --- AI control ---
 BRIDGE_ACTION("toggle_all_ai", case_toggle_all_ai)
@@ -67,8 +74,11 @@ BRIDGE_ACTION("declare_war_debug", do_declare_war_debug)
 BRIDGE_ACTION("pre_validate_war", do_pre_validate_war)
 
 // Path B' override (ck-8weg): vouch (cb, titles, target) for the next
-// AI_CB_SELECTOR call on this thread; consumed once.
+// AI_CB_SELECTOR call on this thread; consumed once. rc2 B2: a DEBUG verb —
+// it takes raw engine pointers from the client.
+#ifdef CK3_BRIDGE_DEBUG_VERBS
 BRIDGE_ACTION("set_cb_selector_override", do_set_cb_selector_override)
+#endif
 
 // Off-goal per-character routine-war veto (re_offgoal_veto_FINAL.md). Arms /
 // disarms g_offgoal_veto_enabled at runtime. DEFAULT OFF — the hook is a pure
@@ -78,7 +88,9 @@ BRIDGE_ACTION("set_cb_selector_override", do_set_cb_selector_override)
 BRIDGE_ACTION("set_offgoal_veto", do_set_offgoal_veto)
 
 // --- Console Command Passthrough ---
+#ifdef CK3_BRIDGE_DEBUG_VERBS
 BRIDGE_ACTION("execute_console_command", do_execute_console_command)
+#endif
 
 // ck-7fyl: invoke an arbitrary PDXScript scripted_effect by name on a
 // character scope. SCAFFOLD — returns "not_implemented_pending_re" until
@@ -169,8 +181,10 @@ BRIDGE_ACTION("unpause_game", case_unpause_game)
 BRIDGE_ACTION("set_speed", case_set_speed)
 
 // --- SDL Input Injection (ck-77pb) ---
+#ifdef CK3_BRIDGE_DEBUG_VERBS
 BRIDGE_ACTION("inject_mouse_click", do_inject_mouse_click)
 BRIDGE_ACTION("select_observe_default", do_select_observe_default)
+#endif
 
 // ck-dq7ym.8: programmatic observe-mode entry via the live
 // CJominiMultiplayerLobbyView singleton (captured by lobby_view_hook).
@@ -382,8 +396,10 @@ BRIDGE_ACTION("query_fascination_progress", do_query_fascination_progress)
 BRIDGE_ACTION("query_research_speed", do_query_research_speed)
 
 // --- RE Validation Endpoints ---
+#ifdef CK3_BRIDGE_DEBUG_VERBS
 BRIDGE_ACTION("memory_probe", do_query_memory_probe)
 BRIDGE_ACTION("resolve_global", do_query_resolve_global)
+#endif
 
 // --- Event Queries ---
 BRIDGE_ACTION("pending_events", do_query_pending_events)

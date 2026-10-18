@@ -148,6 +148,12 @@ public:
     uint32_t heir_character_id = 0;         // cached primary-title heir
     uint32_t primary_title_id = 0;          // cached highest-tier title of primary
     std::set<uint32_t> claimed_character_ids;
+    //: rc2 B6: why the bridge itself took this seat's ruler away, "" when it did
+    //: not. "heir_is_player": the ruler died and the human player inherited, so
+    //: the handoff unbound the seat instead of binding the player. Cleared by
+    //: the next successful claim. Published in sessions_json and get_tick_info.
+    std::string unbound_reason;
+    uint32_t    unbound_heir_id = 0;
 
     // Monotonic claim sequence — the order in which this session acquired its
     // CURRENT run of claims.  Assigned by SessionRegistry from a monotonic
@@ -505,7 +511,28 @@ public:
                            const std::vector<uint32_t>& char_ids)>;
     void set_steering_purge_hook(SteeringPurgeHook hook);
 
+    //: rc2 B6: the human player's character id (0 / 0xFFFFFF = no human, as in
+    //: an observer save). When set, claim_character and swap_character REFUSE
+    //: it with reason "character_is_player", so no bind path — control,
+    //: handoff, skip-held-heir walk, resume — can give a seat the player.
+    //: The bridge installs a reader of PLAYER_CHAR_ID; host tests install
+    //: their own. Unset = no guard (the registry cannot see the game).
+    using PlayerCharacterSource = uint32_t (*)();
+    void set_player_character_source(PlayerCharacterSource src) { player_src_ = src; }
+    //: The player id the guard would use now, 0 when none.
+    uint32_t player_character_id() const;
+    //: First non-empty unbound_reason among control sessions that hold no
+    //: primary ("" when none). get_tick_info publishes it beside the global
+    //: controlled_character_id the hook reads.
+    std::string first_unbound_reason() const;
+    //: rc2 B6: the succession handoff's player guard. `dead` died and its heir
+    //: is the human player: release `dead` from `session` (state HeirIsPlayer:
+    //: never recovered, never retried) and set unbound_reason="heir_is_player",
+    //: unbound_heir_id=heir. Returns whether `dead` was held.
+    bool unbind_for_player_heir(Session* session, uint32_t dead, uint32_t heir);
+
 private:
+    std::atomic<PlayerCharacterSource> player_src_{nullptr};
     // Caller must hold mutex_.  The body of rebuild_legacy_mirrors().
     void rebuild_legacy_mirrors_locked();
     // Caller must hold mutex_.  Recomputes claim_seq bookkeeping for a session.

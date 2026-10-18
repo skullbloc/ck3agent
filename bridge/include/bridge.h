@@ -816,6 +816,11 @@ bool dispatch_action_with_response(const char* action_type, const char* params_j
 // classifier; see snapshot.h for those.
 bool is_registered_action(const char* action_type);
 
+// rc2 B2: true iff `verb` is a debug verb this build compiled out (always false
+// with CK3_BRIDGE_DEBUG_VERBS). Such a verb is not registered; the IPC reader
+// answers it with error=unavailable_in_release rather than unknown_action.
+bool debug_verb_compiled_out(const char* verb);
+
 // Bridge-management verbs: tempo, AI toggles, observer/automation switches and
 // the diagnostic reads. Not game mutations even though action_is_mutation()
 // (which is simply !readonly) says otherwise — which is why the pipeline's

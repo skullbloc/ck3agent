@@ -14,16 +14,19 @@ from typing import Any, Optional, Callable
 
 log = logging.getLogger(__name__)
 
-# ck-qn03 (R12): the socket follows the INSTANCE. `CK3_INSTANCE_ID` unset (or
-# `default`) resolves to the historical /tmp/ck3-agent.sock, so nothing about
-# the single-instance campaign changes; a named instance moves it under
+# ck-qn03 (R12): the socket follows the INSTANCE (see instance.py for the
+# user/legacy layouts); a named instance moves it under
 # $CK3_INSTANCE_ROOT/<id>/. Resolved at import, which is what makes every
 # derived client (harness, overlay poller, async client) follow automatically —
 # pass `socket_path=` explicitly to talk to a different instance in-process.
 try:                                   # normal: `ck3agent.server.bridge_client`
     from .instance import socket_path as _resolve_socket_path
+    from .instance import check_peer as _check_peer
+    from .instance import check_socket_owner as _check_socket_owner
 except ImportError:                    # bare: sys.path points at ck3agent/server
     from instance import socket_path as _resolve_socket_path
+    from instance import check_peer as _check_peer
+    from instance import check_socket_owner as _check_socket_owner
 
 SOCKET_PATH = _resolve_socket_path()
 RECV_BUF = 65536
@@ -286,15 +289,25 @@ class BridgeClient:
         self.world_identity: Optional[dict] = None
 
     def connect(self, timeout: float = 5.0) -> bool:
-        """Connect to the bridge socket. Returns True on success."""
+        """Connect to the bridge socket. Returns True on success.
+
+        Outside the legacy layout, refuses a socket this uid does not own and a
+        peer with another uid (rc2 B1).
+        """
+        s = None
         try:
-            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.sock.settimeout(timeout)
-            self.sock.connect(self.socket_path)
+            _check_socket_owner(self.socket_path)
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect(self.socket_path)
+            _check_peer(s)
+            self.sock = s
             log.info("Connected to bridge at %s", self.socket_path)
             return True
         except (socket.error, OSError) as e:
             log.error("Failed to connect to bridge: %s", e)
+            if s is not None:
+                s.close()
             self.sock = None
             return False
 

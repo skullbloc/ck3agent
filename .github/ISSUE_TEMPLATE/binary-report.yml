@@ -1,0 +1,70 @@
+name: Binary report
+description: Report what a Windows, macOS or Linux CK3 binary looks like. No binary is shared.
+title: "[binary] <platform> <game version>"
+labels: ["port", "binary-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This answers the W0/M0 questions in `docs/porting/questions.md` without sharing the game.
+        **Never attach the binary, a PDB, or a Ghidra project.** Paste the tool output only.
+
+        ```
+        python3 tools/inspect_binary.py "/path/to/ck3.exe" --json
+        ```
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows (ck3.exe)
+        - macOS (ck3 Mach-O)
+        - Linux (ck3 ELF)
+    validations:
+      required: true
+  - type: input
+    id: game_version
+    attributes:
+      label: Game version
+      description: As shown by the game's main menu or the Steam branch. The supported build is 1.18.3.1.
+      placeholder: "1.18.3.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Where the binary came from
+      options:
+        - Steam client install
+        - SteamCMD depot download
+        - Steam branch other than default (name it below)
+        - Other store or copy
+    validations:
+      required: true
+  - type: textarea
+    id: inspect_json
+    attributes:
+      label: inspect_binary --json output
+      description: The full output, unedited. For a fat Mach-O it covers every slice.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: launch_chain
+    attributes:
+      label: Launch chain (optional)
+      description: What Steam starts, in order (for example launcher, then ck3). A process tree from `ps -ef --forest` or Task Manager is enough.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Unusual sections, extra DLLs or dylibs beside the game, anti-tamper messages, branch names.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirm
+      options:
+        - label: I own a licensed copy of the game.
+          required: true
+        - label: I have not attached or linked the game binary, a PDB or a decompilation.
+          required: true

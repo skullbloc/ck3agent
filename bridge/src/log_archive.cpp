@@ -14,6 +14,9 @@ extern char** environ;
 
 namespace bridge {
 
+// instance_paths.cpp; weak so host targets that do not link it still link.
+mode_t instance_file_mode() __attribute__((weak));
+
 namespace {
 
 //: The child currently compressing a window, and which window it is. ONE at a
@@ -51,8 +54,12 @@ bool archive_window_begin(const ArchiveWindow& w, const char* dir) {
     // archive under a name that claims a complete tick range. Renamed on exit.
     char part[832];
     snprintf(part, sizeof part, "%s.part", g_gzip_dst);
+    // rc2 B1: a fresh file (unlink + O_EXCL, never through a symlink), 0600
+    // (0644 legacy) like every bridge file.
+    ::unlink(part);
     posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, part,
-                                     O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                                     O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+                                     instance_file_mode ? instance_file_mode() : 0600);
 
     char  a0[] = "gzip";
     char  a1[] = "-c";

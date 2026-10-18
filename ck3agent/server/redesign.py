@@ -89,7 +89,7 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "target_ineligible":         {"class": "target_state",   "severity": "invalid", "retryable": False},
     "experimental_write_disabled": {"class": "bridge",       "severity": "invalid", "retryable": False, "is_known_limitation": True},
     # Write-action-legitimacy: a state-/resource-granting verb the agent must NEVER
-    # mint (console deny-list + the scripted_effect EXECUTE allow-list mirror it). A
+    # mint (the scripted_effect EXECUTE allow-list refuses it; the gate keeps its old name). A
     # hard, non-retryable refusal — earn the resource in-game, do not cheat it.
     "console_command_denied":    {"class": "legitimacy",     "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "cannot_act_as_player":      {"class": "bridge",         "severity": "invalid", "retryable": False},
@@ -130,6 +130,12 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "last_claim_of_control_session": {"class": "bridge",     "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "actor_dead_or_stale":       {"class": "bridge",         "severity": "transient", "retryable": True},
     "actor_required":            {"class": "bridge",         "severity": "invalid", "retryable": False},
+    # rc2 B6: character_id=0 and the bridge resolved NO character, or this
+    # seat's own row holds no primary. Not retryable as sent: bind first.
+    "no_ruler_bound":            {"class": "bridge",         "severity": "invalid", "retryable": False},
+    # rc2 B6: character_id=0 and no usable reply (timeout, fault, error). We
+    # looked and could not see, which is not "nothing is bound".
+    "actor_unresolved":          {"class": "bridge",         "severity": "transient", "retryable": True},
     "unbounded_eval_refused":    {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "bridge_hung":               {"class": "bridge",         "severity": "frozen",  "retryable": True},
     "drain_timeout":             {"class": "bridge",         "severity": "frozen",  "retryable": True},
@@ -405,6 +411,8 @@ GATE_WHY: dict[str, str] = {
     "clock_owned_by_pipeline": "the clock belongs to the harness; a session cannot pause, unpause or set speed",
     "actor_not_claimed": "the acting character is not claimed by this session",
     "actor_dead_or_stale": "the acting character id is dead or stale and must be re-resolved",
+    "no_ruler_bound": "no ruler is bound to this session, so there is no actor to read or act for",
+    "actor_unresolved": "character_id=0 got no usable reply; the actor is unknown, which does not prove nothing is bound",
     "target_ineligible": "the target was rejected by the game's own eligibility check",
     "confirmation_pending": "the call was accepted and its verdict has not arrived yet",
     "cb_query_busy": "the shared casus-belli slot stayed busy for the whole retry budget",
@@ -430,6 +438,8 @@ GATE_NEXT: dict[str, str] = {
     "unknown_verb": "the callable intents are the `intent` enum on this tool",
     "actor_not_claimed": "claim the character with session(action='claim') first",
     "actor_dead_or_stale": "re-resolve the character id and retry",
+    "no_ruler_bound": "bind one: session(action='control', character_id=<id>), then session(action='whoami')",
+    "actor_unresolved": "check session(action='health'), then session(action='whoami')",
     "owned_by_other": "that character is not free; choose one this seat holds",
 }
 
@@ -637,6 +647,70 @@ def actor_echo(char: dict | None, requested_id: int, is_player: bool = False,
         "id": cid, "name": name, "alive": alive,
         "is_controlled": is_controlled, "is_player": is_player,
     }
+
+
+def unbound_actor_block(reply) -> Optional[dict]:
+    """rc2 B6: classify a `query_character(character_id=0)` reply that names no
+    character. None when it names one.
+
+    With nothing bound the bridge's handler fails with no reason, and
+    dispatch_action_with_response fills `{"success": false, "action": ...}`:
+    that is `no_ruler_bound`. Any other empty reply (timeout `{}`, `None`, an
+    error code) is `actor_unresolved`: we looked and could not see. Before
+    this, both fell through to actor_echo's alive/is_controlled defaults and
+    observe_v2 reported zeros as the ruler's state with ok=true.
+    """
+    sect = reply.get("character") if isinstance(reply, dict) and isinstance(
+        reply.get("character"), dict) else reply
+    if isinstance(sect, dict) and _as_int(sect.get("character_id") or sect.get("id")) > 0:
+        return None
+    if isinstance(reply, dict):
+        code = reply.get("error") or reply.get("reason")
+        if reply.get("success") is False and not code:
+            return why_blocked(
+                "no_ruler_bound",
+                summary=("no ruler is bound to this session: character_id=0 resolves to "
+                         "nothing. Bind one with session(action='control', character_id=<id>)."),
+                measured={"reply": "declined"})
+        if isinstance(code, str) and code:
+            return why_blocked("actor_unresolved",
+                               summary=f"character_id=0 could not be resolved: {code}",
+                               measured={"reply": "error"}, raw_reason=code)
+    return why_blocked("actor_unresolved",
+                       summary=("character_id=0 got no reply naming a character; whether a "
+                                "ruler is bound is unknown. See session(action='whoami')."),
+                       measured={"reply": "absent"})
+
+
+def unbound_measured(row: dict) -> dict:
+    """rc2 B6: what this seat's own session row says about WHY it holds nothing.
+
+    The bridge publishes `unbound_reason` ("" unless the bridge itself unbound
+    the seat; today only `heir_is_player`) and `unbound_heir_id`
+    (session.cpp sessions_json). A row without the key is a bridge that does not
+    report it: None, never "".
+    """
+    reason = row.get("unbound_reason") if "unbound_reason" in row else None
+    return {"reply": "seat_row_has_no_primary",
+            "unbound_reason": reason if isinstance(reason, str) or reason is None else str(reason),
+            "unbound_heir_id": _as_int(row.get("unbound_heir_id")) if "unbound_heir_id" in row else None}
+
+
+def unbound_summary(row: dict) -> str:
+    m = unbound_measured(row)
+    bind = "Bind one with session(action='control', character_id=<id>)."
+    if m["unbound_reason"] == "heir_is_player":
+        return (f"the bridge unbound this session: its ruler died and the heir "
+                f"({m['unbound_heir_id']}) is the human's character. Ask which AI ruler to "
+                f"take. " + bind)
+    if m["unbound_reason"]:
+        return f"the bridge unbound this session ({m['unbound_reason']}). " + bind
+    if m["unbound_reason"] == "":
+        return ("this session holds no ruler and the bridge reports no reason, as after a "
+                "new or reconnected session, a release, or a handoff before a restart. If you "
+                "had a ruler, check it is alive with query(domain='character') before "
+                "rebinding; if it died, ask which AI ruler to take. " + bind)
+    return "this session holds no ruler; this bridge does not report why. " + bind
 
 
 # ---------------------------------------------------------------------------
@@ -1348,8 +1422,13 @@ async def _resolve_actor(gw, character_id: int, tool: str):
             blocked=why_blocked("actor_required",
                                 summary="multi-actor mode: character_id is REQUIRED on every actor-bearing call"),
             game=gw.game(), bridge_health=gw.health)
-    char = await gw.read("query_character", {"character_id": character_id})
-    char = char if isinstance(char, dict) else {}
+    raw_char = await gw.read("query_character", {"character_id": character_id})
+    if not character_id:
+        unbound = unbound_actor_block(raw_char)
+        if unbound is not None:
+            return None, envelope(tool, ok=False, blocked=unbound,
+                                  game=gw.game(), bridge_health=gw.health)
+    char = raw_char if isinstance(raw_char, dict) else {}
     is_player = bool((char.get("character") or char).get("is_player")) if isinstance(char, dict) else False
     actor = actor_echo(char, character_id)
     if character_id and not actor.get("alive", True):
@@ -3776,12 +3855,23 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
     offgoal_armed = False
     if phase == "expansion":
         veto = await gw.write("set_offgoal_veto", {"enabled": True, "character_id": character_id})
-        if isinstance(veto, dict) and (veto.get("error") or veto.get("blocked")):
-            warnings.append({"code": "offgoal_veto_unavailable", "is_known_limitation": True,
-                             "detail": "per-char off-goal veto setter not exposed by the deployed bridge "
-                                       "(honest-refusal); the global DeclareWar pulse still applied"})
-        else:
+        # rc2 B8: armed only on the bridge's own confirmation. A reply with no
+        # `error` key is not one: an ownership refusal, a disconnect and an
+        # unconfirmed send all lack it, and all three used to read as armed.
+        if flag_write_confirmed(veto, True):
             offgoal_armed = True
+            _note_flag_write("off_goal_veto", True, "set_phase('expansion')")
+            warnings.append({"code": "offgoal_veto_experimental", "is_known_limitation": True,
+                             "detail": "armed the off-goal war veto, an EXPERIMENTAL hook "
+                                       "not yet live-validated: " + OFFGOAL_VETO_SCOPE})
+        else:
+            _raw = veto if isinstance(veto, dict) else {}
+            _why = (_raw.get("error") or _raw.get("reason") or _raw.get("status")
+                    or ("success=false" if _raw.get("success") is False else "no confirmation"))
+            warnings.append({"code": "offgoal_veto_unavailable", "is_known_limitation": True,
+                             "detail": f"the bridge did not confirm set_offgoal_veto ({_why}); "
+                                       "the veto is not known to be armed and nothing else "
+                                       "stands in for it"})
 
     result = {"phase": phase, "genome": genome, "subsystems": subs,
               # ck-zgh4: what the phase RECORDS for this character, and the
@@ -3791,7 +3881,10 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
               "declare_war_note": ("recorded on this character only; the engine does not "
                                    "enforce it. To start a war, use declare_war."),
               "offgoal_veto_armed": offgoal_armed,
-              "auto_repin": True, "repinned_this_reign": True}
+              "offgoal_veto_scope": OFFGOAL_VETO_SCOPE,
+              # rc2 B8: nothing re-applies the phase after a succession
+              # (the server has no such path); this said True.
+              "auto_repin": False, "repinned_this_reign": True}
     if isinstance(pres, dict) and pres.get("error"):
         warnings.append({"code": "personality_write_warning", "detail": str(pres.get("error"))})
     return envelope("set_phase", verdict="applied", result=result, actor=actor,
@@ -4055,7 +4148,7 @@ async def _confirm_intent_write(gw, intent: str, bridge_action: str, bridge_para
         if reason == "experimental_write_disabled" or status == "experimental_write_disabled":
             return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                             blocked=why_blocked("experimental_write_disabled",
-                                                summary="add the action to /tmp/ck3-enabled-writes to enable"),
+                                                summary="add the action to the ck3-enabled-writes file in the bridge state dir (enabled_writes_file in this reply) to enable"),
                             warnings=warnings, bridge_health=gw.health)
         if status not in ("dispatched_pending", "sent_no_confirmation") and reason and not raw.get("success", False):
             return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
@@ -4099,25 +4192,23 @@ async def _confirm_intent_write(gw, intent: str, bridge_action: str, bridge_para
 #
 # ── LEGITIMACY (write-action-legitimacy audit) ──────────────────────────────
 # scripted_effect EXECUTE runs a PDXScript effect WITHOUT the trigger that vanilla
-# normally fronts it with — so it is a back door around every other gate. The
-# console deny-list already Refuses the state-GRANTING verbs (add_gold/add_prestige/
-# add_piety/add_claim/give_title/…) as cheats. If those same resource grants were
-# reachable through execute_scripted_effect they would END-RUN that deny-list (run
-# `add_gold` "as a scripted effect" to mint resources the console path forbids).
-# So the agent-side EXECUTE allow-list is deliberately the SMALL safe set: only the
-# audit-blessed reversible/benign primitives (set_variable_conqueror = the
-# ally-call-refusal posture char var; noop/bridge_noop = observability probes). The
-# resource-grant effects are NOT allow-listed here — refused before they ever reach
-# the bridge, mirroring the console deny-list. (The bridge keeps its OWN default-OFF
-# gate; this is defense-in-depth at the agent layer, the only layer this file owns.)
+# normally fronts it with — so it is a back door around every other gate. Run
+# `add_gold` "as a scripted effect" and it mints resources with no cost. The
+# release ships no console path to compare against: execute_console_command is
+# compiled out of release bridges and is not an MCP tool, so THIS allow-list is
+# the agent-side gate, not a mirror of one. It is deliberately the SMALL safe set:
+# the audit-blessed reversible/benign primitives (set_variable_conqueror = the
+# ally-call-refusal posture char var; noop/bridge_noop = observability probes).
+# Everything else is refused before it reaches the bridge. (The bridge keeps its
+# OWN default-OFF gate; this is defense-in-depth at the only layer this file owns.)
 _SCRIPTED_EFFECT_EXECUTE_ALLOW = frozenset({
     "set_variable_conqueror",   # audit-blessed: sets the `conqueror` flag (ally-call-refusal posture)
     "noop", "bridge_noop",      # bridge-local no-op / observability probes
 })
 
-# Resource-/state-granting scripted effects that would end-run the console deny-list.
-# Listed explicitly so the refusal names the legitimacy reason rather than a generic
-# "not allow-listed". Mirrors the execute_console_command deny-list family.
+# Resource-/state-granting scripted effects. Listed only so the refusal names the
+# legitimacy reason rather than a generic "not allow-listed"; the allow-list above
+# already refuses them.
 _SCRIPTED_EFFECT_DENY = frozenset({
     "add_gold", "add_prestige", "add_piety",
     "add_dynasty_prestige", "add_realm_law", "add_doctrine",
@@ -4131,7 +4222,7 @@ def scripted_effect_is_allow_listed(name: str) -> bool:
     The allow-list is deliberately tiny (the audit-blessed reversible/benign
     primitives only). Everything else — and the resource-grant family in
     particular — is refused at the agent layer so execute_scripted_effect cannot
-    be used to end-run the console deny-list (write-action-legitimacy audit)."""
+    mint resources (write-action-legitimacy audit)."""
     if not name:
         return False
     return name in _SCRIPTED_EFFECT_EXECUTE_ALLOW
@@ -4152,9 +4243,8 @@ async def _do_scripted_effect(gw, a: dict, character_id: int, actor: dict) -> di
     # ── LEGITIMACY GATE (agent-layer, defense-in-depth) ────────────────────────
     # Only EXECUTE is gated; resolve-only just looks up the template and runs
     # nothing (safe). A non-allow-listed EXECUTE — and the resource-grant family
-    # in particular — is REFUSED here so the agent path cannot end-run the console
-    # deny-list. This refusal precedes the experimental opt-in so even
-    # experimental=true cannot run add_gold/add_prestige/add_piety.
+    # in particular — is REFUSED here. This refusal precedes the experimental
+    # opt-in so even experimental=true cannot run add_gold/add_prestige/add_piety.
     if want_execute and not scripted_effect_is_allow_listed(effect):
         denied = effect in _SCRIPTED_EFFECT_DENY
         return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
@@ -4163,9 +4253,8 @@ async def _do_scripted_effect(gw, a: dict, character_id: int, actor: dict) -> di
                             severity="invalid",
                             summary=(
                                 f"scripted_effect EXECUTE of '{effect}' is REFUSED: "
-                                + ("it is a state-/resource-granting effect (mirrors the "
-                                   "execute_console_command deny-list — earn resources in-game, "
-                                   "do not mint them; write-action-legitimacy audit). "
+                                + ("it is a state-/resource-granting effect: earn resources "
+                                   "in-game, do not mint them (write-action-legitimacy audit). "
                                    if denied else
                                    "it is not on the agent EXECUTE allow-list. ")
                                 + f"Only {sorted(_SCRIPTED_EFFECT_EXECUTE_ALLOW)} may be executed; "
@@ -4203,7 +4292,7 @@ async def _do_scripted_effect(gw, a: dict, character_id: int, actor: dict) -> di
         return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                         blocked=why_blocked("experimental_write_disabled",
                                             summary=("scripted_effect EXECUTE is bridge-gated (default OFF) "
-                                                     "— add the action to /tmp/ck3-enabled-writes to enable; "
+                                                     "— add the action to the ck3-enabled-writes file in the bridge state dir (enabled_writes_file in this reply) to enable; "
                                                      "validation still PENDING (re_scripted_effect_execute.md)")),
                         bridge_health=gw.health)
     # Bridge does not know the action (old/parallel build) → honest unavailable.
@@ -4561,7 +4650,7 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
     if reason == "experimental_write_disabled" or status == "experimental_write_disabled":
         return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                         blocked=why_blocked("experimental_write_disabled",
-                                            summary="add the action to /tmp/ck3-enabled-writes to enable"),
+                                            summary="add the action to the ck3-enabled-writes file in the bridge state dir (enabled_writes_file in this reply) to enable"),
                         bridge_health=gw.health)
 
     # Stickiness honesty (G1) for council_task — warn it may revert.
@@ -4675,6 +4764,22 @@ async def inspect_impl(gw, subject: str, character_id: int = 0, target_id: int =
                         warnings=[{"code": "domain_known_broken", "is_known_limitation": True,
                                    "detail": f"{subject} returns memory_access_fault — reconstruct adjacency from plan_war targets"}],
                         game=gw.game(), bridge_health=gw.health)
+    _composed = ("war_stance", "heir_plan", "guardian_candidates")
+    if subject not in _INSPECT_SUBJECTS and subject not in _composed:
+        valid = sorted(list(_INSPECT_SUBJECTS) + list(_composed))
+        return envelope("inspect", ok=False, game=gw.game(),
+                        blocked=why_blocked("unknown",
+                                            summary=f"unknown subject '{subject}'; valid: {', '.join(valid)}"),
+                        bridge_health=gw.health)
+    # rc2 B6: every subject reads "the ruler" when character_id is omitted. With
+    # none bound, the reads decline and came back ok=true as empty readings
+    # (war_score's declined reply, war_stance's wars=[]). heir_plan and
+    # guardian_candidates run this check themselves through _resolve_actor.
+    if not character_id and subject not in ("heir_plan", "guardian_candidates"):
+        unbound = unbound_actor_block(await gw.read("query_character", {"character_id": 0}))
+        if unbound is not None:
+            return envelope("inspect", ok=False, result={"subject": subject}, blocked=unbound,
+                            game=gw.game(), bridge_health=gw.health)
     # war_stance (item 3): a SYNTHESIZED view (no single bridge action) — per-active-war
     # side/stance/occupation + a stall verdict + the white-peace exit lever, so the agent
     # SEES stuck offensive wars and abandons them. Special-cased before the action map.
@@ -4703,14 +4808,7 @@ async def inspect_impl(gw, subject: str, character_id: int = 0, target_id: int =
             env["result"] = {"subject": "guardian_candidates", **env["result"]}
             env["tool"] = "inspect"
         return env
-    entry = _INSPECT_SUBJECTS.get(subject)
-    if entry is None:
-        valid = sorted(list(_INSPECT_SUBJECTS) + ["war_stance", "heir_plan", "guardian_candidates"])
-        return envelope("inspect", ok=False, game=gw.game(),
-                        blocked=why_blocked("unknown",
-                                            summary=f"unknown subject '{subject}'; valid: {', '.join(valid)}"),
-                        bridge_health=gw.health)
-    action, builder = entry
+    action, builder = _INSPECT_SUBJECTS[subject]
     # ck-zgh4 deploy-51: this DEFAULTED the de-jure subject to the previous
     # project's goal title, so a seat that asked "de jure of what?" without
     # naming one was answered about e_britannia. No default: the caller names
@@ -4787,7 +4885,7 @@ _EXPERIMENTAL_FLAGS: dict[str, dict[str, str]] = {
     "off_goal_veto": {
         "setter": "set_offgoal_veto",
         "spec": "re_offgoal_veto_FINAL.md",
-        "summary": "per-character routine off-goal war veto (controlled ruler stops AI-chosen off-goal wars; steered bypass=1 unaffected)",
+        "summary": "off-goal war veto: AI-chosen wars are suppressed for every controlled character (steered bypass=1 unaffected). set_phase('expansion') arms it.",
     },
     "break_alliance": {
         "setter": "set_break_alliance_enabled",
@@ -4801,6 +4899,35 @@ _EXPERIMENTAL_FLAGS: dict[str, dict[str, str]] = {
     },
     # REMOVED: move_army experimental flag deleted per design (agent does not drive army micro).
 }
+
+#: rc2 B8: what the veto actually covers (offgoal_war_veto_hook.cpp): one
+#: process-wide flag; the setter ignores character_id.
+OFFGOAL_VETO_SCOPE = ("process-wide: one bridge flag covering every controlled character "
+                      "of every session; character_id is ignored; no phase disarms it; it "
+                      "stays on until set_experimental disarms it or the game exits")
+
+#: rc2 B8: the bridge has no readback for these flags, so the only live
+#: evidence this server has is what IT wrote. Keyed by flag name.
+_FLAG_WRITES: dict[str, dict[str, Any]] = {}
+
+
+def _note_flag_write(flag: str, enabled: bool, by: str) -> None:
+    _FLAG_WRITES[flag] = {"enabled": bool(enabled), "by": by}
+
+
+def flag_write_confirmed(reply, enabled: bool) -> bool:
+    """rc2 B8: True only when the bridge says the flag write landed.
+
+    The setters reply {success: true, enabled: <bool>}. Anything else is not a
+    confirmation: {success: false, reason: ...} (ownership refusal),
+    {reason: bridge_disconnected}, {status: sent_no_confirmation}, {} or None.
+    An echoed `enabled` that differs from the request is a refusal too.
+    """
+    if not isinstance(reply, dict) or reply.get("success") is not True:
+        return False
+    if "enabled" in reply and bool(reply.get("enabled")) is not bool(enabled):
+        return False
+    return True
 
 # Bridge tokens that mean "this build does not know that command" — surface as a typed
 # experimental_flag_unavailable rather than a false success or an opaque error.
@@ -4832,8 +4959,17 @@ async def _set_experimental_flag(gw, flag: str, enabled: bool) -> dict[str, Any]
                                      f"and the IPC setter lands with it; see {meta['spec']})"),
                             raw_reason=err or "unknown_action"),
                         bridge_health=gw.health)
-    applied = bool(raw.get("success")) or str(raw.get("enabled", "")).lower() in ("true", "1") \
-        or _as_int(raw.get("enabled")) == int(bool(enabled))
+    # rc2 B8: this read a missing `enabled` as 0, so any reply to a DISARM,
+    # a disconnect included, counted as applied.
+    applied = flag_write_confirmed(raw, enabled)
+    if applied:
+        _note_flag_write(flag, enabled, "set_experimental")
+    elif raw.get("success") is False:
+        _why = str(raw.get("reason") or raw.get("error") or "")
+        return envelope("session", ok=False, verdict="rejected", game=gw.game(),
+                        result={"experimental_flag": flag, "enabled": bool(enabled), "raw": raw},
+                        blocked=map_raw_reason(_why, summary=_why or "the bridge refused the flag write"),
+                        bridge_health=gw.health)
     return envelope(
         "session",
         verdict="applied" if applied else "dispatched_pending",
@@ -4851,6 +4987,8 @@ async def _set_experimental_flag(gw, flag: str, enabled: bool) -> dict[str, Any]
             f"EXPERIMENTAL-unvalidated: '{flag}' arms a default-OFF engine hook/write that has "
             f"NOT passed live validation ({meta['spec']}). Use only for validation on a "
             f"disposable observer save — never rely on its behaviour on the live campaign."
+            + (" set_phase('expansion') arms this same flag in normal play; the caveat "
+               "applies there too." if flag == "off_goal_veto" else "")
         ],
         game=gw.game(), bridge_health=gw.health)
 
@@ -5198,11 +5336,21 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
     if action == "experimental_flags":
         # READ the registry — what experimental flags exist + their validation status.
         return envelope("session", result={
+            # rc2 B8: `default` is the boot value. The bridge has no readback,
+            # so `live` is unknown; `last_written_here` is this server's own
+            # write, if any (set_phase('expansion') arms off_goal_veto).
             "flags": [{"name": k, "setter": v["setter"], "spec": v["spec"],
                        "summary": v["summary"], "status": "EXPERIMENTAL-unvalidated",
-                       "default": "OFF"} for k, v in sorted(_EXPERIMENTAL_FLAGS.items())],
+                       "default": "OFF", "live": None,
+                       "live_unavailable": "the bridge exposes no readback for this flag",
+                       "last_written_here": _FLAG_WRITES.get(k),
+                       "last_written_here_scope": ("this MCP server process only; another "
+                                                   "seat's server may have written the flag, "
+                                                   "so null does not mean off")}
+                      for k, v in sorted(_EXPERIMENTAL_FLAGS.items())],
             "note": ("arm one with session(action='set_experimental', flag=<name>, enabled=true). "
-                     "All are default-OFF, validation PENDING — for disposable-save validation only."),
+                     "All boot OFF, validation PENDING. set_phase('expansion') arms "
+                     "off_goal_veto, which is " + OFFGOAL_VETO_SCOPE + "."),
         }, game=gw.game(), bridge_health=gw.health)
     if action == "set_experimental":
         if not flag:
@@ -5234,11 +5382,58 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
             # string for the second. Falling back to the global primary is the
             # defect this bead exists to fix.
             primary = None
+        _roster_out = ((roster or {}).get("characters", roster)
+                       if isinstance(roster, dict) else roster)
+        _claims_out = (list(_mine.get("claimed_character_ids") or ())
+                       if _mine is not None else None)
+        # rc2 B6: NOTHING BOUND IS NOT ok=true. This seat's row says it holds no
+        # primary: say so, and do not echo id 0 as a controlled, living ruler.
+        if _mine is not None and _as_int(primary) <= 0:
+            return envelope("session", ok=False,
+                            result={"controlled": None, "session_id": _sid,
+                                    "my_claims": _claims_out, "roster": _roster_out},
+                            blocked=why_blocked(
+                                "no_ruler_bound",
+                                summary=unbound_summary(_mine),
+                                measured=unbound_measured(_mine)),
+                            game=gw.game(), bridge_health=gw.health)
+        # rc2 B6: the REVERSE succession. The human's character died and the
+        # human inherited this seat's ruler: the seat still holds the id, but it
+        # is now the player's and every write is refused (cannot_act_as_player).
+        _player = _as_int((bs or {}).get("player_character_id")) & 0xFFFFFF \
+            if isinstance(bs, dict) and "player_character_id" in bs else 0
+        if _mine is not None and 0 < _player < 0xFFFFFF \
+                and (_as_int(primary) & 0xFFFFFF) == _player:
+            return envelope("session", ok=False,
+                            result={"controlled": None, "session_id": _sid,
+                                    "my_claims": _claims_out, "roster": _roster_out},
+                            blocked=why_blocked(
+                                "cannot_act_as_player",
+                                summary=("this seat's ruler is now the human's character (the "
+                                         "human inherited it); every write is refused. Release "
+                                         "it and bind an AI ruler."),
+                                measured={"primary_character_id": _as_int(primary),
+                                          "player_character_id": _player}),
+                            game=gw.game(), bridge_health=gw.health)
         chr_ = await gw.read("query_character", {"character_id": _as_int(primary)})
-        ctrl = actor_echo(chr_ if isinstance(chr_, dict) else {}, _as_int(primary))
+        _warn: list = []
+        if _mine is None:
+            # Seat unknown: character_id=0 is whatever the bridge resolves it
+            # to, which falls back to the GLOBAL primary (another seat's ruler
+            # when several are bound). Report it, labelled, or report nothing.
+            unbound = unbound_actor_block(chr_)
+            if unbound is not None:
+                return envelope("session", ok=False,
+                                result={"controlled": None, "session_id": _sid,
+                                        "my_claims": None, "roster": _roster_out},
+                                blocked=unbound, game=gw.game(), bridge_health=gw.health)
+            _warn.append("seat_unknown: this session's own row was not found; `controlled` "
+                         "is the bridge's resolution of character_id=0, not a confirmed claim")
+        ctrl = actor_echo(chr_ if isinstance(chr_, dict) else {}, _as_int(primary),
+                          is_controlled=True if _mine is not None else None)
         agent_mode = (bs or {}).get("agent_mode") if isinstance(bs, dict) else None
         _agency = await agency_block(gw, _as_int(primary))
-        return envelope("session", result={"controlled": ctrl,
+        return envelope("session", warnings=_warn, result={"controlled": ctrl,
                                            # ck-zgh4 deploy-51 item (4): what
                                            # this seat actually controls, stated
                                            # once and measured, not inferred.
@@ -5248,9 +5443,8 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                            # for either means it could not be
                                            # determined, never "the global one".
                                            "session_id": _sid,
-                                           "my_claims": (list(_mine.get("claimed_character_ids") or ())
-                                                         if _mine is not None else None),
-                                           "roster": (roster or {}).get("characters", roster) if isinstance(roster, dict) else roster},
+                                           "my_claims": _claims_out,
+                                           "roster": _roster_out},
                         game=gw.game(), bridge_health=gw.health)
     if action == "health":
         bs = await gw.read("get_bridge_state", {})
@@ -5260,6 +5454,17 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                            "offset_health": ov, "agent_mode": (bs or {}).get("agent_mode") if isinstance(bs, dict) else None},
                         game=gw.game(), bridge_health=gw.health)
     if action == "control":
+        # rc2 B6: the bridge reads character_id<=0 as "drop this seat's primary"
+        # and replies success, so an omitted id silently UNBOUND the seat and
+        # came back `applied`. Unbinding is `release`; control needs an id.
+        if _as_int(character_id) <= 0:
+            return envelope("session", ok=False, game=gw.game(),
+                            blocked=why_blocked(
+                                "missing_character_id",
+                                summary=("control needs character_id=<id>; it was omitted or 0, "
+                                         "which the bridge would treat as unbinding. To unbind, "
+                                         "use session(action='release', character_id=<id>).")),
+                            bridge_health=gw.health)
         res = await gw.write("set_controlled_character",
                              {"character_id": character_id, "disable_native_ai": disable_native_ai})
         res = res if isinstance(res, dict) else {}

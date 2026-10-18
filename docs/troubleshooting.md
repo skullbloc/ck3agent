@@ -1,64 +1,97 @@
 # Troubleshooting
 
-Start with `ck3agent doctor`; it checks in the order things can fail and
-prints the first broken link. The usual suspects:
+Find your symptom, apply the fix. Start with `ck3agent doctor`: it checks
+each link in order and names the first broken one.
 
-**`CK3 build NOT supported`.** Your game is not 1.18.3.1 Linux native. See
-[supported versions](supported-versions.md).
+## Prerequisites
 
-**`bridge socket not listening`** after launching. Either the game has not
-finished starting (give it a minute; `--wait 120` on launch), or the bridge
-refused the build (doctor then shows the refusal from `/tmp/ck3_bridge.log`),
-or the game was launched without `LD_PRELOAD` (from Steam without the launch
-option). The bridge writes `/tmp/ck3_bridge_boot.log` the moment it is loaded;
-if that file does not exist, the library was never loaded.
+- `ck3agent` installed. `ck3agent config` prints the paths in use.
 
-**Launched via Steam, nothing happens.** The Paradox launcher starts first;
-the bridge interposes its `exec` of the game and re-injects itself, which is
-logged in `/tmp/ck3_bridge_boot.log`. If you see the launcher but the log is
-empty, the launch option is wrong — it must be exactly
-`LD_PRELOAD=/full/path/libck3_bridge.so %command%`.
+## Logs
 
-**`session_state` is not `active`.** The bridge is loaded but no game is
-loaded yet. Load a save or start a game.
+| Log | Default path |
+|-----|------|
+| Bridge | `$XDG_RUNTIME_DIR/ck3agent/bridge.log` |
+| Bridge action log | `$XDG_RUNTIME_DIR/ck3agent/telemetry/action_log.jsonl` |
+| Game output from `ck3agent launch` | `~/.local/share/ck3agent/logs/ck3-<timestamp>.log` |
+| Game's own logs | `~/.local/share/Paradox Interactive/Crusader Kings III/logs/` (`debug.log`, `error.log`) |
 
-**Claude says `game_unpaused` / `game_paused`.** Some reads need the game
-paused and every write needs it unpaused. The redesigned tools (`observe`,
-`plan_war`, `do`, `declare_war`) manage that themselves; for a raw `query` or
-`discover`, tell Claude to `session(action="pause")` (or unpause) and retry.
+`$XDG_RUNTIME_DIR` is usually `/run/user/<uid>` and is cleared at logout.
+Copy the logs before you reboot if you plan to report a bug. Fallbacks are in
+[files and paths](reference/files-and-paths.md#what-goes-where).
 
-**`cb_query_timeout` on war checks.** Deferred validity queries drain on the
-game tick; they only answer while unpaused. Use `plan_war` / `cbs`, which own
-the unpause, or unpause and ask again.
+## Symptoms
 
-**Claude Code does not list the `ck3` tools.** Check that `claude` was started
-in the play directory (where `.mcp.json` is), that `ck3agent serve` works when
-run by hand (it waits on stdin; Ctrl-C to quit), and that `ck3agent` is on
-`PATH` for the shell Claude Code was started from (`install.sh` prints a PATH
-note if `~/.local/bin` is missing).
+### Setup or doctor says the build is not supported
 
-**The hook makes every prompt slow.** It has a 2.5 s budget; if the bridge is
-busy it prints a degrade line instead. Remove it with
-`ck3agent setup --no-hook --force` if you prefer.
+Steam updated your game past 1.18.3.1. See [Your game updated](supported-versions.md).
 
-**The game stays `dormant` after `ck3agent launch --continue`.** CK3's
-`--continuelastsave` lands on a confirmation screen; for an observer save it
-has an **Observe** button. `launch --wait` sends the bridge's
-`enter_observe_mode` once the lobby appears, which dismisses it. If your save
-is a normal player save, click **Continue** in the game window; the bridge
-turns `active` once the map is loaded.
+### The game stays `dormant` after `ck3agent launch --continue`
 
-**Launching from a terminal on Wayland.** If the game starts but never gets
-past loading (its `debug.log` stops seconds after launch), force X11:
-`env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 ck3agent launch --continue`.
-Launching from Steam avoids this.
+The bridge is loaded but no game is running yet. On a player save, click
+**Continue** in the game window. On an observer save, click **Observe** if
+`launch` timed out. `doctor` shows `session_state=active` once the map loads.
 
-**Crash in the game.** Collect `/tmp/ck3_bridge.log`, `/tmp/ck3_bridge_boot.log`,
-the game's `~/.local/share/Paradox Interactive/Crusader Kings III/logs/`, and
-the `ck3-<timestamp>.log` under `~/.local/share/ck3agent/logs/`, and open an
-issue with the game build and what the agent was doing. Debug symbols for the
-bridge are attached to each release (`libck3_bridge-<version>.so.debug`).
+### The game never finishes loading (Wayland)
 
-**Two games, one machine.** Set `CK3_INSTANCE_ID=<name>` for both the game and
-the MCP server; the socket, logs and telemetry move under
-`/tmp/ck3-inst/<name>/`.
+The game can stall on load under Wayland; `debug.log` stops a few seconds in.
+`ck3agent launch` runs it under XWayland by default. From Steam, put
+`SDL_VIDEODRIVER=x11` before the launch option `setup` printed.
+
+### `bridge socket not listening`
+
+1. The game is still starting. `launch --continue` waits up to 120 seconds.
+2. The bridge refused the build: the bridge log says `REFUSED: unsupported CK3 build`.
+3. The game started without the bridge. Use `ck3agent launch`, or the Steam
+   launch option `setup` printed.
+
+### Claude Code does not list the `ck3` tools
+
+Start `claude` in the play directory, where `.mcp.json` is. Check that
+`~/.local/bin` is on `PATH` and that `ck3agent serve` starts by hand. Ctrl-C quits it.
+
+### Claude says it controls no ruler, or `no_ruler_bound`
+
+Nothing is bound to Claude's session. `whoami`'s
+`blocked.measured.unbound_reason` says which case: `heir_is_player` means
+Claude's ruler died with you as heir, and the bridge unbound rather than hand
+Claude your character. Empty means the bridge recorded no reason: Claude never
+took a ruler, the bridge refused your character, or Claude Code restarted or
+reconnected the MCP server (a `heir_is_player` reason does not survive it),
+which starts a new session bound only to
+`CK3_AGENT_CHARACTER_ID`, if set. Ask Claude to take an
+AI ruler: see [choose the ruler](getting-started.md#4-choose-the-ruler-claude-plays).
+`actor_unresolved` is different: the read failed. Check `session(action="health")`.
+`cannot_act_as_player` from `whoami` means you inherited Claude's ruler.
+
+### `game_paused`, `game_unpaused` or `cb_query_timeout`
+
+`observe`, `query` and `discover` need the game paused; the other tools set
+pause state themselves. Ask Claude to pause and retry once. If it repeats,
+`session(action="health")` shows whether the bridge is hung.
+
+### Flatpak or Snap Steam
+
+Unsupported. The sandbox gives the game its own home and runtime directories,
+so it cannot load the bridge from `~/.local/share` and the MCP server cannot
+reach the bridge socket. Install Steam from your distribution's native package.
+
+### Steam Deck
+
+Untested. Reports are welcome.
+
+### The game crashed
+
+Open an issue with the logs above, the `ck3agent doctor` output and what
+Claude was doing. Each release attaches bridge debug symbols as
+`libck3_bridge-<version>.so.debug`.
+
+### Two games on one machine
+
+Set `CK3_INSTANCE_ID=<name>` for both the game and the MCP server. Each
+instance gets its own socket, logs and telemetry.
+
+## If it fails
+
+Open an issue at <https://github.com/skullbloc/ck3agent/issues> with the full
+`ck3agent doctor` output and the bridge log.

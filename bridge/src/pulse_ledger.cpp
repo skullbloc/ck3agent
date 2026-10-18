@@ -47,7 +47,7 @@ void append_escaped(std::string& out, const std::string& s) {
     }
 }
 
-std::string hex(uintptr_t v) {
+[[maybe_unused]] std::string hex(uintptr_t v) {
     char b[32];
     snprintf(b, sizeof(b), "0x%llx", (unsigned long long)v);
     return std::string(b);
@@ -65,7 +65,10 @@ std::string PulseLeak::to_json() const {
     append_escaped(o, global);
     o += "\",\"site\":\"";
     append_escaped(o, site);
-    o += "\",\"addr\":\"" + hex(addr) + "\"";
+    o += "\"";
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
+    o += ",\"addr\":\"" + hex(addr) + "\"";
+#endif
     o += ",\"width\":" + std::to_string((unsigned)width);
     o += ",\"saved\":" + std::to_string((unsigned long long)saved);
     o += ",\"observed\":" + std::to_string((unsigned long long)observed);

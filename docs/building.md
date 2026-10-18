@@ -1,61 +1,70 @@
 # Building from source
 
-## Bridge
+Build the bridge library and the Python package yourself.
 
-```bash
-sudo apt-get install cmake build-essential git          # Debian/Ubuntu
-cmake -S bridge -B bridge/build \
-      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-      -DCK3_STRICT_BUILD_ID=ON \
-      -DBUILD_BRIDGE_TESTS=ON
-cmake --build bridge/build --target ck3_bridge test_json_helpers -j"$(nproc)"
-./bridge/build/test_json_helpers
-```
+## Prerequisites
 
-Produces `bridge/build/libck3_bridge.so`. Notes:
+- CMake 3.16+, a C++17 compiler such as GCC 11 or newer, and git.
+- Network access on first configure: CMake downloads pinned Zydis and Zycore archives.
+- Python 3.11+.
 
-* **Zydis** is fetched from GitHub and built from source at a pinned commit
-  the first time you configure (needs network once). The headers in
-  `bridge/third_party/zydis/include` are the same version.
-* **`CK3_STRICT_BUILD_ID`** defaults to OFF in CMake and ON in release builds;
-  the public installers are always strict. The environment variable of the
-  same name overrides the compiled default at launch (`0` loosens, `1`
-  tightens).
-* **`BUILD_BRIDGE_TESTS`** adds ~50 engine-free test executables. CI builds
-  and runs a few of them; the rest are acceptance probes from the research
-  tree that still compile here.
-* The library must not depend on anything but glibc, libstdc++, pthread, dl
-  and rt (`ldd` it). Release builds are made on Ubuntu 22.04 for glibc 2.35
-  compatibility.
-* `-DCK3_BUILD_MAPGEN=ON` also builds `tools/ck3mapgen`, a map pre-processor
-  used by the optional map-graph query; it needs the game's data files.
+## Steps
 
-Use your build: `ck3agent setup --bridge $PWD/bridge/build/libck3_bridge.so`
-or `CK3AGENT_BRIDGE=... ck3agent launch`.
+1. Build the bridge, or run `make bridge`:
 
-## Python package
+   ```bash
+   cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+         -DCK3_STRICT_BUILD_ID=ON -DBUILD_BRIDGE_TESTS=ON
+   cmake --build bridge/build -j"$(nproc)"
+   (cd bridge/build && ctest --output-on-failure)
+   ```
 
-```bash
-python -m pip install -e ".[test]"
-python -m pytest                     # server suite + CLI tests, no game needed
-python -m build                      # wheel + sdist into dist/
-```
+   This builds the default target, as CI does: `bridge/build/libck3_bridge.so`,
+   the native tests, and `libck3_bridge_stub.so`, the i386 stub, when the
+   compiler accepts `-m32` (else CMake skips it with a status line). Naming
+   targets explicitly skips the stub.
 
-`ck3agent/server/` is shared verbatim with the upstream research tree and uses
-bare sibling imports (`from tools import …`); `ck3agent.bootstrap_server()`
-puts that directory on `sys.path`, which is what the CLI does before importing
-`mcp_server`. Do not convert them to package-relative imports here; the change
-belongs upstream.
+2. Install the Python package and run the tests, or run `make test`. No game needed.
 
-## Versioning
+   ```bash
+   python -m pip install -e ".[test]"
+   python -m pytest
+   ```
 
-`VERSION` at the root is the single source: CMake reads it for the library
-version, hatch reads `ck3agent/_version.py` (written from it), and the release
-workflow refuses a tag that does not match it.
+3. Use your build: `ck3agent setup --bridge $PWD/bridge/build/libck3_bridge.so`.
 
-## Release pipeline
+## CMake options
 
-`.github/workflows/release.yml` runs on a `v*` tag: builds the bridge on
-Ubuntu 22.04, splits debug symbols, builds the wheel, assembles the tarball,
-attests provenance, and opens a **draft** GitHub Release. See the workflow for
-the exact asset list.
+| Option | Default | Effect |
+|--------|---------|--------|
+| `CK3_STRICT_BUILD_ID` | OFF; ON in releases | refuse any other game build at load. The `CK3_STRICT_BUILD_ID` environment variable overrides it at launch. |
+| `CK3_BRIDGE_DEBUG_VERBS` | OFF | compile in the debug IPC verbs; see [SECURITY.md](../SECURITY.md) |
+| `BUILD_BRIDGE_TESTS` | OFF | build the native tests and probes; `ctest` runs the engine-free ones |
+| `CK3_BUILD_MAPGEN` | OFF | build `tools/ck3mapgen`, the map pre-processor for the map-graph query. It needs the game's data files. |
+| `CK3_ZYDIS_FROM_SOURCE` | OFF | build Zydis from the pinned archive even if a prebuilt `third_party/zydis/lib64/` exists |
+
+## Notes
+
+- The library exports only `execve`, `execvp`, `posix_spawn` and
+  `posix_spawnp`, listed in `bridge/bridge.version`.
+- Release builds need glibc 2.34 and libstdc++ from GCC 11 on the target
+  machine: symbol versions `GLIBC_2.34` and `GLIBCXX_3.4.29`. CI fails a build that needs more.
+- `ck3agent/server/` is shared with the upstream research tree and uses bare
+  sibling imports such as `from tools import ...`. `ck3agent.bootstrap_server()`
+  puts that directory on `sys.path`. Do not convert them here; change them upstream.
+- The export writes `VERSION`, `ck3agent/_version.py` and
+  `ck3agent/_bridge_meta.py`. CMake reads `VERSION`; the Python package reads
+  `_version.py`. The release workflow fails unless all three match the tag.
+- `.github/workflows/release.yml` builds a `v*` tag into a draft GitHub Release.
+
+## Check it worked
+
+- `ctest` passes.
+- `ck3agent doctor` reports your library under "bridge library".
+
+## If it fails
+
+- Zydis download fails: configure once with network access.
+- `ldd bridge/build/libck3_bridge.so` lists anything beyond `libc`, `libm`,
+  `libstdc++`, `libgcc_s`, the loader and the vDSO: your toolchain linked
+  something extra. CI rejects that; report it.
