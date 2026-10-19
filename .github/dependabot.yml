@@ -8,3 +8,8 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule: { interval: weekly }
+    ignore:
+      # mcp 2.x renames FastMCP to MCPServer and removes get_context(); the
+      # server is written against 1.x. Drop this once the migration lands.
+      - dependency-name: mcp
+        update-types: ["version-update:semver-major"]

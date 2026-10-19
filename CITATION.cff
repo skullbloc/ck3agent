@@ -7,7 +7,7 @@ authors:
     given-names: Harrison
 version: 2026.10.0
 # stamped at release; must match the release date
-date-released: "2026-10-17"
+date-released: "2026-10-19"
 license: Apache-2.0
 repository-code: "https://github.com/skullbloc/ck3agent"
 url: "https://github.com/skullbloc/ck3agent"

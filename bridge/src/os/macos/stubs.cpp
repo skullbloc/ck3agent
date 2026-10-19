@@ -49,6 +49,8 @@ Result binary_identity(BinaryIdentity* out) {
         out->format = IdentityFormat::none;
         out->observed_hex[0] = '\0';
         out->check = "unchecked";
+        out->image_sha256[0] = '\0';
+        out->image_size = 0;
     }
     return todo("macos: LC_UUID of the loaded slice, image SHA-256 witness "
                 "(ADR 0001 M0/M1; deferred)");
@@ -112,6 +114,67 @@ Result thread_id(std::uint64_t* out) {
 
 Result set_thread_name(const char*) {
     return todo("macos: pthread_setname_np, calling thread only (ADR 0001; deferred)");
+}
+
+Result entry_state(EntryState* out) {
+    if (out) {
+        out->phase = EntryPhase::not_attached; out->module = 0;
+        out->init_thread_id = 0; out->is_game = false; out->outcome = "";
+    }
+    return todo("macos: __attribute__((constructor)) in the dylib, as Linux (ADR 0001; deferred)");
+}
+
+Result image_sections(Section*, std::size_t, std::size_t* count) {
+    if (count) *count = 0;
+    return todo("macos: getsectiondata() for __TEXT,__text, __DATA_CONST,__const "
+                "(ADR 0001; deferred)");
+}
+
+Result guarded_call(GuardedBody, void*, Fault* fault) {
+    if (fault) { fault->code = 0; fault->address = 0; fault->pc = 0; }
+    return todo("macos: sigsetjmp + SIGSEGV and SIGBUS handlers, EXC_BAD_ACCESS port "
+                "forwarding (ADR 0001; deferred); body not run");
+}
+
+Result guard_rearm() {
+    return todo("macos: re-install the SIGSEGV/SIGBUS handlers (ADR 0001; deferred)");
+}
+
+Result alloc_exec_near(std::uintptr_t, std::size_t, ExecBlock* out) {
+    if (out) { out->base = 0; out->size = 0; }
+    return todo("macos: mmap RW then flip to RX, hardened-runtime entitlement "
+                "(ADR 0001; deferred)");
+}
+
+Result free_exec(ExecBlock*) { return todo("macos: munmap (ADR 0001; deferred)"); }
+
+Result register_unwind(const ExecBlock&, const UnwindEntry*, std::size_t) {
+    return todo("macos: __register_frame for generated code, if needed (ADR 0001; deferred)");
+}
+
+Result unregister_unwind(const ExecBlock&) {
+    return todo("macos: __deregister_frame (ADR 0001; deferred)");
+}
+
+Result watchdog_arm(std::uint32_t, WatchdogFn, void*) {
+    return todo("macos: SIGALRM as Linux (ADR 0001; deferred)");
+}
+
+Result watchdog_disarm(bool* fired) {
+    if (fired) *fired = false;
+    return todo("macos: SIGALRM as Linux (ADR 0001; deferred)");
+}
+
+Result rtti_find_vtable(const char*, std::uintptr_t* vtable) {
+    if (vtable) *vtable = 0;
+    return todo("macos: Itanium RTTI walk over the Mach-O sections; needs the macOS "
+                "binary (ADR 0001 M2; deferred)");
+}
+
+Result hook_plan(std::uintptr_t, HookPlan* out) {
+    if (out) { out->target = 0; out->steal_bytes = 0; out->cfg_checked_site = false;
+               out->cet_compatible = false; }
+    return todo("macos: hook planning needs the macOS binary (ADR 0001 M3; deferred)");
 }
 
 }  // namespace os

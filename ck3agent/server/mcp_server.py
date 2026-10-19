@@ -683,6 +683,12 @@ class BridgeState:
     _listener_task: Optional[asyncio.Task] = None
     _gateway: Optional[object] = None  # BridgeGateway for the 8 redesign tools
     mock_mode: bool = False
+    #: lane-multi / lane-prebind: the outcome of binding CK3_AGENT_CHARACTER_ID
+    #: ({character_id, ok, reason, bound_at?, also: [...], wait: {...}}), None
+    #: until the bind has been attempted. While the game is not yet active the
+    #: attempt waits in `_prebind_task` (see _prebind_when_active).
+    prebind: Optional[dict] = None
+    _prebind_task: Optional[asyncio.Task] = None
 
 
 # ---------------------------------------------------------------------------
@@ -960,7 +966,8 @@ async def bridge_lifespan(server: FastMCP):
                     "Offsets may be stale — proceed with caution.",
                     EXPECTED_BRIDGE_VERSION, bv,
                 )
-        state._listener_task = asyncio.create_task(_bridge_listener(state))
+        if state._listener_task is None or state._listener_task.done():   # a pre-bind starts it
+            state._listener_task = asyncio.create_task(_bridge_listener(state))
         log.info("Bridge connected, listener started")
         # ck-6kvq.9 / §2.2: adopt the bridge's polarity table as the authority
         # and report any disagreement with the local hint LOUDLY. Best-effort:
@@ -974,6 +981,9 @@ async def bridge_lifespan(server: FastMCP):
     try:
         yield state
     finally:
+        # lane-prebind: a pre-bind still waiting for the game must not land in
+        # the middle of the release below, so it is stopped first.
+        await _cancel_prebind_wait(state)
         await _release_on_exit(state)
         if state._listener_task:
             state._listener_task.cancel()
@@ -1245,21 +1255,77 @@ async def _sync_polarity_authority(state: BridgeState) -> list:
 AGENT_CHARACTER_ENV = "CK3_AGENT_CHARACTER_ID"
 
 
-def _agent_character_id() -> Optional[int]:
-    """The declared character, or None. Refuses rather than guesses."""
+#: lane-multi: the most rulers one pre-bind list may name. The bridge's cap is
+#: 10 claims across every session (MAX_CONTROLLED_WATCHLIST); a longer list
+#: cannot all be bound, so it is refused whole rather than bound in part.
+MAX_PREBIND_RULERS = 10
+
+#: lane-prebind: how long the pre-bind waits for the game to become ACTIVE
+#: before it is attempted anyway. `ck3agent run` can start while the save is
+#: still loading (lane-multi run 1: `launch` returned rc 3, both ids were
+#: refused `character_not_found` and nothing retried). Seconds; 0 attempts at
+#: once as before.
+PREBIND_WAIT_ENV = "CK3_AGENT_PREBIND_WAIT_S"
+PREBIND_WAIT_DEFAULT_S = 120.0
+#: Seconds between two reads of the bridge's session_state while waiting.
+PREBIND_POLL_S = 2.0
+
+
+def _prebind_wait_s() -> float:
+    """The wait budget: CK3_AGENT_PREBIND_WAIT_S, or the default when unset or
+    not a non-negative number (logged, never a crash at connect)."""
+    raw = os.environ.get(PREBIND_WAIT_ENV)
+    if raw is None or not str(raw).strip():
+        return PREBIND_WAIT_DEFAULT_S
+    try:
+        val = float(str(raw).strip())
+    except (TypeError, ValueError):
+        val = -1.0
+    if val < 0 or val != val:            # negative, or NaN
+        log.warning("%s=%r is not a non-negative number of seconds; using %.0f",
+                    PREBIND_WAIT_ENV, raw, PREBIND_WAIT_DEFAULT_S)
+        return PREBIND_WAIT_DEFAULT_S
+    return val
+
+
+def _agent_character_ids() -> list[int]:
+    """The declared characters, in order (the first is the primary), or [].
+
+    lane-multi: `CK3_AGENT_CHARACTER_ID` takes one id or a comma-separated list
+    ("13902,12145"). Refuses rather than guesses: one malformed entry, or more
+    than MAX_PREBIND_RULERS, claims NOTHING (a partial list would bind rulers
+    the declaration did not mean as a set). A repeated id is bound once.
+    """
     raw = os.environ.get(AGENT_CHARACTER_ENV)
     if raw is None or not str(raw).strip():
-        return None
-    try:
-        cid = int(str(raw).strip())
-    except (TypeError, ValueError):
-        log.error("%s=%r is not an integer — NOT claiming a character",
-                  AGENT_CHARACTER_ENV, raw)
-        return None
-    if cid <= 0:
-        log.error("%s=%d is not a character id — NOT claiming", AGENT_CHARACTER_ENV, cid)
-        return None
-    return cid
+        return []
+    out: list[int] = []
+    for part in str(raw).split(","):
+        try:
+            cid = int(part.strip())
+        except (TypeError, ValueError):
+            log.error("%s=%r: %r is not an integer — NOT claiming any character",
+                      AGENT_CHARACTER_ENV, raw, part)
+            return []
+        if cid <= 0:
+            log.error("%s=%r: %d is not a character id — NOT claiming any character",
+                      AGENT_CHARACTER_ENV, raw, cid)
+            return []
+        if cid in out:
+            log.warning("%s=%r names %d twice; binding it once", AGENT_CHARACTER_ENV, raw, cid)
+            continue
+        out.append(cid)
+    if len(out) > MAX_PREBIND_RULERS:
+        log.error("%s=%r names %d rulers; the bridge holds at most %d — NOT claiming any",
+                  AGENT_CHARACTER_ENV, raw, len(out), MAX_PREBIND_RULERS)
+        return []
+    return out
+
+
+def _agent_character_id() -> Optional[int]:
+    """The declared PRIMARY character (the first of the list), or None."""
+    ids = _agent_character_ids()
+    return ids[0] if ids else None
 
 
 async def _handshake_and_bind(client, state,
@@ -1309,31 +1375,178 @@ async def _handshake_and_bind(client, state,
     if resume_token:
         log.info("reconnect presented its resume token: resumed=%s resume_status=%s session=%s",
                  ack.get("resumed"), ack.get("resume_status"), ack.get("session_id"))
-    cid = _agent_character_id()
-    if cid is None:
+    ids = _agent_character_ids()
+    if not ids:
         return ack                      # nothing declared: unchanged behaviour
+    # lane-multi: READ THE PRE-BIND'S REPLY. The listener is what routes a reply
+    # to its waiting call, and at connect it used to start only AFTER this
+    # function returned: every pre-bind waited out its timeout and came back
+    # `sent_no_confirmation`, which the `success`-defaults-true read below took
+    # for a bind. Measured with the fake bridge: 5 s per declared ruler, and an
+    # added ruler's `added: true` never seen. Start it now, after the handshake
+    # has consumed its own ack.
+    if getattr(state, "_client", None) is client and not getattr(state, "mock_mode", False):
+        task = getattr(state, "_listener_task", None)
+        if task is None or task.done():
+            state._listener_task = asyncio.create_task(_bridge_listener(state))
+    # lane-prebind: a reconnect's bind replaces any wait the old session left.
+    await _cancel_prebind_wait(state)
+    # lane-prebind: BIND WHEN THE GAME IS ACTIVE, NOT WHEN THE SERVER IS. The
+    # ack says what the bridge is attached to. `active` (or an ack that does
+    # not say — an older bridge or a test fake) binds now, as before. Any
+    # other state (`dormant` on the main menu, a save still loading) would be
+    # refused `character_not_found` at once and never retried, so the bind is
+    # deferred to a task that polls get_tick_info's session_state. A TASK, not
+    # a wait here: this runs inside the lifespan, which FastMCP enters before
+    # it answers `initialize`, and Claude Code gives a server far less than
+    # the 120 s wait to come up. The tools are usable meanwhile.
+    ack_state = ack.get("session_state") if isinstance(ack, dict) else None
+    if ack_state and ack_state != "active":
+        state.prebind = None
+        state._prebind_task = asyncio.create_task(
+            _prebind_when_active(state, client, ids, str(ack_state)))
+        return ack
+    await _prebind_now(state, ids, wait={"waited_s": 0.0, "polls": 0,
+                                         "game_active": True if ack_state else None})
+    return ack
+
+
+async def _prebind_now(state, ids: list[int], wait: dict) -> None:
+    """Claim every declared ruler now, record the outcome on `state.prebind` and
+    in the session record. `wait` says how long the game was waited for
+    (`waited_s`, `polls`) and whether it was seen active (`game_active`: True,
+    False after a timeout, None when nothing said)."""
+    state.prebind = await _prebind_one(state, ids[0], add=False)
+    if len(ids) > 1:
+        # lane-multi: every further ruler is an ADDED claim (`add: true`), so the
+        # first stays the primary. A bridge that predates `add` ignores the key
+        # and SWITCHES away from the first; its reply then lacks `added`, which
+        # _prebind_one records as a refusal rather than a bind.
+        state.prebind["also"] = [await _prebind_one(state, x, add=True) for x in ids[1:]]
+    state.prebind["wait"] = dict(wait)
+    _record_prebind(state.prebind)
+
+
+async def _game_active(state) -> Optional[bool]:
+    """One read of the bridge's session_state: True when `active`, False for any
+    other named state, None when the read failed or named none."""
     try:
-        res = await _action_bridge(state, "set_controlled_character",
-                                   {"character_id": cid,
-                                    "disable_native_ai": False})
+        res = await _query_bridge(state, "get_tick_info", {}, timeout=5.0)
+    except Exception as exc:                                   # noqa: BLE001
+        log.debug("pre-bind wait: get_tick_info failed: %s", exc)
+        return None
+    st = res.get("session_state") if isinstance(res, dict) else None
+    return (st == "active") if st else None
+
+
+def _agent_claims(state) -> int:
+    """How many set_controlled_character calls this server has sent."""
+    return sum(1 for e in state.action_log if e.get("action") == "set_controlled_character")
+
+
+async def _prebind_when_active(state, client, ids: list[int], first_state: str) -> None:
+    """Poll the bridge until the game is active, then bind; on the deadline bind
+    anyway, so a game that never comes up yields the bridge's own refusal
+    (`character_not_found`), exactly what the run prompt already recovers from.
+    Stops without binding if the connection was replaced or exit began, and
+    records `superseded_by_agent_claim` if the agent bound for itself while the
+    wait ran (the bind would otherwise switch or re-claim under it)."""
+    loop = asyncio.get_running_loop()
+    budget = _prebind_wait_s()
+    t0 = loop.time()
+    deadline = t0 + budget
+    log.warning("game not active (session_state=%s): the pre-bind of %s waits up to %.0f s "
+                "for it (%s)", first_state, ids, budget, PREBIND_WAIT_ENV)
+    claims_before = _agent_claims(state)
+    polls = 0
+    active: Optional[bool] = False
+    try:
+        while True:
+            if _EXIT_SIGNAL or state._client is not client:
+                log.warning("pre-bind of %s abandoned: %s", ids,
+                            "exit requested" if _EXIT_SIGNAL else "connection replaced")
+                return
+            active = await _game_active(state)
+            polls += 1
+            if active:
+                break
+            if loop.time() >= deadline:
+                log.error("game still not active after %.0f s (%d polls): attempting the "
+                          "pre-bind of %s anyway", loop.time() - t0, polls, ids)
+                active = False
+                break
+            await asyncio.sleep(max(0.0, min(PREBIND_POLL_S, deadline - loop.time())))
+        waited = round(loop.time() - t0, 3)
+        wait = {"waited_s": waited, "polls": polls, "game_active": active}
+        if _agent_claims(state) > claims_before:
+            log.warning("the agent claimed for itself while the pre-bind of %s waited; "
+                        "the pre-bind is not attempted", ids)
+            state.prebind = {"character_id": ids[0], "ok": False,
+                             "reason": "superseded_by_agent_claim",
+                             "also": [{"character_id": x, "ok": False,
+                                       "reason": "superseded_by_agent_claim"} for x in ids[1:]],
+                             "wait": wait}
+            _record_prebind(state.prebind)
+            return
+        if _EXIT_SIGNAL:                 # exit began during the last poll: nothing is claimed
+            log.warning("pre-bind of %s abandoned: exit requested", ids)
+            return
+        if active:
+            log.info("game active after %.1f s (%d polls): pre-binding %s", waited, polls, ids)
+        await _prebind_now(state, ids, wait)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:                                   # noqa: BLE001
+        log.error("pre-bind wait for %s failed: %s", ids, exc)
+
+
+async def _cancel_prebind_wait(state) -> None:
+    """Stop a pre-bind that is still waiting for the game, if any."""
+    task = getattr(state, "_prebind_task", None)
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):               # noqa: BLE001
+        pass
+
+
+async def _prebind_one(state, cid: int, add: bool) -> dict:
+    """Claim one declared ruler; return {character_id, ok, reason} plus, when it
+    landed, `bound_at` {tick, date} from the reply's clock stamp. Never raises."""
+    params = {"character_id": cid, "disable_native_ai": False}
+    if add:
+        params["add"] = True
+    try:
+        res = await _action_bridge(state, "set_controlled_character", params)
     except Exception as exc:                                   # noqa: BLE001
         log.error("pre-bind to character %d FAILED to send: %s", cid, exc)
-        state.prebind = {"character_id": cid, "ok": False, "reason": str(exc)}
-        return ack
+        return {"character_id": cid, "ok": False, "reason": str(exc)}
     # THE RESULT IS INSPECTED, NOT ASSUMED (ck-tygb is the same file's lesson:
     # a write whose reply is never read leaves the client believing something
     # that did not happen). A refusal is recorded and the agent still runs —
     # it can still claim for itself, exactly as it does today.
     ok = bool(isinstance(res, dict) and res.get("success", True)
               and not res.get("reason"))
-    state.prebind = {"character_id": cid, "ok": ok,
-                     "reason": (res or {}).get("reason") if isinstance(res, dict) else None}
+    reason = (res or {}).get("reason") if isinstance(res, dict) else None
+    if ok and add and not (isinstance(res, dict) and res.get("added") is True):
+        ok, reason = False, "add_unsupported_by_bridge"
+    out = {"character_id": cid, "ok": ok, "reason": reason}
     if ok:
-        log.info("pre-bound to character %d before first turn", cid)
+        # lane-prebind: WHEN it landed. Every bridge frame stamps the live
+        # clock (ipc_server.cpp build_envelope_clock_fragment); a reply without
+        # one (a fake) records None, not a guess.
+        tick = res.get("tick")
+        date = res.get("game_date")
+        out["bound_at"] = {"tick": tick if isinstance(tick, int) else None,
+                           "date": date if isinstance(date, str) and date and date != "unknown" else None}
+        log.info("pre-bound to character %d before first turn%s (tick %s, %s)", cid,
+                 " (added)" if add else "", out["bound_at"]["tick"], out["bound_at"]["date"])
     else:
         log.error("pre-bind to character %d REFUSED: %s — the agent starts "
-                  "UNBOUND and must claim for itself", cid, state.prebind["reason"])
-    return ack
+                  "without it and must claim for itself", cid, reason)
+    return out
 
 
 async def _send_and_wait(state: BridgeState, action: str, params: dict,
@@ -1876,6 +2089,11 @@ async def query(
         character_id: Character context (0 = controlled).
         target_id: Secondary character for opinion, valid_cbs, diplomatic_range.
         title_id: Title context for titles, de_jure, election, neighbors, adjacency, development.
+            neighbors: title_id is a COUNTY. With title_id=0 the character is used
+            (character_id, 0 = the bound ruler): its capital county's neighbours, plus
+            bordering_realms[] = every realm whose counties touch that character's realm
+            (own + vassal counties), with a border_counties count each. Each neighbour row
+            carries title_id, holder_id and realm_ruler_id (the holder's top liege).
         trait_id: Trait ID for trait_compatibility.
         category: Building category for buildings domain (1095=constructible, 1825=special, 0=all).
         include_vassals: Include vassal claims in claims domain.
@@ -1883,8 +2101,15 @@ async def query(
         culture_id: Culture ID for innovation/fascination/research (0 = character's).
         dynasty_id: Dynasty ID for dynasty domain (0 = character's).
         filter: For domain="characters": all|alive|dead|ruler|independent|ai_controlled.
-        sort: For domain="characters": military|gold|realm_size|tier|age|diplomacy|
-              martial|stewardship|intrigue|learning|prowess.
+        sort: For domain="characters": military|gold|realm_size|realm_counties|tier|age|
+              diplomacy|martial|stewardship|intrigue|learning|prowess.
+              Row fields: realm_size = titles the character holds DIRECTLY, all tiers,
+              baronies included (same number as held_title_count); it drops when the AI
+              grants titles to vassals and is not territory. realm_counties = counties
+              held by the character or anyone in its vassal tree (for an independent ruler,
+              the same as query(domain="realm").realm_total_counties): use it for realm
+              size. is_ai = has an AI controller and is not the human player (the same
+              definition as domain="character"; true for every ruler in an observer game).
         sort_order: For domain="characters": desc (default) | asc.
         max_results: For domain="characters": cap on returned rows (lean default 25,
             verbose default 50; lean ceiling 500, verbose ceiling 5000).
@@ -2243,8 +2468,11 @@ async def discover(what: str, interaction_type: str = "",
               current{gold,piety,prestige}); valid_decisions (same eval, ONLY
               available==true decisions). Both take optional character_id.
               war_targets (enumerate every target+title+CB the actor can attack —
-              the "who can I declare war on" surface; feed an entry into
-              act(type="war", method="steered")),
+              the "who can I declare war on" surface; CANDIDATES ONLY: `declarable`
+              means no relation gate (kin, alliance, truce, imprisonment, already at
+              war) blocks the row, not that the game accepts the war. The strict engine
+              check, cbs(target_id) or what=valid_cbs_strict, is authoritative and wins
+              when the two disagree),
               imprisonment (can actor imprison/banish/execute target_id, and on
               what grounds — gate before imprison_interaction),
               targets (THE "who are valid targets for action X" surface — pass
@@ -2929,11 +3157,23 @@ async def do(intent: str = None, action_class: str = None, candidates: list = No
                 so it actually sieges — bridge default-OFF + NEEDS-LIVE-VALIDATION (arm via
                 session set_experimental force_offensive_stance).
         action_class: interactions|decisions|council_tasks|laws|fabricate_targets|
-                      mercenaries|factions_to_join|buildings|imprison_targets|formable_titles
-                      (enumerate only). formable_titles lists the titles you could
+                      mercenaries|factions_to_join|buildings|imprison_targets|formable_titles|
+                      men_at_arms (enumerate only). formable_titles lists the titles you could
                       create_title now, each with its de-jure county count and a ready
                       mint_title do_call (pass `candidates=[...]` to test a custom key set).
-        candidates: BOUNDED list for action_class="decisions" (#64 safety).
+                      mercenaries: free companies, nearest first, each labelled with home
+                      county and men, plus regiments; cost is null (the game prices a hire
+                      per hirer; the hire refuses what you cannot afford). men_at_arms: MaA
+                      types with recruit cost and fielded_regiments (types the realm already
+                      fields are known to be available; the rest are decided at recruit);
+                      30 rows, fielded first then cheapest, or pass candidates=[types].
+                      laws: the other laws in each law group you have; whether a change is
+                      allowed now is decided when change_law runs.
+                      council_task takes args.seat optionally; a task belongs to ONE seat
+                      (task_fabricate_claim is the court chaplain's), a seat that cannot take
+                      it is refused, and every reply names the seat and councillor used.
+        candidates: BOUNDED list for action_class="decisions" (#64 safety); for
+                    "men_at_arms", the MaA type keys to look up.
         character_id: actor (0 = controlled primary; REQUIRED in multi-actor).
         args: intent-specific keys (see the SPEC §2 intent table).
     """
@@ -3009,13 +3249,18 @@ async def cbs(target_id: int, character_id: int = 0) -> dict[str, Any]:
 @mcp.tool()
 async def session(action: str, character_id: int = 0, speed: int = 3,
                   enabled: bool = True, disable_native_ai: bool = False,
-                  flag: str = "") -> dict[str, Any]:
+                  flag: str = "", seconds: int = 60) -> dict[str, Any]:
     """Game-flow, identity, and liveness control. You rarely call this — observe/plan_war/
     do own pause-state for you. Use it to: switch which ruler you control after a
     succession (control); confirm the controlled ruler is alive+landed (whoami — control
     can silently drift); check bridge liveness if calls time out (health — 'hung' = STOP
-    looping); or set speed/pause. Speed is capped at 3; 4-5 while at war/near-succession
-    is REFUSED. The human player can be a target but never an actor.
+    looping); set speed/pause; or let time pass (wait). Speed is capped at 3; 4-5 is
+    REFUSED while at war, otherwise clamped to 3. The human player can be a target but never an actor.
+
+    wait: the way to let time pass between cycles. Unpauses if paused, blocks for
+    `seconds` (1-110; longer waits are several calls), pauses again, and returns
+    start_date/end_date. Do not use Bash `sleep` for this: Claude Code refuses sleeps
+    of 30 s or more.
 
     With no ruler bound, whoami returns ok=false, blocked.gate='no_ruler_bound',
     controlled=null, and blocked.measured.unbound_reason says why ('heir_is_player':
@@ -3027,6 +3272,13 @@ async def session(action: str, character_id: int = 0, speed: int = 3,
     ruler became the human's character gets 'cannot_act_as_player'. control needs
     character_id: 0 or omitted is refused (missing_character_id), never an unbind.
 
+    Several rulers in one session: add claims one more ruler and keeps the ones held
+    (the first stays the primary, the one a call without character_id acts as);
+    control SWITCHES the primary to another ruler. whoami's my_claims lists every
+    ruler held. With several, pass character_id on EVERY call. release frees one;
+    the last one is freed when the session ends. CK3_AGENT_CHARACTER_ID pre-binds
+    one id or a comma-separated list ("13902,12145"); the first is the primary.
+
     experimental_flags lists the EXPERIMENTAL-unvalidated engine flags, all OFF at
     boot; set_experimental(flag=<name>, enabled=bool) arms or disarms ONE
     (off_goal_veto / break_alliance / force_offensive_stance). set_phase('expansion')
@@ -3036,16 +3288,17 @@ async def session(action: str, character_id: int = 0, speed: int = 3,
     confirmed write (another seat's write is not seen; null does not mean off).
 
     Args:
-        action: control|release|whoami|speed|pause|unpause|health|auto_events|
+        action: control|add|release|whoami|speed|pause|unpause|wait|health|auto_events|
             experimental_flags|set_experimental.
-        character_id: for control (required, > 0) and release.
+        character_id: for control and add (required, > 0) and release.
         speed: 1-3 (4-5 refused while at war).
         enabled: for auto_events AND set_experimental (arm/disarm the flag). The
             bridge auto-handles events only while NO client socket is open, so never
             while you are connected; it then clears the event pause, unpauses a
             paused game, and picks no option.
-        disable_native_ai: for control.
+        disable_native_ai: for control and add.
         flag: for set_experimental — off_goal_veto|break_alliance|force_offensive_stance.
+        seconds: for wait — how long to let the clock run, 1-110 (default 60).
     """
     err = await _ensure_connected(_get_state())
     if err:
@@ -3053,7 +3306,7 @@ async def session(action: str, character_id: int = 0, speed: int = 3,
     import redesign
     return await redesign.session_impl(_get_gateway(), action=action, character_id=character_id,
                                        speed=speed, enabled=enabled, disable_native_ai=disable_native_ai,
-                                       flag=flag)
+                                       flag=flag, seconds=seconds)
 
 
 # ===========================================================================
@@ -3303,6 +3556,38 @@ def _record_session_at_handshake(client) -> None:
         return ack
 
     client.handshake = handshake
+
+
+def _record_prebind(prebind: Optional[dict]) -> None:
+    """lane-multi: add the pre-bind outcome to the session record (CK3_SESSION_OUT),
+    so `ck3agent run` can list in its manifest every ruler bound at start. Same
+    file, same 0600 atomic replace; never raises."""
+    out = os.environ.get(SESSION_OUT_ENV)
+    if not out or not os.environ.get(RELEASE_ON_EXIT_ENV) or not prebind:
+        return
+    pth = os.path.expanduser(out)
+    try:
+        with open(pth, encoding="utf-8") as fh:
+            rec = json.loads(fh.read() or "{}")
+    except (OSError, ValueError):
+        return                       # no session record: nothing to annotate
+    if not isinstance(rec, dict):
+        return
+    rec["prebind"] = [{k: p.get(k) for k in ("character_id", "ok", "reason", "bound_at")
+                       if k != "bound_at" or "bound_at" in p}
+                      for p in [prebind, *(prebind.get("also") or [])]]
+    # lane-prebind: how long the game was waited for before the bind, and
+    # whether it was seen active; absent when the server predates the wait.
+    if isinstance(prebind.get("wait"), dict):
+        rec["prebind_wait"] = dict(prebind["wait"])
+    tmp = f"{pth}.{os.getpid()}.tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+        os.replace(tmp, pth)
+    except OSError as exc:
+        log.warning("could not record the pre-bind: %s", exc)
 
 
 # Handlers first: the CLI and its tests take the tool surface file as "the

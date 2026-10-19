@@ -32,6 +32,7 @@ const char* identity_format_string(IdentityFormat f) {
         case IdentityFormat::elf_gnu_build_id: return "elf_gnu_build_id";
         case IdentityFormat::pe_codeview_rsds: return "pe_codeview_rsds";
         case IdentityFormat::macho_lc_uuid:    return "macho_lc_uuid";
+        case IdentityFormat::image_sha256:     return "image_sha256";
     }
     return "unknown";
 }
@@ -41,6 +42,16 @@ const char* transport_kind_string(TransportKind k) {
         case TransportKind::none:         return "none";
         case TransportKind::af_unix:      return "af_unix";
         case TransportKind::tcp_loopback: return "tcp_loopback";
+    }
+    return "unknown";
+}
+
+const char* entry_phase_string(EntryPhase p) {
+    switch (p) {
+        case EntryPhase::not_attached: return "not_attached";
+        case EntryPhase::attached:     return "attached";
+        case EntryPhase::init_running: return "init_running";
+        case EntryPhase::init_done:    return "init_done";
     }
     return "unknown";
 }

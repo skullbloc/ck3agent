@@ -1,4 +1,9 @@
 # Source of truth for repository labels (apply with `gh label create` or a label-sync action).
+- {name: bug, color: d73a4a, description: Something fails on a supported setup}
+- {name: port, color: 5319e7, description: Windows or macOS port work}
+- {name: binary-report, color: 5319e7, description: inspect_binary output for one binary}
+- {name: offset-finding, color: b60205, description: One offset, signature or vtable finding for one binary}
+- {name: bridge-contract, color: 0052cc, description: The bridge did not keep a documented guarantee}
 - {name: good first issue, color: 7057ff, description: Small and scoped, no game needed}
 - {name: needs-live-test, color: d93f0b, description: Needs a run against the real game}
 - {name: offsets, color: b60205, description: re/offsets or signatures}

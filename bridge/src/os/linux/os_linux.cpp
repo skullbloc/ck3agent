@@ -126,6 +126,8 @@ Result binary_identity(BinaryIdentity* out) {
     memcpy(out->observed_hex, w.observed_hex.data(), n);
     out->observed_hex[n] = '\0';
     out->check = bridge::build_id_check_string(w.status);
+    out->image_sha256[0] = '\0';  // no file-hash witness in the Linux bridge yet
+    out->image_size = 0;
     return ok();
 }
 
@@ -230,6 +232,79 @@ Result set_thread_name(const char* name) {
     const int rc = pthread_setname_np(pthread_self(), buf);
     if (rc != 0) return failed(rc, "pthread_setname_np failed");
     return ok();
+}
+
+// ── cells whose Linux code is file-static elsewhere (not routed) ────────────
+// Each names its owner. None of them runs anything: a not_routed guarded_call
+// does NOT run the body, because running it unguarded would be a different
+// semantics wearing the same name.
+
+Result entry_state(EntryState* out) {
+    if (out) {
+        out->phase = EntryPhase::not_attached; out->module = 0;
+        out->init_thread_id = 0; out->is_game = false; out->outcome = "";
+    }
+    return not_routed("linux: dll_init() (__attribute__((constructor))) is "
+                      "bridge/src/bridge_init.cpp");
+}
+
+Result image_sections(Section*, std::size_t, std::size_t* count) {
+    if (count) *count = 0;
+    return not_routed("linux: section bounds from program headers are "
+                      "bridge/src/runtime_resolver.cpp init_context()");
+}
+
+Result guarded_call(GuardedBody, void*, Fault* fault) {
+    if (fault) { fault->code = 0; fault->address = 0; fault->pc = 0; }
+    return not_routed("linux: sigsetjmp(g_recovery_point) + bridge_sigsegv_handler() are "
+                      "bridge/src/bridge_init.cpp; body not run");
+}
+
+Result guard_rearm() {
+    return not_routed("linux: the SIGSEGV re-arm is bridge/src/bridge_init.cpp");
+}
+
+Result alloc_exec_near(std::uintptr_t, std::size_t, ExecBlock* out) {
+    if (out) { out->base = 0; out->size = 0; }
+    return not_routed("linux: alloc_rwx_near() is bridge/src/hooks.cpp");
+}
+
+Result free_exec(ExecBlock*) {
+    return not_routed("linux: the trampoline pool is bridge/src/hooks.cpp");
+}
+
+Result register_unwind(const ExecBlock&, const UnwindEntry*, std::size_t) {
+    return Result{Status::unavailable_on_platform, 0,
+                  "linux: no RUNTIME_FUNCTION table; recovery is siglongjmp, which "
+                  "does not walk generated frames"};
+}
+
+Result unregister_unwind(const ExecBlock&) {
+    return Result{Status::unavailable_on_platform, 0,
+                  "linux: no RUNTIME_FUNCTION table to remove from"};
+}
+
+Result watchdog_arm(std::uint32_t, WatchdogFn, void*) {
+    return not_routed("linux: the per-thread SIGALRM dispatch watchdog is "
+                      "bridge/src/bridge_init.cpp");
+}
+
+Result watchdog_disarm(bool* fired) {
+    if (fired) *fired = false;
+    return not_routed("linux: the per-thread SIGALRM dispatch watchdog is "
+                      "bridge/src/bridge_init.cpp");
+}
+
+Result rtti_find_vtable(const char*, std::uintptr_t* vtable) {
+    if (vtable) *vtable = 0;
+    return not_routed("linux: find_typeinfo()/find_vtable() are "
+                      "bridge/src/runtime_resolver.cpp");
+}
+
+Result hook_plan(std::uintptr_t, HookPlan* out) {
+    if (out) { out->target = 0; out->steal_bytes = 0; out->cfg_checked_site = false;
+               out->cet_compatible = false; }
+    return not_routed("linux: install_hook() prologue relocation is bridge/src/hooks.cpp");
 }
 
 }  // namespace os

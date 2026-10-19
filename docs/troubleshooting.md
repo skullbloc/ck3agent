@@ -64,11 +64,28 @@ AI ruler: see [choose the ruler](getting-started.md#4-choose-the-ruler-claude-pl
 `actor_unresolved` is different: the read failed. Check `session(action="health")`.
 `cannot_act_as_player` from `whoami` means you inherited Claude's ruler.
 
+With no ruler bound and no `character_id` given, `whoami`, `observe_v2`,
+`inspect`, `plan_war`, `declare_war`, `cbs`, `succession_plan`, `set_phase`
+and `do` return `ok: false` with `blocked.gate: "no_ruler_bound"`. The tools
+`observe`, `query`, `discover`, `steer` and `intent` are not checked and
+return `ok: true` with the bridge's empty or declined reply, for example
+`observe`'s `data.character.success: false`. `discover(what="evaluate_trigger")`
+evaluates against the engine's player character, which is yours on a player
+save.
+
 ### `game_paused`, `game_unpaused` or `cb_query_timeout`
 
 `observe`, `query` and `discover` need the game paused; the other tools set
 pause state themselves. Ask Claude to pause and retry once. If it repeats,
 `session(action="health")` shows whether the bridge is hung.
+
+### `experimental_write_disabled`
+
+Two actions, creating or joining a faction and breaking an alliance, are off
+by default because the engine code they call has not been exercised
+crash-free. Claude cannot turn them on. If you want them in your game, add the
+action name to the file named in the reply's `blocked.fix` (one name per line,
+no relaunch needed): [default-off writes](research.md#default-off-writes).
 
 ### Flatpak or Snap Steam
 
@@ -88,7 +105,7 @@ Claude was doing. Each release attaches bridge debug symbols as
 
 ### Two games on one machine
 
-Set `CK3_INSTANCE_ID=<name>` for both the game and the MCP server. Each
+Launch each game with `CK3_INSTANCE_ID=<name> ck3agent launch ...`, and give each its own play directory (`ck3agent setup --play-dir DIR`) whose `.mcp.json` sets the same `CK3_INSTANCE_ID` in its `env` block. Each
 instance gets its own socket, logs and telemetry.
 
 ## If it fails

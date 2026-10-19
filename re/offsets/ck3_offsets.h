@@ -416,9 +416,23 @@ namespace globals {
     constexpr uintptr_t LIFESTYLE_PERK_NULL  = 0x0bf1cb80;
     constexpr uintptr_t LIFESTYLE_DB         = 0x0bee2fc8;
     constexpr uintptr_t LIFESTYLE_NULL       = 0x0bf1cb70;
-    constexpr uintptr_t SCHEME_NULL          = 0x0bf1cb20;
+    constexpr uintptr_t SCHEME_NULL          = 0x0bf1cb20;  // HIGH: SLOT holding the null CActiveScheme* (DB/null pair with SCHEME_REFDB); CreateActiveScheme returns *(base+SCHEME_NULL), id 0xFFFFFF (lane-scheme live 2026-10-18; caller loads it at 0x051ba9ac)
     constexpr uintptr_t SCHEME_REFDB         = 0x0bf1cb18;  // HIGH: TPdxRefDatabase<CActiveScheme,8> (R7-3, DAT_0c01cb18 - 0x100000)
     constexpr uintptr_t SCHEME_TYPE_DB       = 0x0bedaf68;  // HIGH: CSchemeTypeDatabase (R8V5 fix: was 0x0bedaf70 = sentinel, real DB is at sentinel-8)
+    // lane-scheme 2026-10-18 (re/findings/re_scheme_start_args.md): the two OPTIONAL
+    // refs CreateActiveScheme takes as p5/p6. The ONLY engine caller (start_scheme
+    // effect, call @ image 0x052baa73) builds them by RefDB lookup of an optional
+    // script scope and falls back to the DB's null object when the scope is absent:
+    //   p5 = FUN_05f75740(scope type 0x38) -> *(TASK_CONTRACT_DB) slot | *(TASK_CONTRACT_NULL)
+    //   p6 = FUN_05f73f00(scope type 0x1f) -> *(ARTIFACT_DB) slot      | *(ARTIFACT_NULL)
+    // RTTI of the null objects (core dump ivar867): TPdxNullObject<CTaskContract> and
+    // TPdxNullObject<CArtifact>; null ids are -1 (contract +0x8, artifact +0x10), which
+    // is what InitializeScheme copies to scheme+0x34 / +0x38. HIGH (decompile x2 +
+    // RTTI + core dump + live murder readback, see the finding).
+    constexpr uintptr_t TASK_CONTRACT_DB     = 0x0bef9358;  // HIGH: TPdxRefDatabase<CTaskContract> (FUN_05f75740)
+    constexpr uintptr_t TASK_CONTRACT_NULL   = 0x0bef9360;  // HIGH: TPdxNullObject<CTaskContract>* (id @+0x8 == -1)
+    constexpr uintptr_t ARTIFACT_DB          = 0x0bed8938;  // HIGH: TPdxRefDatabase<CArtifact,8> (FUN_05f73f00; re_siege_mechanics.md)
+    constexpr uintptr_t ARTIFACT_NULL        = 0x0bed8940;  // HIGH: TPdxNullObject<CArtifact>* (id @+0x10 == -1)
 
     // War database (canonical war lookup)
     constexpr uintptr_t WAR_DB               = 0x0bed8888;
@@ -1977,10 +1991,12 @@ namespace funcs {
     //                 (param_2[0x3e]) — verified 0 for murder/fabricate_hook/claim_throne.
     //   SELF-GATING: runs type is_shown (vt type+0x10) + ValidateSchemeTarget +
     //   owner/target IsAlive + HasSchemeOnTarget(cooldown) + type can-start (vt
-    //   type+0x38) INTERNALLY; returns SCHEME_NULL (= base+0x0bf1cb20) on any fail.
-    //   p5/p6 are NON-NULLABLE scope objects (InitializeScheme derefs p5 via vcall;
-    //   p5[1]→scheme+0x34 subtype=-1, *(p6+0x10)→scheme+0x38=-1 for real murders) —
-    //   captured at runtime from real engine schemes by scheme_init_hook.cpp.
+    //   type+0x38) INTERNALLY; returns the null scheme *(base+SCHEME_NULL) on any fail
+    //   (the VALUE in the slot, not its address -- lane-scheme 2026-10-18).
+    //   p5/p6 are NON-NULLABLE: p5 = CTaskContract*, p6 = CArtifact* (lane-scheme
+    //   2026-10-18, re_scheme_start_args.md); a scheme without them gets the DB null
+    //   objects *(TASK_CONTRACT_NULL) / *(ARTIFACT_NULL), which execute_scheme_intent
+    //   now passes itself (it used to replay a pointer captured by scheme_init_hook).
     //   SCHEME_TYPE_DB iterated like the faction DB: inst=*(base+SCHEME_TYPE_DB),
     //   arr=*(inst+0x88), count=*(u32)(inst+0x94)=76, name=std::string@type+0x10.
     constexpr uintptr_t CREATE_ACTIVE_SCHEME       = 0x062a7dd0;  // HIGH: 2296B, FUN_063a7dd0
@@ -6103,6 +6119,30 @@ namespace regiment {
     // Dundee barony, ...); ref 881 (Steyr) is well outside the troop-count range, ruling
     // out a count-field false positive. Duplicate copy at +0x160 (same value). (ck-readlane)
     constexpr size_t STATION_TITLE_ID   = 0x15c;  // HIGH: uint32, stationed holding/title ID (TPdxRef, mask 0xFFFFFF)
+}
+
+// =============================================================================
+// CMercenaryCompany def-node fields (lane-query, 2026-10-18). Reached through
+// globals::MERC_COMPANY_DB (hash_map; entry = the 0x70-byte node, id @ +0x10).
+// Evidence: core dump ck3_20260625_152901_ivar867 (867.01.01), all 551 nodes:
+// HOME_COUNTY resolves to a tier-2 LANDED_TITLE_DB entry 551/551 (c_fante,
+// c_begho, ...); CAPTAIN_CHAR_ID resolves to a CHARACTER_DB entry 551/551;
+// REGIMENT_IDS/COUNT resolve 1528/1528 ids in REGIMENT_DB (first regiment has
+// an empty MaA key = the levy block, the rest are MaA types such as
+// light_horsemen / pikemen_unit). HIRED_BY: Ghidra, FUN_062772f0 (the
+// hire validate called by CHireMercenaryCompanyCommand_CanExecute @ 0x610a530)
+// takes the "free" path only when *(company+0x48) == -1; all 551 read -1 in the
+// 867.01.01 dump (no company hired yet), so the hired value is not observed.
+// Name and hire cost are NOT here: the cost is computed per hirer by
+// FUN_06108e60 over the regiment array (scripted values), not stored.
+// See re/findings/re_hire_mercenary_wiring.md (lane-query addendum).
+// =============================================================================
+namespace merc_company {
+    constexpr size_t HOME_COUNTY_ID     = 0x20;   // MEDIUM: u32 county title id (dump 551/551; FUN_06277980 reads it as the hire-range origin)
+    constexpr size_t CAPTAIN_CHAR_ID    = 0x28;   // MEDIUM: u32 captain character id (dump 551/551)
+    constexpr size_t REGIMENT_IDS       = 0x30;   // MEDIUM: ptr to u32[] REGIMENT_DB ids (FUN_06278d70 passes company+0x30 to the cost calc)
+    constexpr size_t REGIMENT_COUNT     = 0x38;   // MEDIUM: u32 count of REGIMENT_IDS (capacity at +0x3c)
+    constexpr size_t HIRED_BY           = 0x48;   // MEDIUM: u32, -1 = not under contract (decompile: FUN_062772f0); otherwise the hirer, unobserved
 }
 
 // =============================================================================

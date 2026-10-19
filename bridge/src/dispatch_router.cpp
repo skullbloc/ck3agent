@@ -651,6 +651,13 @@ const size_t g_subsystem_toggle_count = sizeof(g_subsystem_toggles) / sizeof(g_s
 bool do_set_controlled_character(const char* params_json, std::string* out) {
     int cid = json_get_int(params_json, "character_id");
     bool disable_ai = json_get_bool(params_json, "disable_native_ai", false);
+    //: lane-multi: `add: true` takes the character as ONE MORE ruler of this
+    //: session and keeps its primary, instead of switching away from it. Net +1,
+    //: so the cap is enforced exactly as for a first claim. Absent or false is
+    //: the switch (ck-swap, Ruling Three), unchanged. The reply says `added`, so
+    //: a client can tell this bridge from an older one that ignores the key and
+    //: switches.
+    const bool add = json_get_bool(params_json, "add", false);
 
     bridge::Session* session = bridge::current_session();
 
@@ -762,8 +769,14 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
         // the claim is refused, the note names an id that never becomes primary,
         // and primary_change_cause_for only answers for an id it was actually
         // asked about. An early stamp can be unused; it cannot be wrong.
-        bridge::note_primary_change(char_id, bridge::kPrimaryCauseControl);
-        const bool ok = (held_primary != 0 && held_primary != char_id)
+        //: lane-multi: an ADD with a primary held does not move the primary, so
+        //: there is no primary change to stamp.
+        if (!(add && held_primary != 0))
+            bridge::note_primary_change(char_id, bridge::kPrimaryCauseControl);
+        const bool ok = add
+            ? bridge::g_session_registry.claim_character(
+                  session, char_id, &claim_reason, /*keep_primary=*/true)
+            : (held_primary != 0 && held_primary != char_id)
             ? bridge::g_session_registry.swap_character(
                   session, held_primary, char_id, &claim_reason)
             : bridge::g_session_registry.claim_character(
@@ -831,7 +844,10 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
             //: surrounding branch; nothing in my own lane did, because the row
             //: checked that the assignment EXISTS and not WHERE it is.
             std::lock_guard<std::mutex> lk(session->mutex);
-            session->claim_disabled_native_ai = disable_ai;
+            //: lane-multi: an added ruler does not rewrite what the PRIMARY's
+            //: claim asked for; the handoff preserves the primary's choice.
+            if (!add || session->primary_character_id == char_id)
+                session->claim_disabled_native_ai = disable_ai;
         }
         // Disable native AI for this character if requested. When we actually
         // take over AI control, flip g_agent_mode so downstream gates
@@ -946,9 +962,26 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
 
     if (out) {
         ResponseBuilder r; r.begin_object();
+        // lane-multi: this seat's primary AFTER the call. A switch or a first
+        // claim makes it char_id; an add leaves the one the seat already had.
+        uint32_t primary_after = char_id;
+        std::vector<uint32_t> held_after;
+        if (session) {
+            std::lock_guard<std::mutex> lk(session->mutex);
+            primary_after = session->primary_character_id;
+            held_after.assign(session->claimed_character_ids.begin(),
+                              session->claimed_character_ids.end());
+        }
         r.key("success"); r.value_bool(true);
         r.key("action"); r.value_string("set_controlled_character");
-        r.key("controlled_primary"); r.value_uint(char_id);
+        r.key("controlled_primary"); r.value_uint(primary_after);
+        r.key("added"); r.value_bool(add);
+        r.key("character_id"); r.value_uint(char_id);
+        if (session) {
+            r.key("claimed_character_ids"); r.begin_array();
+            for (uint32_t h : held_after) r.value_uint(h);
+            r.end_array();
+        }
         r.key("session_id"); r.value_string(session ? session->session_id.c_str() : "");
         r.key("ai_disabled"); r.value_bool(ai_disabled_now);
         r.key("agent_mode"); r.value_bool(g_agent_mode.load(std::memory_order_relaxed));
@@ -1617,14 +1650,17 @@ static bool experimental_write_enabled(const char* action) {
         //    NOTE: agent needs province-index discovery (a query exposing realm province
         //    indices) for optimal stationing; unstation needs only regiment_id.
         "faction_action",
-        // #132 scheme_action — NEW engine-write territory (CreateActiveScheme forward,
-        // touches the scheme manager + InitializeScheme + agent staffing). Self-gated
-        // by the engine's own scheme-start predicates, wrapped in the standard fake-RNG
-        // + watchdog + sigsetjmp crash-net, but NOT yet live-validated. Disabled by
-        // default; enable for controlled validation by adding "scheme_action" to
-        // /tmp/ck3-enabled-writes (re-read every call — no relaunch). Once a live murder
-        // is confirmed crash-free and query(schemes) shows it owned, remove from here.
-        "scheme_action",
+        // scheme_action REMOVED 2026-10-18 — VALIDATED live (lane-scheme,
+        // re/sessions/lane-scheme-2026-10-18, re/findings/re_scheme_start_args.md):
+        // CreateActiveScheme's p5/p6 are the CTaskContract/CArtifact DB null objects
+        // (engine starts pass the same, witnessed 13 types), SCHEME_NULL is the slot
+        // not the sentinel, cancel reachable. Murders created and owned for four
+        // rulers across four timed runs (867.02→06, 04→08, ...), no fault line, ticks
+        // kept flowing. Engine refusals come back typed (scheme_start_refused,
+        // target_ineligible, scheme_type_unsupported, game_paused). Not exercised:
+        // a dead target; a human player as TARGET (the game allows it; the bridge
+        // refuses only a player as actor). Still wrapped in the fake-RNG + watchdog +
+        // sigsetjmp crash-net like every other write.
         // break_alliance — the literal CBreakAllowAllianceEffect break. OFFSETS
         // PINNED (alliance::BREAK_ALLIANCE_*) + chain HIGH-confidence, but the
         // handler is observer-save-GATED: it makes NO engine call yet (drain path
@@ -2229,7 +2265,25 @@ static bool case_set_character_ai(const char* params_json, std::string* response
         rb.key("success"); rb.value_bool(ok);
         rb.key("action"); rb.value_string("set_character_ai");
         rb.key("character_id"); rb.value_int(cid);
-        rb.key("ai_enabled"); rb.value_bool(ok ? enabled : true);
+        // lane-query item 7: a refusal used to report `ai_enabled: true` — a
+        // value nobody read (the write was refused before it touched the byte).
+        // set_phase passed character_id 0, the refusal said success:false,
+        // ai_enabled:true, and the action log carried that pair. On failure the
+        // state is UNREAD: null, plus the reason the handler refused.
+        if (ok) {
+            rb.key("ai_enabled"); rb.value_bool(enabled);
+        } else {
+            rb.key("ai_enabled"); rb.value_null();
+            const char* reason = "no_ai_controller";
+            if (cid <= 0) {
+                reason = "character_id_invalid";
+            } else {
+                void* ch = lookup_character(static_cast<uint32_t>(cid));
+                if (!ch || is_sentinel(ch)) reason = "character_not_found";
+                else if (g_get_ai_ctrl && g_get_ai_ctrl(ch)) reason = "ai_controller_unreadable";
+            }
+            rb.key("reason"); rb.value_string(reason);
+        }
         rb.end_object();
         *response_out = rb.take();
     }

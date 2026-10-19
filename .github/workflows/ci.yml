@@ -1,4 +1,7 @@
-name: ci
+name: CI
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   push:
@@ -26,7 +29,7 @@ jobs:
         os: [ubuntu-22.04, ubuntu-latest]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build deps
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake build-essential git binutils
       - name: Configure (strict BuildID, tests on, Zydis from source)
@@ -83,8 +86,8 @@ jobs:
         python: ["3.11", "3.12", "3.13", "3.14"]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
@@ -101,8 +104,8 @@ jobs:
         python: ["3.11", "3.12", "3.13", "3.14"]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install build==1.6.1 hatchling==1.32.4
@@ -140,22 +143,25 @@ jobs:
 
   # Platform layer (docs/adr/0001-windows-macos-port.md, phase P2). These legs
   # build ONLY bridge/src/os/ (CK3_PLATFORM=windows|macos stops the CMake file
-  # before the Linux bridge) and run its stub test: the proof that the stubs
-  # compile with MSVC and Apple clang. No game, no bridge, no hooks.
+  # before the Linux bridge) with no game, no hooks. windows-latest builds the
+  # Win32 cells, the ck3_bridge_win DLL and every os test and runs them (the
+  # ADR "P2 cell status" table names the same test_os_win_<cell> tests);
+  # macos-14 builds the typed-refusal stubs and their test. ADR 0001 P2:
+  # "engine-free tests pass on 3 OSes".
   platform-windows:
     name: platform layer (windows-latest)
     runs-on: windows-latest
-    continue-on-error: true   # first release: never run on MSVC/Apple clang yet; drop once green
+    continue-on-error: true   # P2: keep until the cells are green on real MSVC twice, then drop
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - name: Configure (platform layer only, MSVC)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure (platform layer, MSVC)
         run: cmake -S bridge -B bridge/build -DCK3_PLATFORM=windows -DBUILD_BRIDGE_TESTS=ON
-      - name: Build the stub target
-        run: cmake --build bridge/build --config Release --target ck3_os test_os_stubs
-      - name: Stub contract test
+      - name: Build the cells, their tests and the ck3_bridge_win DLL
+        run: cmake --build bridge/build --config Release
+      - name: Platform-layer tests (cells + stubs)
         run: ctest --test-dir bridge/build -C Release --output-on-failure
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
@@ -171,17 +177,17 @@ jobs:
   platform-macos:
     name: platform layer (macos-14)
     runs-on: macos-14
-    continue-on-error: true   # first release: never run on MSVC/Apple clang yet; drop once green
+    continue-on-error: true   # P2: macOS is all typed refusals; keep until green twice
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - name: Configure (platform layer only, Apple clang)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure (platform layer, Apple clang)
         run: cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=Release -DCK3_PLATFORM=macos -DBUILD_BRIDGE_TESTS=ON
-      - name: Build the stub target
-        run: cmake --build bridge/build --config Release --target ck3_os test_os_stubs
-      - name: Stub contract test
+      - name: Build the stubs, the portable helpers and their tests
+        run: cmake --build bridge/build --config Release
+      - name: Platform-layer tests (stubs + portable helpers)
         run: ctest --test-dir bridge/build -C Release --output-on-failure
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
@@ -193,11 +199,12 @@ jobs:
         run: python -m pytest
 
   dco:
-    if: github.event_name == 'pull_request'
+    # Dependabot's commits carry no sign-off; its PRs are reviewed by a human instead.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Every PR commit carries Signed-off-by

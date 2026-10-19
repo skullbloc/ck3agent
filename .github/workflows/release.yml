@@ -1,6 +1,6 @@
 # Tag push vYYYY.MM.N: CI on the tagged sha, then build (read-only) and
 # publish (write) a DRAFT GitHub Release. A human clicks Publish.
-name: release
+name: Release
 
 on:
   push:
@@ -26,7 +26,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Versions agree with the tag
         run: |
@@ -41,15 +41,18 @@ jobs:
           echo "VER=$tag" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
 
+      # Written outside the checkout: the bridge's build provenance runs
+      # `git status --porcelain`, and an untracked out/ would stamp the shipped
+      # library "dirty". The assemble step copies the notes into out/.
       - name: Release notes from CHANGELOG
         run: |
-          mkdir -p out
-          awk -v ver="$VER" '/^## /{ on = ($2 == ver) } on && !/^<!--/' CHANGELOG.md > out/notes.md
-          if [ ! -s out/notes.md ]; then echo "::error::CHANGELOG.md has no section for $VER"; exit 1; fi
-          if head -n1 out/notes.md | grep -qi unreleased; then
+          notes="$RUNNER_TEMP/notes.md"
+          awk -v ver="$VER" '/^## /{ on = ($2 == ver) } on && !/^<!--/' CHANGELOG.md > "$notes"
+          if [ ! -s "$notes" ]; then echo "::error::CHANGELOG.md has no section for $VER"; exit 1; fi
+          if head -n1 "$notes" | grep -qi unreleased; then
             echo "::error::CHANGELOG heading for $VER still says unreleased"; exit 1
           fi
-          cat >> out/notes.md <<EOF
+          cat >> "$notes" <<EOF
 
           Debug symbols: rename \`libck3_bridge-${VER}.so.debug\` to \`libck3_bridge.so.debug\` and put it beside \`libck3_bridge.so\`.
           Verify downloads against \`SHA256SUMS\` and \`gh attestation verify\` (docs/getting-started.md).
@@ -64,6 +67,12 @@ jobs:
           cmake --build bridge/build -- -j"$(nproc)"
           (cd bridge/build && ctest --output-on-failure)
 
+      - name: Build provenance names this commit and a clean tree
+        run: |
+          h=bridge/build/build_provenance.h; cat "$h"
+          grep -q "GIT_SHA *= *\"${GITHUB_SHA:0:12}\"" "$h" || { echo "::error::provenance GIT_SHA is not $GITHUB_SHA"; exit 1; }
+          grep -q 'GIT_DIRTY *= *"clean"' "$h" || { echo "::error::provenance says the tree was dirty at build time; git status:"; git status --porcelain; exit 1; }
+
       - name: Split debug info
         run: |
           cd bridge/build
@@ -72,7 +81,7 @@ jobs:
           objcopy --add-gnu-debuglink=libck3_bridge.so.debug libck3_bridge.so
           ls -la libck3_bridge.so libck3_bridge.so.debug
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Build wheel + sdist
@@ -83,6 +92,7 @@ jobs:
 
       - name: Assemble tarball
         run: |
+          mkdir -p out && cp "$RUNNER_TEMP/notes.md" out/notes.md
           set -e
           name="ck3agent-${VER}-linux-x86_64"
           d="stage/$name"
@@ -93,6 +103,7 @@ jobs:
           # runtime dependencies for every supported Python, so the tarball installs offline
           # (the same script installer/test_install.sh bundles with)
           installer/bundle_wheels.sh "$d/wheels" dist/*.whl
+          (cd "$d/wheels" && sha256sum *.whl > SHA256SUMS)   # the exact third-party closure this release bundles
           cp installer/install.sh installer/uninstall.sh "$d/"
           cp LICENSE NOTICE THIRD_PARTY_LICENSES.md VERSION UPSTREAM CITATION.cff "$d/"
           cp installer/README.txt "$d/README.txt"

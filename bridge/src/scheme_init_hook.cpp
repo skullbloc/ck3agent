@@ -17,6 +17,7 @@
 #include <deque>
 #include <map>
 #include <chrono>
+#include <cstring>
 
 namespace bridge {
 
@@ -51,7 +52,8 @@ static constexpr size_t MAX_SCHEME_INITS = 64;
 static void* g_orig_create_active_scheme = nullptr;
 
 // =============================================================================
-// #132 — Scheme-start argument template cache.
+// #132 — Scheme-start argument template cache. (SUPERSEDED as an argument source by
+// lane-scheme 2026-10-18 — see the block after this one; kept as a witness.)
 //
 // CREATE_ACTIVE_SCHEME's 5th & 6th args (forwarded to InitializeScheme) are NOT
 // scalars: param_5 is a subtype-scope object (vtable-dereferenced; param_5[1] →
@@ -69,11 +71,29 @@ static void* g_orig_create_active_scheme = nullptr;
 // "no subtype / no special scope" sentinels — param5[1]==-1, *(param6+0x10)==-1),
 // not per-scheme allocations, so they remain valid for reuse.
 // =============================================================================
+// lane-scheme 2026-10-18 (re/findings/re_scheme_start_args.md): RE has since
+// named the two args. The single engine caller (the start_scheme effect, call @
+// image 0x052baa73) passes p5 = the scheme's CTaskContract* and p6 = its
+// CArtifact*, each a RefDB lookup of an OPTIONAL script scope that falls back to
+// the DB's TPdxNullObject when the scope is absent. A murder carries neither, so
+// the engine passes the two null objects -- process-lifetime singletons. A start
+// that DID carry a contract/artifact would leave a pointer to a destroyable
+// object here, so the cache now records which case it saw (`null_args`) and
+// execute_scheme_intent no longer replays a captured pointer at all: it passes
+// the live null objects itself and uses this cache only as a witness of how the
+// engine starts each type.
 struct SchemeArgTemplate {
     uint64_t param5;
     uint64_t param6;
     bool     valid;
+    bool     null_args;   // the LAST start passed exactly the null contract/artifact
+    uint32_t null_seen;   // engine starts of this type with the null objects
+    uint32_t real_seen;   // engine starts of this type carrying a real contract/artifact
 };
+// Set by execute_scheme_intent around its own CreateActiveScheme call, so the
+// witness below counts only the ENGINE's starts, never the bridge's own.
+thread_local bool g_scheme_start_from_bridge = false;
+
 static std::shared_mutex g_scheme_tpl_mutex;
 static std::map<std::string, SchemeArgTemplate> g_scheme_arg_templates CK3_EARLY_INIT;
 
@@ -86,6 +106,30 @@ bool scheme_get_arg_template(const std::string& type_name,
     if (it == g_scheme_arg_templates.end() || !it->second.valid) return false;
     if (out_p5) *out_p5 = it->second.param5;
     if (out_p6) *out_p6 = it->second.param6;
+    return true;
+}
+
+// How the engine itself has started `type_name` this process: 0 = never seen,
+// 1 = at least one start passed the null contract/artifact objects (the type is
+// startable without them), 2 = seen, and EVERY start carried a real contract or
+// artifact (the bridge cannot start it faithfully).
+int scheme_arg_template_status(const std::string& type_name) {
+    std::shared_lock<std::shared_mutex> lock(g_scheme_tpl_mutex);
+    auto it = g_scheme_arg_templates.find(type_name);
+    if (it == g_scheme_arg_templates.end() || !it->second.valid) return 0;
+    if (it->second.null_seen > 0) return 1;
+    return it->second.real_seen > 0 ? 2 : 0;
+}
+
+// The two null objects CreateActiveScheme expects when a scheme has no task
+// contract / artifact (what the start_scheme effect passes when its optional
+// scopes are absent). 0 when the DB is not up yet. Fault-tolerant reads.
+bool scheme_null_arg_objects(uint64_t* out_contract, uint64_t* out_artifact) {
+    uintptr_t c = safe_read<uintptr_t>(g_base_addr + ck3::globals::TASK_CONTRACT_NULL);
+    uintptr_t a = safe_read<uintptr_t>(g_base_addr + ck3::globals::ARTIFACT_NULL);
+    if (!c || !a || !is_mapped(c) || !is_mapped(a)) return false;
+    if (out_contract) *out_contract = c;
+    if (out_artifact) *out_artifact = a;
     return true;
 }
 
@@ -119,9 +163,14 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
         return result;
     }
 
-    // Check if result is the null sentinel (SCHEME_NULL = g_base_addr + 0x0bf1cb20)
-    uintptr_t null_sentinel = g_base_addr + ck3::globals::SCHEME_NULL;
-    if (scheme_ptr == null_sentinel) {
+    // Engine refusal: CreateActiveScheme returns the null-scheme OBJECT whose
+    // pointer lives in the SCHEME_NULL slot, not the slot's address
+    // (lane-scheme 2026-10-18; see execute_scheme_intent). The old address
+    // compare never matched, so every refused AI start was recorded here as an
+    // initiation of a scheme with id 0xFFFFFF.
+    uintptr_t null_slot = g_base_addr + ck3::globals::SCHEME_NULL;
+    uintptr_t null_obj = safe_read<uintptr_t>(null_slot);
+    if (scheme_ptr == null_slot || (null_obj && scheme_ptr == null_obj)) {
         return result;
     }
 
@@ -132,7 +181,19 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
-    // SIGSEGV protection around all memory reads
+    // SIGSEGV protection around all memory reads.
+    //
+    // lane-scheme 2026-10-18: SAVE AND RESTORE the caller's recovery state. This
+    // hook runs INSIDE other protected regions: execute_scheme_intent calls the
+    // hooked entry under its own sigsetjmp, and an interaction the bridge sends
+    // (start_murder_interaction) reaches it through the engine's effect walk under
+    // that handler's net. Before this, the hook overwrote the thread's
+    // g_recovery_point with a frame that is dead once it returns and then cleared
+    // g_in_protected_region, so a later fault or watchdog SIGALRM in the OUTER
+    // region either crashed the game unprotected or siglongjmp'd into a dead frame.
+    sigjmp_buf saved_recovery;
+    memcpy(&saved_recovery, &g_recovery_point, sizeof(sigjmp_buf));
+    const bool saved_protected = g_in_protected_region;
     g_in_protected_region = true;
     if (sigsetjmp(g_recovery_point, 1) == 0) {
         // Scheme ID (packed ref at +0x10)
@@ -159,10 +220,35 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
                 // (we're already past the null-sentinel guard above) so the args
                 // are known-good for THIS scheme type. param5/param6 reference
                 // long-lived shared script-scope sentinels, safe to reuse.
-                {
-                    std::unique_lock<std::shared_mutex> tl(g_scheme_tpl_mutex);
-                    g_scheme_arg_templates[type_name] =
-                        SchemeArgTemplate{ param5, param6, true };
+                if (!g_scheme_start_from_bridge) {
+                    uint64_t null_c = 0, null_a = 0;
+                    const bool have_nulls = scheme_null_arg_objects(&null_c, &null_a);
+                    const bool null_args = have_nulls && param5 == null_c && param6 == null_a;
+                    bool changed = false;
+                    uint32_t null_seen = 0, real_seen = 0;
+                    {
+                        std::unique_lock<std::shared_mutex> tl(g_scheme_tpl_mutex);
+                        auto it = g_scheme_arg_templates.find(type_name);
+                        if (it != g_scheme_arg_templates.end()) {
+                            null_seen = it->second.null_seen;
+                            real_seen = it->second.real_seen;
+                            changed = (it->second.null_args != null_args);
+                        } else {
+                            changed = true;  // first sighting of this type
+                        }
+                        (null_args ? null_seen : real_seen) += 1;
+                        g_scheme_arg_templates[type_name] = SchemeArgTemplate{
+                            param5, param6, true, null_args, null_seen, real_seen };
+                    }
+                    // Logged on the first sighting of a type and whenever the
+                    // contract/artifact case flips: the live witness for the
+                    // finding's claim that engine murders pass the null objects.
+                    if (changed) ADLOG("scheme_init_hook: arg template type=%s p5=0x%lx "
+                          "p6=0x%lx null_contract=0x%lx null_artifact=0x%lx null_args=%d "
+                          "null_seen=%u real_seen=%u\n", type_name.c_str(),
+                          (unsigned long)param5, (unsigned long)param6,
+                          (unsigned long)null_c, (unsigned long)null_a,
+                          null_args ? 1 : 0, null_seen, real_seen);
                 }
             }
         }
@@ -218,7 +304,8 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
         // SIGSEGV recovery
         ADLOG("scheme_init_hook: SIGSEGV reading new scheme at %p\n", result);
     }
-    g_in_protected_region = false;
+    memcpy(&g_recovery_point, &saved_recovery, sizeof(sigjmp_buf));
+    g_in_protected_region = saved_protected;
 
     return result;
 }

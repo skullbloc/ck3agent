@@ -81,7 +81,11 @@ def test_a_declared_character_IS_claimed_before_the_first_turn(monkeypatch):
     c, st, sent = _bind(monkeypatch, "30853")
     assert sent == [("set_controlled_character",
                      {"character_id": 30853, "disable_native_ai": False})]
-    assert st.prebind == {"character_id": 30853, "ok": True, "reason": None}
+    # lane-prebind added `bound_at` (the reply's clock stamp; this fake has none)
+    # and `wait` (the fake ack names no session_state: nothing waited, nothing seen).
+    assert st.prebind == {"character_id": 30853, "ok": True, "reason": None,
+                          "bound_at": {"tick": None, "date": None},
+                          "wait": {"waited_s": 0.0, "polls": 0, "game_active": None}}
 
 
 def test_a_REFUSED_claim_is_RECORDED_not_assumed(monkeypatch):

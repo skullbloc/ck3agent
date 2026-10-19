@@ -184,6 +184,35 @@ def _owner(link: Link, cid: int) -> str:
     return "an unknown session"
 
 
+def _claims(link: Link) -> list[int]:
+    """Every character any session holds, in session order."""
+    out: list[int] = []
+    for row in _sessions(link.call("get_bridge_state")):
+        for c in row.get("claimed_character_ids") or []:
+            if isinstance(c, int) and c not in out:
+                out.append(c)
+    return out
+
+
+def held_rulers(sock: str, link: Link | None = None) -> list[int] | None:
+    """Every ruler still bound in the game, or None when the bridge cannot be asked."""
+    if not alive(sock):
+        return None
+    own = link is None
+    link = link or Link(sock, mode="control")
+    try:
+        r = link.call("get_bridge_state")
+        if r is None:
+            return None
+        return [c for row in _sessions(r) for c in row.get("claimed_character_ids") or []
+                if isinstance(c, int)]
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        if own:
+            link.close()
+
+
 def teardown(sock: str, wait: float = 15.0, link: Link | None = None) -> list[tuple[str, bool, str]]:
     """Pause, then confirm no ruler is still bound. Never raises.
 
@@ -191,6 +220,8 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None) -> list[tu
     anyone else not_owned_by_session), so the release itself is the MCP
     server's, on its own shutdown. This waits up to `wait` seconds for it to
     land, then tries a release of its own and names the holder if that fails.
+    "No ruler bound" means no session holds any ruler, not only that the
+    bridge's primary is gone: a session may hold several (lane-multi).
     """
     if not alive(sock):
         return [("bridge", False, "socket not listening")]
@@ -208,18 +239,22 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None) -> list[tu
                 out.append(("release", False, "no tick info; ruler unknown"))
                 return out
             cid = int(t["controlled_character_id"] or 0)
-            if not cid:
+            left = ([cid] if cid else []) + [c for c in _claims(link) if c != cid]
+            if not left:
                 out.append(("release", True, "no ruler bound"))
                 return out
             if time.monotonic() >= deadline:
                 break
             time.sleep(1.0)
-        r = link.call("release_character", {"character_id": cid}) or {}
-        if r.get("success") is True:
-            out.append(("release", True, f"{cid}"))
-        else:
-            out.append(("release", False, f"{cid} still held by {_owner(link, cid)}: "
-                                          f"{r.get('reason') or link.error or 'no reply'}"))
+        done, bad = [], []
+        for c in left:
+            r = link.call("release_character", {"character_id": c}) or {}
+            if r.get("success") is True:
+                done.append(str(c))
+            else:
+                bad.append(f"{c} still held by {_owner(link, c)}: "
+                           f"{r.get('reason') or link.error or 'no reply'}")
+        out.append(("release", False, "; ".join(bad)) if bad else ("release", True, ", ".join(done)))
     except Exception as e:  # noqa: BLE001
         out.append(("bridge", False, str(e) or repr(e)))
     finally:
@@ -284,6 +319,13 @@ def release_session(sock: str, rec: dict, link: Link, wait: float = 15.0) -> dic
 
 
 def handshake_report(sock: str) -> bool:
+    return handshake_check(sock)[0]
+
+
+def handshake_check(sock: str) -> tuple[bool, str]:
+    """Print the handshake lines; return (ok, session_state). The state matters:
+    `dormant` means the bridge answers but the game is still loading or on the
+    menu, and doctor used to print "Ready" over it (persona test 2026-10-18)."""
     bootstrap_server()
     from bridge_client import HandshakeRefused  # noqa
     try:
@@ -291,20 +333,20 @@ def handshake_report(sock: str) -> bool:
             ack = bc.handshake_ack
     except HandshakeRefused as e:
         con.fail("bridge handshake refused", str(e))
-        return False
+        return False, ""
     except Exception as e:  # noqa: BLE001
         con.fail("bridge handshake", str(e) or repr(e))
-        return False
+        return False, ""
     seen = ack.get("observed_build_id") or ack.get("build_id") or "?"
-    state = ack.get("session_state") or ack.get("status") or "?"
+    state = str(ack.get("session_state") or ack.get("status") or "?")
     con.ok("bridge handshake", f"session_state={state}, BuildID {str(seen)[:12]}")
     bv = ack.get("bridge_version")
     if bv and bv != __version__:
         con.fail("bridge version", f"bridge {bv}, ck3agent {__version__}: reinstall so they match")
-        return False
+        return False, state
     if bv:
         con.ok("bridge version", bv)
-    return True
+    return True, state
 
 
 def last_launch_time(logs_dir: Path) -> float | None:
@@ -333,8 +375,11 @@ def find_refusal(log: Path, since: float | None) -> list[str] | None:
     return [line.strip() for line in tail[hits[-1]:hits[-1] + 5]]
 
 
-def wait_for_active(sock: str, deadline: float, proc: "subprocess.Popen") -> int:
-    """After --continue: enter observe mode once the lobby exists (dismisses the prompt).
+def wait_for_active(sock: str, deadline: float, proc: "subprocess.Popen", pause: bool = True) -> int:
+    """After --continue: enter observe mode once the lobby exists (dismisses the prompt),
+    then pause the game, because the bridge forces the first tick by unpausing it and
+    nothing stops the clock afterwards (a player save lost ten game months before the
+    first Claude turn, 2026-10-18). `pause=False` leaves it running.
 
     0 = game active, 1 = CK3 exited, 3 = timed out.
     """
@@ -348,6 +393,12 @@ def wait_for_active(sock: str, deadline: float, proc: "subprocess.Popen") -> int
                 r = call(bc, "get_tick_info", timeout=6.0) or {}
                 if r.get("session_state") == "active" or bc.handshake_ack.get("session_state") == "active":
                     con.ok("game active", f"date {r.get('game_date')}")
+                    if pause:
+                        p = call(bc, "pause_game", timeout=6.0) or {}
+                        if p.get("success") is False:
+                            con.warn("game not paused", f"{p.get('reason') or 'refused'}; the clock is running")
+                        else:
+                            con.ok("game paused", "Claude unpauses it when it plays; --no-pause leaves it running")
                     return 0
                 r = call(bc, "enter_observe_mode", timeout=10.0) or {}
                 last = str(r.get("reason") or "")

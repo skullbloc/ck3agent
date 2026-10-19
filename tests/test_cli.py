@@ -561,6 +561,13 @@ def server_rc(tmp_path: Path) -> int:
 
 
 ARMED = "release on exit armed"           # mcp_server logs it once a signal starts the release
+LAST = {"42": cli.LAST_CLAIM}             # the bridge refuses to empty a control session (ck-cwal)
+GONE_OK = {"step": "release", "ok": True, "detail": "no ruler bound"}
+
+
+def gone(r: dict) -> bool:
+    """The session closed and the bridge dropped it with its claims: nothing was resumed."""
+    return r["resume_status"] == "session_gone" and r["claims"] == [] and r["resumed"] is False
 
 
 def test_run_records_the_session(play, tmp_path, monkeypatch):
@@ -599,7 +606,10 @@ def test_run_records_the_session(play, tmp_path, monkeypatch):
 
 
 def test_server_releases_inside_claude_codes_stop_window(play, bridge, tmp_path, monkeypatch):
-    """SIGINT, SIGTERM at 100 ms, SIGKILL at 500 ms: the server's own release must fit."""
+    """SIGINT, SIGTERM at 100 ms, SIGKILL at 500 ms: the server's own release must fit.
+
+    Its one ruler is its last claim, which the bridge refuses to release; the
+    session's close frees it (free play), and the teardown confirms that."""
     fb = bridge()
     monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
     monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
@@ -608,11 +618,111 @@ def test_server_releases_inside_claude_codes_stop_window(play, bridge, tmp_path,
     m = manifest_of(play)
     assert server_rc(tmp_path) == 128 + signal.SIGINT, (tmp_path / "server.log").read_text()[-2000:]
     rel = m["server_release"]
-    assert rel["trigger"] == "SIGINT" and rel["released"] == [42] and rel["held_after"] == []
-    assert m["resumed_release"]["resumed"] is True and m["resumed_release"]["claims"] == []
+    assert rel["trigger"] == "SIGINT" and rel["released"] == [] and rel["refused"] == LAST
+    assert rel["held_after"] == [42] and rel["error"] is None
+    assert gone(m["resumed_release"]) and fb.resumes == []
     assert fb.owner == {} and m["claude_stop"] == "exited" and m["result_event"] is True
-    assert {"step": "release", "ok": True, "detail": "no ruler bound"} in m["teardown"]
+    assert GONE_OK in m["teardown"]
     assert not (play / "runs" / (Path(m["prompt_file"]).name.split(".")[0] + ".session.json")).exists()
+
+
+def test_a_single_rulers_refused_release_is_reported_ok(play, bridge, tmp_path, monkeypatch, capsys):
+    bridge()
+    monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
+    monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42")
+    capsys.readouterr()
+    assert cli.main(["run", "--quiet"]) == 0
+    out = capsys.readouterr().out
+    assert manifest_of(play)["server_release"]["refused"] == LAST       # the record keeps the raw refusal
+    assert "[warn]" not in out, out
+    assert "MCP server release: last ruler 42 stays bound until the session closes" in out, out
+    assert re.search(r"session release: session \S+ already closed, nothing held", out), out
+    assert "resumed" not in out and "teardown release: no ruler bound" in out, out
+
+
+def test_a_refusal_for_any_other_reason_still_warns(play, bridge, tmp_path, monkeypatch, capsys):
+    fb = bridge(replies={"release_character": {"success": False, "reason": "game_paused"}})
+    monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
+    monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42")
+    capsys.readouterr()
+    assert cli.main(["run", "--quiet"]) == 0
+    out = capsys.readouterr().out
+    assert manifest_of(play)["server_release"]["refused"] == {"42": "game_paused"}
+    assert "[warn] MCP server release: released [], refused {'42': 'game_paused'}" in out, out
+    assert "stays bound" not in out and fb.owner == {}, out
+
+
+def test_a_server_holding_two_rulers_releases_all_but_its_last(play, bridge, tmp_path, monkeypatch, capsys):
+    """Releasing one of several claims is allowed; only the last is refused.
+    The second ruler is ADDED (`session(action="add")`): `control` would switch."""
+    fb = bridge()
+    monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
+    monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
+    monkeypatch.setenv("FAKE_MCP_CALL", json.dumps(
+        {"name": "session", "arguments": {"action": "add", "character_id": 43}}))
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42")
+    capsys.readouterr()
+    assert cli.main(["run", "--quiet"]) == 0
+    out = capsys.readouterr().out
+    m = manifest_of(play)
+    log = (tmp_path / "server.log").read_text()[-3000:]
+    claimer = next(s for s, a, p in fb.log if a == "set_controlled_character")
+    claims = [p["character_id"] for s, a, p in fb.log if a == "set_controlled_character"]
+    assert claims == [42, 43], (claims, log)
+    rel = m["server_release"]
+    assert rel["session_id"] == claimer and rel["released"] == [42], (rel, log)
+    assert rel["refused"] == {"43": cli.LAST_CLAIM} and rel["held_after"] == [43] and rel["error"] is None
+    assert [(s, p) for s, a, p in fb.log if a == "release_character"] == [
+        (claimer, {"character_id": 42}), (claimer, {"character_id": 43})]
+    assert gone(m["resumed_release"]) and fb.owner == {} and GONE_OK in m["teardown"]
+    assert "[warn]" not in out and "released [42]; last ruler 43 stays bound" in out, out
+
+
+def test_a_prebound_list_binds_every_ruler_and_the_manifest_records_them(
+        play, bridge, tmp_path, monkeypatch, capsys):
+    """lane-multi: CK3_AGENT_CHARACTER_ID=42,43 binds 42 as the primary and ADDS 43.
+    The teardown reads clean: 42 released by the server, 43 its last claim, freed
+    when the session closed; the manifest lists both at start and at stop."""
+    fb = bridge()
+    monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
+    monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42,43")
+    capsys.readouterr()
+    assert cli.main(["run", "--quiet"]) == 0
+    out = capsys.readouterr().out
+    m = manifest_of(play)
+    log = (tmp_path / "server.log").read_text()[-3000:]
+    binds = [p for s, a, p in fb.log if a == "set_controlled_character"]
+    assert [(p["character_id"], p.get("add")) for p in binds] == [(42, None), (43, True)], (binds, log)
+    rel = m["server_release"]
+    assert rel["released"] == [42] and rel["refused"] == {"43": cli.LAST_CLAIM}, (rel, log)
+    # lane-prebind: `bound_at` is the reply's clock stamp (the fake bridge stamps
+    # none), `prebind_wait` says the game was active at the handshake (no wait).
+    assert m["rulers"] == {"declared": [42, 43], "bound_at_start": [42, 43], "refused_at_start": {},
+                           "bound_at": {"42": {"tick": None, "date": None},
+                                        "43": {"tick": None, "date": None}},
+                           "prebind_wait": {"waited_s": 0.0, "polls": 0, "game_active": True},
+                           "held_at_stop": [42, 43], "held_after_teardown": []}, m["rulers"]
+    assert gone(m["resumed_release"]) and fb.owner == {} and GONE_OK in m["teardown"]
+    assert "[warn]" not in out, out
+    assert "released [42]; last ruler 43 stays bound" in out, out
+    assert "rulers: bound at start [42, 43]; held at stop [42, 43]" in out, out
+
+
+def test_a_ruler_refused_at_start_is_a_warning_in_the_run_report(play, bridge, tmp_path, monkeypatch, capsys):
+    fb = bridge()
+    fb.owner[43] = "elsewhere"                  # another session already holds 43
+    monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
+    monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42,43")
+    capsys.readouterr()
+    assert cli.main(["run", "--quiet"]) == 0
+    out = capsys.readouterr().out
+    rl = manifest_of(play)["rulers"]
+    assert rl["bound_at_start"] == [42] and rl["refused_at_start"] == {"43": "owned_by_other"}, rl
+    assert "[warn] rulers: bound at start [42], refused {'43': 'owned_by_other'}" in out, out
 
 
 def test_a_server_killed_before_it_releases_is_released_by_resuming_its_session(
@@ -626,11 +736,12 @@ def test_a_server_killed_before_it_releases_is_released_by_resuming_its_session(
     m = manifest_of(play)
     assert server_rc(tmp_path) == -signal.SIGKILL and m["server_release"] is None
     claimer = next(s for s, a, p in fb.log if a == "set_controlled_character")
+    # The kill closed its socket and the bridge dropped the session with its claim.
     r = m["resumed_release"]
-    assert r["session_id"] == claimer and r["resumed"] is True and r["released"] == [42]
-    assert (claimer, "release_character", {"character_id": 42}) in fb.log
-    assert fb.owner == {} and fb.resumes == [(f"tok-{claimer}", True, "ok")]
-    assert {"step": "release", "ok": True, "detail": "no ruler bound"} in m["teardown"]
+    assert r["session_id"] == claimer and gone(r)
+    assert not any(a == "release_character" for s, a, p in fb.log)
+    assert fb.owner == {} and fb.resumes == []
+    assert GONE_OK in m["teardown"]
 
 
 @pytest.mark.parametrize("drop", ["pin", "destroy"])
@@ -638,9 +749,10 @@ def test_a_reconnected_server_killed_mid_release_is_released_through_its_current
         play, bridge, tmp_path, monkeypatch, drop):
     """The bridge drops the server after its pre-bind; a tool call reconnects and
     re-claims; then Claude Code's stop SIGKILLs the server mid-release (slow
-    get_bridge_state). `ck3agent run` must resume the session that holds the claim.
+    get_bridge_state). `ck3agent run` must look up the session that holds the claim.
     "pin": the server resumes its old session. "destroy": the bridge erased it, the
-    resume is refused, a fresh session claims, and only the re-record names it."""
+    resume is refused, a fresh session claims, and only the re-record names it.
+    Either way the kill closes that session and the bridge frees the claim."""
     fb = bridge(delays={("ck3agent", "get_bridge_state"): 2.0}, drop_after_claim={"ck3agent": drop})
     monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
     monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
@@ -658,8 +770,9 @@ def test_a_reconnected_server_killed_mid_release_is_released_through_its_current
     assert (current == first) == (drop == "pin")
     assert server_rc(tmp_path) == -signal.SIGKILL and m["server_release"] is None, log
     r = m["resumed_release"]
-    assert r["session_id"] == current and r["resumed"] is True and r["released"] == [42], (r, log)
-    assert fb.owner == {}, (fb.owner, log)
+    assert r["session_id"] == current and gone(r), (r, log)
+    assert fb.owner == {} and len(fb.resumes) == 1, (fb.owner, fb.resumes, log)
+    assert GONE_OK in m["teardown"]
 
 
 def test_a_claim_in_flight_at_the_servers_snapshot_is_still_released(play, bridge, tmp_path, monkeypatch):
@@ -670,8 +783,10 @@ def test_a_claim_in_flight_at_the_servers_snapshot_is_still_released(play, bridg
     monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42")
     assert cli.main(["run", "--quiet"]) == 0
     m = manifest_of(play)
-    assert m["server_release"]["released"] == [42] and m["server_release"]["rounds"] == 3
-    assert fb.owner == {}
+    rel = m["server_release"]
+    assert rel["rounds"] == 3 and rel["claims"] == [42] and rel["refused"] == LAST
+    assert rel["held_after"] == [42] and rel["released"] == []
+    assert gone(m["resumed_release"]) and fb.owner == {} and GONE_OK in m["teardown"]
 
 
 def test_a_claim_the_server_never_sees_is_released_after_it_exits(play, bridge, tmp_path, monkeypatch):
@@ -682,7 +797,7 @@ def test_a_claim_the_server_never_sees_is_released_after_it_exits(play, bridge, 
     assert cli.main(["run", "--quiet"]) == 0
     m = manifest_of(play)
     assert m["server_release"]["claims"] == [] and m["server_release"]["error"] is None
-    assert m["resumed_release"]["released"] == [42] and fb.owner == {}
+    assert gone(m["resumed_release"]) and fb.owner == {} and GONE_OK in m["teardown"]
 
 
 def test_wall_seconds_stop_releases_the_ruler_through_its_own_session(play, bridge, tmp_path, monkeypatch):
@@ -699,14 +814,15 @@ def test_wall_seconds_stop_releases_the_ruler_through_its_own_session(play, brid
     assert (claimer, "release_character", {"character_id": 42}) in fb.log
     assert fb.owner == {}, (tmp_path / "server.log").read_text()[-3000:]
     assert m["stop_reason"] == "wall_seconds" and m["exit_code"] == 0 and m["claude_stop"] == "SIGTERM"
-    assert m["server_release"]["released"] == [42] and m["server_release"]["trigger"] == "SIGINT"
-    assert m["server_release"]["session_id"] == claimer
-    assert {"step": "release", "ok": True, "detail": "no ruler bound"} in m["teardown"]
+    rel = m["server_release"]
+    assert rel["released"] == [] and rel["refused"] == LAST and rel["held_after"] == [42]
+    assert rel["trigger"] == "SIGINT" and rel["session_id"] == claimer
+    assert gone(m["resumed_release"]) and GONE_OK in m["teardown"]
     assert fb.paused
     assert m["result_event"] is False
     assert m["usage"] == m["total_cost_usd"] == "unrecorded: terminated"
     # One CLI session served the start date, then one the watcher, release check, end and teardown.
-    cli_sessions = [s for s, v in fb.sessions.items() if v["client_name"] == "ck3agent-cli"]
+    cli_sessions = [s for s, v in {**fb.sessions, **fb.destroyed}.items() if v["client_name"] == "ck3agent-cli"]
     assert len(cli_sessions) == 2 == m["bridge_sessions_opened"], fb.sessions
 
 

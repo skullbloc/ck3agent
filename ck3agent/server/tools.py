@@ -100,7 +100,10 @@ QUERY_DOMAIN_MAP = {
     "county":               ("query_county_details",       lambda p: {"character_id": p.get("character_id", 0)}),
     "development":          ("query_development_growth",   lambda p: {"title_id": p.get("title_id", 0), "character_id": p.get("character_id", 0)}),
     "buildings":            ("query_building_types",       lambda p: {"category": p.get("category", 0)}),
-    "neighbors":            ("query_county_neighbors",     lambda p: {"title_id": p.get("title_id", 0)}),
+    # lane-query item 4: title_id=0 resolves the character (character_id, 0 =
+    # the controlled ruler): its capital county, plus bordering_realms[].
+    "neighbors":            ("query_county_neighbors",     lambda p: {"title_id": p.get("title_id", 0),
+                                                                       "character_id": p.get("character_id", 0)}),
     "adjacency":            ("query_province_adjacency",   lambda p: {"title_id": p.get("title_id", 0)}),
     # map_graph: the baked map-graph window (ck3map.bin via ck3mapgen). Static topology
     # + de-jure + terrain, live overlay (holder/faith/culture/dev/control), serialized to
@@ -404,11 +407,17 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
         # Some tasks need a de jure title target (target_title_id). The command
         # applies on a game tick, so success=dispatched; poll query(council) to
         # confirm the task transitioned.
-        return "set_council_task", {
+        out = {
             "actor_id": actor_id,
             "task": params.get("task", ""),
             "target_title_id": params.get("target_title_id", 0),
         }
+        # lane-query item 1: forward an explicit seat so the bridge can REFUSE
+        # a seat that cannot take this task (it used to be dropped here, and
+        # the task silently landed on its own seat).
+        if params.get("seat"):
+            out["seat"] = str(params.get("seat"))
+        return "set_council_task", out
     elif act_type == "maa":
         # Men-at-arms control (the doomstack engine). action ∈ recruit|station|unstation.
         #   recruit  — raise a regiment of maa_type (from query(domain="armies")/unlocked MaA)
@@ -912,7 +921,12 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
     elif what == "hireable_mercenaries":
         # Enumerate hireable mercenary companies (company_id list). Feed a chosen
         # company_id into act(type="hire_mercenary", company_id=...).
-        return "query_hireable_mercenaries", {}
+        # lane-query item 2: rows carry home county, captain, troops,
+        # regiments and (with an actor) distance; nearest first, capped.
+        return "query_hireable_mercenaries", {
+            "actor_id": params.get("actor_id", 0) or params.get("character_id", 0),
+            "max_results": params.get("max_results", 0) or 25,
+        }
     elif what == "war_targets":
         # ck-leg: enumerate every (target, title, CB) the actor can declare war
         # on right now — the "who can I attack and with what" surface. Each entry
@@ -1358,14 +1372,17 @@ _RETIRED_LEGACY_TOOLS = frozenset({"act", "game", "control", "bridge",
 #: `men_at_arms` is a legitimate INTENT and has never been a discover class, and
 #: the census caught an agent asking to enumerate it five times — a reasonable
 #: guess, since the intent list contains it and this list contains plural nouns
-#: like `buildings` and `mercenaries`. There is nothing to enumerate: no bridge
-#: verb lists men-at-arms types (`maa_recruit` resolves one by name and answers
-#: `maa_type_not_found`), so the class cannot be added without new bridge work.
-#: The refusals therefore say which vocabulary a name belongs to instead.
+#: like `buildings` and `mercenaries`. There was nothing to enumerate: no bridge
+#: verb listed men-at-arms types. lane-query added one (`query_maa_types`), so
+#: `men_at_arms` is now BOTH an intent and a class — the one name in both lists,
+#: on purpose: the intent's refusal (maa_type_required) points at this class.
 ACTION_CLASSES = [
     "interactions", "decisions", "council_tasks", "laws",
     "fabricate_targets", "mercenaries", "factions_to_join",
     "buildings", "imprison_targets", "formable_titles",
+    # lane-query item 2: do(intent="men_at_arms") refused maa_type_required and
+    # pointed at an enumerate that did not exist. This is it.
+    "men_at_arms",
 ]
 
 
@@ -2232,12 +2249,11 @@ def _redesign_tool_definitions() -> list[dict]:
                                      "enum": list(ACTION_CLASSES),
                                      "description": (
                                          "Enumerate mode only — the class of things to LIST. "
-                                         "A DIFFERENT vocabulary from `intent`: these are plural "
-                                         "nouns naming what can be listed, and no value here is "
-                                         "ever an intent. In particular `men_at_arms` is an "
-                                         "INTENT and is NOT listable — men-at-arms types cannot "
-                                         "be enumerated, so pass args.maa_type by name "
-                                         "(e.g. \"huscarl\").")},
+                                         "A DIFFERENT vocabulary from `intent`: these are mostly "
+                                         "plural nouns naming what can be listed. `men_at_arms` "
+                                         "is in both lists: as a class it lists MaA types with "
+                                         "recruit cost and what the realm already fields; as an "
+                                         "intent it recruits one (args.maa_type).")},
                     "candidates": {"type": "array", "items": {"type": "string"},
                                    "description": "BOUNDED list for action_class='decisions' (#64 safety)."},
                     "character_id": {"type": "integer", "default": 0,
@@ -2256,7 +2272,7 @@ def _redesign_tool_definitions() -> list[dict]:
                                  "these BY REFUSAL, so they are listed here. Keys are "
                                  "what the harness READS; the bridge decides which are "
                                  "mandatory and answers with a *_required code.\n"
-                                 "ARGUMENTS BY INTENT (generated: scripts/gen_do_intent_args.py):\n  appoint: args.{seat, position_id, councillor_id, character_id}\n  build: args.{location_id, building}\n  change_law: args.{law, scope, title_id}\n  convert_culture: args.{culture, culture_id}\n  convert_faith: args.{faith, faith_id}\n  council_task: args.{task, target_title_id, target_id, target_character_id}\n  faction: args.{action, faction_id, target_id, faction_type}\n  hire_merc: args.{company_id}\n  interact: args.{interaction, interaction_type, target_id, title_id, secondary_actor_id, secondary_recipient_id}\n  lifestyle: args.{focus}\n  men_at_arms: args.{action, maa_type, location_id, regiment_id}\n  mint_title: args.{title_key, title, title_id}\n  move_capital: args.{title_id}\n  muster: args.{mode}\n  respond_event: args.{event_id, option, instance_id}\n  scheme: args.{action, target_id, scheme_type, scheme, scheme_id}\n  set_doctrine: args.{doctrine}\n  set_education_focus: args.{focus}\n  set_obligation: args.{vassal_id, level, obligation}\n  take_decision: args.{decision}"
+                                 "ARGUMENTS BY INTENT (generated: scripts/gen_do_intent_args.py):\n  appoint: args.{seat, position_id, councillor_id, character_id}\n  build: args.{location_id, building}\n  change_law: args.{law, scope, title_id}\n  convert_culture: args.{culture, culture_id}\n  convert_faith: args.{faith, faith_id}\n  council_task: args.{task, target_title_id, target_id, target_character_id, seat}\n  faction: args.{action, faction_id, target_id, faction_type}\n  hire_merc: args.{company_id}\n  interact: args.{interaction, interaction_type, target_id, title_id, secondary_actor_id, secondary_recipient_id}\n  lifestyle: args.{focus}\n  men_at_arms: args.{action, maa_type, location_id, regiment_id}\n  mint_title: args.{title_key, title, title_id}\n  move_capital: args.{title_id}\n  muster: args.{mode}\n  respond_event: args.{event_id, option, instance_id}\n  scheme: args.{action, target_id, scheme_type, scheme, scheme_id}\n  set_doctrine: args.{doctrine}\n  set_education_focus: args.{focus}\n  set_obligation: args.{vassal_id, level, obligation}\n  take_decision: args.{decision}"
                              )},
                 },
                 "required": [],
@@ -2327,8 +2343,8 @@ def _redesign_tool_definitions() -> list[dict]:
                 "plan_war/do own pause-state for you. Use to: switch which ruler you control "
                 "after a succession (control); confirm the controlled ruler is alive+landed "
                 "(whoami); check bridge liveness if calls time out (health — 'hung' = STOP "
-                "looping); or set speed/pause. Speed capped at 3; 4-5 while at war/near-"
-                "succession is REFUSED. The human player can be a target but never an actor. "
+                "looping); or set speed/pause. Speed capped at 3; 4-5 is REFUSED while at "
+                "war, otherwise clamped to 3. The human player can be a target but never an actor. "
                 "experimental_flags lists the default-OFF EXPERIMENTAL-unvalidated engine "
                 "flags; set_experimental(flag=<name>, enabled=bool) arms ONE for "
                 "disposable-save validation ONLY (off_goal_veto / break_alliance / "
@@ -2340,9 +2356,13 @@ def _redesign_tool_definitions() -> list[dict]:
                 "properties": {
                     "action": {"type": "string",
                                "enum": ["control", "release", "whoami", "speed", "pause",
-                                        "unpause", "health", "auto_events",
+                                        "unpause", "wait", "health", "auto_events",
                                         "experimental_flags", "set_experimental"],
-                               "description": "The session operation."},
+                               "description": ("The session operation. wait: let the clock run for "
+                                               "`seconds` (unpause, block, pause) and return the "
+                                               "start and end dates; use it instead of Bash sleep.")},
+                    "seconds": {"type": "integer", "default": 60,
+                                "description": "For wait — 1-110 seconds of game clock per call."},
                     "character_id": {"type": "integer", "default": 0, "description": "For control/release."},
                     "speed": {"type": "integer", "default": 3, "description": "1-3 (4-5 refused while at war)."},
                     "enabled": {"type": "boolean", "default": True,

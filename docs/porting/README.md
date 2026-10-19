@@ -19,18 +19,59 @@ macOS is deferred. Most of P0 to P3 needs no Windows or Mac machine.
 
 ## Where port code goes
 
-The platform layer is in the tree as a skeleton. `bridge/include/os/os.h`
-declares the interfaces from the ADR's "Platform abstraction" table (process
-identity, image base, binary identity, guarded read and write, exec
-interposition, IPC transport, paths, input, threads), each returning a typed
-`Result`. `bridge/src/os/linux/` forwards to the existing Linux code;
-`bridge/src/os/windows/stubs.cpp` and `bridge/src/os/macos/stubs.cpp` return
-`not_implemented` or `unavailable_on_platform` and name the phase or the
-replacement. Configure with `-DCK3_PLATFORM=windows` or `-DCK3_PLATFORM=macos`
-to build only the layer and its stub test (`test_os_stubs`); CI does this on
-`windows-latest` and `macos-14`. Replacing a stub with a real implementation is
-a port task. The Linux bridge does not call the layer yet, so its behaviour
-cannot change until a call site is moved onto it.
+The platform layer is `bridge/include/os/os.h`: it declares every row of the
+ADR's "Platform abstraction" table (library entry, process identity, image
+base and section table, binary identity, guarded read and write, the guarded
+region, executable-memory allocation and unwind registration, exec
+interposition, IPC transport, paths, input, threads, watchdog), plus the two
+ABI-bound pieces that need the game binary (RTTI vtable lookup, hook planning).
+Each call returns a typed `Result` (`ok` / `failed` / `not_routed` /
+`not_implemented` / `unavailable_on_platform`).
+
+- **`bridge/src/os/linux/os_linux.cpp`** forwards to the existing Linux code
+  (the bridge does not link the layer yet, so Linux behaviour cannot change
+  until a call site is moved onto it).
+- **`bridge/src/os/macos/stubs.cpp`** is typed refusals; macOS is deferred.
+- **`bridge/src/os/windows/`** holds the P2 Win32 cells, one file each:
+  `process.cpp`, `entry.cpp` + `dll_main.cpp`, `image.cpp`, `identity.cpp`,
+  `safe_read.cpp`, `write_protected.cpp`, `threads.cpp`, `paths.cpp`,
+  `transport.cpp`, `exec_alloc.cpp`, `guarded.cpp`, `watchdog.cpp`, with
+  `common.cpp` (shared Win32 helpers) and `win_internal.h`. Everything not yet
+  a cell stays a typed refusal in `windows/stubs.cpp` (`input_click`,
+  `rtti_find_vtable`, `hook_plan`; `exec_interposition` is
+  `unavailable_on_platform` — a proxy DLL replaces it).
+- **Portable helpers** used by the cells live beside the layer and build on all
+  three OSes: `bridge/src/os/sha256.cpp`, `pe_image.cpp`, `win_paths.cpp`.
+- **The Windows DLL** `ck3_bridge_win` is the layer plus an inert `DllMain`; the
+  proxy export table is phase P4.
+
+Configure with `-DCK3_PLATFORM=windows` (MSVC, or `clang-cl` + `xwin` from
+Linux — see below) or `-DCK3_PLATFORM=macos` (Apple clang); the CMake file then
+stops before the Linux bridge. `-DBUILD_BRIDGE_TESTS=ON` builds the tests: a
+portable `test_os_<helper>` everywhere, `test_os_stubs` for the refusals, and a
+`test_os_win_<cell>` per Windows cell. CI runs these on `windows-latest` and
+`macos-14`; the ADR's "P2 cell status" table lists which cell each test covers.
+
+### Cross-building the Windows layer from Linux
+
+`bridge/cmake/toolchains/clang-cl-xwin.cmake` builds the Windows leg with the
+MSVC ABI on a Linux host, and its tests run under Wine (MEDIUM evidence until
+re-run on real Windows, per the ADR). The host this was developed on used:
+
+- **llvm-mingw** (provides `clang-cl`, `lld-link`, `llvm-lib`) unpacked under
+  `~/.local/opt`, with driver symlinks in `~/.local/opt/clangcl-bin`;
+- **xwin** (`xwin --accept-license splat --output ~/.local/opt/xwin-sdk`) for
+  the MSVC CRT and the Windows SDK — the licence is the downloader's to accept;
+- system **Wine** as the `ctest` emulator.
+
+```bash
+cmake -S bridge -B build-win -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=bridge/cmake/toolchains/clang-cl-xwin.cmake \
+  -DCK3_PLATFORM=windows -DBUILD_BRIDGE_TESTS=ON
+cmake --build build-win && ctest --test-dir build-win   # tests run under wine
+```
+
+Replacing a refusal with a real cell is a port task.
 
 ## Rules
 

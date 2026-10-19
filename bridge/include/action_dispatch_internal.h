@@ -626,6 +626,7 @@ bool do_set_character_culture(const char* params_json, std::string* out);
 bool do_set_title_law(const char* params_json, std::string* out);
 bool do_query_joinable_factions(const char* params_json, std::string* out);
 bool do_query_hireable_mercenaries(const char* params_json, std::string* out);
+bool do_query_maa_types(const char* params_json, std::string* out);
 const char* get_interaction_name(void* interaction);
 uint32_t get_interaction_hash(void* interaction);
 

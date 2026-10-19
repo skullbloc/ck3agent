@@ -88,6 +88,22 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # a half-resolved refusal, which is worse than an honest `unknown`.
     "target_ineligible":         {"class": "target_state",   "severity": "invalid", "retryable": False},
     "experimental_write_disabled": {"class": "bridge",       "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    # lane-scheme 2026-10-18: the scheme_action (do(intent="scheme")) refusals.
+    # Before these, every one of them reached the seat as gate "unknown", and the
+    # paused/timeout ones as `drain_timeout` through the substring pass ("timeout").
+    #   scheme_start_refused    the ENGINE's own start checks said no (CreateActiveScheme
+    #                           returned its null sentinel): invalid/hidden target, the
+    #                           schemer cannot start this type, or an existing scheme or
+    #                           cooldown against that target. A re-plan, not a retry.
+    #   scheme_type_unsupported every engine start of this type seen this session
+    #                           carried a task contract or artifact the bridge cannot
+    #                           supply.
+    #   scheme_bridge_fault     the bridge's own call faulted or could not be prepared
+    #                           (crash-net fired, null objects unreadable). Contained,
+    #                           and not something a retry fixes.
+    "scheme_start_refused":      {"class": "target_state",   "severity": "invalid", "retryable": False},
+    "scheme_type_unsupported":   {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    "scheme_bridge_fault":       {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
     # Write-action-legitimacy: a state-/resource-granting verb the agent must NEVER
     # mint (the scripted_effect EXECUTE allow-list refuses it; the gate keeps its old name). A
     # hard, non-retryable refusal — earn the resource in-game, do not cheat it.
@@ -128,6 +144,9 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # `is_known_limitation` matches `observe_mode`, the sibling that is also a
     # standing rule about what a seat may do rather than a state that passes.
     "last_claim_of_control_session": {"class": "bridge",     "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    # lane-multi: session(action="add") against a bridge whose reply lacks
+    # `added`: it predates the add path and treated the call as a SWITCH.
+    "add_unsupported_by_bridge": {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "actor_dead_or_stale":       {"class": "bridge",         "severity": "transient", "retryable": True},
     "actor_required":            {"class": "bridge",         "severity": "invalid", "retryable": False},
     # rc2 B6: character_id=0 and the bridge resolved NO character, or this
@@ -342,6 +361,39 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "no_matching_position": "name_not_found",
     "capital_validate_failed": "target_ineligible",
     "councillor_dead": "target_ineligible",
+    # lane-scheme 2026-10-18: scheme_action's own codes (action_handlers.cpp
+    # do_dispatch_scheme_intent, intent_dispatch.cpp execute_scheme_intent /
+    # execute_scheme_cancel_intent). Several arrive as `code:detail`; the prefix
+    # resolution in map_raw_reason keys those on the code.
+    "engine_refused_scheme_null_sentinel": "scheme_start_refused",
+    "scheme_type_needs_contract_or_artifact": "scheme_type_unsupported",
+    "scheme_type_not_found": "name_not_found",
+    "scheme_type_required": "missing_required_argument",
+    "target_id_required": "missing_required_argument",
+    "scheme_id_required": "missing_required_argument",
+    "cannot_scheme_against_self": "target_ineligible",
+    "not_scheme_owner": "target_ineligible",
+    "scheme_not_found": "name_not_found",
+    "owner_not_found": "actor_dead_or_stale",
+    "owner_not_alive": "actor_dead_or_stale",
+    "target_not_found": "character_not_found",
+    "target_handle_zero": "character_not_found",
+    "target_not_alive": "character_dead",
+    "scheme_call_crashed": "scheme_bridge_fault",
+    "scheme_null_args_unavailable": "scheme_bridge_fault",
+    "scheme_null_args_shape_mismatch": "scheme_bridge_fault",
+    "scheme_cancel_crashed": "scheme_bridge_fault",
+    "scheme_manager_null": "scheme_bridge_fault",
+    "game_state_root_null": "scheme_bridge_fault",
+    # the engine's remove ran and the readback still finds the scheme
+    "scheme_still_present_after_remove": "scheme_bridge_fault",
+    # The bridge waited 5 s, no tick ran it, and it RETIRED the intent: it will
+    # never run. Distinct from the one below, where it may still land.
+    "intent_timeout_cancelled_not_executed": "drain_timeout",
+    "intent_timeout_no_result": "confirmation_pending",
+    "scheme_not_owned_after_call": "confirmation_pending",
+    # lane-query item 1: an explicit `seat` that is not the task's own seat.
+    "seat_cannot_take_task": "target_ineligible",
 }
 
 #: ENGINE PROSE, ORDERED, AND CHECKED AFTER THE EXACT MAP (ck-3mz0).
@@ -418,6 +470,9 @@ GATE_WHY: dict[str, str] = {
     "cb_query_busy": "the shared casus-belli slot stayed busy for the whole retry budget",
     "de_jure_control": "the title requires de-jure counties the character does not hold",
     "not_at_peace": "the action requires peace and the character is at war",
+    "scheme_start_refused": "the game's own scheme-start checks refused it: the target is not valid for this scheme, the schemer cannot start it, or a scheme or cooldown against that target already exists",
+    "scheme_type_unsupported": "the game only starts this scheme type with a task contract or artifact, which the bridge cannot supply",
+    "scheme_bridge_fault": "the bridge's call into the game's scheme code faulted or could not be prepared; it was contained, so check query(domain='schemes') before assuming nothing changed",
 }
 
 #: Gates that fire REGARDLESS of the arguments. `scope: "generic"` tells a seat
@@ -445,6 +500,41 @@ GATE_NEXT: dict[str, str] = {
 
 #: Said in full rather than implied, for the gates where nothing will ever work.
 NOT_POSSIBLE = "not possible for this character in this episode"
+
+#: lane-query item 2: THE PLACEHOLDER WAS SHIPPED. GATE_NEXT says "call
+#: do(action_class=<this intent's class>)" and that text reached the agent
+#: verbatim, including for men_at_arms, which had no class at all. do() knows
+#: the intent, so it names the class; an intent with no enumerate says so.
+INTENT_ENUMERATE_CLASS: dict[str, str] = {
+    "council_task": "council_tasks",
+    "take_decision": "decisions",
+    "interact": "interactions",
+    "change_law": "laws",
+    "hire_merc": "mercenaries",
+    "men_at_arms": "men_at_arms",
+    "build": "buildings",
+    "faction": "factions_to_join",
+    "mint_title": "formable_titles",
+}
+_NEXT_PLACEHOLDER = "<this intent's class>"
+
+#: do(action_class="men_at_arms") row cap (lane-query live: 109 rows = 47 KB).
+MAA_ENUMERATE_CAP = 30
+
+
+def concrete_next(blocked, intent: str):
+    """Replace the GATE_NEXT placeholder with the intent's real enumerate class."""
+    if not isinstance(blocked, dict):
+        return blocked
+    nxt = blocked.get("next")
+    if isinstance(nxt, str) and _NEXT_PLACEHOLDER in nxt:
+        cls = INTENT_ENUMERATE_CLASS.get(intent or "")
+        if cls:
+            blocked["next"] = nxt.replace(_NEXT_PLACEHOLDER, repr(cls))
+        else:
+            blocked["next"] = (f"intent '{intent}' has no enumerate mode; its arguments are "
+                               "listed under ARGUMENTS BY INTENT in the do tool description")
+    return blocked
 
 
 def _actionable(gate: str, out: dict, *, fix: Optional[dict] = None,
@@ -550,6 +640,36 @@ def why_blocked(gate: str, summary: str = "", *, fix: Optional[dict] = None,
     return out
 
 
+#: The bridge's default-off write list (dispatch_router.cpp experimental_write_enabled,
+#: kExperimental), as the seat sees it. MIRRORED, not imported: the bridge is C++.
+#: test_experimental_gate_contract.py reads kExperimental out of the source and the
+#: operator docs (docs/research.md) and fails if any of the three disagree.
+EXPERIMENTAL_WRITES: tuple = ("faction_action", "break_alliance")
+# scheme_action left the list 2026-10-18 after live validation (lane-scheme).
+
+
+def experimental_gate_blocked(raw: Any, bridge_action: str) -> dict[str, Any]:
+    """The `experimental_write_disabled` refusal, carrying what an OPERATOR needs.
+
+    lane-scheme 2026-10-18. The persona test got a summary pointing at
+    "enabled_writes_file in this reply" from a reply that did not carry it: the
+    bridge sends the path, and this envelope dropped it. The path and the exact
+    line now ride in `fix`, marked operator-only, because the seat cannot and
+    must not arm its own gate (GATE_WHY says so) -- but the human reading the
+    transcript can, for a controlled validation run.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    path = raw.get("enabled_writes_file") or ""
+    fix = {"who": "operator", "enabled_writes_file": path, "add_line": bridge_action,
+           "docs": "docs/research.md#default-off-writes"}
+    summary = (f"'{bridge_action}' is off by default in the bridge (not yet validated "
+               f"crash-free). An operator can arm it for a controlled run by adding the "
+               f"line '{bridge_action}' to {path or 'the ck3-enabled-writes file in the bridge state dir'}; "
+               f"the seat cannot.")
+    return why_blocked("experimental_write_disabled", summary=summary, fix=fix,
+                       raw_reason="experimental_write_disabled")
+
+
 def map_raw_reason(raw_reason: str, summary: str = "") -> dict[str, Any]:
     """Map a documented bridge refusal string to a why_blocked. Unmapped ⇒ gate:unknown
     carrying the raw reason in `summary` (loud, never silently bucketed)."""
@@ -567,6 +687,12 @@ def map_raw_reason(raw_reason: str, summary: str = "") -> dict[str, Any]:
             if needle in low:
                 gate = g
                 break
+    if gate is None and ":" in key:
+        # lane-scheme: `code:detail` (scheme_type_not_found:murder,
+        # scheme_call_crashed:SIGSEGV). Key on the code BEFORE the substring
+        # pass, which would otherwise let any short code that happens to occur
+        # inside the detail win.
+        gate = RAW_REASON_TO_GATE.get(key.split(":", 1)[0].strip())
     if gate is None:
         # try a prefix/substring match for the #109 reason family.
         for raw, g in RAW_REASON_TO_GATE.items():
@@ -897,6 +1023,11 @@ SELF_DISADVANTAGE_INTERACTIONS = {
 }
 
 
+#: Intents whose bridge handler requires an explicit actor_id > 0 (no controlled-
+#: primary fallback): do_dispatch_scheme_intent, do_dispatch_faction_intent.
+_EXPLICIT_ACTOR_INTENTS: frozenset = frozenset({"scheme", "faction"})
+
+
 def _intent_to_act_params(intent: str, args: dict, actor_id: int) -> dict[str, Any]:
     """Translate a do(intent, args) call into the act_params dict for resolve_act."""
     base = dict(INTENT_TO_ACT[intent])
@@ -951,6 +1082,11 @@ def _intent_to_act_params(intent: str, args: dict, actor_id: int) -> dict[str, A
         # year on. The exact name wins when both are given.
         base["target_title_id"] = _as_int(a.get("target_title_id") or a.get("target_id"))
         base["target_character_id"] = _as_int(a.get("target_character_id"))
+        # lane-query item 1: `seat` was accepted, documented in the do_call rows
+        # this module prints, and then dropped. It now reaches the bridge, which
+        # refuses a seat that cannot take the task (seat_cannot_take_task).
+        if a.get("seat"):
+            base["seat"] = str(a.get("seat"))
     elif intent == "appoint":
         base["position_id"] = _as_int(a.get("seat") or a.get("position_id"))
         base["character_id"] = _as_int(a.get("councillor_id") or a.get("character_id"))
@@ -1042,6 +1178,7 @@ TOOL_BRIDGE_ACTIONS: dict[str, list[str]] = {
         "list_interactions", "query_interaction_acceptance", "list_valid_decisions",
         "list_decisions_annotated", "query_council_tasks", "query_available_law_changes",
         "query_fabricate_targets", "query_hireable_mercenaries", "query_joinable_factions",
+        "query_maa_types",
         "query_building_types", "construction_check", "query_imprisonment_reasons",
         "query_dejure_progress",
         # ck-7fyl/#75 scripted_effect intent (resolve-only validated; EXECUTE experimental):
@@ -1148,8 +1285,14 @@ async def agency_block(gw, character_id: int) -> dict[str, Any]:
                                 "posture, not commanded directly"),
         "you_act_directly_through": ["do", "declare_war", "intent", "set_phase",
                                      "steer", "session"],
-        "at_your_death": ("this seat does not follow the heir automatically; "
-                          "claim the new character with session(action='control')"),
+        # The bridge moves the seat to the heir (session.cpp handoff); it refuses
+        # only when the heir is the human player, and says so. This string used
+        # to claim the opposite and Claude flagged the contradiction to the
+        # human every session (persona test 2026-10-18).
+        "at_your_death": ("the bridge moves this seat to the heir when the ruler dies; "
+                          "whoami then shows the new ruler. If the heir is the human "
+                          "player the seat is unbound (unbound_reason heir_is_player): "
+                          "claim another ruler with session(action='control')"),
         "ai_tick": {"enabled": None, "suspended": None,
                     "measured": False,
                     "source": "query_war_stance (per-character ai_ctrl)",
@@ -2475,6 +2618,13 @@ async def cbs_impl(gw, target_id: int = 0, character_id: int = 0) -> dict[str, A
         "options": all_opts,
         "valid_options": valid_opts,
         "best": (valid_opts[0] if valid_opts else None),
+        # lane-query item 6: this is the game's own CB check, and it wins over
+        # discover(what="war_targets"), whose `declarable` is a relation-gate
+        # heuristic (that reply now says so too).
+        "authority": "engine",
+        "authority_note": ("valid_options come from the game's strict casus-belli check; "
+                           "discover(what='war_targets') lists candidates only and is "
+                           "overruled by this answer when they disagree"),
     }
     return envelope("cbs", result=result, actor=actor, game=gw.game(),
                     warnings=warnings, bridge_health=gw.health)
@@ -3836,9 +3986,27 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
     # disable (an earlier take with disable_native_ai=true, or a release/retake
     # race) silently kills ALL war prosecution — armies never re-plan, sieges
     # never chain (the archived M-003 class). Idempotent write; belt-and-braces.
-    ai_gate = await gw.write("set_character_ai",
-                             {"character_id": character_id, "enabled": True})
-    if isinstance(ai_gate, dict) and (ai_gate.get("error") or ai_gate.get("blocked")):
+    #
+    # lane-query item 7: THE RE-ASSERT WAS REFUSED ON EVERY DEFAULT CALL, AND
+    # THE REPLY SAID APPLIED. set_phase passes the tool's character_id through,
+    # and the default is 0 ("the bound ruler"). set_ai_personality and
+    # set_character_subsystems resolve 0 to the controlled ruler; the bridge's
+    # set_character_ai deliberately REFUSES 0 (ck-vf92: 0 is not a character,
+    # and it once reached the AI_CHAR_TOGGLE store). So every set_phase called
+    # without an explicit id logged {"success": false, "ai_enabled": true} in
+    # the action log, and this check — which looked only for `error`/`blocked`,
+    # keys that reply never carries — let the phase report applied. Now the
+    # write goes to the RESOLVED actor id, and a reply that is not an explicit
+    # success is reported, in the warning and in result.ai_gate.
+    ai_gate_cid = _as_int(character_id) or _as_int((actor or {}).get("id"))
+    if ai_gate_cid > 0:
+        ai_gate = await gw.write("set_character_ai",
+                                 {"character_id": ai_gate_cid, "enabled": True})
+    else:
+        ai_gate = {"success": False, "reason": "actor_id_unresolved"}
+    ai_gate_ok = isinstance(ai_gate, dict) and ai_gate.get("success") is True \
+        and not ai_gate.get("error") and not ai_gate.get("blocked")
+    if not ai_gate_ok:
         warnings.append({"code": "ai_gate_reassert_failed", "is_known_limitation": True,
                          # ck-zgh4 deploy-51: this used to name `set_character_ai`
                          # to the SEAT. That verb is not on the seat surface — not
@@ -3884,7 +4052,15 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
               "offgoal_veto_scope": OFFGOAL_VETO_SCOPE,
               # rc2 B8: nothing re-applies the phase after a succession
               # (the server has no such path); this said True.
-              "auto_repin": False, "repinned_this_reign": True}
+              "auto_repin": False, "repinned_this_reign": True,
+              # lane-query item 7: what the per-character AI re-assert did,
+              # read from its reply rather than assumed.
+              "ai_gate": {"character_id": ai_gate_cid,
+                          "reasserted": ai_gate_ok,
+                          "reason": (None if ai_gate_ok else
+                                     (ai_gate.get("reason") or ai_gate.get("error")
+                                      if isinstance(ai_gate, dict) else "no_reply")
+                                     or "no_confirmation")}}
     if isinstance(pres, dict) and pres.get("error"):
         warnings.append({"code": "personality_write_warning", "detail": str(pres.get("error"))})
     return envelope("set_phase", verdict="applied", result=result, actor=actor,
@@ -3933,8 +4109,14 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
         for t in (res or {}).get("targets", []) if isinstance(res, dict) else []:
             assignable = t.get("assignable")
             row = {"label": f"Fabricate claim on {t.get('title') or t.get('title_id')}",
+                   # lane-query item 1: this row used to say seat "chancellor".
+                   # task_fabricate_claim is a COURT CHAPLAIN task (dump
+                   # ck3_20260625_152901_ivar867: tasktype+0x30 ->
+                   # councillor_court_chaplain), so the printed call named a
+                   # seat the game never uses for it, and a seat that read it
+                   # went looking for its chancellor's skill.
                    "do_call": {"intent": "council_task",
-                               "args": {"seat": "chancellor", "task": "task_fabricate_claim",
+                               "args": {"seat": "court_chaplain", "task": "task_fabricate_claim",
                                         "target_id": t.get("title_id")}},
                    "warnings": [{"code": "may_revert_ai_reasserts", "is_known_limitation": True}]}
             if assignable:
@@ -3945,21 +4127,107 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                                              summary="target dropped off the eligible list this tick — re-enumerate, never reuse a stale target_id")
                 unavailable.append(row)
     elif action_class == "laws":
+        # lane-query item 2: THE REPLY SHAPE WAS NEVER READ. The bridge answers
+        # {groups: [{group_name, current_law, options: [{name, ...}]}]} and this
+        # read `laws` / `available`, keys the bridge does not emit, so every
+        # ruler got {"available": [], "unavailable": []} — at war or at peace.
         res = await gw.read("query_available_law_changes", {"character_id": character_id})
-        for law in (res or {}).get("laws", res.get("available", []) if isinstance(res, dict) else []) if isinstance(res, dict) else []:
-            name = law.get("law_name") or law.get("name") if isinstance(law, dict) else law
-            available.append({"label": name,
-                              "do_call": {"intent": "change_law", "args": {"law": name}},
-                              "blocked": None})
+        res = res if isinstance(res, dict) else {}
+        groups = res.get("groups") if isinstance(res.get("groups"), list) else []
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            gname = g.get("group_name") or "?"
+            cur = g.get("current_law")
+            for o in (g.get("options") or []):
+                name = o.get("name") if isinstance(o, dict) else o
+                if not name:
+                    continue
+                available.append({"label": f"{gname}: {cur} -> {name}",
+                                  "group": gname, "current_law": cur,
+                                  "do_call": {"intent": "change_law", "args": {"law": name}},
+                                  "blocked": None})
+        warnings.append({"code": "law_options_unvalidated", "is_known_limitation": True,
+                         "detail": ("each row is another law in a group this ruler has, not a "
+                                    "verdict that the change is allowed now: the game checks "
+                                    "cost, war and other conditions when change_law runs")})
+        if not available:
+            _why = (res.get("error") or ("the ruler has no law groups with alternatives"
+                                         if groups else "the bridge returned no law groups"))
+            warnings.append({"code": "no_law_options", "is_known_limitation": False,
+                             "detail": f"no law changes listed: {_why}"})
     elif action_class == "fabricate_targets":
         return await _do_enumerate(gw, "council_tasks", character_id, candidates, actor)
     elif action_class == "mercenaries":
-        res = await gw.read("query_hireable_mercenaries", {})
-        for m in (res or {}).get("companies", res.get("mercenaries", []) if isinstance(res, dict) else []) if isinstance(res, dict) else []:
-            cid = m.get("company_id") if isinstance(m, dict) else m
-            available.append({"label": (m.get("name") if isinstance(m, dict) else str(cid)),
-                              "do_call": {"intent": "hire_merc", "args": {"company_id": cid}},
-                              "blocked": None})
+        # lane-query item 2: 562 rows, every label null, no size, 49 KB. The
+        # bridge now labels each company (home county + men), gives troops and
+        # the regiment mix, leaves out companies under contract, and with an
+        # actor sorts nearest first; the cap keeps the reply small.
+        res = await gw.read("query_hireable_mercenaries",
+                            {"actor_id": character_id, "max_results": 25})
+        res = res if isinstance(res, dict) else {}
+        for m in (res.get("companies") or []):
+            if not isinstance(m, dict):
+                continue
+            cid = m.get("company_id")
+            row = {"label": m.get("label") or f"company {cid}",
+                   "do_call": {"intent": "hire_merc", "args": {"company_id": cid}},
+                   "troops": m.get("troops"),
+                   "regiments": m.get("regiments"),
+                   "home_county": m.get("home_county_name") or m.get("home_county_key"),
+                   "cost": m.get("cost"),
+                   "blocked": None}
+            if m.get("distance_px") is not None:
+                row["distance_px"] = m.get("distance_px")
+            available.append(row)
+        if res.get("cost_note"):
+            warnings.append({"code": "merc_cost_not_read", "is_known_limitation": True,
+                             "detail": res.get("cost_note")})
+        if res.get("listed_before_cap") and res.get("count") is not None \
+                and res.get("listed_before_cap") > res.get("count"):
+            warnings.append({"code": "truncated", "is_known_limitation": False,
+                             "detail": (f"{res.get('count')} of {res.get('listed_before_cap')} "
+                                        f"free companies shown ({res.get('order')}); "
+                                        "discover(what='hireable_mercenaries', max_results=N) lists more")})
+    elif action_class == "men_at_arms":
+        # lane-query item 2: the enumerate do(intent="men_at_arms") pointed at.
+        res = await gw.read("query_maa_types", {"actor_id": character_id})
+        res = res if isinstance(res, dict) else {}
+        types = [t for t in (res.get("types") or []) if isinstance(t, dict) and t.get("maa_type")]
+        # fielded first (known available), then cheapest first; a type with no
+        # recruit cost read (0) sorts last. Capped: 109 rows were 47 KB live.
+        types.sort(key=lambda t: (-(_as_int(t.get("fielded_regiments"))),
+                                  _f(t.get("recruit_cost")) <= 0,
+                                  _f(t.get("recruit_cost"))))
+        cap = max(1, len(candidates)) if candidates else MAA_ENUMERATE_CAP
+        if candidates:
+            want = {str(c) for c in candidates}
+            types = [t for t in types if t.get("maa_type") in want]
+        elif len(types) > cap:
+            warnings.append({"code": "truncated", "is_known_limitation": False,
+                             "detail": (f"{cap} of {len(types)} MaA types shown (fielded first, "
+                                        "then cheapest); pass candidates=[<maa_type>, ...] "
+                                        "to look up specific types")})
+            types = types[:cap]
+        for t in types:
+            mt = t.get("maa_type")
+            row = {"label": f"{mt} (recruit {t.get('recruit_cost')} gold)",
+                   "do_call": {"intent": "men_at_arms", "args": {"action": "recruit", "maa_type": mt}},
+                   "recruit_cost": t.get("recruit_cost"),
+                   "upkeep_per_stack": t.get("upkeep_per_stack"),
+                   "fielded_regiments": t.get("fielded_regiments")}
+            if t.get("affordable") is False:
+                row["blocked"] = why_blocked(
+                    "insufficient_gold",
+                    summary=f"recruit cost {t.get('recruit_cost')} > gold {res.get('gold')}",
+                    measured={"need": t.get("recruit_cost"), "have": res.get("gold")})
+                unavailable.append(row)
+            else:
+                row["blocked"] = None
+                available.append(row)
+        if res.get("note"):
+            warnings.append({"code": "maa_unlock_not_checked", "is_known_limitation": True,
+                             "detail": res.get("note")})
     elif action_class == "factions_to_join":
         res = await gw.read("query_joinable_factions", {"character_id": character_id})
         for fac in (res or {}).get("factions", []) if isinstance(res, dict) else []:
@@ -4570,7 +4838,20 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
 
     # #64: take_decision must be bounded (no unbounded annotated eval here — single
     # named decision is fine; it dispatches send_decision, not the eval path).
-    act_params = _intent_to_act_params(intent, a, character_id)
+    # lane-scheme 2026-10-18: the scheme and faction handlers REFUSE actor_id 0
+    # (`actor_id_required`, action_handlers.cpp) rather than fall back to the
+    # bridge's process-wide controlled primary, which may be another seat's
+    # character and which the ownership gate does not check. So a seat that
+    # calls do(intent="scheme") with no character_id -- the normal single-ruler
+    # call, and the persona test's -- was refused for a missing argument it
+    # never had to pass. Measured live once the write gate was armed: six of six
+    # do(intent="scheme") calls refused actor_id_required. Send the actor this
+    # call already resolved instead. Every other intent keeps actor_id 0 and the
+    # bridge's own default, unchanged.
+    dispatch_actor = character_id
+    if not dispatch_actor and intent in _EXPLICIT_ACTOR_INTENTS:
+        dispatch_actor = _as_int((actor or {}).get("id"))
+    act_params = _intent_to_act_params(intent, a, dispatch_actor)
 
     # ── ck-ba35: REFUSE A MALFORMED CALL BEFORE IT COSTS A FLUSH ───────────
     #
@@ -4611,13 +4892,13 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
         if _verdict.get("valid") is False and _verdict.get("reason") != "unknown_type":
             return envelope(
                 "do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
-                blocked=why_blocked(
+                blocked=concrete_next(why_blocked(
                     "missing_required_argument",
                     summary=_verdict.get("hint")
                     or f"{_verdict.get('reason')}: {_verdict.get('rejected_fields')}",
                     raw_reason=str(_verdict.get("reason") or ""),
                     fix={"rejected_fields": _verdict.get("rejected_fields") or [],
-                         "retry_with": _verdict.get("retry_with") or {}}),
+                         "retry_with": _verdict.get("retry_with") or {}}), intent),
                 bridge_health=gw.health)
 
     try:
@@ -4649,8 +4930,7 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
 
     if reason == "experimental_write_disabled" or status == "experimental_write_disabled":
         return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
-                        blocked=why_blocked("experimental_write_disabled",
-                                            summary="add the action to the ck3-enabled-writes file in the bridge state dir (enabled_writes_file in this reply) to enable"),
+                        blocked=experimental_gate_blocked(raw, bridge_action),
                         bridge_health=gw.health)
 
     # Stickiness honesty (G1) for council_task — warn it may revert.
@@ -4701,8 +4981,18 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
                                      "whether this landed is unknown")},
                         result={"intent": intent, "raw": raw}, warnings=warnings, bridge_health=gw.health)
     if not success:
+        _summary = reason or status
+        _result = None
+        if intent == "council_task":
+            # lane-query item 1: the bridge's refusal names the seat it used or
+            # the seat the task belongs to; surface that instead of the bare code.
+            _summary = raw.get("warning") or _summary
+            _result = {"intent": intent, "raw": raw}
         return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
-                        blocked=map_raw_reason(reason or status or "unknown", summary=reason or status),
+                        result=_result,
+                        blocked=concrete_next(
+                            map_raw_reason(reason or status or "unknown", summary=_summary),
+                            intent),
                         warnings=warnings, bridge_health=gw.health)
     return envelope("do", verdict="applied", result={"intent": intent, "raw": raw},
                     actor=actor, game=gw.game(), warnings=warnings, bridge_health=gw.health)
@@ -5319,20 +5609,72 @@ def unwitnessed_applied(env, writes):
 
 async def session_impl(gw, action: str, character_id: int = 0, speed: int = 3,
                        enabled: bool = True, disable_native_ai: bool = False,
-                       flag: str = "") -> dict[str, Any]:
+                       flag: str = "", seconds: int = 60) -> dict[str, Any]:
     """Thin wrapper: run the branches, then apply the one guard to whatever they
     returned. See `unwitnessed_applied` for why the rule lives in one place."""
     wgw = _WitnessingGateway(gw)
     env = await _session_impl_branches(wgw, action, character_id=character_id,
                                        speed=speed, enabled=enabled,
                                        disable_native_ai=disable_native_ai,
-                                       flag=flag)
+                                       flag=flag, seconds=seconds)
     return unwitnessed_applied(env, wgw.writes)
+
+
+# session(action="wait"): the server owns the wait between cycles. Claude Code
+# refuses a foreground `sleep` of 30 s or more (measured 2026-10-18 on 2.1.241 and
+# 2.1.302: "Blocked: standalone sleep 30"), and an allow-list entry does not
+# override it, so the protocol's `sleep 60` never ran and every multi-cycle run
+# stopped after one cycle. Claude Code also hands an MCP call still running after
+# 120 s to a background task (CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS); the cap keeps a
+# wait under that, and the run harness and play directory turn the hand-off off.
+WAIT_CAP_S = 110
+_SLEEP = asyncio.sleep          # tests replace it
+
+
+async def _fresh_tick(gw) -> dict:
+    """get_tick_info straight from the bridge: the gateway's cached tick_start is
+    not refreshed by a management write, so after unpause_game it still says
+    paused until some other call happens to update it (the `paused: true` reply
+    to a successful unpause, 2026-10-18)."""
+    try:
+        ti = await gw.read("get_tick_info", {})
+    except Exception:  # noqa: BLE001
+        return {}
+    if isinstance(ti, dict) and isinstance(ti.get("data"), dict):
+        ti = {**ti["data"], **ti}
+    return ti if isinstance(ti, dict) else {}
+
+
+async def _settle_pause(gw, want_paused, timeout_s: float = 3.0) -> dict:
+    """Poll the bridge until `paused` reads `want_paused` (None: one fresh read)."""
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    ti = await _fresh_tick(gw)
+    while want_paused is not None and ti.get("paused") is not want_paused:
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await _SLEEP(0.2)
+        ti = await _fresh_tick(gw)
+    return ti
+
+
+def _game_from_tick(gw, ti: dict) -> dict:
+    g = dict(gw.game())
+    if ti.get("game_date"):
+        g["date"] = ti["game_date"]
+    for k in ("tick", "tick_id"):
+        if isinstance(ti.get(k), int):
+            g["tick"] = ti[k]
+            break
+    if ti.get("paused") is not None:
+        g["paused"] = bool(ti["paused"])
+    if ti.get("game_speed") is not None:
+        g["speed"] = ti["game_speed"]
+    return g
 
 
 async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: int = 3,
                        enabled: bool = True, disable_native_ai: bool = False,
-                       flag: str = "") -> dict[str, Any]:
+                       flag: str = "", seconds: int = 60) -> dict[str, Any]:
     if action == "experimental_flags":
         # READ the registry — what experimental flags exist + their validation status.
         return envelope("session", result={
@@ -5565,6 +5907,68 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                 },
                         warnings=warnings,
                         game=gw.game(), bridge_health=gw.health)
+    if action == "add":
+        # lane-multi: ONE MORE RULER for this session. `control` SWITCHES (the
+        # bridge's swap, Ruling Three); `add` claims the character beside the
+        # ones already held and keeps the primary (`add: true` on the bridge's
+        # set_controlled_character). With nothing held it is a first claim.
+        if _as_int(character_id) <= 0:
+            return envelope("session", ok=False, game=gw.game(),
+                            blocked=why_blocked(
+                                "missing_character_id",
+                                summary="add needs character_id=<id>; it was omitted or 0."),
+                            bridge_health=gw.health)
+        res = await gw.write("set_controlled_character",
+                             {"character_id": character_id,
+                              "disable_native_ai": disable_native_ai, "add": True})
+        res = res if isinstance(res, dict) else {}
+        _refusal = control_refusal_reason(res)
+        if _refusal is not None:
+            _raw = res.get("error") if isinstance(res.get("error"), str) else res.get("reason")
+            return envelope("session", ok=False, game=gw.game(),
+                            blocked=why_blocked(
+                                _refusal,
+                                summary=CONTROL_REFUSAL_SUMMARIES.get(
+                                    _refusal,
+                                    "the bridge refused the add and named a reason this "
+                                    "client does not know: treat as UNFORESEEN"),
+                                raw_reason=_raw if isinstance(_raw, str) else ""),
+                            bridge_health=gw.health)
+        if res.get("success") is True and res.get("added") is not True:
+            # An older bridge ignores `add` and SWITCHES: the seat may have let
+            # go of a ruler it held. Say so; whoami reads what it holds now.
+            return envelope("session", ok=False, game=gw.game(),
+                            blocked=why_blocked(
+                                "add_unsupported_by_bridge",
+                                summary=("this bridge does not support add: it treated the call "
+                                         "as control and may have SWITCHED away from a ruler "
+                                         "this session held. Read session(action='whoami').")),
+                            bridge_health=gw.health)
+        _claims = res.get("claimed_character_ids")
+        if not isinstance(_claims, list):
+            _row = own_session_row(await gw.read("get_bridge_state", {}), own_session_id(gw))
+            _claims = list(_row.get("claimed_character_ids") or ()) if _row is not None else None
+        _witnessed = res.get("success") is True and isinstance(_claims, list) \
+            and _as_int(character_id) in [_as_int(c) for c in _claims]
+        chr_ = await gw.read("query_character", {"character_id": _as_int(character_id)})
+        warnings = None
+        if not _witnessed:
+            warnings = ["the bridge did not confirm that this session now holds "
+                        f"{character_id}; call session(action='whoami') before acting as it."]
+        if disable_native_ai:
+            warnings = (warnings or []) + [
+                "disable_native_ai=true disables this character's war AI: an OFFENSIVE war "
+                "will not siege. set_phase re-asserts its AI tick."]
+        return envelope("session", verdict="applied",
+                        result={"added": actor_echo(chr_ if isinstance(chr_, dict) else {},
+                                                    character_id),
+                                "add_witnessed": _witnessed,
+                                "primary_character_id": res.get("controlled_primary"),
+                                "my_claims": _claims,
+                                "native_ai_disable_requested": bool(disable_native_ai),
+                                "note": ("pass character_id on every call for each ruler: "
+                                         "a call without it acts as the primary")},
+                        warnings=warnings, game=gw.game(), bridge_health=gw.health)
     if action == "release":
         # ck-switch: THE SIBLING OF THE CONTROL DEFECT, one branch below it.
         # This discarded the reply outright — not even assigned — and answered
@@ -5618,18 +6022,51 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
         return envelope("session", verdict="applied", result={"paused": True}, game=gw.game(), bridge_health=gw.health)
     if action == "unpause":
         res = await gw.write("unpause_game", {})
-        # Read the tick FRESH after unpausing: gw.game() reads the cached tick_start,
-        # which still says paused:true until the engine pushes a new running tick. Wait
-        # one tick so game.paused reflects reality (the stale-snapshot nit).
-        await gw._await_tick_advance(timeout_s=3.0)
-        g = gw.game()
+        # The bridge clears the flag and queues the real PAUSE_SET for the next
+        # tick, and the gateway's cached snapshot is not refreshed by the write:
+        # ask the bridge until it reads unpaused (or 3 s pass), and report that.
+        ti = await _settle_pause(gw, False, 3.0)
+        g = _game_from_tick(gw, ti)
         return envelope("session", verdict="applied",
-                        result={"paused": bool(g.get("paused"))}, game=g, bridge_health=gw.health)
+                        result={"paused": bool(g.get("paused")),
+                                "settled": ti.get("paused") is False},
+                        game=g, bridge_health=gw.health)
+    if action == "wait":
+        # Let time pass, server-side: unpause if paused, block, pause, report the
+        # dates. Claude cannot sleep in Bash (see WAIT_CAP_S above).
+        try:
+            secs = int(seconds)
+        except (TypeError, ValueError):
+            secs = 60
+        secs = max(1, min(secs, WAIT_CAP_S))
+        before = await _settle_pause(gw, None)
+        if before.get("paused") is not False:
+            await gw.write("unpause_game", {})
+            running = await _settle_pause(gw, False, 3.0)
+            if running.get("paused") is not False:
+                return envelope("session", ok=False, game=_game_from_tick(gw, running),
+                                blocked=why_blocked(
+                                    "unknown", severity="invalid",
+                                    summary=("the game did not unpause within 3 s; nothing was "
+                                             "waited. session(action='health'), then retry once.")),
+                                bridge_health=gw.health)
+        await _SLEEP(secs)
+        await gw.write("pause_game", {})
+        after = await _settle_pause(gw, True, 3.0)
+        g = _game_from_tick(gw, after)
+        return envelope("session", verdict="applied", result={
+            "waited_s": secs, "cap_s": WAIT_CAP_S,
+            "start_date": before.get("game_date"), "end_date": after.get("game_date"),
+            "clock_ran": bool(before.get("game_date")) and before.get("game_date") != after.get("game_date"),
+            "paused": bool(after.get("paused", True)),
+            "note": ("the game is paused again; observe, decide, act, then wait again. "
+                     f"For longer than {WAIT_CAP_S} s, call wait more than once."),
+        }, game=g, bridge_health=gw.health)
     if action == "auto_events":
         res = await gw.write("set_auto_respond_events", {"enabled": enabled})
         return envelope("session", verdict="applied", result={"auto_events": enabled, "raw": res},
                         game=gw.game(), bridge_health=gw.health)
     return envelope("session", ok=False, game=gw.game(),
                     blocked=why_blocked("unknown",
-                                        summary=f"unknown session action '{action}'; valid: control, release, whoami, speed, pause, unpause, health, auto_events"),
+                                        summary=f"unknown session action '{action}'; valid: control, release, whoami, speed, pause, unpause, wait, health, auto_events, experimental_flags, set_experimental"),
                     bridge_health=gw.health)

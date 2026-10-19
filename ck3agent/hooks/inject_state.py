@@ -21,7 +21,9 @@ Design constraints:
 Query plan:
   Tier-1 (always — works even while unpaused):
     get_tick_info   -> date / game_year / game_speed / paused / controlled id
-    get_bridge_state
+    get_bridge_state -> every ruler the session holds (lane-multi); with more
+                        than one, get_active_wars and (paused) query_character
+                        per extra ruler
   Tier-2 (only if paused — the bridge refuses game-state reads while unpaused):
     query_character (character_id=0), query_wars, query_succession,
     query_factions, query_faction_threat, query_schemes, query_council
@@ -153,6 +155,28 @@ def clean(v, _depth=0):
         return {clean(k): clean(x, _depth + 1) for k, x in v.items()}
     if isinstance(v, list):
         return [clean(x, _depth + 1) for x in v]
+    return v
+
+
+#: What a ruler line says in place of a name the bridge has not localized yet.
+NAME_PENDING = "name not localized yet (the game resolves it on its next tick)"
+
+
+def display_name(v):
+    """A character name fit to print, or None.
+
+    The bridge answers a name-cache MISS with the character's localization KEY
+    as stored on CCharacter (`E_thelred` for Æthelred, `Bj_rn` for Björn): its
+    reader thread cannot call the game's localizer, so it queues the id for the
+    game thread, which resolves it on its next tick (bridge/src/name_tables.cpp).
+    Until time moves — the first snapshot of a run, a paused game — every read
+    of that ruler returns the key, which is how lane-multi run 3 printed
+    `E_thelred` where whoami, a few turns later, said `Æthelred`. A key is not
+    a name: an underscore never occurs in a display name, so a string carrying
+    one is omitted rather than printed as the ruler's name.
+    """
+    if not isinstance(v, str) or not v.strip() or "_" in v:
+        return None
     return v
 
 
@@ -328,6 +352,102 @@ def _fmt_num(x):
     return str(x)
 
 
+def _war_count(resp):
+    """Number of wars in a get_active_wars reply, or None when there is none to read."""
+    if isinstance(resp, list):
+        return len(resp)
+    wl = deep_find(resp, "wars") if isinstance(resp, dict) else None
+    return len(wl) if isinstance(wl, list) else None
+
+
+def held_rulers(bstate, controlled):
+    """(this session's rulers, primary first; rulers other sessions hold).
+
+    The hook is its own bridge session and holds nothing, so "this session" is
+    the one that holds the bridge's primary (`controlled`): in one-session play,
+    the MCP server's. Rows come from get_bridge_state.sessions.
+    """
+    rows = [r for r in (bstate or {}).get("sessions") or [] if isinstance(r, dict)]
+    mine, mine_row, others = [], None, []
+    for r in rows:
+        ids = [int(c) for c in r.get("claimed_character_ids") or [] if isinstance(c, int)]
+        if controlled and int(controlled) in ids and mine_row is None:
+            mine_row = r
+            prim = r.get("primary_character_id")
+            prim = int(prim) if isinstance(prim, int) and prim in ids else int(controlled)
+            mine = [prim] + [c for c in ids if c != prim]
+        else:
+            others.extend(ids)
+    return mine, others
+
+
+def prefetch_rulers(puller, bstate, controlled, paused):
+    """{id: (profile, war count)} for every ruler held besides the primary.
+
+    Read right after tier 1, before the long paused plan: live on 2026-10-19 a
+    paused report read late in the plan came back without the second ruler's
+    name, the budget spent on lower-priority reads.
+    """
+    mine, _ = held_rulers(bstate, controlled)
+    out = {}
+    for cid in mine[1:]:
+        prof = (_unwrap(puller.query("query_character", {"character_id": cid})) or {}) \
+            if paused is True else {}
+        out[cid] = (prof if isinstance(prof, dict) else {},
+                    _war_count(_unwrap(puller.query("get_active_wars", {"character_id": cid}))))
+    return out
+
+
+def rulers_block(puller, bstate, controlled, ch, active_wars, paused, extras=None):
+    """Lines listing every ruler this session holds when it holds more than one.
+
+    One ruler: nothing (the `You:` line already says it all). Per ruler: id,
+    name and primary title (paused only: the profile read is pause-gated), at
+    war (works unpaused), imprisoned, dead. `extras` is prefetch_rulers' result.
+    """
+    mine, others = held_rulers(bstate, controlled)
+    extras = extras if extras is not None else prefetch_rulers(puller, bstate, controlled, paused)
+    out = []
+    if len(mine) > 1:
+        out.append("- Rulers this session holds (%d, primary first). Pass character_id on "
+                   "every call; a call without it acts as the primary:" % len(mine))
+        for i, cid in enumerate(mine):
+            if i == 0:
+                prof = ch if isinstance(ch, dict) else {}
+                wars_n = _war_count(active_wars)
+            else:
+                prof, wars_n = extras.get(cid, ({}, None))
+            seg = "    - id %s" % _fmt_num(cid)
+            raw_nm = g(prof, "name")
+            nm = display_name(raw_nm)
+            if nm:
+                seg += " · **%s**" % nm
+            ttl = g(prof, "primary_title_name", "primary_title_key", "primary_title")
+            if ttl:
+                seg += " · %s" % ttl
+            if i == 0:
+                seg += " (primary)"
+            if not nm and raw_nm:
+                seg += " · " + NAME_PENDING
+            elif not nm and paused is not True:
+                seg += " · name: pause to read"
+            elif not nm:
+                seg += " · profile unavailable this turn"
+            if wars_n:
+                seg += " · **at war** (%d)" % wars_n
+            elif wars_n == 0:
+                seg += " · not at war"
+            if g(prof, "is_imprisoned"):
+                seg += " · **IMPRISONED**"
+            if prof.get("alive") is False:
+                seg += " · **DEAD**"
+            out.append(seg)
+    if others:
+        out.append("- Held by another session: ids %s (two sessions in one game is "
+                   "unsupported: they share the clock)" % ", ".join(_fmt_num(c) for c in others))
+    return out
+
+
 def build_report(puller):
     """Run the query plan and compose the markdown block. Returns a string."""
     gaps = []
@@ -336,7 +456,7 @@ def build_report(puller):
     tick = _unwrap(puller.query("get_tick_info")) or {}
     if not tick:
         gaps.append("tick info unavailable")
-    _ = _unwrap(puller.query("get_bridge_state")) or {}
+    bstate = _unwrap(puller.query("get_bridge_state")) or {}
 
     date = g(tick, "game_date", "date")
     year = g(tick, "game_year")
@@ -355,6 +475,8 @@ def build_report(puller):
     # the agent gets in an unpaused human-vs-agent game; the rich query_wars
     # below is paused-gated and never fires while the human keeps time running.
     active_wars = _unwrap(puller.query("get_active_wars", {"character_id": 0}))
+    # lane-multi: the other rulers' reads come before the long paused plan.
+    extras = prefetch_rulers(puller, bstate, controlled, paused)
 
     # --- Tier 2: only while paused -----------------------------------------
     ch = {}
@@ -392,7 +514,9 @@ def build_report(puller):
 
     # --- Character profile fields ------------------------------------------
     title = g(ch, "primary_title_name", "primary_title_key", "primary_title")
-    name = g(ch, "name") or title
+    raw_name = g(ch, "name")
+    name = display_name(raw_name) or title
+    name_pending = bool(raw_name) and display_name(raw_name) is None
     age = g(ch, "age")
     tier = g(ch, "ruler_tier", "tier", "primary_title_tier")
     gold = g(ch, "gold")
@@ -433,7 +557,11 @@ def build_report(puller):
     # definitive death signal regardless of pause state.
     if alive_flag is None and controlled_alive is False:
         alive_flag = False
-    if alive_flag is not None or (isinstance(ch, dict) and ch):
+    # No ruler bound (id 0) is not a succession: the profile of "character 0"
+    # is whatever the bridge returns for nothing, and it read as "not landed"
+    # (persona test 2026-10-18: every turn of an unbound session opened with
+    # the emergency banner). The no-ruler line below says what to do instead.
+    if controlled and (alive_flag is not None or (isinstance(ch, dict) and ch)):
         # tier/title were resolved above; a landed ruler has a primary title.
         is_landed = bool(title) or (isinstance(tier, (int, float)) and tier and tier > 0)
         # When unpaused we have no profile, so only the explicit-death branch
@@ -472,11 +600,15 @@ def build_report(puller):
         if title:
             you += " · %s" % title
         you += " (tier %s)" % _fmt_num(tier)
+        if name_pending:
+            you += " · " + NAME_PENDING
         if imprisoned:
             you += " · **IMPRISONED**"
         if liege_id:
             you += " · liege %s" % _fmt_num(liege_id)
         lines.append(you)
+        # lane-multi: every ruler the session holds, not only the primary.
+        lines.extend(rulers_block(puller, bstate, controlled, ch, active_wars, paused, extras))
 
     # at-war + per-war.
     # Prefer the rich (paused) query_wars list when present; otherwise fall back

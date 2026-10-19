@@ -4,6 +4,18 @@ ck3agent loads a library into a game you own and exposes that process's
 memory to a local client. This page states what it protects, what it does
 not, and how to report a problem.
 
+## Supported versions
+
+| Version | Supported |
+|---------|-----------|
+| the latest release (2026.10.x) | yes |
+| anything older | no: upgrade |
+
+Each release supports one CK3 build ([docs/supported-versions.md](docs/supported-versions.md));
+fixes ship as a new release, never as a patch to an old one. In scope:
+`libck3_bridge.so`, the `ck3agent` CLI and MCP server, the installer scripts,
+the release workflow and its artifacts.
+
 ## Threat model
 
 - **Single user.** Any process running as you can read and steer the game.
@@ -56,5 +68,7 @@ own code, Steam, and your MCP host.
 ## Reporting a vulnerability
 
 Open a [private security advisory](https://github.com/skullbloc/ck3agent/security/advisories/new).
-Do not file public issues for security problems. We acknowledge within 7 days
-and aim to fix within 90 days.
+If that form is unavailable, send a private message to the maintainer
+([@stebbins](https://github.com/stebbins)) on GitHub with "ck3agent security"
+in the first line. Do not file public issues for security problems. We
+acknowledge within 7 days and aim to fix within 90 days.

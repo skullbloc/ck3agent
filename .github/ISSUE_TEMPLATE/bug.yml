@@ -1,11 +1,13 @@
 name: Bug report
 description: Something fails on a supported setup
+labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
         Supported setup only: CK3 1.18.3.1, Linux native, Steam. For a new game
-        patch use "New game version". Security problems: use a private advisory.
+        patch, or if the bridge log says it refused your build, use "New game
+        version". Security problems: use a private advisory.
   - type: textarea
     id: version
     attributes:
@@ -47,6 +49,12 @@ body:
     validations:
       required: true
   - type: textarea
+    id: tool
+    attributes:
+      label: Tool call, if one was wrong
+      description: Tool name and arguments, the reply (JSON), and what the game actually showed (screenshot, or save plus character id).
+      render: json
+  - type: textarea
     id: what
     attributes:
       label: What happened, what you expected, how to reproduce
@@ -57,5 +65,5 @@ body:
     attributes:
       label: Checks
       options:
-        - label: This is not an --allow-unsupported-build run (no CK3_STRICT_BUILD_ID=0, no --unsupported).
+        - label: This is not a loosened run (no CK3_STRICT_BUILD_ID=0, no --allow-unsupported-build / --unsupported).
           required: true

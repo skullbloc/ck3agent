@@ -28,6 +28,10 @@ from ._elf import NotAnElf, read_build_id
 PROTOCOL_DIR = Path(__file__).resolve().parent / "protocol"
 MCP_SERVER_NAME = "ck3"
 ALLOW = [f"mcp__{MCP_SERVER_NAME}", "Bash(sleep:*)"]
+# Claude Code hands an MCP call still running after 120 s to a background task;
+# session(action="wait") blocks for up to 110 s by design, and a long read can
+# push past it. Off in the play directory and in `ck3agent run`.
+SETTINGS_ENV = {"CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "0"}
 RELEASES_URL = "https://github.com/skullbloc/ck3agent/blob/main/docs/supported-versions.md"
 CK3_EXAMPLE = '"$HOME/.local/share/Steam/steamapps/common/Crusader Kings III/binaries/ck3"'
 CONTINUE_WAIT = 120
@@ -157,8 +161,14 @@ def _is_our_hook(h) -> bool:
     return isinstance(cmd, str) and "ck3agent" in cmd and cmd.rstrip().endswith("hook-state")
 
 
-def merge_settings(d: dict, hook_cmd: str | None, allow: list[str] | None) -> dict:
-    """Add our hook and allow-list to a .claude/settings.json dict, keeping the rest."""
+def merge_settings(d: dict, hook_cmd: str | None, allow: list[str] | None,
+                   env: dict[str, str] | None = None) -> dict:
+    """Add our hook, allow-list and env to a .claude/settings.json dict, keeping the rest."""
+    if env:
+        block = d.setdefault("env", {})
+        if not isinstance(block, dict):
+            raise ValueError("env is not an object")
+        block.update(env)
     if hook_cmd:
         groups = d.setdefault("hooks", {}).setdefault("UserPromptSubmit", [])
         if not isinstance(groups, list):
@@ -230,7 +240,7 @@ def cmd_setup(a: argparse.Namespace) -> int:
         settings = _load_json(settings_path)
         changed = merge_mcp(mcp, argv, a.force)
         hook_cmd = None if a.no_hook else " ".join(shlex.quote(x) for x in argv + ["hook-state"])
-        merge_settings(settings, hook_cmd, None if a.no_allow else ALLOW)
+        merge_settings(settings, hook_cmd, None if a.no_allow else ALLOW, SETTINGS_ENV)
     except ValueError as e:
         con.fail("cannot merge existing file", f"{e}; fix it or remove it")
         return 1
@@ -246,10 +256,10 @@ def cmd_setup(a: argparse.Namespace) -> int:
     else:
         shutil.copy(src_md, md)
         con.ok("CLAUDE.md written", "the play protocol")
-    if hook_cmd or not a.no_allow:
-        _write_json(settings_path, settings)
-        what = [w for w, on in (("live-state hook", hook_cmd), ("allow-list", not a.no_allow)) if on]
-        con.ok(".claude/settings.json merged", ", ".join(what))
+    _write_json(settings_path, settings)
+    what = [w for w, on in (("live-state hook", hook_cmd), ("allow-list", not a.no_allow),
+                            ("env (no MCP auto-background: session wait blocks up to 110 s)", True)) if on]
+    con.ok(".claude/settings.json merged", ", ".join(what))
 
     c.ck3_binary, c.bridge_so = str(binary), str(bridge)
     c.trigger_csv = str(csv) if csv else ""
@@ -353,9 +363,11 @@ def cmd_doctor(a: argparse.Namespace) -> int:
 
     sock = br.socket_path()
     game = br.alive(sock)
+    state = ""
     if game:
         con.ok("bridge socket", sock)
-        if not br.handshake_report(sock):
+        ok, state = br.handshake_check(sock)
+        if not ok:
             k.failed += 1
             k.next_fail = k.next_fail or "restart the game: ck3agent launch --continue"
     else:
@@ -374,13 +386,21 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     if k.failed:
         print(f"{k.failed} check(s) failed. Next: {k.next_fail}")
         return 1
-    if k.next_warn:
-        print(f"Next: {k.next_warn}")
-    elif not game:
-        print("Ready. Next: ck3agent launch --continue")
-    else:
-        print(f"Ready. Next: cd {shlex.quote(str(play))} && claude")
+    print(doctor_last_line(k.next_warn, game, state, play))
     return 0
+
+
+def doctor_last_line(next_warn: str | None, game: bool, state: str, play: Path) -> str:
+    """The verdict line. "Ready" only when the game is active: a bridge that
+    answers from the menu (`dormant`) is not a game Claude can play yet."""
+    if next_warn:
+        return f"Next: {next_warn}"
+    if not game:
+        return "Ready. Next: ck3agent launch --continue"
+    if state != "active":
+        return (f"Game not active yet (session_state={state or '?'}): wait for the save to "
+                f"load, or click Continue in the game window. Then: cd {shlex.quote(str(play))} && claude")
+    return f"Ready. Next: cd {shlex.quote(str(play))} && claude"
 
 
 # ── launch ───────────────────────────────────────────────────────────────────
@@ -508,7 +528,7 @@ def cmd_launch(a: argparse.Namespace) -> int:
         _debug_log_hint()
         return EXIT_TIMEOUT
     if cont:
-        rc = br.wait_for_active(sock, deadline, proc)
+        rc = br.wait_for_active(sock, deadline, proc, pause=not a.no_pause)
         if rc:
             _debug_log_hint()
         return rc
@@ -865,6 +885,88 @@ def _clean(rec: dict | None) -> bool:
     return bool(rec) and not rec.get("error") and not rec.get("refused")
 
 
+#: The bridge's refusal to empty a control session (dispatch_router.cpp, ck-cwal).
+#: Not a failed release: in free play the session's close frees that ruler, and
+#: the teardown's ruler check below is what verifies it.
+LAST_CLAIM = "last_claim_of_control_session"
+
+
+def _kept_as_last_claim(rec: dict | None) -> list[str]:
+    """The rulers `rec` left bound only because each was its session's last claim.
+
+    Empty unless that is ALL it refused and it has no error: any other refusal
+    or an error is still a warning.
+    """
+    refused = (rec or {}).get("refused") or {}
+    if rec and not rec.get("error") and refused and set(refused.values()) == {LAST_CLAIM}:
+        return list(refused)
+    return []
+
+
+def _report_release(what: str, rec: dict, detail: str) -> None:
+    kept = _kept_as_last_claim(rec)
+    if kept:
+        done = f"released {rec.get('released')}; " if rec.get("released") else ""
+        con.ok(what, f"{done}last ruler {', '.join(kept)} stays bound until the session closes "
+                     "(the bridge refuses to empty a control session); checked below")
+    else:
+        (con.ok if _clean(rec) else con.warn)(what, detail)
+
+
+def _declared_rulers(raw: str | None) -> list[int] | str | None:
+    """CK3_AGENT_CHARACTER_ID as the server reads it: ids in order, or the raw text
+    when the server would refuse it (it then binds nothing), or None when unset."""
+    if raw is None or not raw.strip():
+        return None
+    ids: list[int] = []
+    for part in raw.split(","):
+        try:
+            cid = int(part.strip())
+        except ValueError:
+            return raw
+        if cid <= 0:
+            return raw
+        if cid not in ids:
+            ids.append(cid)
+    return ids if len(ids) <= 10 else raw
+
+
+def _rulers_record(declared, prebind, release: dict | None, resumed: dict | None,
+                   after: list[int] | None, wait: dict | None = None) -> dict:
+    """Every ruler of the run: declared, bound at start (and WHEN: the tick and
+    date each bind landed, `bound_at`), held at stop, held after teardown.
+    `prebind_wait` is how long the server waited for the game to be active
+    before binding (`waited_s`, `polls`, `game_active`); None when the server
+    did not say."""
+    at_stop: list[int] = []
+    for rec in (release, resumed):
+        for c in (rec or {}).get("claims") or []:
+            if c not in at_stop:
+                at_stop.append(c)
+    return {"declared": declared,
+            "bound_at_start": [p["character_id"] for p in prebind or [] if p.get("ok")],
+            "bound_at": {str(p["character_id"]): p.get("bound_at")
+                         for p in prebind or [] if p.get("ok")},
+            "refused_at_start": {str(p["character_id"]): p.get("reason")
+                                 for p in prebind or [] if not p.get("ok")},
+            "prebind_wait": dict(wait) if isinstance(wait, dict) else None,
+            "held_at_stop": at_stop, "held_after_teardown": after}
+
+
+def _bound_when(rl: dict) -> str:
+    """For the run report: the date(s) the binds landed and the wait, if known."""
+    dates: list[str] = []
+    for v in (rl.get("bound_at") or {}).values():
+        d = (v or {}).get("date") if isinstance(v, dict) else None
+        if d and d not in dates:
+            dates.append(d)
+    waited = (rl.get("prebind_wait") or {}).get("waited_s")
+    out = f" on {', '.join(dates)}" if dates else ""
+    if isinstance(waited, (int, float)) and waited > 0:
+        out += f" after waiting {waited:.0f} s for the game"
+    return out
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     claude = shutil.which("claude")
     if not claude:
@@ -908,7 +1010,12 @@ def cmd_run(a: argparse.Namespace) -> int:
     _write_json(paths["mcp"], {"mcpServers": {MCP_SERVER_NAME: srv}})
 
     argv = build_claude_argv(claude, prompt, paths["mcp"], a, claude_supports(claude, "--strict-mcp-config"))
-    env = dict(os.environ, CK3_TOOL_SURFACE_OUT=str(paths["tools"]))
+    # Claude Code moves an MCP call still running after 120 s into a background task
+    # (CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS); session(action="wait") blocks for up to
+    # that long by design, so the run turns the hand-off off. Setup writes the same
+    # variable into the play directory's settings for interactive sessions.
+    env = dict(os.environ, CK3_TOOL_SURFACE_OUT=str(paths["tools"]),
+               CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS="0")
     action_log = Path(br.action_log_path())
     try:
         log_start = action_log.stat().st_size
@@ -983,6 +1090,11 @@ def cmd_run(a: argparse.Namespace) -> int:
             err.close()
             if stop in ("until_date", "wall_seconds"):
                 rc = 0
+            try:
+                srec = _load_json(paths["session"]) or {}
+                prebind, prebind_wait = srec.get("prebind"), srec.get("prebind_wait")
+            except (ValueError, OSError):
+                prebind = prebind_wait = None
             release, resumed = _release_after(paths, sock, link)
             good = _clean(resumed) if resumed is not None else _clean(release)
             teardown = br.teardown(sock, wait=0 if good else 5.0, link=link)
@@ -999,21 +1111,38 @@ def cmd_run(a: argparse.Namespace) -> int:
                 end_game_date=br.game_date(sock, link), server_release=release, resumed_release=resumed,
                 teardown=[{"step": w, "ok": g, "detail": d} for w, g, d in teardown],
                 tool_surface=_load_tool_surface(paths["tools"]),
-                actions=_copy_range(action_log, log_start, paths["actions"]))
+                actions=_copy_range(action_log, log_start, paths["actions"]),
+                rulers=_rulers_record(_declared_rulers(os.environ.get("CK3_AGENT_CHARACTER_ID")),
+                                      prebind, release, resumed, br.held_rulers(sock, link),
+                                      wait=prebind_wait))
             link.close()
             manifest["bridge_sessions_opened"] = link.opened
             _write_json(paths["manifest"], manifest)
 
             if release:
-                (con.ok if _clean(release) else con.warn)(
-                    "MCP server release", f"released {release.get('released')}, refused "
+                _report_release(
+                    "MCP server release", release, f"released {release.get('released')}, refused "
                     f"{release.get('refused') or 'none'}, {release.get('error') or 'no error'}")
-            if resumed:
+            if resumed and resumed.get("resume_status") == "session_gone":
+                # Nothing was resumed: the bridge had already dropped the session, and its claims with it.
                 (con.ok if _clean(resumed) else con.warn)(
-                    "session release", f"resumed {resumed.get('session_id')}: {resumed.get('claims')} held, "
-                    f"released {resumed.get('released')}, {resumed.get('error') or 'no error'}")
+                    "session release", f"session {resumed.get('session_id')} already closed, nothing held")
+            elif resumed:
+                _report_release(
+                    "session release", resumed, f"resumed {resumed.get('session_id')}: {resumed.get('claims')} "
+                    f"held, released {resumed.get('released')}, refused {resumed.get('refused') or 'none'}, "
+                    f"{resumed.get('error') or 'no error'}")
             for what, ok, detail in teardown:
                 (con.ok if ok else con.warn)(f"teardown {what}", detail)
+            rl = manifest["rulers"]
+            if rl["bound_at_start"] or rl["refused_at_start"] or rl["declared"] is not None:
+                (con.warn if rl["refused_at_start"] or isinstance(rl["declared"], str) else con.ok)(
+                    "rulers", f"bound at start {rl['bound_at_start'] or 'none'}"
+                    + (_bound_when(rl) if rl["bound_at_start"] else "")
+                    + (f", refused {rl['refused_at_start']}" if rl["refused_at_start"] else "")
+                    + (f" (CK3_AGENT_CHARACTER_ID={rl['declared']!r} is not an id list)"
+                       if isinstance(rl["declared"], str) else "")
+                    + f"; held at stop {rl['held_at_stop'] or 'none'}")
             con.say(f"run {stamp} ended (code {rc}{', ' + stop if stop else ''}); manifest {paths['manifest']}")
         finally:
             for s, h in old_signals.items():
@@ -1144,6 +1273,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--wait", type=int, metavar="SECS",
                    help=f"wait up to SECS for the game (default {CONTINUE_WAIT} with --continue, else 0)")
     s.add_argument("--no-wait", action="store_true", help="return as soon as CK3 starts")
+    s.add_argument("--no-pause", action="store_true",
+                   help="leave the clock running once the game is active (default: pause it)")
     s.add_argument("--native-wayland", action="store_true",
                    help="keep WAYLAND_DISPLAY (default under Wayland: SDL_VIDEODRIVER=x11)")
     s.add_argument("--allow-unsupported-build", dest="allow_unsupported", action="store_true",

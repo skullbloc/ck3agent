@@ -16,6 +16,7 @@
 #include <thread>
 #include <chrono>
 #include <unordered_set>
+#include <unordered_map>
 #include <set>
 #include <map>
 #include <mutex>
@@ -400,6 +401,33 @@ static bool family_array_contains(uintptr_t family_ptr, size_t arr_off, uint32_t
 // needed by the character emitter, which sits above its definition.
 static uint32_t get_top_realm_ruler_id(uintptr_t char_addr);
 
+// lane-query item 3: ONE definition of `is_ai`, read by both the `character`
+// profile and the `characters` listing (search_characters). They disagreed:
+// the profile used core_data+AI_CONTROLLER (non-null), the listing read the
+// byte at character+0x199 (IS_AI_FLAG), so an observer save reported
+// is_ai:false for every independent ruler in the listing and is_ai:true for the
+// same ids in the profile.
+//
+// Core-dump evidence (ck3_20260625_152901_ivar867, observer, PLAYER_CHAR_ID
+// 0xFFFFFFFF; william_1066_baseline, player 31808):
+//   * +0x199 is NOT an AI flag: in the observer dump it is 0 on 4,487 of 4,593
+//     living rulers and 1 on 8,951 living non-rulers; in the William dump it is 0
+//     for the human player AND for his AI rivals 30853/29767 alike.
+//   * core_data+AI_CONTROLLER is non-null on every living ruler in both dumps,
+//     the human player included (31808: controller present, AI_ENABLED=1), so on
+//     its own it over-reports the player as AI.
+// So: AI-controlled = has an AI controller AND is not the human player.
+// PLAYER_CHAR_ID is 0xFFFFFFFF in observer mode, which matches no character.
+static bool char_is_ai_controlled(uintptr_t c) {
+    if (!c || !is_mapped(c)) return false;
+    uintptr_t core = safe_read<uintptr_t>(c + ck3::character::REALM_DATA);
+    if (!core || !is_mapped(core)) return false;
+    if (safe_read<uintptr_t>(core + ck3::core_data::AI_CONTROLLER) == 0) return false;
+    uint32_t player = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID) & 0xFFFFFF;
+    uint32_t id = safe_read<uint32_t>(c + ck3::character::ID) & 0xFFFFFF;
+    return player == 0xFFFFFF || player == 0 || id != player;
+}
+
 // Helper: build character basic profile into a ResponseBuilder
 //
 // ck-86ue.2: All derived-pointer hops are now guarded with is_mapped() in
@@ -667,11 +695,8 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
     if (verbose && g_logfile) { fprintf(g_logfile, "[CK3-Bridge] .. personality\n"); fflush(g_logfile); }
     // BUG-10 fix: IS_AI_FLAG at 0x199 was always 0. Use AI controller pointer
     // in core_data as a more reliable indicator (non-null = AI-controlled).
-    bool is_ai = false;
-    if (realm_data && is_mapped(realm_data)) {
-        uintptr_t ai_ctrl = safe_read<uintptr_t>(realm_data + ck3::core_data::AI_CONTROLLER);
-        is_ai = (ai_ctrl != 0);
-    }
+    // lane-query item 3: shared with search_characters (char_is_ai_controlled).
+    bool is_ai = char_is_ai_controlled(c);
     r.key("is_ai"); r.value_bool(is_ai);
     r.key("personality"); r.begin_object();
     {
@@ -2199,6 +2224,58 @@ static int count_realm_counties(uintptr_t ruler_addr, uint32_t ruler_id) {
         return true;
     });
     return total;
+}
+
+// lane-query item 5: realm county counts for MANY rulers in one pass, for the
+// `characters` listing. count_realm_counties (above) is right for one ruler but
+// walks every character per call, so a 25-500 row listing would be quadratic;
+// it also enumerates only AI-ENABLED characters (enumerate_ai_characters), so a
+// vassal whose AI is off drops out of its liege's count.
+//
+// This walk reads CHARACTER_DB once (the same safe_read loop search_characters
+// uses), takes every living landed character's DIRECTLY-held county count
+// (count_demesne_counties) and credits it to that character AND to every liege
+// above it (get_liege_id_from_addr, depth-capped, cycle-guarded). So for any
+// ruler R, index[R] = counties held by R or by anyone in R's vassal tree:
+//   * independent ruler: the same set count_realm_counties(R) counts
+//     (= query(realm).realm_total_counties), plus any AI-disabled vassals;
+//   * vassal: its own sub-realm (count_realm_counties gives demesne only).
+// Pure reads, no engine calls. An unreadable chain just stops crediting upward.
+static void build_realm_county_index(std::unordered_map<uint32_t, int>& index) {
+    index.clear();
+    uintptr_t db = safe_read_offset<uintptr_t>(ck3::globals::CHARACTER_DB);
+    if (!db) return;
+    uintptr_t tbl = safe_read<uintptr_t>(db + ck3::hash_map::TABLE_PTR);
+    uint32_t capacity = safe_read<uint32_t>(db + ck3::hash_map::CAPACITY);
+    if (!tbl || capacity == 0 || capacity > 500000) return;
+    uintptr_t sentinel = safe_read_offset<uintptr_t>(ck3::globals::CHAR_DB_SENTINEL);
+    for (uint32_t i = 0; i < capacity; i++) {
+        uintptr_t c = safe_read<uintptr_t>(tbl + ck3::hash_map::ENTRY_HEADER_SIZE
+                                           + static_cast<uintptr_t>(i) * ck3::hash_map::ENTRY_STRIDE);
+        if (!c || c < 0x10000 || c > 0x7FFFFFFFFFFF || c == sentinel) continue;
+        if (safe_read<uint8_t>(c + ck3::character::DEAD_FLAG) != 0) continue;
+        uintptr_t tr = safe_read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA);
+        if (!tr || !is_mapped(tr)) continue;
+        int vc = count_demesne_counties(c);
+        if (vc <= 0) continue;
+        uint32_t cur_id = safe_read<uint32_t>(c + ck3::character::ID) & 0xFFFFFF;
+        uintptr_t cur = c;
+        uint32_t seen[32];
+        int nseen = 0;
+        for (int depth = 0; depth < 30 && cur_id != 0 && cur_id != 0xFFFFFF; depth++) {
+            bool cycle = false;
+            for (int k = 0; k < nseen; k++) if (seen[k] == cur_id) { cycle = true; break; }
+            if (cycle) break;
+            seen[nseen++] = cur_id;
+            index[cur_id] += vc;
+            uint32_t liege = get_liege_id_from_addr(cur) & 0xFFFFFF;
+            if (liege == 0 || liege == 0xFFFFFF || liege == cur_id) break;
+            void* next = lookup_character(liege);
+            if (!next || is_sentinel(next)) break;
+            cur = reinterpret_cast<uintptr_t>(next);
+            cur_id = liege;
+        }
+    }
 }
 
 // =============================================================================
@@ -4194,12 +4271,109 @@ bool do_query_province_adjacency(const char* params_json, std::string* out) {
     return true;
 }
 
+// lane-query item 4 helpers for query_county_neighbors.
+//
+// Tier of a title id (1 barony .. 5 empire), 0 when unreadable.
+static int nb_title_tier(uint32_t tid) {
+    uintptr_t t = lookup_title_obj(tid & 0xFFFFFF);
+    if (!t) return 0;
+    uintptr_t tp = safe_read<uintptr_t>(t + ck3::title_obj::TITLE_TYPE_PTR);
+    if (!tp || !is_mapped(tp)) return 0;
+    int tier = safe_read<int32_t>(tp + ck3::title_obj::TITLE_TYPE_TIER);
+    return (tier >= 1 && tier <= 5) ? tier : 0;
+}
+
+// A ruler's capital COUNTY: the capital barony's de-jure parent
+// (title_realm+CAPITAL_BARONY_ID -> title_obj+DE_JURE_PARENT, both HIGH), else
+// the first county in the held-title array. 0 when the character holds none.
+static uint32_t nb_capital_county(uintptr_t c, const char** how) {
+    uintptr_t tr = safe_read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA);
+    if (!tr || !is_mapped(tr)) return 0;
+    uint32_t barony = safe_read<uint32_t>(tr + ck3::title_realm::CAPITAL_BARONY_ID);
+    if (barony != 0 && barony != 0xFFFFFFFF) {
+        uintptr_t bobj = lookup_title_obj(barony & 0xFFFFFF);
+        if (bobj) {
+            uint32_t parent = safe_read<uint32_t>(bobj + ck3::title_obj::DE_JURE_PARENT) & 0xFFFFFF;
+            if (parent && parent != 0xFFFFFF && nb_title_tier(parent) == 2) {
+                if (how) *how = "capital_county";
+                return parent;
+            }
+        }
+    }
+    uintptr_t arr = safe_read<uintptr_t>(tr + ck3::title_realm::TITLE_ARRAY_PTR);
+    int32_t n = safe_read<int32_t>(tr + ck3::title_realm::TITLE_ARRAY_COUNT);
+    if (arr && is_mapped(arr) && n > 0 && n < 500) {
+        for (int32_t i = 0; i < n; i++) {
+            uint32_t tid = safe_read<uint32_t>(arr + i * 4) & 0xFFFFFF;
+            if (nb_title_tier(tid) == 2) {
+                if (how) *how = "first_held_county";
+                return tid;
+            }
+        }
+    }
+    return 0;
+}
+
+// Is character c inside root's realm (c == root, or root is somewhere up c's
+// liege chain)? Depth-capped, pure reads.
+static bool nb_in_realm_of(uintptr_t c, uint32_t root) {
+    uint32_t cur_id = safe_read<uint32_t>(c + ck3::character::ID) & 0xFFFFFF;
+    uintptr_t cur = c;
+    for (int depth = 0; depth < 30 && cur; depth++) {
+        if (cur_id == root) return true;
+        uint32_t liege = get_liege_id_from_addr(cur) & 0xFFFFFF;
+        if (liege == 0 || liege == 0xFFFFFF || liege == cur_id) return false;
+        void* next = lookup_character(liege);
+        if (!next || is_sentinel(next)) return false;
+        cur = reinterpret_cast<uintptr_t>(next);
+        cur_id = liege;
+    }
+    return false;
+}
+
+// Holder of a county title (title_obj+HOLDER_CHAR_ID, HIGH); 0 when vacant.
+static uint32_t nb_county_holder(uint32_t county_tid) {
+    uintptr_t t = lookup_title_obj(county_tid & 0xFFFFFF);
+    if (!t) return 0;
+    uint32_t h = safe_read<uint32_t>(t + ck3::title_obj::HOLDER_CHAR_ID) & 0xFFFFFF;
+    return (h == 0xFFFFFF) ? 0 : h;
+}
+
 // query_county_neighbors: list neighboring counties with dev/faith/culture (ck-3nzw)
+//
+// lane-query item 4: title_id is no longer required. With title_id=0 the
+// character (character_id, 0 = the controlled ruler) is resolved instead:
+//   * the per-county list is for that character's capital county
+//     (resolved_title_id / resolved_from say which county and how);
+//   * bordering_realms[] answers "which realms border character X": every
+//     county of X's realm (own + vassals) is walked, and each neighbouring
+//     county held OUTSIDE that realm is credited to its holder's top liege.
+// Every neighbour row now also carries its county title_id, holder_id and
+// realm_ruler_id (the holder's top liege), which the old reply did not.
 bool do_query_county_neighbors(const char* params_json, std::string* out) {
     int title_id_param = json_get_int(params_json, "title_id");
-    if (title_id_param <= 0) {
-        if (out) *out = R"({"error":"missing_title_id","hint":"Provide title_id parameter"})";
-        return false;
+    const bool char_mode = (title_id_param <= 0);
+    uint32_t root_id = 0;
+    std::string root_name;
+    const char* resolved_from = "title_id";
+    if (char_mode) {
+        int cid_param = json_get_int(params_json, "character_id");
+        void* ch = resolve_character(params_json);
+        if (!ch || is_sentinel(ch)) {
+            if (out) *out = (cid_param > 0)
+                ? R"J({"error":"character_not_found","hint":"character_id does not name a living character; or pass title_id (a county)"})J"
+                : R"J({"error":"missing_title_id","hint":"pass title_id (a county), or character_id of a landed ruler; with neither, the controlled ruler is used and none is bound"})J";
+            return false;
+        }
+        uintptr_t rc = reinterpret_cast<uintptr_t>(ch);
+        root_id = safe_read<uint32_t>(rc + ck3::character::ID) & 0xFFFFFF;
+        root_name = ad_read_char_name(rc);
+        uint32_t cap = nb_capital_county(rc, &resolved_from);
+        if (!cap) {
+            if (out) *out = R"J({"error":"character_holds_no_county","hint":"this character holds no county, so it has no neighbours; pass title_id (a county) instead"})J";
+            return false;
+        }
+        title_id_param = static_cast<int>(cap);
     }
 
     uintptr_t county_data = resolve_county_data(static_cast<uint32_t>(title_id_param));
@@ -4217,6 +4391,12 @@ bool do_query_county_neighbors(const char* params_json, std::string* out) {
     ResponseBuilder r;
     r.begin_object();
     r.key("title_id"); r.value_uint(static_cast<uint32_t>(title_id_param) & 0xFFFFFF);
+    r.key("resolved_from"); r.value_string(resolved_from);
+    if (char_mode) {
+        r.key("character_id"); r.value_uint(root_id);
+        if (!root_name.empty()) { r.key("character_name"); r.value_string(root_name.c_str(), root_name.size()); }
+        r.key("resolved_title_id"); r.value_uint(static_cast<uint32_t>(title_id_param) & 0xFFFFFF);
+    }
     r.key("development"); r.value_int(dev);
     r.key("neighbors"); r.begin_array();
 
@@ -4227,6 +4407,20 @@ bool do_query_county_neighbors(const char* params_json, std::string* out) {
             if ((!nbr || !is_mapped(nbr))) continue;
 
             r.begin_object();
+
+            uint32_t ntid = safe_read<uint32_t>(nbr + ck3::county::COUNTY_TITLE_ID) & 0xFFFFFF;
+            if (ntid && ntid != 0xFFFFFF) {
+                r.key("title_id"); r.value_uint(ntid);
+                uint32_t holder = nb_county_holder(ntid);
+                if (holder) {
+                    r.key("holder_id"); r.value_uint(holder);
+                    void* hc = lookup_character(holder);
+                    if (hc && !is_sentinel(hc)) {
+                        r.key("realm_ruler_id");
+                        r.value_uint(get_top_realm_ruler_id(reinterpret_cast<uintptr_t>(hc)) & 0xFFFFFF);
+                    }
+                }
+            }
 
             int32_t nbr_dev = safe_read<int32_t>(nbr + ck3::county::DEVELOPMENT);
             if (nbr_dev >= 0 && nbr_dev <= 200) {
@@ -4254,6 +4448,85 @@ bool do_query_county_neighbors(const char* params_json, std::string* out) {
 
     r.end_array();
     r.key("neighbor_count"); r.value_int(valid_count);
+
+    if (char_mode) {
+        // Realm counties of root (own + vassals), from one CHARACTER_DB walk.
+        std::vector<uint32_t> realm_counties;
+        std::unordered_set<uint32_t> realm_county_set;
+        uintptr_t db = safe_read_offset<uintptr_t>(ck3::globals::CHARACTER_DB);
+        uintptr_t tbl = db ? safe_read<uintptr_t>(db + ck3::hash_map::TABLE_PTR) : 0;
+        uint32_t capacity = db ? safe_read<uint32_t>(db + ck3::hash_map::CAPACITY) : 0;
+        uintptr_t sentinel = safe_read_offset<uintptr_t>(ck3::globals::CHAR_DB_SENTINEL);
+        if (tbl && capacity > 0 && capacity <= 500000) {
+            for (uint32_t i = 0; i < capacity && realm_counties.size() < 1000; i++) {
+                uintptr_t c = safe_read<uintptr_t>(tbl + ck3::hash_map::ENTRY_HEADER_SIZE
+                                                   + static_cast<uintptr_t>(i) * ck3::hash_map::ENTRY_STRIDE);
+                if (!c || c < 0x10000 || c > 0x7FFFFFFFFFFF || c == sentinel) continue;
+                if (safe_read<uint8_t>(c + ck3::character::DEAD_FLAG) != 0) continue;
+                uintptr_t tr = safe_read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA);
+                if (!tr || !is_mapped(tr)) continue;
+                if (count_demesne_counties(c) <= 0) continue;
+                if (!nb_in_realm_of(c, root_id)) continue;
+                uintptr_t arr = safe_read<uintptr_t>(tr + ck3::title_realm::TITLE_ARRAY_PTR);
+                int32_t n = safe_read<int32_t>(tr + ck3::title_realm::TITLE_ARRAY_COUNT);
+                if (!arr || !is_mapped(arr) || n <= 0 || n >= 500) continue;
+                for (int32_t j = 0; j < n; j++) {
+                    uint32_t tid = safe_read<uint32_t>(arr + j * 4) & 0xFFFFFF;
+                    if (nb_title_tier(tid) == 2 && realm_county_set.insert(tid).second)
+                        realm_counties.push_back(tid);
+                }
+            }
+        }
+        // Neighbouring counties outside the realm, credited to their top liege.
+        std::map<uint32_t, int> by_ruler;
+        std::unordered_set<uint32_t> outside_seen;
+        int unheld = 0;
+        for (uint32_t ctid : realm_counties) {
+            uintptr_t cd = resolve_county_data(ctid);
+            if (!cd || !is_mapped(cd)) continue;
+            uintptr_t na = safe_read<uintptr_t>(cd + ck3::county::NEIGHBOR_ARRAY);
+            int32_t nc = safe_read<int32_t>(cd + ck3::county::NEIGHBOR_COUNT);
+            if (!na || !is_mapped(na) || nc <= 0 || nc > 100) continue;
+            for (int32_t k = 0; k < nc; k++) {
+                uintptr_t nbr = safe_read<uintptr_t>(na + k * 8);
+                if (!nbr || !is_mapped(nbr)) continue;
+                uint32_t ntid = safe_read<uint32_t>(nbr + ck3::county::COUNTY_TITLE_ID) & 0xFFFFFF;
+                if (!ntid || ntid == 0xFFFFFF || realm_county_set.count(ntid)) continue;
+                if (!outside_seen.insert(ntid).second) continue;
+                uint32_t holder = nb_county_holder(ntid);
+                void* hc = holder ? lookup_character(holder) : nullptr;
+                if (!hc || is_sentinel(hc)) { unheld++; continue; }
+                uintptr_t hcp = reinterpret_cast<uintptr_t>(hc);
+                if (nb_in_realm_of(hcp, root_id)) continue;   // held inside after all
+                by_ruler[get_top_realm_ruler_id(hcp) & 0xFFFFFF]++;
+            }
+        }
+        std::vector<std::pair<uint32_t, int>> rows(by_ruler.begin(), by_ruler.end());
+        std::sort(rows.begin(), rows.end(), [](const std::pair<uint32_t, int>& a,
+                                               const std::pair<uint32_t, int>& b) {
+            return a.second != b.second ? a.second > b.second : a.first < b.first; });
+        r.key("realm_county_count"); r.value_int(static_cast<int>(realm_counties.size()));
+        r.key("border_county_count"); r.value_int(static_cast<int>(outside_seen.size()));
+        if (unheld) { r.key("border_counties_unheld"); r.value_int(unheld); }
+        r.key("bordering_realms"); r.begin_array();
+        for (const auto& row : rows) {
+            r.begin_object();
+            r.key("ruler_id"); r.value_uint(row.first);
+            void* rc = lookup_character(row.first);
+            if (rc && !is_sentinel(rc)) {
+                std::string nm = ad_read_char_name(reinterpret_cast<uintptr_t>(rc));
+                if (!nm.empty()) { r.key("name"); r.value_string(nm.c_str(), nm.size()); }
+            }
+            r.key("border_counties"); r.value_int(row.second);
+            r.end_object();
+        }
+        r.end_array();
+        r.key("bordering_realm_count"); r.value_int(static_cast<int>(rows.size()));
+        r.key("note"); r.value_string(
+            "bordering_realms: counties adjacent to any county of this character's realm "
+            "(own + vassals) and held outside it, grouped by the holder's top liege "
+            "(realm_ruler_id). The per-county `neighbors` list is for resolved_title_id.");
+    }
     r.end_object();
     if (out) *out = r.take();
     return true;
@@ -5930,23 +6203,75 @@ bool do_query_council(const char* params_json, std::string* out) {
 // create/join against its liege (the vassal-breaks-free lever). v1 is structural
 // (no cross-thread game-trigger calls); native validity is confirmed by attempting
 // the write — act(type=faction) returns null if the engine disallows it.
-// do_query_hireable_mercenaries — enumerate CMercenaryCompany def-nodes from the
-// real merc DB (MERC_COMPANY_DB, the label-swap-corrected 0x0bf087e8; the old
-// MERCENARY_DB 0x0bf087d8 is EMPTY). Standard hash_map walk; company_id at
-// entry+ENTRY_KEY_REF. Ships company_id + count; human name/troops are GAP fields
-// living in heap sub-arrays (re_hire_mercenary_wiring.md). The company_id feeds
-// act(type="hire_mercenary", company_id=...).
+// lane-query item 2: the merc listing was 562 bare {company_id} rows (49 KB to
+// an agent, labels null, no size). Each row now carries what a hirer needs to
+// choose, from the CMercenaryCompany fields in ::merc_company (dump-verified
+// 551/551, see ck3_offsets.h): home county, captain, troop count and the
+// regiment breakdown, whether it is already under contract, and (with an actor)
+// the map distance from the actor's capital. Rows already under contract are
+// left out unless include_hired=true; nearest first when an actor is given,
+// else largest first; max_results caps the rows (0 = all).
+// NOT read: the hire price. The engine computes it per hirer (FUN_06108e60 over
+// the regiment array, scripted values); it is not a stored field, so `cost` is
+// null and the hire call's own affordability check is the authority. The
+// engine's hire-range test is also not replicated: distance_px is a plain map
+// distance between capitals, not the engine's range verdict.
+static bool mc_capital_xy(uintptr_t c, int32_t& out_x, int32_t& out_y);  // defined below
+
+static bool merc_county_xy(uint32_t county_tid, int32_t& x, int32_t& y) {
+    uintptr_t t = lookup_title_obj(county_tid & 0xFFFFFF);
+    if (!t) return false;
+    int32_t sc = safe_read<int32_t>(t + ck3::title_obj::SUB_TITLE_COUNT);
+    uintptr_t sa = safe_read<uintptr_t>(t + ck3::title_obj::SUB_TITLE_ARRAY);
+    if (sc <= 0 || sc > 50 || !sa || !is_mapped(sa)) return false;
+    uintptr_t barony = lookup_title_obj(safe_read<uint32_t>(sa) & 0xFFFFFF);
+    if (!barony) return false;
+    uintptr_t prov = safe_read<uintptr_t>(barony + ck3::title_obj::PROVINCE_PTR);
+    if (!prov || !is_mapped(prov)) return false;
+    uintptr_t tmpl = safe_read<uintptr_t>(prov + ck3::province::TEMPLATE_PTR);
+    if (!tmpl || !is_mapped(tmpl)) return false;
+    x = safe_read<int32_t>(tmpl + ck3::province_template::CENTER_X);
+    y = safe_read<int32_t>(tmpl + ck3::province_template::CENTER_Y);
+    return true;
+}
+
+static int32_t merc_regiment_men(uintptr_t reg_ptr) {
+    int32_t alive = 0;
+    for (int ch = 0; ch < static_cast<int>(::regiment::CHUNK_COUNT); ++ch) {
+        uintptr_t chunk = reg_ptr + ::regiment::CHUNK_BASE + ch * ::regiment::CHUNK_STRIDE;
+        int32_t allocated = safe_read<int32_t>(chunk + ::maa_chunk::ALLOCATED_COUNT);
+        int32_t current   = safe_read<int32_t>(chunk + ::maa_chunk::CURRENT_COUNT);
+        int32_t status    = safe_read<int32_t>(chunk + ::maa_chunk::STATUS_FLAG);
+        alive += (status != 3 || current != 0) ? current : allocated;
+    }
+    return alive;
+}
+
 bool do_query_hireable_mercenaries(const char* params_json, std::string* out) {
-    (void)params_json;
+    int actor_param = json_get_int(params_json, "actor_id");
+    if (actor_param <= 0) actor_param = json_get_int(params_json, "character_id");
+    int max_results = json_get_int(params_json, "max_results");
+    if (max_results < 0) max_results = 0;
+    bool include_hired = json_get_bool(params_json, "include_hired", false);
+
+    int32_t ax = 0, ay = 0;
+    bool have_actor_xy = false;
+    uint32_t actor_id = 0;
+    if (actor_param > 0) {
+        void* a = lookup_character(static_cast<uint32_t>(actor_param));
+        if (a && !is_sentinel(a)) {
+            actor_id = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(a) + ck3::character::ID) & 0xFFFFFF;
+            have_actor_xy = mc_capital_xy(reinterpret_cast<uintptr_t>(a), ax, ay);
+        }
+    }
+
     uintptr_t db = safe_read<uintptr_t>(g_base_addr + ck3::globals::MERC_COMPANY_DB);
     uintptr_t table = db ? safe_read<uintptr_t>(db + ck3::hash_map::TABLE_PTR) : 0;
     uint32_t capacity = db ? safe_read<uint32_t>(db + ck3::hash_map::CAPACITY) : 0;
 
-    ResponseBuilder r;
-    r.begin_object();
-    r.key("action"); r.value_string("query_hireable_mercenaries");
-    r.key("companies"); r.begin_array();
-    uint32_t found = 0;
+    struct Row { uintptr_t e; uint32_t id; int32_t men; int64_t dist2; bool has_dist; uint32_t hired_by; };
+    std::vector<Row> rows;
+    uint32_t total = 0, hired = 0;
     if (table && is_mapped(table) && capacity > 0 && capacity <= 100000) {
         for (uint32_t i = 0; i < capacity; ++i) {
             uintptr_t e = safe_read<uintptr_t>(table + ck3::hash_map::ENTRY_HEADER_SIZE
@@ -5954,17 +6279,203 @@ bool do_query_hireable_mercenaries(const char* params_json, std::string* out) {
             if (!e || !is_mapped(e)) continue;
             uint32_t key = safe_read<uint32_t>(e + ck3::hash_map::ENTRY_KEY_REF);
             if ((key & 0xFFFFFF) != i) continue;
+            ++total;
+            uint32_t hb = safe_read<uint32_t>(e + ::merc_company::HIRED_BY);
+            bool is_hired = (hb != 0xFFFFFFFF);
+            if (is_hired) ++hired;
+            if (is_hired && !include_hired) continue;
+            Row row{e, key & 0xFFFFFF, 0, 0, false, hb};
+            uint32_t n = safe_read<uint32_t>(e + ::merc_company::REGIMENT_COUNT);
+            uintptr_t arr = safe_read<uintptr_t>(e + ::merc_company::REGIMENT_IDS);
+            if (arr && is_mapped(arr) && n > 0 && n <= 64) {
+                for (uint32_t k = 0; k < n; ++k) {
+                    uintptr_t reg = ad_db_lookup(ck3::globals::REGIMENT_DB, safe_read<uint32_t>(arr + k * 4));
+                    if (reg && is_mapped(reg)) row.men += merc_regiment_men(reg);
+                }
+            }
+            int32_t cx = 0, cy = 0;
+            if (have_actor_xy && merc_county_xy(safe_read<uint32_t>(e + ::merc_company::HOME_COUNTY_ID), cx, cy)) {
+                int64_t dx = cx - ax, dy = cy - ay;
+                row.dist2 = dx * dx + dy * dy;
+                row.has_dist = true;
+            }
+            rows.push_back(row);
+        }
+    }
+    if (have_actor_xy) {
+        std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+            if (a.has_dist != b.has_dist) return a.has_dist;
+            return a.has_dist ? a.dist2 < b.dist2 : a.men > b.men; });
+    } else {
+        std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.men > b.men; });
+    }
+    size_t listed = rows.size();
+    if (max_results > 0 && rows.size() > static_cast<size_t>(max_results)) rows.resize(max_results);
+
+    ResponseBuilder r;
+    r.begin_object();
+    r.key("action"); r.value_string("query_hireable_mercenaries");
+    if (actor_id) { r.key("actor_id"); r.value_uint(actor_id); }
+    r.key("companies"); r.begin_array();
+    for (const Row& row : rows) {
+        uintptr_t e = row.e;
+        r.begin_object();
+        r.key("company_id"); r.value_uint(row.id);
+        uint32_t home = safe_read<uint32_t>(e + ::merc_company::HOME_COUNTY_ID) & 0xFFFFFF;
+        std::string home_name, home_key;
+        if (uintptr_t t = lookup_title_obj(home)) {
+            home_name = ad_read_std_string(t + ck3::title_obj::TITLE_DISPLAY_NAME);
+            uintptr_t tp = safe_read<uintptr_t>(t + ck3::title_obj::TITLE_TYPE_PTR);
+            if (tp && is_mapped(tp)) home_key = ad_read_std_string(tp + ck3::db_object::NAME_KEY);
+        }
+        std::string label = std::string("Mercenary company from ")
+            + (home_name.empty() ? (home_key.empty() ? std::to_string(home) : home_key) : home_name)
+            + ", " + std::to_string(row.men) + " men";
+        r.key("label"); r.value_string(label.c_str(), label.size());
+        r.key("home_county_id"); r.value_uint(home);
+        if (!home_key.empty()) { r.key("home_county_key"); r.value_string(home_key.c_str(), home_key.size()); }
+        if (!home_name.empty()) { r.key("home_county_name"); r.value_string(home_name.c_str(), home_name.size()); }
+        uint32_t cap = safe_read<uint32_t>(e + ::merc_company::CAPTAIN_CHAR_ID) & 0xFFFFFF;
+        r.key("captain_id"); r.value_uint(cap);
+        if (void* cc = lookup_character(cap)) {
+            if (!is_sentinel(cc)) {
+                std::string cn = ad_read_char_name(reinterpret_cast<uintptr_t>(cc));
+                if (!cn.empty()) { r.key("captain_name"); r.value_string(cn.c_str(), cn.size()); }
+            }
+        }
+        r.key("troops"); r.value_int(row.men);
+        r.key("regiments"); r.begin_array();
+        uint32_t n = safe_read<uint32_t>(e + ::merc_company::REGIMENT_COUNT);
+        uintptr_t arr = safe_read<uintptr_t>(e + ::merc_company::REGIMENT_IDS);
+        if (arr && is_mapped(arr) && n > 0 && n <= 64) {
+            for (uint32_t k = 0; k < n; ++k) {
+                uintptr_t reg = ad_db_lookup(ck3::globals::REGIMENT_DB, safe_read<uint32_t>(arr + k * 4));
+                if (!reg || !is_mapped(reg)) continue;
+                const char* tn = nullptr; size_t tl = 0;
+                uintptr_t tptr = safe_read<uintptr_t>(reg + ::regiment::MAA_TYPE_PTR);
+                if (tptr && is_mapped(tptr)) read_db_obj_name(tptr, tn, tl);
+                r.begin_object();
+                r.key("maa_type");
+                if (tn && tl) r.value_string(tn, tl); else r.value_string("levies");
+                r.key("men"); r.value_int(merc_regiment_men(reg));
+                r.end_object();
+            }
+        }
+        r.end_array();
+        r.key("hired_by");
+        if (row.hired_by == 0xFFFFFFFF) r.value_null(); else r.value_uint(row.hired_by & 0xFFFFFF);
+        if (row.has_dist) {
+            r.key("distance_px"); r.value_int(static_cast<int>(std::sqrt(static_cast<double>(row.dist2))));
+        }
+        r.key("cost"); r.value_null();
+        r.end_object();
+    }
+    r.end_array();
+    r.key("count"); r.value_uint(static_cast<uint32_t>(rows.size()));
+    r.key("listed_before_cap"); r.value_uint(static_cast<uint32_t>(listed));
+    r.key("total_companies"); r.value_uint(total);
+    r.key("under_contract"); r.value_uint(hired);
+    r.key("order"); r.value_string(have_actor_xy ? "nearest_first" : "largest_first");
+    r.key("cost_note"); r.value_string(
+        "cost is null: the hire price is computed by the game per hirer and is not a stored "
+        "field. The hire itself refuses what the ruler cannot afford. distance_px is map "
+        "distance between capitals, not the game's hire-range verdict.");
+    r.key("hint"); r.value_string(
+        "Hire via do(intent='hire_merc', args={company_id}). Actor must be an AI ruler.");
+    r.end_object();
+    if (out) *out = r.take();
+    return true;
+}
+
+// =============================================================================
+// do_query_maa_types — lane-query item 2: the enumerate behind
+// do(action_class="men_at_arms"). do(intent="men_at_arms") refused with
+// maa_type_required and pointed at an enumerate that did not exist. Lists every
+// MaA type in MAA_TYPE_DB (109 in build e61ff264) with its upfront recruit cost
+// (maa_type::RECRUIT_GOLD_COST, HIGH) and per-stack monthly upkeep
+// (MAINT_GOLD_PER_STACK, HIGH); with an actor, the actor's gold, an
+// `affordable` flag and how many regiments of each type the actor already
+// fields (title_realm PERSONAL_MAA_PTR / TITLE_MAA_REG_PTR, as query_armies).
+// NOT checked: whether the actor's culture/innovations unlock a type. That is
+// decided by the game at recruit; a type already fielded is known to be
+// available, the rest are candidates. Pure reads.
+// =============================================================================
+bool do_query_maa_types(const char* params_json, std::string* out) {
+    int actor_param = json_get_int(params_json, "actor_id");
+    if (actor_param <= 0) actor_param = json_get_int(params_json, "character_id");
+    void* actor = (actor_param > 0) ? lookup_character(static_cast<uint32_t>(actor_param))
+                                    : get_controlled_character();
+    if (actor && is_sentinel(actor)) actor = nullptr;
+
+    std::map<std::string, int> fielded;
+    double gold = 0.0;
+    bool have_gold = false;
+    uint32_t actor_id = 0;
+    if (actor) {
+        uintptr_t a = reinterpret_cast<uintptr_t>(actor);
+        actor_id = safe_read<uint32_t>(a + ck3::character::ID) & 0xFFFFFF;
+        uintptr_t core = safe_read<uintptr_t>(a + ck3::character::REALM_DATA);
+        if (core && is_mapped(core)) {
+            gold = static_cast<double>(safe_read<int64_t>(core + ck3::core_data::GOLD)) / 100000.0;
+            have_gold = true;
+        }
+        uintptr_t tr = safe_read<uintptr_t>(a + ck3::character::TITLE_REALM_DATA);
+        if (tr && is_mapped(tr)) {
+            const size_t srcs[] = {ck3::title_realm::PERSONAL_MAA_PTR, ck3::title_realm::TITLE_MAA_REG_PTR};
+            for (size_t off : srcs) {
+                uintptr_t arr = safe_read<uintptr_t>(tr + off);
+                int32_t cnt = safe_read<int32_t>(tr + off + 0x0C);
+                if (!arr || !is_mapped(arr) || cnt <= 0 || cnt > 500) continue;
+                for (int32_t i = 0; i < cnt; ++i) {
+                    uint32_t ref = safe_read<uint32_t>(arr + i * 4);
+                    if (ref == 0 || ref == 0xFFFFFFFF) continue;
+                    uintptr_t reg = ad_db_lookup(ck3::globals::REGIMENT_DB, ref);
+                    if (!reg || !is_mapped(reg)) continue;
+                    uintptr_t tptr = safe_read<uintptr_t>(reg + ::regiment::MAA_TYPE_PTR);
+                    const char* tn = nullptr; size_t tl = 0;
+                    if (tptr && is_mapped(tptr) && read_db_obj_name(tptr, tn, tl) && tl)
+                        fielded[std::string(tn, tl)]++;
+                }
+            }
+        }
+    }
+
+    uintptr_t db  = safe_read_offset<uintptr_t>(ck3::globals::MAA_TYPE_DB);
+    uintptr_t arr = db ? safe_read<uintptr_t>(db + ck3::globals::MAA_TYPE_DB_ARR_OFF) : 0;
+    uint32_t  cnt = db ? safe_read<uint32_t>(db + ck3::globals::MAA_TYPE_DB_CNT_OFF) : 0;
+
+    ResponseBuilder r;
+    r.begin_object();
+    r.key("action"); r.value_string("query_maa_types");
+    if (actor_id) { r.key("actor_id"); r.value_uint(actor_id); }
+    if (have_gold) { r.key("gold"); r.value_float(gold); }
+    r.key("types"); r.begin_array();
+    int emitted = 0;
+    if (arr && is_mapped(arr) && cnt > 0 && cnt <= 5000) {
+        for (uint32_t i = 0; i < cnt; ++i) {
+            uintptr_t e = safe_read<uintptr_t>(arr + static_cast<uintptr_t>(i) * 8);
+            if (!e || !is_mapped(e)) continue;
+            std::string key = ad_read_std_string(e + ::maa_type::NAME_KEY);
+            if (key.empty()) continue;
+            double cost = static_cast<double>(safe_read<int64_t>(e + ::maa_type::RECRUIT_GOLD_COST)) / 100000.0;
+            double upkeep = static_cast<double>(safe_read<int64_t>(e + ::maa_type::MAINT_GOLD_PER_STACK)) / 100000.0;
             r.begin_object();
-            r.key("company_id"); r.value_uint(key & 0xFFFFFF);
+            r.key("maa_type"); r.value_string(key.c_str(), key.size());
+            r.key("recruit_cost"); r.value_float(cost);
+            r.key("upkeep_per_stack"); r.value_float(upkeep);
+            if (have_gold) { r.key("affordable"); r.value_bool(cost <= gold); }
+            auto it = fielded.find(key);
+            r.key("fielded_regiments"); r.value_int(it == fielded.end() ? 0 : it->second);
             r.end_object();
-            ++found;
+            ++emitted;
         }
     }
     r.end_array();
-    r.key("count"); r.value_uint(found);
-    r.key("hint"); r.value_string(
-        "Hire via act(type='hire_mercenary', company_id=<id>, contract_len=<years, default 1>). "
-        "Actor must be an AI ruler. company name/troop-size are not yet surfaced.");
+    r.key("count"); r.value_int(emitted);
+    r.key("note"); r.value_string(
+        "Whether the ruler's culture/innovations unlock a type is decided by the game at "
+        "recruit and is not checked here; fielded_regiments>0 means the realm already "
+        "fields that type. Recruit via do(intent='men_at_arms', args={maa_type}).");
     r.end_object();
     if (out) *out = r.take();
     return true;
@@ -10953,6 +11464,8 @@ static int64_t extract_sort_key(uintptr_t c, uintptr_t title_realm, uintptr_t re
     if (strcmp(sort_field, "realm_size") == 0) {
         return title_realm ? safe_read<int32_t>(title_realm + ck3::title_realm::TITLE_ARRAY_COUNT) : 0;
     }
+    // "realm_counties" is keyed by do_search_characters itself (it needs the
+    // realm-county index); it never reaches this function.
     if (strcmp(sort_field, "tier") == 0) {
         return title_realm ? safe_read<int32_t>(title_realm + ck3::title_realm::REALM_TIER) : 0;
     }
@@ -11149,6 +11662,13 @@ bool do_search_characters(const char* params_json, std::string* out) {
 
     int scanned = 0, matched = 0;
 
+    // lane-query item 5: realm county counts (one pass, see
+    // build_realm_county_index). Emitted per row as `realm_counties` and usable
+    // as sort="realm_counties".
+    std::unordered_map<uint32_t, int> realm_county_index;
+    build_realm_county_index(realm_county_index);
+    const bool sort_realm_counties = (strcmp(sort_str, "realm_counties") == 0);
+
     for (uint32_t i = 0; i < capacity; i++) {
         uintptr_t entry = safe_read<uintptr_t>(tbl + ck3::hash_map::ENTRY_HEADER_SIZE
                                                + static_cast<uintptr_t>(i) * ck3::hash_map::ENTRY_STRIDE);
@@ -11188,8 +11708,8 @@ bool do_search_characters(const char* params_json, std::string* out) {
 
         // AI controlled filter
         if (filter_ai) {
-            uint8_t is_ai = safe_read<uint8_t>(c + ck3::character::IS_AI_FLAG);
-            if (!is_ai) continue;
+            // lane-query item 3: was the +0x199 byte, which is not an AI flag.
+            if (!char_is_ai_controlled(c)) continue;
         }
 
         // §4: court_of predicate — keep only c whose immediate liege == court_of.
@@ -11198,8 +11718,14 @@ bool do_search_characters(const char* params_json, std::string* out) {
         // Resolve realm_data for gold sort
         uintptr_t realm_data = safe_read<uintptr_t>(c + ck3::character::REALM_DATA);
 
-        int64_t key = extract_sort_key(c, (title_realm && is_mapped(title_realm)) ? title_realm : 0,
-                                        (realm_data && is_mapped(realm_data)) ? realm_data : 0, sort_str);
+        int64_t key;
+        if (sort_realm_counties) {
+            auto it = realm_county_index.find(safe_read<uint32_t>(c + ck3::character::ID) & 0xFFFFFF);
+            key = (it == realm_county_index.end()) ? 0 : it->second;
+        } else {
+            key = extract_sort_key(c, (title_realm && is_mapped(title_realm)) ? title_realm : 0,
+                                   (realm_data && is_mapped(realm_data)) ? realm_data : 0, sort_str);
+        }
         matched++;
 
         // Insert into bounded heap (maintain top-N)
@@ -11286,8 +11812,8 @@ bool do_search_characters(const char* params_json, std::string* out) {
         bool is_independent = is_ruler && (get_liege_id_from_addr(c) == 0);
         r.key("is_independent"); r.value_bool(is_independent);
 
-        uint8_t is_ai = safe_read<uint8_t>(c + ck3::character::IS_AI_FLAG);
-        r.key("is_ai"); r.value_bool(is_ai != 0);
+        // lane-query item 3: the same definition the `character` profile uses.
+        r.key("is_ai"); r.value_bool(char_is_ai_controlled(c));
 
         // Military
         int32_t mil = 0;
@@ -11304,12 +11830,22 @@ bool do_search_characters(const char* params_json, std::string* out) {
         }
         r.key("gold"); r.value_float(gold);
 
-        // Realm size (held title count)
+        // Realm size. UNCHANGED MEANING (lane-query item 5): `realm_size` is the
+        // count of titles this character holds DIRECTLY, all tiers, baronies
+        // included (title_realm+0x1EC). It is NOT territory: it drops when the
+        // AI grants titles to vassals and stays flat when a vassal conquers.
+        // `held_title_count` is the same number under its honest name;
+        // `realm_counties` is the territory measure (own + vassal counties).
         int32_t realm_size = 0;
         if (is_ruler) {
             realm_size = safe_read<int32_t>(title_realm + ck3::title_realm::TITLE_ARRAY_COUNT);
         }
         r.key("realm_size"); r.value_int(realm_size);
+        r.key("held_title_count"); r.value_int(realm_size);
+        {
+            auto it = realm_county_index.find(id);
+            r.key("realm_counties"); r.value_int(it == realm_county_index.end() ? 0 : it->second);
+        }
 
         // Tier
         int32_t tier = 0;
@@ -12569,6 +13105,20 @@ bool do_query_valid_war_targets(const char* params_json, std::string* out) {
     // should prefer declarable==true rows.
     r.key("declarable_count"); r.value_int(declarable_count);
     r.key("include_conquest_cbs"); r.value_bool(include_conquest_cbs);
+    // lane-query item 6: say at the TOP that this count is not the game's
+    // verdict. The rows already carried declarable_authoritative:false, but a
+    // reader counting "declarable" saw 5 here while the strict engine CB check
+    // (query_cb_validity_strict / cbs / plan_war) returned 0 of 98 for the
+    // same neighbours. The strict check is authoritative; this list is the
+    // candidate set (relation gates only: kin, alliance, truce, imprisonment,
+    // already at war; no CB validity, geography or cost).
+    r.key("declarable_authoritative"); r.value_bool(false);
+    r.key("authority"); r.value_string(
+        "candidates only: declarable here means no relation gate (kin, alliance, truce, "
+        "imprisonment, already at war) blocks the row. Whether the game will accept the "
+        "war is decided by the strict engine CB check: cbs(target_id) or "
+        "discover(what='valid_cbs_strict'), which plan_war also runs. Trust that answer "
+        "when the two disagree.");
     r.end_object();
 
     if (out) *out = r.take();

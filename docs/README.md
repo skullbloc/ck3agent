@@ -13,7 +13,7 @@ Read in this order. Stop when you have what you need.
 ## Run and study
 
 6. [Scripted runs](scripted-runs.md): unattended runs and what they record.
-7. [Research notes](research.md): controls, speed, presets, bridge variables, terms of use.
+7. [Research notes](research.md): how to set up a treatment and a control, what is recorded, and the terms of use.
 
 ## Reference
 
@@ -29,5 +29,6 @@ Read in this order. Stop when you have what you need.
 
 15. [Architecture](architecture.md)
 16. [Building from source](building.md)
+16b. [Releasing](releasing.md): how a version reaches the releases page (maintainers).
 17. [Windows and macOS port plan](adr/0001-windows-macos-port.md), [porting guide](porting/README.md)
 18. [Contributing](../CONTRIBUTING.md)
