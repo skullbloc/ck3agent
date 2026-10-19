@@ -33,15 +33,19 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 #            NOT link yet: libck3_bridge.so is built exactly as before, from
 #            the same sources with the same flags and the same four exports.
 #            Routing the bridge through bridge::os is the rest of P2.
-#   windows  build ONLY ck3_os (typed-refusal stubs) and its test, then stop:
-#   macos    the rest of this file is the Linux bridge and is never reached.
-#            The windows-latest and macos-14 CI legs are the proof the stubs
-#            compile with MSVC and Apple clang.
+#   windows  build ONLY the platform layer (the Win32 cells in CK3_WIN_CELLS,
+#   macos    typed refusals for the rest; macOS is all refusals) and its tests,
+#            then stop: the rest of this file is the Linux bridge and is never
+#            reached. The windows-latest and macos-14 CI legs build and run
+#            them with MSVC and Apple clang; from Linux,
+#            cmake/toolchains/clang-cl-xwin.cmake cross-builds the Windows
+#            leg and runs its tests under wine.
 #
 # Tests (BUILD_BRIDGE_TESTS, declared with the other tests further down; read
-# here from the cache): test_os_linux_adapters on linux, plus both stub TUs
-# compiled as strict C++17 by the host compiler (test_os_stubs_windows,
-# test_os_stubs_macos); test_os_stubs on windows/macos.
+# here from the cache): the portable test_os_<t> everywhere;
+# test_os_linux_adapters on linux, plus both stub TUs compiled as strict C++17
+# by the host compiler (test_os_stubs_windows, test_os_stubs_macos);
+# test_os_stubs on windows/macos; test_os_win_<cell> on windows.
 # ═════════════════════════════════════════════════════════════════════════════
 set(CK3_PLATFORM "linux" CACHE STRING "Platform layer implementation: linux|windows|macos")
 set_property(CACHE CK3_PLATFORM PROPERTY STRINGS linux windows macos)
@@ -57,9 +61,32 @@ message(STATUS "ck3 platform layer: ${CK3_PLATFORM}")
 
 if(MSVC)
     set(CK3_OS_WARNINGS /W4 /permissive-)
+    # The tests use the standard C library (getenv, fopen) on purpose.
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 else()
     set(CK3_OS_WARNINGS -Wall -Wextra)
 endif()
+
+# THE WINDOWS CELLS, one declaration for three readers. Each name <c> here is
+#   src/os/windows/<c>.cpp            compiled into ck3_os on windows
+#   src/os/test/test_os_win_<c>.cpp   its engine-free test (ctest name
+#                                     test_os_win_<c>; the ADR's "P2 cell
+#                                     status" table names the same tests)
+#   CK3_OS_CELL_<C>                   defined for test_os_stubs[_windows], so
+#                                     the stub contract stops asserting a
+#                                     refusal the cell no longer gives
+# Every os.h entry point not covered by a cell stays a typed refusal in
+# src/os/windows/stubs.cpp, which Linux keeps compiling as strict C++17.
+set(CK3_WIN_CELLS process entry image identity safe_read threads paths write_protected transport exec_alloc guarded watchdog)
+set(CK3_WIN_CELL_DEFS "")
+foreach(_c ${CK3_WIN_CELLS})
+    string(TOUPPER "${_c}" _C)
+    list(APPEND CK3_WIN_CELL_DEFS CK3_OS_CELL_${_C})
+endforeach()
+# Portable helpers (standard C++17, no platform header) and their tests, which
+# build and run on every platform: src/os/test/test_os_<t>.cpp.
+set(CK3_OS_PORTABLE src/os/os_common.cpp src/os/pe_image.cpp src/os/sha256.cpp src/os/win_paths.cpp)
+set(CK3_OS_PORTABLE_TESTS pe_image sha256 win_paths_rules)
 
 if(CK3_PLATFORM STREQUAL "linux")
     add_library(ck3_os STATIC src/os/os_common.cpp src/os/linux/os_linux.cpp)
@@ -67,8 +94,26 @@ if(CK3_PLATFORM STREQUAL "linux")
     # build_id_witness.cpp); a consumer links those sources itself, so ck3_os
     # never carries a second copy of them.
     target_compile_definitions(ck3_os PRIVATE _GNU_SOURCE)
+elseif(CK3_PLATFORM STREQUAL "windows")
+    set(_cells "")
+    foreach(_c ${CK3_WIN_CELLS})
+        list(APPEND _cells src/os/windows/${_c}.cpp)
+    endforeach()
+    add_library(ck3_os STATIC ${CK3_OS_PORTABLE} src/os/windows/stubs.cpp
+        src/os/windows/common.cpp ${_cells})
+    set_target_properties(ck3_os PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_definitions(ck3_os PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    # The transport cell (and its test, which links ck3_os) needs Winsock.
+    target_link_libraries(ck3_os PUBLIC ws2_32)
+    # ck3_bridge_win: the Windows bridge DLL. For P2 it is the platform layer
+    # plus an inert DllMain (src/os/windows/dll_main.cpp); the proxy export
+    # table that forwards a system DLL's exports is ADR phase P4. The target
+    # exists so the cells link into a real version.dll-style DLL.
+    add_library(ck3_bridge_win SHARED src/os/windows/dll_main.cpp)
+    target_link_libraries(ck3_bridge_win PRIVATE ck3_os)
+    set_target_properties(ck3_bridge_win PROPERTIES CXX_EXTENSIONS OFF)
 else()
-    add_library(ck3_os STATIC src/os/os_common.cpp src/os/${CK3_PLATFORM}/stubs.cpp)
+    add_library(ck3_os STATIC ${CK3_OS_PORTABLE} src/os/${CK3_PLATFORM}/stubs.cpp)
     set_target_properties(ck3_os PROPERTIES CXX_EXTENSIONS OFF)
 endif()
 target_include_directories(ck3_os PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -76,6 +121,13 @@ target_compile_options(ck3_os PRIVATE ${CK3_OS_WARNINGS})
 
 if(BUILD_BRIDGE_TESTS)
     enable_testing()
+    foreach(_t ${CK3_OS_PORTABLE_TESTS})
+        add_executable(test_os_${_t} src/os/test/test_os_${_t}.cpp ${CK3_OS_PORTABLE})
+        target_include_directories(test_os_${_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        set_target_properties(test_os_${_t} PROPERTIES CXX_EXTENSIONS OFF)
+        target_compile_options(test_os_${_t} PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_${_t} COMMAND test_os_${_t})
+    endforeach()
     if(CK3_PLATFORM STREQUAL "linux")
         find_package(Threads REQUIRED)
         add_executable(test_os_linux_adapters
@@ -91,6 +143,19 @@ if(BUILD_BRIDGE_TESTS)
         target_link_options(test_os_linux_adapters PRIVATE -pie)
         add_test(NAME test_os_linux_adapters COMMAND test_os_linux_adapters)
 
+        # The Windows path rules and instance_paths.cpp must refuse the same
+        # ids. Linux-only (it forks to set the environment per case).
+        add_executable(test_os_win_paths_pin
+            src/os/test/test_os_win_paths_pin.cpp
+            src/os/win_paths.cpp
+            src/instance_paths.cpp
+        )
+        target_include_directories(test_os_win_paths_pin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(test_os_win_paths_pin PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+        target_compile_definitions(test_os_win_paths_pin PRIVATE _GNU_SOURCE)
+        target_compile_options(test_os_win_paths_pin PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_win_paths_pin COMMAND test_os_win_paths_pin)
+
         foreach(_p windows macos)
             add_executable(test_os_stubs_${_p}
                 src/os/test/test_os_stubs.cpp
@@ -103,13 +168,37 @@ if(BUILD_BRIDGE_TESTS)
             target_compile_options(test_os_stubs_${_p} PRIVATE -pedantic-errors -Werror ${CK3_OS_WARNINGS})
             add_test(NAME test_os_stubs_${_p} COMMAND test_os_stubs_${_p})
         endforeach()
+        target_compile_definitions(test_os_stubs_windows PRIVATE ${CK3_WIN_CELL_DEFS})
     else()
         add_executable(test_os_stubs src/os/test/test_os_stubs.cpp)
         target_link_libraries(test_os_stubs PRIVATE ck3_os)
         target_compile_definitions(test_os_stubs PRIVATE CK3_OS_EXPECT_PLATFORM="${CK3_PLATFORM}")
+        if(CK3_PLATFORM STREQUAL "windows")
+            target_compile_definitions(test_os_stubs PRIVATE ${CK3_WIN_CELL_DEFS})
+        endif()
         set_target_properties(test_os_stubs PROPERTIES CXX_EXTENSIONS OFF)
         target_compile_options(test_os_stubs PRIVATE ${CK3_OS_WARNINGS})
         add_test(NAME test_os_stubs COMMAND test_os_stubs)
+    endif()
+    if(CK3_PLATFORM STREQUAL "windows")
+        foreach(_c ${CK3_WIN_CELLS})
+            add_executable(test_os_win_${_c} src/os/test/test_os_win_${_c}.cpp)
+            target_link_libraries(test_os_win_${_c} PRIVATE ck3_os)
+            target_compile_definitions(test_os_win_${_c} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+            set_target_properties(test_os_win_${_c} PROPERTIES CXX_EXTENSIONS OFF)
+            target_compile_options(test_os_win_${_c} PRIVATE ${CK3_OS_WARNINGS})
+            add_test(NAME test_os_win_${_c} COMMAND test_os_win_${_c})
+        endforeach()
+        # identity: the witnesses (dbghelp, ole32, CNG, psapi); built once with
+        # an RSDS record (/DEBUG) and once without, so both keys are exercised.
+        target_link_libraries(test_os_win_identity PRIVATE dbghelp ole32 bcrypt psapi)
+        target_link_options(test_os_win_identity PRIVATE /DEBUG)
+        add_executable(test_os_win_identity_nodebug src/os/test/test_os_win_identity.cpp)
+        target_link_libraries(test_os_win_identity_nodebug PRIVATE ck3_os dbghelp ole32 bcrypt psapi)
+        target_compile_definitions(test_os_win_identity_nodebug PRIVATE
+            CK3_EXPECT_NO_RSDS WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+        target_compile_options(test_os_win_identity_nodebug PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_win_identity_nodebug COMMAND test_os_win_identity_nodebug)
     endif()
 endif()
 
@@ -644,6 +733,20 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_link_libraries(swap_character_probe PRIVATE Threads::Threads)
     target_compile_options(swap_character_probe PRIVATE -O2 -Wall -Wextra)
+
+    # lane-multi: several rulers in one session — an ADDED claim keeps the
+    # primary and counts against the cap. Registered with ctest below.
+    add_executable(add_claim_probe
+        test/add_claim_probe.cpp
+        ${SESSION_HOST_SOURCES}
+    )
+    target_include_directories(add_claim_probe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+    )
+    target_link_libraries(add_claim_probe PRIVATE Threads::Threads)
+    target_compile_options(add_claim_probe PRIVATE -O2 -Wall -Wextra)
 
     # ck-handoff-swap: the succession handoff at a full roster — the case that
     # spun check_controlled_handoff 2,574 times because claim-then-release cannot
@@ -1474,7 +1577,8 @@ endif()
     foreach(_t test_json_helpers test_script_block_parser test_instance_paths
                test_game_date test_war_history test_clock_rate
                test_flush_scheduler test_pipeline
-               test_debug_verbs test_ipc_wiring test_handoff_player)
+               test_debug_verbs test_ipc_wiring test_handoff_player
+               add_claim_probe)
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
     # rc2 B2: the ON build must fail the same assertions.

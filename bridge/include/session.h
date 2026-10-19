@@ -312,7 +312,13 @@ public:
 
     // Claim ownership on behalf of a session.  Returns false if already owned
     // by a different session.
-    bool claim_character(Session* session, uint32_t char_id, std::string* reason_out);
+    //: lane-multi: `keep_primary` makes this an ADDITIONAL claim. A session that
+    //: already has a primary keeps it and gains `char_id` as one more held
+    //: ruler (net +1, so the cap is enforced exactly as for a first claim); a
+    //: session with no primary gets `char_id` as its primary, as before. The
+    //: default (false) is the historical rule: the claimed id becomes primary.
+    bool claim_character(Session* session, uint32_t char_id, std::string* reason_out,
+                         bool keep_primary = false);
 
     // Release ownership from a session.  Returns false if the session did not
     // own the character.

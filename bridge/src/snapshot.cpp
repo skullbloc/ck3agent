@@ -557,6 +557,7 @@ bool is_game_state_query(const char* action_type) {
         "query_title_succession",
         "query_joinable_factions",
         "query_hireable_mercenaries",
+        "query_maa_types",            // lane-query: MAA_TYPE_DB walk, pure reads
         "query_valid_war_targets",
         "query_cb_options",
         "query_imprisonment_reasons",

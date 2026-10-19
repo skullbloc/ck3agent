@@ -1089,6 +1089,58 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
 
     uintptr_t postype_ref = safe_read<uintptr_t>(tasktype + TASKTYPE_POSREF);
 
+    // lane-query item 1: NAME THE SEAT, AND REFUSE ONE THAT CANNOT TAKE THE TASK.
+    // A council task belongs to exactly one position type (tasktype+0x30, the
+    // same key query_council prints as position_key). The handler always
+    // resolved the seat from the task and never read a `seat` argument, so a
+    // caller asking for the chancellor to fabricate a claim got the court
+    // chaplain (task_fabricate_claim is a chaplain task: dump
+    // ck3_20260625_152901_ivar867, tasktype+0x30 -> councillor_court_chaplain)
+    // with nothing in the reply saying so, and its retry read
+    // no_change_already_set. Now: the reply names the seat it used, and an
+    // explicit `seat` that is not the task's seat is refused up front.
+    std::string task_seat;
+    {
+        const char* kp = nullptr; size_t kl = 0;
+        if (postype_ref && is_mapped(postype_ref) && read_db_obj_name(postype_ref, kp, kl) && kl)
+            task_seat.assign(kp, std::min(kl, (size_t)127));
+    }
+    {
+        const char* seat_arg = json_get_string(params_json, "seat");
+        std::string want_seat = seat_arg ? std::string(seat_arg) : std::string();
+        auto norm = [](std::string v) {
+            for (auto& ch : v) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+            const std::string pre = "councillor_";
+            if (v.compare(0, pre.size(), pre) == 0) v = v.substr(pre.size());
+            return v;
+        };
+        bool numeric = !want_seat.empty() &&
+            want_seat.find_first_not_of("0123456789") == std::string::npos;
+        if (!want_seat.empty() && !numeric && !task_seat.empty() &&
+                norm(want_seat) != norm(task_seat)) {
+            ADLOG("set_council_task: REFUSE seat '%s' cannot take '%s' (task seat %s)\n",
+                  want_seat.c_str(), want.c_str(), task_seat.c_str());
+            if (response_out) {
+                ResponseBuilder r; r.begin_object();
+                r.key("success"); r.value_bool(false);
+                r.key("action"); r.value_string("set_council_task");
+                r.key("requested"); r.value_string(want.c_str(), want.size());
+                r.key("reason"); r.value_string("seat_cannot_take_task");
+                r.key("requested_seat"); r.value_string(want_seat.c_str(), want_seat.size());
+                r.key("task_seat"); r.value_string(task_seat.c_str(), task_seat.size());
+                r.key("applied"); r.value_bool(false);
+                std::string w = "'" + want + "' is a " + task_seat + " task; the game assigns it "
+                                "only to that seat. Omit `seat` (the task picks its seat) or pick a "
+                                "task of the seat you want (inspect(subject='council') lists seats "
+                                "and their current tasks).";
+                r.key("warning"); r.value_string(w.c_str(), w.size());
+                r.end_object();
+                *response_out = r.take();
+            }
+            return false;
+        }
+    }
+
     // #118: target-required tasks (task_fabricate_claim, task_conversion,
     // task_integrate_title, …) carry a non-zero target-mode discriminator at
     // tasktype+0x38 (0 = no target; 1 = single-target eval-predicate path, the
@@ -1402,6 +1454,17 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         if (!prior.empty()) { r.key("prior_task"); r.value_string(prior.c_str(), prior.size()); }
         if (!reject.empty()) { r.key("reject_reason"); r.value_string(reject.c_str(), reject.size()); }
         if (target_title_id > 0) { r.key("target_title_id"); r.value_int(target_title_id); }
+        // lane-query item 1: the seat this task was applied to (or tried).
+        if (!task_seat.empty()) { r.key("seat"); r.value_string(task_seat.c_str(), task_seat.size()); }
+        r.key("position_id"); r.value_uint(pos_id & 0xFFFFFF);
+        if (ctx_a && (ctx_a & 0xFFFFFF) != 0xFFFFFF) {
+            r.key("councillor_id"); r.value_uint(ctx_a & 0xFFFFFF);
+            void* cc = lookup_character(ctx_a);
+            if (cc && !is_sentinel(cc)) {
+                std::string cn = ad_read_char_name(reinterpret_cast<uintptr_t>(cc));
+                if (!cn.empty()) { r.key("councillor_name"); r.value_string(cn.c_str(), cn.size()); }
+            }
+        }
         // Vacant-seat warning: ctx_a is the seated councillor id. A task stored on
         // an EMPTY seat is inert — no councillor executes it, so it produces no
         // progress (the silent-stall the agent kept hitting). Tell the agent to
@@ -6775,8 +6838,26 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
     int target_raw = json_get_int(params_json, "target_id");
     const char* scheme = json_get_string(params_json, "scheme");
     if (!scheme || !scheme[0]) scheme = json_get_string(params_json, "scheme_type");
-    const char* action = json_get_string(params_json, "action");
-    bool is_cancel = (action && strcmp(action, "cancel") == 0);
+    // lane-scheme 2026-10-18, measured live: the CANCEL branch was unreachable
+    // over the wire. The handler receives the whole request
+    //   {"action":"scheme_action","params":{...,"action":"cancel",...}}
+    // and json_get_string looks at the TOP level first, so "action" always
+    // read "scheme_action": every cancel fell into the start branch and was
+    // refused target_id_required (3/3 MCP cancels). Read the sub-operation
+    // from `params` first; a bare params object (no envelope) still works.
+    bool is_cancel = false;
+    {
+        rapidjson::Document d;
+        d.Parse<rapidjson::kParseIterativeFlag>(params_json ? params_json : "");
+        if (!d.HasParseError() && d.IsObject()) {
+            const rapidjson::Value* scope = &d;
+            auto pit = d.FindMember("params");
+            if (pit != d.MemberEnd() && pit->value.IsObject()) scope = &pit->value;
+            auto ait = scope->FindMember("action");
+            is_cancel = (ait != scope->MemberEnd() && ait->value.IsString() &&
+                         strcmp(ait->value.GetString(), "cancel") == 0);
+        }
+    }
 
     auto short_error = [&](const char* reason) {
         if (!response_out) return;
@@ -6786,6 +6867,49 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
         r.key("reason"); r.value_string(reason);
         r.end_object();
         *response_out = r.take();
+    };
+
+    // lane-scheme 2026-10-18: PAUSED is refused up front, typed. The intent drains
+    // only on a sim tick, so a paused call used to poll 5 s, answer
+    // intent_timeout_no_result -- and leave the intent QUEUED, where its tick-
+    // based TTL cannot age while paused: the scheme was then created on the first
+    // tick after the caller had been told it failed. `game_paused` is the
+    // spelling every other tier-3 write uses for this (ipc_server.cpp), and the
+    // MCP gateway already answers it by unpausing and retrying.
+    if (is_paused()) { short_error("game_paused"); return false; }
+
+    // Bounded wait for this request's verdict, and the second half of the fix:
+    // if none arrives, the intent is CANCELLED before we reply, so a reported
+    // timeout can never execute later. Only when the cancel finds nothing to
+    // cancel (the drain took it meanwhile) is the verdict re-read once more.
+    auto await_scheme_result = [&](const std::string& rid, bool* ok_out,
+                                   std::string* out_str, char* reason_buf,
+                                   size_t reason_len) -> const char* {
+        auto take = [&](const Intent& c) {
+            *ok_out = c.executed && !c.rejected;
+            *out_str = c.console_output;
+            if (c.rejected && c.rejection_reason[0])
+                snprintf(reason_buf, reason_len, "%s", c.rejection_reason);
+        };
+        Intent c;
+        for (int poll = 0; poll < 100; poll++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (g_intent_queue.find_completed_by_request_id(rid, &c)) { take(c); return nullptr; }
+        }
+        // Retire, not erase (see IntentQueue::retire_pending_by_request_id). If it
+        // was still pending, it will now never run -- unless the drain was already
+        // inside it, in which case its own verdict overwrites ours; re-read once.
+        const bool retired = g_intent_queue.retire_pending_by_request_id(
+            rid, "intent_timeout_cancelled_not_executed");
+        for (int poll = 0; poll < 40; poll++) {
+            if (g_intent_queue.find_completed_by_request_id(rid, &c)) { take(c); return nullptr; }
+            if (g_intent_queue.find_pending_by_request_id(rid, &c) && c.consumed &&
+                strcmp(c.rejection_reason, "intent_timeout_cancelled_not_executed") != 0) {
+                take(c); return nullptr;   // the drain finished it after the retire
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return retired ? "intent_timeout_cancelled_not_executed" : "intent_timeout_no_result";
     };
 
     // #scheme_cancel branch: abandon an owned scheme by scheme_id (from
@@ -6816,20 +6940,10 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
         ADLOG("scheme_action: queued CANCEL actor=%u scheme_id=%d rid=%s\n",
               actor_id, cancel_scheme_id, request_id.c_str());
 
-        bool found = false, ok = false; std::string out_str; char reason_buf[160] = {};
-        for (int poll = 0; poll < 100; poll++) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            auto completed = g_intent_queue.completed_snapshot(16);
-            for (const auto& c : completed) {
-                if (c.request_id == request_id) {
-                    found = true; ok = c.executed && !c.rejected; out_str = c.console_output;
-                    if (c.rejected && c.rejection_reason[0])
-                        strncpy(reason_buf, c.rejection_reason, sizeof(reason_buf) - 1);
-                    break;
-                }
-            }
-            if (found) break;
-        }
+        bool ok = false; std::string out_str; char reason_buf[160] = {};
+        const char* timeout_reason = await_scheme_result(request_id, &ok, &out_str,
+                                                         reason_buf, sizeof(reason_buf));
+        const bool found = (timeout_reason == nullptr);
         if (response_out) {
             ResponseBuilder r; r.begin_object();
             r.key("success"); r.value_bool(ok);
@@ -6841,7 +6955,7 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
                 if (!out_str.empty()) { r.key("result_raw"); r.value_string(out_str.c_str(), out_str.size()); }
                 if (!ok && reason_buf[0]) { r.key("reason"); r.value_string(reason_buf); }
             } else {
-                r.key("reason"); r.value_string("intent_timeout_no_result");
+                r.key("reason"); r.value_string(timeout_reason);
             }
             r.end_object();
             *response_out = r.take();
@@ -6878,24 +6992,13 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
     ADLOG("scheme_action: queued actor=%u target=%u scheme='%s' rid=%s\n",
           actor_id, target_id, scheme, request_id.c_str());
 
-    bool found_result = false, intent_succeeded = false;
+    bool intent_succeeded = false;
     std::string output_str;
     char result_reason[160] = {};
-    for (int poll = 0; poll < 100; poll++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        auto completed = g_intent_queue.completed_snapshot(16);
-        for (const auto& c : completed) {
-            if (c.request_id == request_id) {
-                found_result = true;
-                intent_succeeded = c.executed && !c.rejected;
-                output_str = c.console_output;
-                if (c.rejected && c.rejection_reason[0])
-                    strncpy(result_reason, c.rejection_reason, sizeof(result_reason) - 1);
-                break;
-            }
-        }
-        if (found_result) break;
-    }
+    const char* timeout_reason = await_scheme_result(request_id, &intent_succeeded,
+                                                     &output_str, result_reason,
+                                                     sizeof(result_reason));
+    const bool found_result = (timeout_reason == nullptr);
 
     if (response_out) {
         ResponseBuilder r; r.begin_object();
@@ -6910,7 +7013,7 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
             if (!output_str.empty()) { r.key("result_raw"); r.value_string(output_str.c_str(), output_str.size()); }
             if (!intent_succeeded && result_reason[0]) { r.key("reason"); r.value_string(result_reason); }
         } else {
-            r.key("reason"); r.value_string("intent_timeout_no_result");
+            r.key("reason"); r.value_string(timeout_reason);
         }
         r.end_object();
         *response_out = r.take();

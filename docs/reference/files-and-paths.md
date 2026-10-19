@@ -26,6 +26,7 @@ None. `ck3agent config` prints the paths in use; `ck3agent doctor` checks them.
 | bridge socket, mode 0600 | `RUN/agent.sock` | the bridge |
 | bridge log | `RUN/bridge.log` | the bridge |
 | action log | `RUN/telemetry/action_log.jsonl` | the bridge |
+| default-off write list, `ck3-enabled-writes` | `RUN/` | you, by hand; see [research notes](../research.md#default-off-writes) |
 
 A named instance (`CK3_INSTANCE_ID=<id>`) moves the socket, log and telemetry
 to `RUN/inst/<id>/`. `CK3_INSTANCE_LAYOUT=legacy` restores the old shared
@@ -76,7 +77,8 @@ Variables read only by the bridge are in
 | `CK3_INSTANCE_ROOT` | parent directory for named instances |
 | `CK3_INSTANCE_LAYOUT` | `user`, the default, or `legacy` |
 | `CK3_CONTROL_DIR` | operator control directory; research layout only |
-| `CK3_AGENT_CHARACTER_ID` | the MCP server binds this character at connect, before Claude's first turn |
+| `CK3_AGENT_CHARACTER_ID` | the MCP server binds this character at connect, before Claude's first turn; a comma-separated list binds several, the first as the primary |
+| `CK3_AGENT_PREBIND_WAIT_S` | how long that bind waits for the game to be active (a save still loading) before it is attempted anyway: seconds, default 120, polled every 2 s; `0` attempts at once |
 | `CK3_TOOL_SURFACE_OUT` | the MCP server writes its registered tool list to this file |
 | `CK3_RELEASE_ON_EXIT` | `run` sets it; the MCP server releases its own claims when it stops and writes the record here |
 | `CK3_SESSION_OUT` | `run` sets it; the MCP server writes its session id and resume token here so `run` can finish the release if the server is killed first |

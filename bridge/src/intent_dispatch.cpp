@@ -578,6 +578,28 @@ bool IntentQueue::cancel_by_request_id(const std::string& request_id) {
     return false;
 }
 
+bool IntentQueue::retire_pending_by_request_id(const std::string& request_id,
+                                               const char* reason) {
+    if (request_id.empty()) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& it : intents_) {
+        if (!it.consumed && it.request_id == request_id) {
+            it.consumed = true;
+            it.rejected = true;
+            it.executed = false;
+            snprintf(it.rejection_reason, sizeof(it.rejection_reason), "%s",
+                     reason ? reason : "retired");
+            if (pending_count_atomic_.load(std::memory_order_relaxed) > 0)
+                pending_count_atomic_.fetch_sub(1, std::memory_order_relaxed);
+            IQLOG("Intent retired: %s actor=%u request_id=%s reason=%s\n",
+                  it.interaction_name.c_str(), it.actor_id & 0xFFFFFF,
+                  request_id.c_str(), it.rejection_reason);
+            return true;
+        }
+    }
+    return false;
+}
+
 void IntentQueue::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     intents_.clear();
@@ -2780,8 +2802,10 @@ static uintptr_t resolve_scheme_type_by_name(const std::string& key) {
 // Confirm the owner now OWNS a scheme of `type_ptr` targeting `target_id` — same
 // owned-scheme walk as do_query_schemes (core_data+0x98 ref list → SCHEME_REFDB).
 // Returns the matching scheme's packed id (or 0). Fault-tolerant via safe_read*.
+// want_id != 0: match only the scheme with that id (lane-scheme: the readback
+// must confirm the scheme the call RETURNED, not any scheme of the same shape).
 static uint32_t confirm_owned_scheme(void* owner, uintptr_t type_ptr,
-                                     uint32_t target_id) {
+                                     uint32_t target_id, uint32_t want_id) {
     uintptr_t core = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(owner)
                                           + ck3::character::REALM_DATA);
     if (!core || !is_mapped(core)) return 0;
@@ -2807,6 +2831,7 @@ static uint32_t confirm_owned_scheme(void* owner, uintptr_t type_ptr,
         if (safe_read<uintptr_t>(sp + ck3::active_scheme::SCHEME_TYPE_PTR) != type_ptr) continue;
         uint32_t tref = safe_read<uint32_t>(sp + ck3::active_scheme::TARGET_REF) & 0xFFFFFF;
         if (tref != (target_id & 0xFFFFFF)) continue;
+        if (want_id && idx != (want_id & 0xFFFFFF)) continue;
         return ref & 0xFFFFFF;
     }
     return 0;
@@ -2947,7 +2972,9 @@ bool execute_scheme_cancel_intent(Intent* intent) {
 bool execute_scheme_intent(Intent* intent) {
     extern thread_local sigjmp_buf g_recovery_point;
     extern thread_local bool g_in_protected_region;
-    extern bool scheme_get_arg_template(const std::string&, uint64_t*, uint64_t*);
+    extern int scheme_arg_template_status(const std::string&);
+    extern bool scheme_null_arg_objects(uint64_t*, uint64_t*);
+    extern thread_local bool g_scheme_start_from_bridge;
 
     const std::string& scheme_key = intent->interaction_name;
     uint32_t actor_id  = intent->actor_id & 0xFFFFFF;
@@ -2977,15 +3004,30 @@ bool execute_scheme_intent(Intent* intent) {
         return reject(buf);
     }
 
-    // The 5th/6th CreateActiveScheme args — captured from a real engine scheme of
-    // this type by the observer hook. We refuse rather than fabricate them.
+    // The 5th/6th CreateActiveScheme args are the scheme's optional task contract
+    // and artifact (re/findings/re_scheme_start_args.md). A bridge-started scheme
+    // has neither, so we pass exactly what the engine's start_scheme effect passes
+    // when those scopes are absent: the two DB null objects, read live. This
+    // REPLACES replaying a pointer captured from some earlier AI start (lane-scheme
+    // 2026-10-18): that pointer was a real CTaskContract/CArtifact whenever the
+    // observed start carried one -- an object that can be destroyed, and someone
+    // else's -- and requiring a capture refused every scheme type the AI had not
+    // happened to start since the bridge loaded (no_arg_template_captured).
     uint64_t tpl5 = 0, tpl6 = 0;
-    if (!scheme_get_arg_template(scheme_key, &tpl5, &tpl6)) {
-        char buf[176];
-        snprintf(buf, sizeof(buf),
-                 "no_arg_template_captured:%.48s (no engine-initiated '%.48s' "
-                 "scheme observed yet to source CreateActiveScheme args)",
-                 scheme_key.c_str(), scheme_key.c_str());
+    if (!scheme_null_arg_objects(&tpl5, &tpl6))
+        return reject("scheme_null_args_unavailable");
+    // Shape check on the null objects: their ids must be the -1 InitializeScheme
+    // copies to scheme+0x34 / +0x38 for a contract-less, artifact-less scheme.
+    if (safe_read<int32_t>(static_cast<uintptr_t>(tpl5) + 0x8) != -1 ||
+        safe_read<int32_t>(static_cast<uintptr_t>(tpl6) + 0x10) != -1)
+        return reject("scheme_null_args_shape_mismatch");
+    // If the engine's own last start of THIS type carried a real contract or
+    // artifact, the type is one the bridge cannot start faithfully (it would be a
+    // contract-less copy of a contract scheme). Refuse, typed.
+    if (scheme_arg_template_status(scheme_key) == 2) {
+        char buf[160];
+        snprintf(buf, sizeof(buf), "scheme_type_needs_contract_or_artifact:%.64s",
+                 scheme_key.c_str());
         return reject(buf);
     }
 
@@ -3019,6 +3061,7 @@ bool execute_scheme_intent(Intent* intent) {
     g_in_protected_region = true;
     int sig = sigsetjmp(g_recovery_point, 1);
     if (sig != 0) {
+        g_scheme_start_from_bridge = false;
         g_in_protected_region = false;
         watchdog_disarm();
         if (rng_armed) restore_fake_random_scope(saved_rng);
@@ -3031,42 +3074,59 @@ bool execute_scheme_intent(Intent* intent) {
     {
         void* mgr = get_scheme_mgr(reinterpret_cast<void*>(gsr));
         if (mgr) {
+            g_scheme_start_from_bridge = true;
             scheme = create_scheme(mgr, reinterpret_cast<void*>(type_ptr),
                                    owner, target_scope, tpl5, tpl6);
         }
     }
+    g_scheme_start_from_bridge = false;
     g_in_protected_region = false;
     watchdog_disarm();
     if (rng_armed) restore_fake_random_scope(saved_rng);
 
-    // SCHEME_NULL sentinel (= base + 0x0bf1cb20) = engine refused (gate failed).
-    uintptr_t sentinel = g_base_addr + ck3::globals::SCHEME_NULL;
-    bool is_null = (scheme == nullptr) ||
-                   (reinterpret_cast<uintptr_t>(scheme) == sentinel) ||
-                   (reinterpret_cast<uintptr_t>(scheme) < 0x10000);
-
-    // Handler-side readback: confirm the owner now OWNS a live scheme of this type
-    // against this target (same walk as query_schemes).
+    // ENGINE REFUSAL. lane-scheme 2026-10-18, measured live: SCHEME_NULL
+    // (base + 0x0bf1cb20) is the SLOT that holds the null-scheme object's
+    // pointer (the Jomini DB/null pair: SCHEME_REFDB at N, null at N+8), and
+    // CreateActiveScheme returns the VALUE in it -- `return _DAT_0c01cb20;`, and
+    // its one caller loads it the same way (`mov 0x...(%rip),%rbp # bf1cb20`
+    // at 0x051ba9ac). The old check compared against the slot's ADDRESS, which
+    // nothing ever returns, so every engine refusal was read as a creation: a
+    // second murder against Aella came back "created":true with the id of the
+    // FIRST scheme (379), because the readback below found that one. The null
+    // object's own id is 0xFFFFFF (seen in that reply's log line), so it is
+    // checked too.
+    const uintptr_t null_scheme = safe_read<uintptr_t>(g_base_addr + ck3::globals::SCHEME_NULL);
+    const uintptr_t sp = reinterpret_cast<uintptr_t>(scheme);
+    bool is_null = (sp < 0x10000) || (null_scheme && sp == null_scheme) ||
+                   (sp == g_base_addr + ck3::globals::SCHEME_NULL);
     uint32_t scheme_id = 0;
     if (!is_null) {
-        scheme_id = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(scheme)
-                                        + ck3::active_scheme::SCHEME_ID) & 0xFFFFFF;
+        scheme_id = safe_read<uint32_t>(sp + ck3::active_scheme::SCHEME_ID) & 0xFFFFFF;
+        if (scheme_id == 0xFFFFFF) is_null = true;
     }
-    uint32_t confirmed = confirm_owned_scheme(owner, type_ptr, target_id);
 
-    bool ok = !is_null && confirmed != 0;
+    // Handler-side readback: the owner must now own THE RETURNED scheme (same
+    // walk as query_schemes), not merely some scheme of this type and target.
+    uint32_t confirmed = is_null ? 0 : confirm_owned_scheme(owner, type_ptr, target_id,
+                                                            scheme_id);
+    // On a refusal, say whether the owner already runs this scheme on this
+    // target (the commonest engine refusal is HasSchemeOnTarget).
+    uint32_t existing = is_null ? confirm_owned_scheme(owner, type_ptr, target_id, 0) : 0;
+
+    bool ok = !is_null && confirmed != 0 && confirmed == scheme_id;
     intent->executed = ok;
     intent->rejected = !ok;
     intent->consumed = true;
     {
-        char buf[200];
+        char buf[240];
         snprintf(buf, sizeof(buf),
                  "{\"scheme\":\"%.48s\",\"owner_id\":%u,\"target_id\":%u,"
-                 "\"created\":%s,\"scheme_id\":%u,\"confirmed_owned\":%s}",
+                 "\"created\":%s,\"scheme_id\":%u,\"confirmed_owned\":%s,"
+                 "\"existing_scheme_id\":%u}",
                  scheme_key.c_str(), actor_id, target_id,
                  is_null ? "false" : "true",
-                 confirmed ? confirmed : scheme_id,
-                 confirmed ? "true" : "false");
+                 is_null ? 0u : scheme_id,
+                 ok ? "true" : "false", existing);
         intent->console_output = buf;
     }
     if (!ok && intent->rejection_reason[0] == '\0') {
@@ -3074,8 +3134,9 @@ bool execute_scheme_intent(Intent* intent) {
                  is_null ? "engine_refused_scheme_null_sentinel"
                          : "scheme_not_owned_after_call");
     }
-    IQLOG("scheme intent result: ok=%d null=%d scheme_id=%u confirmed=%u\n",
-          ok ? 1 : 0, is_null ? 1 : 0, scheme_id, confirmed);
+    IQLOG("scheme intent result: ok=%d null=%d scheme_id=%u confirmed=%u existing=%u "
+          "ret=0x%lx null_obj=0x%lx\n", ok ? 1 : 0, is_null ? 1 : 0, scheme_id, confirmed,
+          existing, (unsigned long)sp, (unsigned long)null_scheme);
     return ok;
 }
 

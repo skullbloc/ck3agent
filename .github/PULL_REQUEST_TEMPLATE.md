@@ -16,6 +16,10 @@
 - [ ] No
 - [ ] Yes. Evidence and confidence (HIGH / MEDIUM / LOW) per entry:
 
+## Changelog
+
+- [ ] A line under the next version's heading in CHANGELOG.md, or not needed (docs, tests)
+
 ## DCO
 
 - [ ] Every commit is signed off (`git commit -s`).

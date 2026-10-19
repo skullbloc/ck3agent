@@ -8,7 +8,9 @@ license of every path.
 
 Third-party components and their licenses: THIRD_PARTY_LICENSES.md.
 
-Crusader Kings III is a trademark of Paradox Interactive AB. This project is
-not affiliated with or endorsed by Paradox Interactive. It contains no game
-assets or game code; it reads and writes the memory of a copy of the game the
+Crusader Kings and Paradox Interactive are registered trademarks of Paradox
+Interactive AB; Claude is a trademark of Anthropic, PBC. This project is not
+affiliated with or endorsed by either. It contains no game assets and no game
+code beyond the short byte patterns in re/offsets/signatures.h that locate
+functions at load; it reads and writes the memory of a copy of the game the
 user owns.

@@ -225,7 +225,7 @@ Session* SessionRegistry::owner_of(uint32_t char_id) {
 }
 
 bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
-                                      std::string* reason_out) {
+                                      std::string* reason_out, bool keep_primary) {
     if (!session) {
         if (reason_out) *reason_out = "no_session";
         return false;
@@ -258,7 +258,8 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
             {
                 std::lock_guard<std::mutex> slock(session->mutex);
                 session->claimed_character_ids.insert(char_id);
-                session->primary_character_id = char_id;
+                if (!keep_primary || session->primary_character_id == 0)
+                    session->primary_character_id = char_id;
                 session->unbound_reason.clear();
                 session->unbound_heir_id = 0;
             }
@@ -294,7 +295,9 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
     {
         std::lock_guard<std::mutex> slock(session->mutex);
         session->claimed_character_ids.insert(char_id);
-        session->primary_character_id = char_id;
+        // lane-multi: an ADDITIONAL claim leaves the session's primary alone.
+        if (!keep_primary || session->primary_character_id == 0)
+            session->primary_character_id = char_id;
         session->unbound_reason.clear();
         session->unbound_heir_id = 0;
     }

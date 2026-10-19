@@ -372,6 +372,8 @@ BRIDGE_ACTION("set_character_faith", do_set_character_faith)
 BRIDGE_ACTION("set_character_culture", do_set_character_culture)
 BRIDGE_ACTION("set_title_law", do_set_title_law)
 BRIDGE_ACTION("query_hireable_mercenaries", do_query_hireable_mercenaries)
+// lane-query item 2: the enumerate behind do(action_class="men_at_arms").
+BRIDGE_ACTION("query_maa_types", do_query_maa_types)
 BRIDGE_ACTION("query_valid_war_targets", do_query_valid_war_targets)
 
 // #110: de-jure-duchy-completion conquest targeting (2nd-duchy win-line).

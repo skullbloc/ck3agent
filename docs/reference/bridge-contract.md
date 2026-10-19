@@ -40,7 +40,12 @@ turns off the ruler's AI tick, so every move must be explicit through `do`,
 the AI tick on every call, so do not mix it with Mode B.
 
 **Roster.** The bridge holds up to 10 controlled characters. The primary is
-the one calls default to with `character_id=0`. With none bound, `whoami`,
+the one calls default to with `character_id=0`. `set_controlled_character`
+switches a session's primary to the new character (a swap: the old one is let
+go); with `add: true` it claims the character as one more of the session's
+rulers and keeps the primary, and its reply carries `added: true`,
+`controlled_primary` and `claimed_character_ids`. The bridge binds the heir
+of a session's primary only. With none bound, `whoami`,
 `observe_v2`, `inspect`, `plan_war`, `declare_war`, `cbs`, `succession_plan`,
 `set_phase` and `do` return `no_ruler_bound`; `whoami` adds
 `blocked.measured.unbound_reason` (`heir_is_player`, or `""` when the bridge
@@ -166,8 +171,13 @@ you are connected.
 
 `session(action="release", character_id=N)` re-enables the ruler's AI tick,
 removes it from the roster, and clears the primary if it was the primary.
-The engine drives the ruler from the next tick. Release refusals:
-`missing_character_id`, `not_in_roster`, `not_owned_by_session`, `observe_mode`.
+The engine drives the ruler from the next tick. A control session cannot
+release its last ruler: the reply is `last_claim_of_control_session` and
+nothing changes. Switch instead with `session(action="control", character_id=M)`,
+or end the session: outside an experiment episode the bridge destroys a
+session when its socket closes and frees every ruler it held. Other release
+refusals: `missing_character_id`, `not_in_roster`, `not_owned_by_session`,
+`observe_mode`.
 
 ### 5.2 Operator override
 

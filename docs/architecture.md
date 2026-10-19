@@ -51,7 +51,7 @@ the handler table in `bridge/src/action_registry.inc`, from the bridge to the ag
 | `ck3agent/server/redesign.py` | the nine goal-shaped tools: `observe_v2`, `inspect`, `cbs`, `plan_war`, `succession_plan`, `set_phase`, `declare_war`, `do`, `session`. Also their envelope, the `set_phase` presets and the `do` intent table. No I/O; it calls the bridge through a gateway that sets and restores pause state. |
 | `ck3agent/server/bridge_client.py`, `async_bridge_client.py` | NDJSON framing, request ids, the v2 handshake in observe or control mode |
 | `ck3agent/server/instance.py` | socket, log and telemetry paths, per `CK3_INSTANCE_ID` |
-| `ck3agent/cli.py` | `setup`, `doctor`, `launch`, `serve`, `run`, `config`, `hook-state` |
+| `ck3agent/cli.py` | `setup`, `doctor`, `launch`, `serve`, `run`, `config`, `version`, `hook-state` |
 
 ## Response envelopes
 

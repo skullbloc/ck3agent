@@ -180,6 +180,17 @@ public:
     // Cancel a specific intent by request_id (for cancel_intent IPC)
     bool cancel_by_request_id(const std::string& request_id);
 
+    // lane-scheme 2026-10-18: retire a still-pending intent IN PLACE (consumed +
+    // rejected with `reason`) instead of erasing it. The game-thread drain holds a
+    // raw Intent* into intents_ while it executes (find_for_character), so an
+    // erase from the IPC thread could pull the element out from under it; a mark
+    // under the lock cannot. A drain that has not reached it yet skips it (it is
+    // consumed); one already executing overwrites the verdict, so the completed
+    // record still tells the truth. tick_maintenance moves it to completed.
+    // Returns true if a pending intent with that id was found and marked.
+    bool retire_pending_by_request_id(const std::string& request_id,
+                                      const char* reason);
+
     void clear();
 
     // Store a completed intent result for diagnostic queries.

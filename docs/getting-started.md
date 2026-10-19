@@ -4,14 +4,16 @@ From download to Claude's first move, about 15 minutes.
 
 ## Prerequisites
 
-- Linux x86_64, glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora 35 or later.
+- Linux x86_64, glibc 2.34 or newer: Ubuntu 22.04 or later, Debian 12 or later, Fedora (tested on 44), Arch.
 - Crusader Kings III **1.18.3.1**, the native Linux build, from the native
   Steam package. Not Flatpak, not Snap, not the Windows build under Proton.
 - Python 3.11 or newer. `pipx` is optional.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) on the same machine, signed in.
-- A single-player save that is not Ironman, made before step 3. Recommended: an
-  observer save. Start a new game, choose **Observe** on the character-selection
-  screen, and save.
+- A single-player save that is not Ironman. Two kinds work: an **observer
+  save** (start a new game, choose **Observe** on the character-selection
+  screen, save) if you want to watch Claude rule, or **your own campaign** if
+  you want to play against Claude. Back up the campaign first: the game's
+  autosave rotation runs whenever the clock runs, and ck3agent does not stop it.
 
 ## 1. Download and verify
 
@@ -46,21 +48,25 @@ Setup finds the game, checks its build, and creates the play directory
 ## 3. Launch the game
 
 ```bash
-ck3agent launch --continue
+ck3agent launch --save "$HOME/.local/share/Paradox Interactive/Crusader Kings III/save games/<name>.ck3"   # a specific save
+ck3agent launch --continue                                                                                # the save CK3 played last
 ```
 
-This starts CK3 with the bridge, loads your last save, and waits up to 120
-seconds for the game. On an observer save it enters Observe for you. On a
-player save, click **Continue** in the game window. To start CK3 from Steam
-instead, use the launch option `setup` printed.
+Both start CK3 with the bridge and wait up to 120 seconds for the game.
+Expect a few game days to pass before the pause lands: the bridge has to let
+the clock run to finish loading. On an observer save it enters Observe for
+you. On a player save it usually continues on its own; if the game stays on
+the menu, click **Continue** in the game window. Once the game is active,
+`launch` pauses it; Claude unpauses when it plays. `--no-pause` leaves the
+clock running. To start CK3 from Steam instead, use the launch option `setup`
+printed.
 
 ## 4. Choose the ruler Claude plays
 
 Claude plays an AI ruler, never yours. The bridge refuses to bind your
 character. If Claude's ruler dies and you are its heir, the bridge refuses that
 handoff too (`heir_is_player`) and leaves Claude with no ruler. Nothing guards
-the reverse: if your character dies and you inherit Claude's ruler, Claude's
-seat now holds your character. `whoami` then returns `cannot_act_as_player`,
+the reverse: if your character dies and you inherit Claude's ruler, the ruler Claude is bound to is now your character. `whoami` then returns `cannot_act_as_player`,
 and every write is refused. Pick one:
 
 - **Observer save.** Recommended. You watch; Claude rules.
@@ -70,16 +76,13 @@ and every write is refused. Pick one:
 In Claude Code, ask "Who can you control? List nearby rulers with their ids."
 Then say "Take control of <name>". Claude calls
 `session(action="control", character_id=...)` and confirms with `whoami`.
-Until then, with no `character_id` given:
-
-- `whoami`, `observe_v2`, `inspect`, `plan_war`, `declare_war`, `cbs`,
-  `succession_plan`, `set_phase` and `do` return `ok: false` with
-  `blocked.gate: "no_ruler_bound"`.
-- `observe`, `query`, `discover`, `steer` and `intent` are not checked: they
-  return `ok: true` with the bridge's empty or declined reply, for example
-  `observe`'s `data.character.success: false`.
-- `discover(what="evaluate_trigger")` evaluates against the engine's player
-  character, which is yours on a player save.
+To give Claude more than one ruler, say "Also take <name>": Claude calls
+`session(action="add", character_id=...)` and keeps the first.
+Until a ruler is bound, most tools refuse with `no_ruler_bound`, and the few
+that answer anyway return empty data. If Claude narrates a realm before you
+named a ruler, it is reading nothing: ask it to run `whoami`. The per-tool
+detail is under [no_ruler_bound](troubleshooting.md#claude-says-it-controls-no-ruler-or-no_ruler_bound) in
+troubleshooting.
 
 ## 5. Play
 
@@ -88,13 +91,18 @@ cd ~/ck3agent-play
 claude
 ```
 
+The first time, Claude Code asks whether you trust this directory. Accept:
+until you do, the tool allow-list that `setup` wrote is ignored and every
+`ck3` call prompts. (`ck3agent run` passes its allow-list on the command line
+and does not need the dialog.)
+
 Try "Brief me on the realm", then "Play ten cycles. Keep the succession intact
 and explain each decision." Press Esc to interrupt. Time, cost and stopping:
 [Claude Code](claude-code.md).
 
 ## Check it worked
 
-- `ck3agent doctor` shows no `FAIL` lines, and its handshake line reads `session_state=active`.
+- `ck3agent doctor` shows no `FAIL` lines, its handshake line reads `session_state=active`, and its last line says `Ready`. While the game is still loading or on the menu it says `Game not active yet` instead.
 - Claude's first reply names its ruler, the date and the realm.
 - After a cycle, the game date has advanced.
 

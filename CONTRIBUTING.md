@@ -1,15 +1,14 @@
 # Contributing
 
-## 1. How this repo works
+## 1. Where this repo comes from
 
-A script exports this repository from a private research checkout; `UPSTREAM` names the source
-commit. Each export lands as one sync commit by the release bot. Before it, the maintainer records
-every commit merged here since the last sync as `ported` (carried upstream as is), `superseded`
-(carried with changes, or replaced) or `reverted` (dropped with a reason; the sync undoes it). The
-sync script refuses while one is unrecorded or a `ported` one would not survive the export. It finds
-the last sync by the release bot's name and email, which anyone can type, so a PR containing a commit
-authored as the bot is not merged. Its trailers name each PR (`Ports:`, `Supersedes:`, `Reverts:`);
-authors of ported and superseded ones get `Co-authored-by:`.
+This repository is exported from a private research tree; `UPSTREAM` names the
+source commit. Your merged PR is carried upstream by the maintainer (`ported`),
+adapted (`superseded`) or, rarely, dropped with a reason (`reverted`); the next
+export commit names each PR in its trailers and credits you with
+`Co-authored-by:`. The sync tooling identifies the release bot by name and
+email, which anyone can type, so a PR containing a commit authored as the bot
+is not merged. Merges here are merge commits, never squashes.
 
 ## 2. First contribution in 10 minutes
 
@@ -45,7 +44,7 @@ Hooks, offsets and anything touching game memory need a live check.
 * Game: CK3 1.18.3.1, Linux native. See [docs/supported-versions.md](docs/supported-versions.md).
 * Build exactly: `cmake -S bridge -B bridge/build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCK3_STRICT_BUILD_ID=ON`.
 * Paste in the PR: `ck3agent --version`, `ck3agent doctor`, and the bridge log tail from the run.
-* A loosened run, with `CK3_STRICT_BUILD_ID=0` or `--allow-unsupported-build`, is not evidence.
+* A loosened run, with `CK3_STRICT_BUILD_ID=0` or `--allow-unsupported-build` (alias `--unsupported`), is not evidence.
 
 ## 6. Offsets and RE
 
@@ -100,6 +99,10 @@ Ids like `ck-xxxx` in comments are upstream tracker ids; see [bridge/test/README
 
 ## 12. Review process
 
+Add a line under the next version's heading in `CHANGELOG.md`
+(`## YYYY.MM.N — date`; the release workflow reads that heading verbatim).
+Skip it for docs-only and test-only changes.
+
 CI must be green. CODEOWNERS routes the review; a maintainer merges here. Offset and bridge
 changes need the live check in section 5 first. Merged PRs get `needs-port`, then `ported-upstream`.
 First response within 7 days. No reply after 14: ping on the PR.
@@ -117,6 +120,6 @@ Copyright line: "Harrison Stebbins and ck3agent contributors".
 
 ## Good first issues
 
-1. Fold `ck3agent/_bridge_meta.py` into `ck3agent/_version.py`, so the package has one stamped version file.
+1. Fold `ck3agent/_bridge_meta.py` into `ck3agent/_version.py`, so the package has one stamped version file; update `.github/workflows/release.yml` (its version check reads `_bridge_meta.py`) and `docs/building.md` in the same PR.
 2. Fix the four `-Wmisleading-indentation` warnings in the bridge build. `cmake --build` prints them.
 3. Remove the bridge's unused static functions; the build reports 19 `-Wunused-function` warnings.

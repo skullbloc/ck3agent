@@ -151,6 +151,8 @@ static void test_binary_identity() {
     check(b.format == os::IdentityFormat::elf_gnu_build_id, "binary_identity: format elf_gnu_build_id");
     check(strcmp(b.check, "unchecked") == 0 && b.observed_hex[0] == '\0',
           "binary_identity: before the resolver runs, the witness says unchecked");
+    check(b.image_sha256[0] == '\0' && b.image_size == 0,
+          "binary_identity: no file-hash witness on Linux yet; the adapter reports none");
 
     bridge::BuildIdWitness w;
     w.status = bridge::BuildIdCheck::MISMATCH;
@@ -272,6 +274,55 @@ static void test_not_routed() {
     r = os::input_click(1, 1, os::MouseButton::left);
     check(r.status == os::Status::not_routed && strstr(r.detail, "action_handlers.cpp") != nullptr,
           "input_click: not_routed, names action_handlers.cpp, injects nothing");
+
+    // The cells whose Linux code is file-static elsewhere: each refuses, names
+    // its owner, and does nothing (a not-routed guarded_call never runs body).
+    struct Owner { const char* what; os::Result r; os::Status want; const char* file; };
+    os::EntryState es;
+    memset(&es, 0x5a, sizeof(es));
+    size_t nsec = 7;
+    os::Fault f{1, 2, 3};
+    static int ran = 0;
+    os::ExecBlock eb{9, 9};
+    bool fired = true;
+    uintptr_t vt = 9;
+    os::HookPlan hp{9, 9, true, true};
+    const Owner owners[] = {
+        {"entry_state", os::entry_state(&es), os::Status::not_routed, "bridge_init.cpp"},
+        {"image_sections", os::image_sections(nullptr, 0, &nsec), os::Status::not_routed,
+         "runtime_resolver.cpp"},
+        {"guarded_call", os::guarded_call([](void*) { ++ran; }, nullptr, &f),
+         os::Status::not_routed, "bridge_init.cpp"},
+        {"guard_rearm", os::guard_rearm(), os::Status::not_routed, "bridge_init.cpp"},
+        {"alloc_exec_near", os::alloc_exec_near(0x1000, 64, &eb), os::Status::not_routed,
+         "hooks.cpp"},
+        {"free_exec", os::free_exec(&eb), os::Status::not_routed, "hooks.cpp"},
+        {"register_unwind", os::register_unwind(eb, nullptr, 0),
+         os::Status::unavailable_on_platform, "RUNTIME_FUNCTION"},
+        {"unregister_unwind", os::unregister_unwind(eb), os::Status::unavailable_on_platform,
+         "RUNTIME_FUNCTION"},
+        {"watchdog_arm", os::watchdog_arm(1, nullptr, nullptr), os::Status::not_routed,
+         "bridge_init.cpp"},
+        {"watchdog_disarm", os::watchdog_disarm(&fired), os::Status::not_routed,
+         "bridge_init.cpp"},
+        {"rtti_find_vtable", os::rtti_find_vtable("8CAIManager", &vt), os::Status::not_routed,
+         "runtime_resolver.cpp"},
+        {"hook_plan", os::hook_plan(0x1000, &hp), os::Status::not_routed, "hooks.cpp"},
+    };
+    for (const Owner& o : owners) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%s: %s, names %s", o.what, os::status_string(o.want),
+                      o.file);
+        check(o.r.status == o.want && strstr(o.r.detail, o.file) != nullptr, buf);
+    }
+    check(ran == 0, "guarded_call (not routed): the body never ran");
+    check(es.phase == os::EntryPhase::not_attached && es.module == 0 && es.outcome &&
+              !*es.outcome,
+          "entry_state: out is empty");
+    check(nsec == 0 && f.code == 0 && f.address == 0 && f.pc == 0 && eb.base == 0 &&
+              eb.size == 0 && !fired && vt == 0 && hp.target == 0 && hp.steal_bytes == 0 &&
+              !hp.cfg_checked_site && !hp.cet_compatible,
+          "not-routed cells leave every out-parameter empty");
 }
 
 static void test_threads() {

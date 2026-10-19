@@ -3,8 +3,7 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
-## 2026.10.0 — 2026-10-18
-<!-- The date is the tag date; release.yml refuses a heading that says "unreleased". If the release slips, re-stamp, re-sync and re-tag. -->
+## 2026.10.0 — 2026-10-19
 
 First public release.
 
@@ -21,6 +20,31 @@ First public release.
   play directory with `.mcp.json`, the play protocol, the live-state hook and
   an allow-list. Also `doctor`, `launch`, `serve`, `config`, `version`, and
   `run`, an unattended Claude Code session that records a transcript and a manifest.
+* **Several rulers in one session.** `session(action="add")` binds one more
+  ruler and keeps the first as the primary (`control` switches); a
+  comma-separated `CK3_AGENT_CHARACTER_ID` pre-binds several. The live-state
+  hook lists every ruler held, and the `ck3agent run` manifest records them
+  at start and stop. One posture per ruler, one game clock. The pre-bind
+  waits for the game to be active (`CK3_AGENT_PREBIND_WAIT_S`, default 120 s)
+  instead of being refused when the run starts before the save has loaded;
+  the manifest notes the tick and date each bind landed.
+* **Live-state hook.** A ruler whose name the bridge has not localized yet
+  (it answers with the game's key, `E_thelred` for Æthelred, until a tick
+  resolves it) is listed without a name and a note, never with the key.
+* **Time passes through the server.** `session(action="wait", seconds=N)`
+  unpauses, blocks up to 110 s, pauses and returns the dates; the play
+  protocol never uses a shell `sleep`, which Claude Code refuses at 30 s or
+  more. `ck3agent launch` pauses the game once it is active (`--no-pause`
+  keeps it running).
+* **Writes.** `do(intent="scheme")` starts and cancels schemes for an AI
+  ruler, validated live; `faction_action` and `break_alliance` stay off by
+  default behind an operator-armed file. `set_phase` reports whether it
+  re-enabled the ruler's AI tick.
+* **Reads.** `query` characters listing adds `realm_counties` and
+  `held_title_count` and one `is_ai` definition; `neighbors` resolves from a
+  character; `do` enumerates men-at-arms types, laws and mercenaries with
+  labels; council tasks take and report a `seat`; `discover(war_targets)`
+  says it lists candidates and `cbs` is authoritative.
 * **Linux tarball** with installer, split debug symbols, SHA256SUMS and build
   provenance attestation; wheel attached to the release.
 * **Docs**: getting started, Claude Code, Claude Desktop, scripted runs,

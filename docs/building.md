@@ -57,6 +57,14 @@ Build the bridge library and the Python package yourself.
   `_version.py`. The release workflow fails unless all three match the tag.
 - `.github/workflows/release.yml` builds a `v*` tag into a draft GitHub Release.
 
+Release builds set `SOURCE_DATE_EPOCH` to the tag commit's time, sort and
+owner-normalise the tarball and gzip it without a timestamp, so the tarball
+is reproducible given the same runner image (ubuntu-22.04, GCC 11). The `.so`
+is not yet bit-for-bit reproducible across toolchains; `build_provenance.h`
+records the commit and whether the tree was clean, and the release workflow
+refuses a dirty one. The bundled wheels are whatever PyPI resolves on release
+day; `wheels/SHA256SUMS` in the tarball lists exactly what shipped.
+
 ## Check it worked
 
 - `ctest` passes.

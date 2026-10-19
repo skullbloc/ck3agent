@@ -2,11 +2,12 @@
 
 | Component | Version | License | Where |
 |-----------|---------|---------|-------|
-| [Zydis](https://github.com/zyantific/zydis) (with Zycore) | 5.0.0 (commit `9bfadd6a`) / 1.5.2 | MIT | headers in `bridge/third_party/zydis/include`; library fetched and built from source by CMake |
+| [Zydis](https://github.com/zyantific/zydis) (with Zycore) | 5.0.0 (commit `9bfadd6a`) / 1.5.2 (commit `75a36c45`) | MIT | headers in `bridge/third_party/zydis/include`; library fetched and built from source by CMake |
 | [RapidJSON](https://github.com/Tencent/rapidjson) | 1.1.0 + master snapshot | MIT, plus BSD-3 `msinttypes` (full upstream `license.txt` below) | `bridge/third_party/rapidjson` |
 | [stb_image](https://github.com/nothings/stb) | 2.30 | MIT or public domain (dual) | `bridge/third_party/stb_image.h` (optional `ck3mapgen` tool only) |
 | [mcp](https://pypi.org/project/mcp/) (Python SDK) | ≥1.2 | MIT | Python dependency |
 | [pydantic](https://pypi.org/project/pydantic/) | ≥2 | MIT | Python dependency |
+| Python dependency closure (bundled wheels) | resolved at release time; `wheels/SHA256SUMS` in the tarball lists them | MIT, BSD-3-Clause, Apache-2.0, MPL-2.0 (certifi), PSF-2.0 (typing-extensions) | `wheels/` in the release tarball; each wheel's `*.dist-info/` carries its own license text |
 
 Each vendored directory also carries its own `LICENSE`.
 

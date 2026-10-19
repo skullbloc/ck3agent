@@ -71,6 +71,7 @@ int main() {
                       "unavailable_on_platform") == 0,
           "status_string(unavailable_on_platform)");
 
+#ifndef CK3_OS_CELL_PROCESS
     {
         ProcessIdentity p;
         std::memset(&p, 0x5a, sizeof(p));
@@ -80,30 +81,46 @@ int main() {
         refusal(exe_path_is_game("ck3", &g), "exe_path_is_game");
         check(!g, "exe_path_is_game: out is false");
     }
+#endif
+#ifndef CK3_OS_CELL_IMAGE
     {
         ImageInfo i{1, 2};
         refusal(image_base(&i), "image_base");
         check(i.base == 0 && i.end == 0, "image_base: out is empty");
+        std::size_t n = 7;
+        Section s[1];
+        refusal(image_sections(s, 1, &n), "image_sections");
+        check(n == 0, "image_sections: count is 0");
     }
+#endif
+#ifndef CK3_OS_CELL_IDENTITY
     {
         BinaryIdentity b;
         std::memset(&b, 0x5a, sizeof(b));
         refusal(binary_identity(&b), "binary_identity");
         check(b.format == IdentityFormat::none && b.observed_hex[0] == '\0' &&
-                  b.check != nullptr && std::strcmp(b.check, "unchecked") == 0,
+                  b.check != nullptr && std::strcmp(b.check, "unchecked") == 0 &&
+                  b.image_sha256[0] == '\0' && b.image_size == 0,
               "binary_identity: out says unchecked, observed nothing");
     }
+#endif
     {
         unsigned char buf[4] = {1, 2, 3, 4};
+        (void)buf;
+#ifndef CK3_OS_CELL_SAFE_READ
         refusal(safe_read(buf, reinterpret_cast<std::uintptr_t>(buf), sizeof(buf)), "safe_read");
+#endif
+#ifndef CK3_OS_CELL_WRITE_PROTECTED
         refusal(write_protected(reinterpret_cast<std::uintptr_t>(buf), buf, sizeof(buf)),
                 "write_protected");
+#endif
     }
     {
         ExecInterposition e{"x", nullptr, 7};
         refusal(exec_interposition(&e), "exec_interposition");
         check(e.symbols == nullptr && e.symbol_count == 0, "exec_interposition: out is empty");
     }
+#ifndef CK3_OS_CELL_TRANSPORT
     {
         Endpoint ep{TransportKind::af_unix, "x"};
         refusal(ipc_endpoint(&ep), "ipc_endpoint");
@@ -124,6 +141,8 @@ int main() {
         check(n == 0, "transport_write: nothing written");
         refusal(transport_close(kInvalidHandle), "transport_close");
     }
+#endif
+#ifndef CK3_OS_CELL_PATHS
     {
         Paths p{"a", "b", "c", "d", "e", "f"};
         refusal(paths(&p), "paths");
@@ -132,13 +151,68 @@ int main() {
                   p.log_archive_dir && !*p.log_archive_dir && p.state_dir && !*p.state_dir,
               "paths: every field is empty, none null");
     }
+#endif
     refusal(input_click(1, 1, MouseButton::left), "input_click");
+#ifndef CK3_OS_CELL_THREADS
     {
         std::uint64_t t = 99;
         refusal(thread_id(&t), "thread_id");
         check(t == 0, "thread_id: out is 0");
         refusal(set_thread_name("ck3-test"), "set_thread_name");
     }
+#endif
+#ifndef CK3_OS_CELL_ENTRY
+    {
+        EntryState es;
+        std::memset(&es, 0x5a, sizeof(es));
+        refusal(entry_state(&es), "entry_state");
+        check(es.phase == EntryPhase::not_attached && es.module == 0 &&
+                  es.init_thread_id == 0 && !es.is_game && es.outcome && !*es.outcome,
+              "entry_state: out is empty");
+    }
+#endif
+    {
+#ifndef CK3_OS_CELL_GUARDED
+        static int ran = 0;
+        Fault f{1, 2, 3};
+        refusal(guarded_call([](void*) { ++ran; }, nullptr, &f), "guarded_call");
+        check(ran == 0, "guarded_call: a refusing stub never runs the body");
+        check(f.code == 0 && f.address == 0 && f.pc == 0, "guarded_call: fault is empty");
+        refusal(guard_rearm(), "guard_rearm");
+#endif
+    }
+#ifndef CK3_OS_CELL_EXEC_ALLOC
+    {
+        ExecBlock e{1, 2};
+        refusal(alloc_exec_near(0x10000, 64, &e), "alloc_exec_near");
+        check(e.base == 0 && e.size == 0, "alloc_exec_near: nothing allocated");
+        refusal(free_exec(&e), "free_exec");
+        refusal(register_unwind(e, nullptr, 0), "register_unwind");
+        refusal(unregister_unwind(e), "unregister_unwind");
+    }
+#endif
+#ifndef CK3_OS_CELL_WATCHDOG
+    {
+        refusal(watchdog_arm(1, nullptr, nullptr), "watchdog_arm");
+        bool fired = true;
+        refusal(watchdog_disarm(&fired), "watchdog_disarm");
+        check(!fired, "watchdog_disarm: fired is false");
+    }
+#endif
+    {
+        std::uintptr_t vt = 9;
+        refusal(rtti_find_vtable("x", &vt), "rtti_find_vtable");
+        check(vt == 0, "rtti_find_vtable: out is 0");
+        HookPlan hp{9, 9, true, true};
+        refusal(hook_plan(0x1000, &hp), "hook_plan");
+        check(hp.target == 0 && hp.steal_bytes == 0 && !hp.cfg_checked_site &&
+                  !hp.cet_compatible,
+              "hook_plan: out is empty");
+    }
+    check(std::strcmp(entry_phase_string(EntryPhase::init_done), "init_done") == 0,
+          "entry_phase_string(init_done)");
+    check(std::strcmp(identity_format_string(IdentityFormat::image_sha256), "image_sha256") == 0,
+          "identity_format_string(image_sha256)");
 
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

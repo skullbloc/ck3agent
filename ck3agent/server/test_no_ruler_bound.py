@@ -364,7 +364,9 @@ UNCHECKED = {"observe", "query", "discover", "steer", "intent"}
 NOT_ACTOR_SCOPED = {"session"}
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DOCS = [("release/overlay/docs/getting-started.md", "docs/getting-started.md"),
+# The per-tool list moved from getting-started to troubleshooting in the
+# pre-release docs review (getting-started keeps one plain sentence).
+DOCS = [("release/overlay/docs/troubleshooting.md", "docs/troubleshooting.md"),
         ("release/overlay/docs/reference/bridge-contract.md", "docs/reference/bridge-contract.md"),
         ("release/overlay/ck3agent/protocol/CLAUDE.md", "ck3agent/protocol/CLAUDE.md"),
         ("release/overlay/ck3agent/protocol/CLAUDE-desktop.md", "ck3agent/protocol/CLAUDE-desktop.md")]

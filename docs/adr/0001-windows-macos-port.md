@@ -284,6 +284,38 @@ registers. `install_hook()`'s prologue relocation must learn MSVC prologues
 the format and `sig_scanner.cpp` stay. `resolve_rip_anchors()` carries over
 because PE code on x86-64 is also RIP-relative.
 
+**P2 cell status.** The platform layer (`bridge/src/os/windows/`) built and
+tested with `clang-cl` + `xwin`, tests under Wine (MEDIUM until re-run on real
+Windows). Each **done** cell has an engine-free `test_os_win_<cell>`; the
+portable helpers it leans on (`pe_image`, `sha256`, `win_paths` rules) have a
+`test_os_<helper>` that also runs on Linux and macOS. A **stub** is a typed
+refusal in `windows/stubs.cpp` whose refusal `test_os_stubs` asserts, so it
+cannot be mistaken for working code.
+
+| `os::` cell | File | State | Test | Why, if not done |
+|---|---|---|---|---|
+| `process_identity` / `exe_path_is_game` | `process.cpp` | done | `test_os_win_process` | |
+| `entry_state` (DllMain) | `entry.cpp`, `dll_main.cpp` | done (exe path); init thread untested | `test_os_win_entry` | the `attached` path needs the DLL in `ck3.exe` (P4) |
+| `image_base` / `image_sections` | `image.cpp` | done | `test_os_win_image`, `test_os_pe_image` | |
+| `binary_identity` | `identity.cpp` | done | `test_os_win_identity`(+`_nodebug`), `test_os_sha256` | `check` stays `unchecked` until `offset_version.h` carries PE constants (P1) |
+| `safe_read` | `safe_read.cpp` | done | `test_os_win_safe_read` | |
+| `write_protected` | `write_protected.cpp` | done | `test_os_win_write_protected` | |
+| `thread_id` / `set_thread_name` | `threads.cpp` | done | `test_os_win_threads` | |
+| `paths` | `paths.cpp` | done | `test_os_win_paths`, `test_os_win_paths_rules`, `test_os_win_paths_pin` | |
+| `ipc_endpoint` / `transport_*` | `transport.cpp` | done (byte transport) | `test_os_win_transport` | the token + `endpoint.json` are P4 |
+| `alloc_exec_near` / `free_exec` / `register_unwind` | `exec_alloc.cpp` | done | `test_os_win_exec_alloc` | |
+| `guarded_call` / `guard_rearm` | `guarded.cpp` | done | `test_os_win_guarded` (faults deliberately) | |
+| `watchdog_arm` / `watchdog_disarm` | `watchdog.cpp` | done | `test_os_win_watchdog` | |
+| `input_click` | `stubs.cpp` | stub | `test_os_stubs` | `SendInput`; steering is phase P6 |
+| `rtti_find_vtable` | `stubs.cpp` | stub | `test_os_stubs` | needs `ck3.exe` (MSVC RTTI, P1/P5) |
+| `hook_plan` | `stubs.cpp` | stub | `test_os_stubs` | needs `ck3.exe` (per-hook CFG/CET, P6) |
+| `exec_interposition` | `stubs.cpp` | n/a | `test_os_stubs` | `unavailable_on_platform`: a proxy DLL replaces it |
+
+The `ck3_bridge_win` DLL target links the layer plus an inert `DllMain`; the
+proxy export table is P4. The `windows-latest` CI leg builds all of it and runs
+the tests (`continue-on-error` until green on real MSVC twice). macOS is all
+typed refusals (`macos/stubs.cpp`), built on `macos-14`.
+
 **Binary identity on the Python side.** `ck3agent/_elf.py` gains siblings
 `_pe.py` (debug directory → `RSDS` GUID/age, optional-header
 `TimeDateStamp`/`SizeOfImage`) and later `_macho.py` (`LC_UUID`, per slice),
@@ -292,6 +324,40 @@ of `read_build_id` directly. `offset_version.h` already carries
 `GAME_PLATFORM` with a `linux / windows` comment; it gets per-platform
 identity constants (`PE_PDB_GUID`, `PE_PDB_AGE`, `PE_TIMESTAMP`,
 `PE_SIZE_OF_IMAGE`; `MACHO_UUID`) alongside `BUILD_ID`.
+
+**Status (2026-10-18).** Findings are in the research checkout
+(`re/findings/windows/W0-binary-report.md`, `re_anchor_transfer.md`). The
+binary read was 1.20.1.1, so its identity is recorded in the report only, not
+in `offset_version.h`.
+
+| Item | State |
+|---|---|
+| W0 (W1-W16) | Answered 2026-10-18, from a static read of the Windows depot. **The depot read is 1.20.1.1** (Steam public branch), not 1.18.3.1; answers that depend on the build (identity) are for 1.20.1.1 only |
+| Kill trigger: anti-tamper | Not fired (MEDIUM, static only): standard MSVC sections, CRT-only TLS callbacks, no protector. Callers of the debugger/module-enumeration APIs not yet classified |
+| Kill trigger: no 1.18.3.1 rollback branch | Not fired, provisional: a public `1.18.3` branch exists for the Windows binaries depot; that it serves 1.18.3.1 is MEDIUM until it is downloaded and its `rawVersion` read |
+| Injection | `version.dll` and `winmm.dll` both imported; no CFG enforcement, not CET-compatible; exe Authenticode-signed by Paradox |
+| P1 anchors | **0 transferred** on the pinned binary (not yet downloaded). Method check on 1.20.1.1: of the first 20 first-tier anchors, 15 found and 5 documented gaps (20 of 20 resolved); of 30, 22 found, 5 gaps, 3 open. Raw MSVC RTTI walk and string anchors both work |
+| Gaps | MSVC inlined four small functions the bridge calls (`GET_PLAYER_CHAR_ID`, `IS_MANUALLY_PAUSED`, `AI_CHAR_TOGGLE`, `CHAR_GET_AI_CONTROLLER`): the bridge needs an inline-read recipe per anchor, whose field offsets P3 confirms; the CAIManager tick lives in the vtable of the `+8` subobject (no thunk), not the `+0` one |
+| Next, in order | Download the `1.18.3` branch and re-run; `GAME_COMMAND_DISPATCH` and the command classes; `CMD_PAUSE_ON`; the 34 signatures re-derived in the Windows Ghidra project; the managers under `GAME_STATE_ROOT` |
+
+P1's kill trigger (transfer below ~40% with no new method) is not yet
+measurable: the method check ran on the wrong version, though every method
+tried worked.
+
+**Status under Proton (2026-10-19).** One Linux host, Proton
+experimental-11.0, no Steam client installed. Proton evidence is MEDIUM (limits
+above). Commands and log lines are in `docs/porting/proton-runbook.md` §3-§5.
+
+| Item | Phase | Status | What was seen |
+|---|---|---|---|
+| Windows depot at the 1.18.3.1 pin | P0 | **not met** | The depot used was the public branch, 1.20.1.1. Nothing below is an offset result for the pin |
+| `ck3.exe` reaches the main menu under Proton | P3 | verified | 85 s from `proton run`; DXVK, D3D11 feature level 11_0 on an NVIDIA GPU; the Paradox launcher is never started |
+| Steam API check for a copy outside a Steam library | P3 | not a blocker without Steam | Proton's `steam.exe` asserts unless `~/.steam/sdk64/steamclient.so` exists (workaround: steamcmd's copy). Then the game's `SteamAPI_Init` fails and the game runs anyway. Not tested with the Steam client running |
+| Proxy `version.dll` loads `native` and forwards | P4 (load half) | verified | `Loaded ...\binaries\VERSION.dll ... : native`; the stub resolved 16 of 16 exports from the builtin; the game called 3 of them through it and reached the menu |
+| `match` / `REFUSED` on build identity, no listener otherwise | P4 | not started | Needs the bridge DLL (P2) |
+| ELF core of the Wine process readable by the core reader | P3 | verified | `gcore` in 18 s; `MZ` at base `0x140000000` (the PE `ImageBase`; Wine kept it); `resolve(rva)` returns bytes equal to the file |
+| MSVC container layouts in memory | P3 probe | `std::string` seen, others not measured | In the core, 54,753 records of the MSVC string shape (length at +16, capacity 15 at +24) against 921 of the libstdc++ shape in the same 256 MiB of heap; `std::map` needs an anchored object (P1) |
+| Layout probe over the 1,757 field offsets | P3 | not started | Waits for the pinned depot and the P1 anchors |
 
 ## macOS plan
 

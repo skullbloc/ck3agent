@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Windows/macOS port
+  - name: Questions and show-and-tell
+    url: https://github.com/skullbloc/ck3agent/discussions
+    about: Ask how to do something, or show what Claude did in your game.
+  - name: Windows or macOS support
     url: https://github.com/skullbloc/ck3agent/blob/main/docs/porting/README.md
-    about: How to help with the port, and what to report.
+    about: Not supported yet. The plan, the status and how to help; please do not open a feature request for it.
   - name: Security vulnerability
     url: https://github.com/skullbloc/ck3agent/security/advisories/new
     about: Report privately. Do not open a public issue.

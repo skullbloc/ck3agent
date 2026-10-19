@@ -63,25 +63,51 @@ def test_link_retries_once_on_a_stale_session(bridge):
 
 
 def test_release_session_resumes_the_servers_session_once_it_lets_go(bridge):
-    fb = bridge()
+    # pin_claims: the bridge keeps a closed seat resumable with its claims, as
+    # experiment mode does. The last claim of a control session is refused.
+    fb = bridge(pin_claims=True)
     sock = br.socket_path()
     server = br.session(sock, "ck3agent", mode="control")
     bc = server.__enter__()
     br.call(bc, "set_controlled_character", {"character_id": 42})
-    rec = {"session_id": bc.session_id, "resume_token": bc.handshake_ack["resume_token"]}
+    br.call(bc, "set_controlled_character", {"character_id": 43, "add": True})   # add: control switches
+    sid = bc.session_id
+    rec = {"session_id": sid, "resume_token": bc.handshake_ack["resume_token"]}
     link = br.Link(sock, mode="control")
     try:
         # Still attached: resuming would mint a fresh session that cannot release 42.
         r = br.release_session(sock, rec, link, wait=0.5)
         assert r["resumed"] is False and r["resume_status"] == "session_attached"
-        assert r["error"] == "resume refused: session_attached" and fb.owner == {42: rec["session_id"]}
-        # Let go after a moment: the wait sees it detach, then the resume releases 42.
+        assert r["error"] == "resume refused: session_attached" and fb.owner == {42: sid, 43: sid}
+        # Let go after a moment: the wait sees it detach, then the resume releases
+        # 42 and is refused 43, the session's last.
         threading.Timer(0.8, lambda: server.__exit__(None, None, None)).start()
         r = br.release_session(sock, rec, link, wait=10)
-        assert r["resumed"] is True and r["claims"] == [42] and r["released"] == [42] and r["error"] is None
-        assert r["waited_s"] > 0.5 and fb.owner == {}
-        # Already released: nothing held, nothing to do.
-        assert br.release_session(sock, rec, link, wait=1)["claims"] == []
+        assert r["resumed"] is True and r["claims"] == [42, 43] and r["released"] == [42]
+        assert r["refused"] == {"43": "last_claim_of_control_session"} and r["error"] is None
+        assert r["waited_s"] > 0.5 and fb.owner == {43: sid}
+        # Again: the last claim is still refused, not lost.
+        r = br.release_session(sock, rec, link, wait=1)
+        assert r["claims"] == [43] and r["refused"] == {"43": "last_claim_of_control_session"}
+    finally:
+        link.close()
+
+
+def test_release_session_finds_a_free_play_session_gone_with_its_claims(bridge):
+    # Free play: a closed session is destroyed, and its claims with it.
+    fb = bridge()
+    sock = br.socket_path()
+    with br.session(sock, "ck3agent", mode="control") as bc:
+        br.call(bc, "set_controlled_character", {"character_id": 42})
+        rec = {"session_id": bc.session_id, "resume_token": bc.handshake_ack["resume_token"]}
+    link = br.Link(sock, mode="control")
+    try:
+        deadline = time.monotonic() + 5
+        while fb.owner and time.monotonic() < deadline:     # the close lands on the bridge's thread
+            time.sleep(0.05)
+        r = br.release_session(sock, rec, link, wait=1)
+        assert r["resume_status"] == "session_gone" and r["claims"] == [] and r["resumed"] is False
+        assert r["error"] is None and fb.owner == {} and fb.resumes == []
     finally:
         link.close()
 
