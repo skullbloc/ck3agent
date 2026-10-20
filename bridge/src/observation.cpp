@@ -6,6 +6,7 @@
 #include "name_tables.h"
 #include "action_dispatch_internal.h"  // resolve_title_realm()
 
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -84,8 +85,8 @@ public:
     }
 
     void value_float(float v) {
-        char tmp[32];
-        snprintf(tmp, sizeof(tmp), "%.2f", v);
+        char tmp[48];
+        format_fixed2(v, tmp, sizeof(tmp));
         buf_ += tmp;
         buf_ += ',';
     }
@@ -100,7 +101,7 @@ public:
 
     void value_hex(uintptr_t v) {
         char hex[32];
-        snprintf(hex, sizeof(hex), "\"0x%lx\"", v);
+        snprintf(hex, sizeof(hex), "\"0x%" PRIxPTR "\"", v);   // PRIxPTR: long is 32-bit on Windows
         buf_ += hex;
         buf_ += ',';
     }
@@ -195,7 +196,7 @@ static std::string resolve_character_name(uintptr_t char_ptr) {
     if (!char_ptr) return {};
 
     auto resolve_fn = reinterpret_cast<fn_resolve_name>(
-        g_base_addr + ck3::funcs::CHAR_FIRST_NAME_RESOLVED);
+        bridge::game_fn(ck3::funcs::CHAR_FIRST_NAME_RESOLVED));
 
     // SIGSEGV protection: character may be freed between lookup and call
     std::string result;
@@ -208,7 +209,8 @@ static std::string resolve_character_name(uintptr_t char_ptr) {
         return {};  // Return empty on crash — caller handles gracefully
     }
     try {
-        resolve_fn(&result, reinterpret_cast<void*>(char_ptr));
+        bridge::game_first_name_resolved(reinterpret_cast<uintptr_t>(resolve_fn), &result,
+                                         reinterpret_cast<void*>(char_ptr));
     } catch (...) {
         result.clear();
     }
@@ -408,7 +410,7 @@ static void build_personality(JsonBuilder& json, void* character) {
     }
     try {
         for (const auto& axis : g_personality_axes) {
-            auto getter = reinterpret_cast<fn_get_personality>(g_base_addr + axis.func_offset);
+            auto getter = reinterpret_cast<fn_get_personality>(bridge::game_fn(axis.func_offset));
             int value = getter(character);
             json.key(axis.name);
             json.value_int(value);
@@ -497,7 +499,7 @@ static void build_basic_stats(JsonBuilder& json, void* ruler) {
     }
 
     // Age: call GET_AGE(char*) -> int16 (years)
-    auto fn_age = reinterpret_cast<int16_t(*)(void*)>(g_base_addr + ck3::funcs::GET_AGE);
+    auto fn_age = reinterpret_cast<int16_t(*)(void*)>(bridge::game_fn(ck3::funcs::GET_AGE));
     int16_t age = fn_age(ruler);
     json.key("age"); json.value_int(age);
 
@@ -551,7 +553,7 @@ static void build_traits(JsonBuilder& json, void* ruler) {
 
     // Function pointer for trait descriptor resolution (initialized once, outside loop)
     using fn_get_desc = uintptr_t(*)(uintptr_t);
-    auto get_desc = reinterpret_cast<fn_get_desc>(g_base_addr + ck3::funcs::TRAIT_GET_DESCRIPTOR);
+    auto get_desc = reinterpret_cast<fn_get_desc>(bridge::game_fn(ck3::funcs::TRAIT_GET_DESCRIPTOR));
 
     if (trait_array_ptr && trait_count > 0 && trait_count < 200 && tdb) {
         int32_t max_trait_id = read<int32_t>(tdb + ck3::trait_db::ARRAY_COUNT);
@@ -578,8 +580,10 @@ static void build_traits(JsonBuilder& json, void* ruler) {
                     // Resolve trait name via descriptor function
                     uintptr_t desc = get_desc(trait_entry);
                     if (desc) {
-                        const char* name = reinterpret_cast<const char*>(read<uintptr_t>(desc + ck3::trait_descriptor::NAME_PTR));
-                        size_t len = read<size_t>(desc + ck3::trait_descriptor::NAME_LENGTH);
+                        uintptr_t name_p = 0; uint64_t name_n = 0;   // the game's string ABI
+                        game_string_view(desc + ck3::trait_descriptor::NAME_PTR, &name_p, &name_n);
+                        const char* name = reinterpret_cast<const char*>(name_p);
+                        size_t len = static_cast<size_t>(name_n);
                         if (name && len > 0 && len < 256) {
                             json.key("name"); json.value_string(name, len);
                         }
@@ -610,8 +614,10 @@ static void build_traits(JsonBuilder& json, void* ruler) {
                 if (trait_entry) {
                     uintptr_t desc = get_desc(trait_entry);
                     if (desc) {
-                        const char* name = reinterpret_cast<const char*>(read<uintptr_t>(desc + ck3::trait_descriptor::NAME_PTR));
-                        size_t len = read<size_t>(desc + ck3::trait_descriptor::NAME_LENGTH);
+                        uintptr_t name_p = 0; uint64_t name_n = 0;   // the game's string ABI
+                        game_string_view(desc + ck3::trait_descriptor::NAME_PTR, &name_p, &name_n);
+                        const char* name = reinterpret_cast<const char*>(name_p);
+                        size_t len = static_cast<size_t>(name_n);
                         if (name && len > 0 && len < 256) {
                             json.value_string(name, len);
                         }
@@ -1652,7 +1658,7 @@ static void build_schemes(JsonBuilder& json, void* ruler) {
     json.begin_array();
 
     // Access scheme refs via core_data sub-struct (char+0x1A8)
-    uintptr_t core_data = read<uintptr_t>(r + 0x1A8);
+    uintptr_t core_data = read<uintptr_t>(r + ck3::character::REALM_DATA);
     if (!core_data) { json.end_array(); return; }
 
     uintptr_t scheme_ref_ptr = read<uintptr_t>(core_data + ck3::core_data::SCHEME_REF_PTR);

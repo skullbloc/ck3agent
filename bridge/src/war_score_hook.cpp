@@ -499,6 +499,21 @@ static int compute_ticking_score_breakdown(uintptr_t wp) {
 
 // WAR_SCORE_UPDATE signature: void FUN_066b6020(void* war_ptr)
 // We call the original first, then compute and cache the breakdown.
+
+// The imprisonment component, per side. Linux: int score in eax of a 16-byte
+// return. MSVC returns the 16 bytes through a hidden slot in rcx
+// (ck3_offsets_win.h funcs::WAR_SCORE_IMPRISONMENT); the score is the slot's +0.
+static int war_score_imprisonment(void* war_ptr, int side) {
+#ifdef _WIN32
+    struct { int32_t score; uint32_t pad; uint64_t flags; } r = {};
+    reinterpret_cast<void* (*)(void*, void*, uint8_t, void*)>(g_fn_imprisonment)(
+        &r, war_ptr, static_cast<uint8_t>(side), nullptr);
+    return r.score;
+#else
+    return g_fn_imprisonment(war_ptr, side, nullptr);
+#endif
+}
+
 static void on_war_score_update(void* war_ptr) {
     // Call original first — game state is updated
     auto orig = reinterpret_cast<void(*)(void*)>(g_orig_war_score_update);
@@ -581,8 +596,8 @@ static void on_war_score_update(void* war_ptr) {
     g_in_protected_region = true;
     if (sigsetjmp(g_recovery_point, 1) == 0) {
         // Per-side functions (3-param: war_ptr, side, tooltip)
-        bd.imprisonment_atk = g_fn_imprisonment(war_ptr, 0, nullptr);
-        bd.imprisonment_def = g_fn_imprisonment(war_ptr, 1, nullptr);
+        bd.imprisonment_atk = war_score_imprisonment(war_ptr, 0);
+        bd.imprisonment_def = war_score_imprisonment(war_ptr, 1);
         bd.occupation_atk   = g_fn_occupation(war_ptr, 0, nullptr);
         bd.occupation_def   = g_fn_occupation(war_ptr, 1, nullptr);
 
@@ -650,17 +665,17 @@ static void on_war_score_update(void* war_ptr) {
 void init_war_score_hook() {
     // Resolve sub-function pointers (per-side = 3-param, net = 2-param)
     g_fn_imprisonment = reinterpret_cast<fn_war_score_sided>(
-        g_base_addr + ck3::funcs::WAR_SCORE_IMPRISONMENT);
+        bridge::game_fn(ck3::funcs::WAR_SCORE_IMPRISONMENT));
     g_fn_battle = reinterpret_cast<fn_war_score_net>(
-        g_base_addr + ck3::funcs::WAR_SCORE_BATTLE);
+        bridge::game_fn(ck3::funcs::WAR_SCORE_BATTLE));
     g_fn_occupation = reinterpret_cast<fn_war_score_sided>(
-        g_base_addr + ck3::funcs::WAR_SCORE_OCCUPATION);
+        bridge::game_fn(ck3::funcs::WAR_SCORE_OCCUPATION));
     // ck-nr51.3: TickingScore is direct-read — no function pointer to resolve.
     g_fn_landless = reinterpret_cast<fn_war_score_net>(
-        g_base_addr + ck3::funcs::WAR_SCORE_LANDLESS_THUNK);
+        bridge::game_fn(ck3::funcs::WAR_SCORE_LANDLESS_THUNK));
 
     // Install inline hook on WAR_SCORE_UPDATE
-    uintptr_t target = g_base_addr + ck3::funcs::WAR_SCORE_UPDATE;
+    uintptr_t target = bridge::game_fn(ck3::funcs::WAR_SCORE_UPDATE);
     g_orig_war_score_update = install_hook(target, reinterpret_cast<void*>(on_war_score_update));
 
     if (g_orig_war_score_update) {

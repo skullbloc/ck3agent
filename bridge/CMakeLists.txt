@@ -47,170 +47,10 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # by the host compiler (test_os_stubs_windows, test_os_stubs_macos);
 # test_os_stubs on windows/macos; test_os_win_<cell> on windows.
 # ═════════════════════════════════════════════════════════════════════════════
-set(CK3_PLATFORM "linux" CACHE STRING "Platform layer implementation: linux|windows|macos")
-set_property(CACHE CK3_PLATFORM PROPERTY STRINGS linux windows macos)
-if(NOT CK3_PLATFORM MATCHES "^(linux|windows|macos)$")
-    message(FATAL_ERROR "CK3_PLATFORM='${CK3_PLATFORM}': must be linux, windows or macos")
-endif()
-if(CK3_PLATFORM STREQUAL "linux" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "CK3_PLATFORM=linux on a ${CMAKE_SYSTEM_NAME} host: the bridge "
-        "is Linux-only. Configure with -DCK3_PLATFORM=windows or -DCK3_PLATFORM=macos "
-        "to build the platform-layer stubs.")
-endif()
-message(STATUS "ck3 platform layer: ${CK3_PLATFORM}")
-
-if(MSVC)
-    set(CK3_OS_WARNINGS /W4 /permissive-)
-    # The tests use the standard C library (getenv, fopen) on purpose.
-    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
-else()
-    set(CK3_OS_WARNINGS -Wall -Wextra)
-endif()
-
-# THE WINDOWS CELLS, one declaration for three readers. Each name <c> here is
-#   src/os/windows/<c>.cpp            compiled into ck3_os on windows
-#   src/os/test/test_os_win_<c>.cpp   its engine-free test (ctest name
-#                                     test_os_win_<c>; the ADR's "P2 cell
-#                                     status" table names the same tests)
-#   CK3_OS_CELL_<C>                   defined for test_os_stubs[_windows], so
-#                                     the stub contract stops asserting a
-#                                     refusal the cell no longer gives
-# Every os.h entry point not covered by a cell stays a typed refusal in
-# src/os/windows/stubs.cpp, which Linux keeps compiling as strict C++17.
-set(CK3_WIN_CELLS process entry image identity safe_read threads paths write_protected transport exec_alloc guarded watchdog)
-set(CK3_WIN_CELL_DEFS "")
-foreach(_c ${CK3_WIN_CELLS})
-    string(TOUPPER "${_c}" _C)
-    list(APPEND CK3_WIN_CELL_DEFS CK3_OS_CELL_${_C})
-endforeach()
-# Portable helpers (standard C++17, no platform header) and their tests, which
-# build and run on every platform: src/os/test/test_os_<t>.cpp.
-set(CK3_OS_PORTABLE src/os/os_common.cpp src/os/pe_image.cpp src/os/sha256.cpp src/os/win_paths.cpp)
-set(CK3_OS_PORTABLE_TESTS pe_image sha256 win_paths_rules)
-
-if(CK3_PLATFORM STREQUAL "linux")
-    add_library(ck3_os STATIC src/os/os_common.cpp src/os/linux/os_linux.cpp)
-    # The adapters forward to bridge code (bridge.h, instance_paths.cpp,
-    # build_id_witness.cpp); a consumer links those sources itself, so ck3_os
-    # never carries a second copy of them.
-    target_compile_definitions(ck3_os PRIVATE _GNU_SOURCE)
-elseif(CK3_PLATFORM STREQUAL "windows")
-    set(_cells "")
-    foreach(_c ${CK3_WIN_CELLS})
-        list(APPEND _cells src/os/windows/${_c}.cpp)
-    endforeach()
-    add_library(ck3_os STATIC ${CK3_OS_PORTABLE} src/os/windows/stubs.cpp
-        src/os/windows/common.cpp ${_cells})
-    set_target_properties(ck3_os PROPERTIES CXX_EXTENSIONS OFF)
-    target_compile_definitions(ck3_os PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-    # The transport cell (and its test, which links ck3_os) needs Winsock.
-    target_link_libraries(ck3_os PUBLIC ws2_32)
-    # ck3_bridge_win: the Windows bridge DLL. For P2 it is the platform layer
-    # plus an inert DllMain (src/os/windows/dll_main.cpp); the proxy export
-    # table that forwards a system DLL's exports is ADR phase P4. The target
-    # exists so the cells link into a real version.dll-style DLL.
-    add_library(ck3_bridge_win SHARED src/os/windows/dll_main.cpp)
-    target_link_libraries(ck3_bridge_win PRIVATE ck3_os)
-    set_target_properties(ck3_bridge_win PROPERTIES CXX_EXTENSIONS OFF)
-else()
-    add_library(ck3_os STATIC ${CK3_OS_PORTABLE} src/os/${CK3_PLATFORM}/stubs.cpp)
-    set_target_properties(ck3_os PROPERTIES CXX_EXTENSIONS OFF)
-endif()
-target_include_directories(ck3_os PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_options(ck3_os PRIVATE ${CK3_OS_WARNINGS})
-
-if(BUILD_BRIDGE_TESTS)
-    enable_testing()
-    foreach(_t ${CK3_OS_PORTABLE_TESTS})
-        add_executable(test_os_${_t} src/os/test/test_os_${_t}.cpp ${CK3_OS_PORTABLE})
-        target_include_directories(test_os_${_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-        set_target_properties(test_os_${_t} PROPERTIES CXX_EXTENSIONS OFF)
-        target_compile_options(test_os_${_t} PRIVATE ${CK3_OS_WARNINGS})
-        add_test(NAME test_os_${_t} COMMAND test_os_${_t})
-    endforeach()
-    if(CK3_PLATFORM STREQUAL "linux")
-        find_package(Threads REQUIRED)
-        add_executable(test_os_linux_adapters
-            src/os/test/test_os_linux_adapters.cpp
-            src/instance_paths.cpp
-            src/build_id_witness.cpp
-        )
-        target_link_libraries(test_os_linux_adapters PRIVATE ck3_os Threads::Threads ${CMAKE_DL_LIBS})
-        target_compile_definitions(test_os_linux_adapters PRIVATE
-            CK3_BRIDGE_VERSION_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/bridge.version")
-        target_compile_options(test_os_linux_adapters PRIVATE -O2 ${CK3_OS_WARNINGS})
-        # ck3 is PIE; the image-base checks need a PIE main executable too.
-        target_link_options(test_os_linux_adapters PRIVATE -pie)
-        add_test(NAME test_os_linux_adapters COMMAND test_os_linux_adapters)
-
-        # The Windows path rules and instance_paths.cpp must refuse the same
-        # ids. Linux-only (it forks to set the environment per case).
-        add_executable(test_os_win_paths_pin
-            src/os/test/test_os_win_paths_pin.cpp
-            src/os/win_paths.cpp
-            src/instance_paths.cpp
-        )
-        target_include_directories(test_os_win_paths_pin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-        target_link_libraries(test_os_win_paths_pin PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
-        target_compile_definitions(test_os_win_paths_pin PRIVATE _GNU_SOURCE)
-        target_compile_options(test_os_win_paths_pin PRIVATE ${CK3_OS_WARNINGS})
-        add_test(NAME test_os_win_paths_pin COMMAND test_os_win_paths_pin)
-
-        foreach(_p windows macos)
-            add_executable(test_os_stubs_${_p}
-                src/os/test/test_os_stubs.cpp
-                src/os/os_common.cpp
-                src/os/${_p}/stubs.cpp
-            )
-            target_include_directories(test_os_stubs_${_p} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-            target_compile_definitions(test_os_stubs_${_p} PRIVATE CK3_OS_EXPECT_PLATFORM="${_p}")
-            set_target_properties(test_os_stubs_${_p} PROPERTIES CXX_EXTENSIONS OFF)
-            target_compile_options(test_os_stubs_${_p} PRIVATE -pedantic-errors -Werror ${CK3_OS_WARNINGS})
-            add_test(NAME test_os_stubs_${_p} COMMAND test_os_stubs_${_p})
-        endforeach()
-        target_compile_definitions(test_os_stubs_windows PRIVATE ${CK3_WIN_CELL_DEFS})
-    else()
-        add_executable(test_os_stubs src/os/test/test_os_stubs.cpp)
-        target_link_libraries(test_os_stubs PRIVATE ck3_os)
-        target_compile_definitions(test_os_stubs PRIVATE CK3_OS_EXPECT_PLATFORM="${CK3_PLATFORM}")
-        if(CK3_PLATFORM STREQUAL "windows")
-            target_compile_definitions(test_os_stubs PRIVATE ${CK3_WIN_CELL_DEFS})
-        endif()
-        set_target_properties(test_os_stubs PROPERTIES CXX_EXTENSIONS OFF)
-        target_compile_options(test_os_stubs PRIVATE ${CK3_OS_WARNINGS})
-        add_test(NAME test_os_stubs COMMAND test_os_stubs)
-    endif()
-    if(CK3_PLATFORM STREQUAL "windows")
-        foreach(_c ${CK3_WIN_CELLS})
-            add_executable(test_os_win_${_c} src/os/test/test_os_win_${_c}.cpp)
-            target_link_libraries(test_os_win_${_c} PRIVATE ck3_os)
-            target_compile_definitions(test_os_win_${_c} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-            set_target_properties(test_os_win_${_c} PROPERTIES CXX_EXTENSIONS OFF)
-            target_compile_options(test_os_win_${_c} PRIVATE ${CK3_OS_WARNINGS})
-            add_test(NAME test_os_win_${_c} COMMAND test_os_win_${_c})
-        endforeach()
-        # identity: the witnesses (dbghelp, ole32, CNG, psapi); built once with
-        # an RSDS record (/DEBUG) and once without, so both keys are exercised.
-        target_link_libraries(test_os_win_identity PRIVATE dbghelp ole32 bcrypt psapi)
-        target_link_options(test_os_win_identity PRIVATE /DEBUG)
-        add_executable(test_os_win_identity_nodebug src/os/test/test_os_win_identity.cpp)
-        target_link_libraries(test_os_win_identity_nodebug PRIVATE ck3_os dbghelp ole32 bcrypt psapi)
-        target_compile_definitions(test_os_win_identity_nodebug PRIVATE
-            CK3_EXPECT_NO_RSDS WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-        target_compile_options(test_os_win_identity_nodebug PRIVATE ${CK3_OS_WARNINGS})
-        add_test(NAME test_os_win_identity_nodebug COMMAND test_os_win_identity_nodebug)
-    endif()
-endif()
-
-if(NOT CK3_PLATFORM STREQUAL "linux")
-    return()   # windows/macos: the platform layer is all there is to build
-endif()
-# ═════════════════════════════════════════════════════════════════════════════
-# PLATFORM LAYER — END
-# ═════════════════════════════════════════════════════════════════════════════
-
-# Build as shared library (.so) for LD_PRELOAD injection
-add_library(ck3_bridge SHARED
+# The bridge core: one source list for both builds (ADR 0001 P5). Linux links it
+# into libck3_bridge.so; Windows compiles it (minus the Linux-only
+# launcher_bypass.cpp) into ck3_bridge_core_win, linked into version.dll.
+set(CK3_BRIDGE_SOURCES
     src/bridge_init.cpp
     src/hooks.cpp
     src/ipc_server.cpp
@@ -309,6 +149,376 @@ add_library(ck3_bridge SHARED
     src/instance_paths.cpp
     src/log_archive.cpp
 )
+
+set(CK3_PLATFORM "linux" CACHE STRING "Platform layer implementation: linux|windows|macos")
+set_property(CACHE CK3_PLATFORM PROPERTY STRINGS linux windows macos)
+if(NOT CK3_PLATFORM MATCHES "^(linux|windows|macos)$")
+    message(FATAL_ERROR "CK3_PLATFORM='${CK3_PLATFORM}': must be linux, windows or macos")
+endif()
+if(CK3_PLATFORM STREQUAL "linux" AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "CK3_PLATFORM=linux on a ${CMAKE_SYSTEM_NAME} host: the bridge "
+        "is Linux-only. Configure with -DCK3_PLATFORM=windows or -DCK3_PLATFORM=macos "
+        "to build the platform-layer stubs.")
+endif()
+message(STATUS "ck3 platform layer: ${CK3_PLATFORM}")
+
+if(MSVC)
+    set(CK3_OS_WARNINGS /W4 /permissive-)
+    # The tests use the standard C library (getenv, fopen) on purpose.
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+else()
+    set(CK3_OS_WARNINGS -Wall -Wextra)
+endif()
+
+# THE WINDOWS CELLS, one declaration for three readers. Each name <c> here is
+#   src/os/windows/<c>.cpp            compiled into ck3_os on windows
+#   src/os/test/test_os_win_<c>.cpp   its engine-free test (ctest name
+#                                     test_os_win_<c>; the ADR's "P2 cell
+#                                     status" table names the same tests)
+#   CK3_OS_CELL_<C>                   defined for test_os_stubs[_windows], so
+#                                     the stub contract stops asserting a
+#                                     refusal the cell no longer gives
+# Every os.h entry point not covered by a cell stays a typed refusal in
+# src/os/windows/stubs.cpp, which Linux keeps compiling as strict C++17.
+set(CK3_WIN_CELLS process entry image identity safe_read threads paths write_protected transport exec_alloc guarded watchdog)
+set(CK3_WIN_CELL_DEFS "")
+foreach(_c ${CK3_WIN_CELLS})
+    string(TOUPPER "${_c}" _C)
+    list(APPEND CK3_WIN_CELL_DEFS CK3_OS_CELL_${_C})
+endforeach()
+# Portable helpers (standard C++17, no platform header) and their tests, which
+# build and run on every platform: src/os/test/test_os_<t>.cpp.
+set(CK3_OS_PORTABLE src/os/os_common.cpp src/os/pe_image.cpp src/os/sha256.cpp src/os/win_paths.cpp)
+set(CK3_OS_PORTABLE_TESTS pe_image sha256 win_paths_rules format_fixed2)
+
+if(CK3_PLATFORM STREQUAL "linux")
+    add_library(ck3_os STATIC src/os/os_common.cpp src/os/linux/os_linux.cpp)
+    # The adapters forward to bridge code (bridge.h, instance_paths.cpp,
+    # build_id_witness.cpp); a consumer links those sources itself, so ck3_os
+    # never carries a second copy of them.
+    target_compile_definitions(ck3_os PRIVATE _GNU_SOURCE)
+elseif(CK3_PLATFORM STREQUAL "windows")
+    set(_cells "")
+    foreach(_c ${CK3_WIN_CELLS})
+        list(APPEND _cells src/os/windows/${_c}.cpp)
+    endforeach()
+    add_library(ck3_os STATIC ${CK3_OS_PORTABLE} src/os/windows/stubs.cpp
+        src/os/windows/common.cpp src/os/windows/identity_gate.cpp ${_cells})
+    set_target_properties(ck3_os PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_definitions(ck3_os PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    # The transport cell (and its test, which links ck3_os) needs Winsock.
+    target_link_libraries(ck3_os PUBLIC ws2_32)
+    # ck3_bridge_win: the Windows bridge DLL, built as version.dll (ADR 0001
+    # phase P4). It is the platform layer, the version.dll proxy
+    # (src/os/windows/proxy.cpp: one forward per export of the real DLL) and
+    # DllMain + the init thread that runs the identity gate
+    # (src/os/windows/dll_main.cpp). The DLL exports ONLY the forwards: the
+    # .def below is generated from the export list, one declaration for three
+    # readers (this .def, proxy.cpp's forwards, the post-build check).
+    set(CK3_PROXY_LISTS
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/version_exports.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/version_exports_extra.h)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CK3_PROXY_LISTS})
+    set(_def "LIBRARY version.dll\nEXPORTS\n")
+    set(_n 0)
+    foreach(_l ${CK3_PROXY_LISTS})
+        file(STRINGS ${_l} _xs REGEX "^X\\([A-Za-z0-9_]+, *[0-9]+\\)")
+        foreach(_x ${_xs})
+            string(REGEX REPLACE "^X\\(([A-Za-z0-9_]+),.*" "\\1" _name "${_x}")
+            string(APPEND _def "    ${_name}=ck3proxy_${_name}\n")
+            math(EXPR _n "${_n} + 1")
+        endforeach()
+    endforeach()
+    if(_n LESS 17)
+        message(FATAL_ERROR "proxy export list: parsed ${_n} names from ${CK3_PROXY_LISTS}, want at least 17")
+    endif()
+    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ck3_proxy_version.def CONTENT "${_def}")
+    add_library(ck3_bridge_win SHARED src/os/windows/dll_main.cpp src/os/windows/proxy.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/ck3_proxy_version.def)
+    target_link_libraries(ck3_bridge_win PRIVATE ck3_os)
+    target_compile_definitions(ck3_bridge_win PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    target_compile_options(ck3_bridge_win PRIVATE ${CK3_OS_WARNINGS})
+    # The file is version.dll; its import library keeps the target's name so
+    # it can never shadow the SDK's version.lib.
+    set_target_properties(ck3_bridge_win PROPERTIES CXX_EXTENSIONS OFF
+        OUTPUT_NAME version ARCHIVE_OUTPUT_NAME ck3_bridge_win)
+
+    # ── ADR 0001 P5: the bridge core on Windows (observe-only) ──────────────
+    # The Linux bridge sources, compiled with clang-cl/MSVC against
+    #   src/os/windows/posix/   a POSIX subset on Win32 and the os:: cells
+    #                           (ck3_posix.h says, per name, real or refuses)
+    #   <build>/win_offsets/    ck3_offsets.h with Windows values, generated by
+    #                           re/scripts/windows/gen_win_offsets.py from the
+    #                           Linux header, ck3_offsets_win.h and the P3
+    #                           probe reports (report.json: the rule per constant)
+    # and linked into version.dll, whose init thread calls ck3_bridge_start()
+    # after the identity gate matched.
+    # The core needs the Windows offsets, from one of two sources:
+    #   research tree: the inputs (the generator, the annotated ck3_offsets_win.h, the
+    #     P3 probe reports); ck3_offsets.h with Windows values is generated at build;
+    #   public export: the two headers release/export.py GENERATED from those inputs
+    #     (re/offsets/windows/ck3_offsets.generated.h and a ck3_offsets_win.h without
+    #     the research annotations; owner decision 2026-10-19), used as they are.
+    # A tree with neither builds the P4 DLL: the identity gate and the forwards,
+    # nothing started on match. Said at configure time, never silently.
+    set(_win_core_inputs
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/scripts/windows/gen_win_offsets.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/scripts/windows/layout_probe.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets/windows/ck3_offsets_win.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/findings/windows/p3_probe_867_pair.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/findings/windows/p3_probe_867_07_09_pair.json)
+    set(_win_pregen ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets/windows/ck3_offsets.generated.h)
+    set(_win_have_inputs ON)
+    foreach(_f ${_win_core_inputs})
+        if(NOT EXISTS ${_f})
+            set(_win_have_inputs OFF)
+            set(_win_missing ${_f})
+        endif()
+    endforeach()
+    if(_win_have_inputs)
+        set(_win_core_default ON)
+    elseif(EXISTS ${_win_pregen} AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets/windows/ck3_offsets_win.h)
+        set(_win_core_default ON)
+        message(STATUS "ck3 Windows bridge core: the generated offset headers (re/offsets/windows/)")
+    else()
+        set(_win_core_default OFF)
+        message(STATUS "ck3 Windows bridge core: OFF by default, ${_win_missing} is not in this tree "
+                       "and no generated offset headers either (version.dll is the P4 identity gate only)")
+    endif()
+    option(CK3_WIN_BRIDGE_CORE "Build the bridge core into version.dll (ADR 0001 P5)" ${_win_core_default})
+    if(CK3_WIN_BRIDGE_CORE)
+        if(NOT _win_core_default)
+            message(FATAL_ERROR "CK3_WIN_BRIDGE_CORE=ON needs ${_win_missing}, or the generated "
+                                "re/offsets/windows/ck3_offsets.generated.h and ck3_offsets_win.h")
+        endif()
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        set(_reo ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets)
+        set(_wo ${CMAKE_CURRENT_BINARY_DIR}/win_offsets)
+        if(_win_have_inputs)
+            set(_ref ${CMAKE_CURRENT_SOURCE_DIR}/../re/findings/windows)
+            set(_gen ${CMAKE_CURRENT_SOURCE_DIR}/../re/scripts/windows/gen_win_offsets.py)
+            set(_probes ${_ref}/p3_probe_867_pair.json ${_ref}/p3_probe_867_07_09_pair.json)
+            add_custom_command(
+                OUTPUT ${_wo}/ck3_offsets.h ${_wo}/report.json
+                COMMAND ${Python3_EXECUTABLE} -I ${_gen}
+                    --linux ${_reo}/ck3_offsets.h --windows ${_reo}/windows/ck3_offsets_win.h
+                    --probe ${_ref}/p3_probe_867_pair.json --probe ${_ref}/p3_probe_867_07_09_pair.json
+                    --recipes ${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/recipes.inc
+                    --out ${_wo}/ck3_offsets.h --report ${_wo}/report.json
+                DEPENDS ${_gen} ${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/recipes.inc ${CMAKE_CURRENT_SOURCE_DIR}/../re/scripts/windows/layout_probe.py
+                    ${_reo}/ck3_offsets.h ${_reo}/windows/ck3_offsets_win.h ${_probes}
+                COMMENT "Generating the Windows ck3_offsets.h")
+        else()
+            # The export generated it; the build only puts it where the sources
+            # resolve "ck3_offsets.h" first.
+            add_custom_command(
+                OUTPUT ${_wo}/ck3_offsets.h
+                COMMAND ${CMAKE_COMMAND} -E copy ${_win_pregen} ${_wo}/ck3_offsets.h
+                DEPENDS ${_win_pregen}
+                COMMENT "Using the generated Windows ck3_offsets.h")
+        endif()
+        add_custom_target(gen_win_offsets DEPENDS ${_wo}/ck3_offsets.h)
+        add_custom_target(gen_provenance_win ALL
+            COMMAND ${CMAKE_COMMAND} -DOUT=${CMAKE_CURRENT_BINARY_DIR}/build_provenance.h
+                -DSRCDIR=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/gen_provenance.cmake
+            BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/build_provenance.h)
+
+        set(_core_srcs ${CK3_BRIDGE_SOURCES})
+        list(REMOVE_ITEM _core_srcs src/launcher_bypass.cpp)   # execve interposition: the proxy DLL replaces it
+        add_library(ck3_bridge_core_win STATIC ${_core_srcs} src/os/windows/posix/posix_shim.cpp
+            src/os/windows/recipes.cpp)
+        add_dependencies(ck3_bridge_core_win gen_win_offsets gen_provenance_win)
+        target_include_directories(ck3_bridge_core_win BEFORE PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/posix
+            ${_wo}
+            ${CMAKE_CURRENT_BINARY_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${_reo}
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+        target_compile_definitions(ck3_bridge_core_win PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS
+            _CRT_NONSTDC_NO_DEPRECATE)
+        target_link_libraries(ck3_bridge_core_win PUBLIC ck3_os bcrypt)
+        # Zydis from the pinned source archive (the vendored lib64/ is Linux).
+        include(FetchContent)
+        FetchContent_Declare(zycore
+            URL      https://github.com/zyantific/zycore-c/archive/75a36c45ae1ad382b0f4e0ede0af84c11ee69928.tar.gz
+            URL_HASH SHA256=c24ebd402d0ce83cd54f08e68189e68d54e3b5938f65ca972dfdbac89757139b
+            SOURCE_SUBDIR _populate_only)
+        FetchContent_MakeAvailable(zycore)
+        FetchContent_Declare(zydis
+            URL      https://github.com/zyantific/zydis/archive/9bfadd6a55fc92dbd37fa3ba089bf8b36622df4f.tar.gz
+            URL_HASH SHA256=2c168a83fc9f67c5abec287fde50d2b016757f159db8bf46aac138126d504edc)
+        set(ZYAN_ZYCORE_PATH "${zycore_SOURCE_DIR}" CACHE PATH "" FORCE)
+        set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+        set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(ZYDIS_BUILD_DOXYGEN OFF CACHE BOOL "" FORCE)
+        set(ZYAN_FORCE_ASSERTS OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(zydis)
+        target_link_libraries(ck3_bridge_core_win PUBLIC Zydis)
+        target_link_libraries(ck3_bridge_win PRIVATE ck3_bridge_core_win)
+        # A PDB for version.dll (the recovered-fault log names RIPs as dll+RVA;
+        # llvm-symbolizer turns them into functions). CodeView on these two targets
+        # only: the identity tests keep their own (no-debug) builds.
+        target_compile_options(ck3_bridge_core_win PRIVATE /Z7)
+        target_compile_options(ck3_bridge_win PRIVATE /Z7)
+        target_link_options(ck3_bridge_win PRIVATE /DEBUG)
+        if(BUILD_BRIDGE_TESTS)
+            # The shim's fault recovery in the bridge's inline-query shape.
+            add_executable(test_os_win_posix_recovery src/os/test/test_os_win_posix_recovery.cpp
+                src/os/windows/posix/posix_shim.cpp)
+            target_include_directories(test_os_win_posix_recovery BEFORE PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/posix ${CMAKE_CURRENT_SOURCE_DIR}/include)
+            target_compile_definitions(test_os_win_posix_recovery PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+            target_link_libraries(test_os_win_posix_recovery PRIVATE ck3_os)
+            add_test(NAME test_os_win_posix_recovery COMMAND test_os_win_posix_recovery)
+        endif()
+        target_compile_definitions(ck3_bridge_win PRIVATE CK3_WIN_BRIDGE_CORE=1)
+    endif()
+else()
+    add_library(ck3_os STATIC ${CK3_OS_PORTABLE} src/os/${CK3_PLATFORM}/stubs.cpp)
+    set_target_properties(ck3_os PROPERTIES CXX_EXTENSIONS OFF)
+endif()
+target_include_directories(ck3_os PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(ck3_os PRIVATE ${CK3_OS_WARNINGS})
+
+if(BUILD_BRIDGE_TESTS)
+    enable_testing()
+    foreach(_t ${CK3_OS_PORTABLE_TESTS})
+        add_executable(test_os_${_t} src/os/test/test_os_${_t}.cpp ${CK3_OS_PORTABLE})
+        target_include_directories(test_os_${_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        set_target_properties(test_os_${_t} PROPERTIES CXX_EXTENSIONS OFF)
+        target_compile_options(test_os_${_t} PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_${_t} COMMAND test_os_${_t})
+    endforeach()
+    if(CK3_PLATFORM STREQUAL "linux")
+        find_package(Threads REQUIRED)
+        add_executable(test_os_linux_adapters
+            src/os/test/test_os_linux_adapters.cpp
+            src/instance_paths.cpp
+            src/build_id_witness.cpp
+        )
+        target_link_libraries(test_os_linux_adapters PRIVATE ck3_os Threads::Threads ${CMAKE_DL_LIBS})
+        target_compile_definitions(test_os_linux_adapters PRIVATE
+            CK3_BRIDGE_VERSION_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/bridge.version")
+        target_compile_options(test_os_linux_adapters PRIVATE -O2 ${CK3_OS_WARNINGS})
+        # ck3 is PIE; the image-base checks need a PIE main executable too.
+        target_link_options(test_os_linux_adapters PRIVATE -pie)
+        add_test(NAME test_os_linux_adapters COMMAND test_os_linux_adapters)
+
+        # The Windows path rules and instance_paths.cpp must refuse the same
+        # ids. Linux-only (it forks to set the environment per case).
+        add_executable(test_os_win_paths_pin
+            src/os/test/test_os_win_paths_pin.cpp
+            src/os/win_paths.cpp
+            src/instance_paths.cpp
+        )
+        target_include_directories(test_os_win_paths_pin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(test_os_win_paths_pin PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+        target_compile_definitions(test_os_win_paths_pin PRIVATE _GNU_SOURCE)
+        target_compile_options(test_os_win_paths_pin PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_win_paths_pin COMMAND test_os_win_paths_pin)
+
+        foreach(_p windows macos)
+            add_executable(test_os_stubs_${_p}
+                src/os/test/test_os_stubs.cpp
+                src/os/os_common.cpp
+                src/os/${_p}/stubs.cpp
+            )
+            target_include_directories(test_os_stubs_${_p} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+            target_compile_definitions(test_os_stubs_${_p} PRIVATE CK3_OS_EXPECT_PLATFORM="${_p}")
+            set_target_properties(test_os_stubs_${_p} PROPERTIES CXX_EXTENSIONS OFF)
+            target_compile_options(test_os_stubs_${_p} PRIVATE -pedantic-errors -Werror ${CK3_OS_WARNINGS})
+            add_test(NAME test_os_stubs_${_p} COMMAND test_os_stubs_${_p})
+        endforeach()
+        target_compile_definitions(test_os_stubs_windows PRIVATE ${CK3_WIN_CELL_DEFS})
+    else()
+        add_executable(test_os_stubs src/os/test/test_os_stubs.cpp)
+        target_link_libraries(test_os_stubs PRIVATE ck3_os)
+        target_compile_definitions(test_os_stubs PRIVATE CK3_OS_EXPECT_PLATFORM="${CK3_PLATFORM}")
+        if(CK3_PLATFORM STREQUAL "windows")
+            target_compile_definitions(test_os_stubs PRIVATE ${CK3_WIN_CELL_DEFS})
+        endif()
+        set_target_properties(test_os_stubs PROPERTIES CXX_EXTENSIONS OFF)
+        target_compile_options(test_os_stubs PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_stubs COMMAND test_os_stubs)
+    endif()
+    if(CK3_PLATFORM STREQUAL "windows")
+        foreach(_c ${CK3_WIN_CELLS})
+            add_executable(test_os_win_${_c} src/os/test/test_os_win_${_c}.cpp)
+            target_link_libraries(test_os_win_${_c} PRIVATE ck3_os)
+            target_compile_definitions(test_os_win_${_c} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+            set_target_properties(test_os_win_${_c} PROPERTIES CXX_EXTENSIONS OFF)
+            target_compile_options(test_os_win_${_c} PRIVATE ${CK3_OS_WARNINGS})
+            add_test(NAME test_os_win_${_c} COMMAND test_os_win_${_c})
+        endforeach()
+        # identity: the witnesses (dbghelp, ole32, CNG, psapi); built once with
+        # an RSDS record (/DEBUG) and once without, so both keys are exercised.
+        target_link_libraries(test_os_win_identity PRIVATE dbghelp ole32 bcrypt psapi)
+        target_link_options(test_os_win_identity PRIVATE /DEBUG)
+        add_executable(test_os_win_identity_nodebug src/os/test/test_os_win_identity.cpp)
+        target_link_libraries(test_os_win_identity_nodebug PRIVATE ck3_os dbghelp ole32 bcrypt psapi)
+        target_compile_definitions(test_os_win_identity_nodebug PRIVATE
+            CK3_EXPECT_NO_RSDS WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+        target_compile_options(test_os_win_identity_nodebug PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_win_identity_nodebug COMMAND test_os_win_identity_nodebug)
+
+        # P4: the identity gate on synthetic identities (pure).
+        add_executable(test_os_win_identity_gate src/os/test/test_os_win_identity_gate.cpp)
+        target_link_libraries(test_os_win_identity_gate PRIVATE ck3_os)
+        set_target_properties(test_os_win_identity_gate PROPERTIES CXX_EXTENSIONS OFF)
+        target_compile_options(test_os_win_identity_gate PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_win_identity_gate COMMAND test_os_win_identity_gate)
+
+        # P4: the built DLL, loaded by two hosts from one source, each beside
+        # its own copy named version.dll: a plain exe (inert) and an exe named
+        # ck3.exe that is not the pinned build (REFUSED).
+        foreach(_h load host)
+            add_executable(test_os_win_proxy_${_h} src/os/test/test_os_win_proxy_load.cpp)
+            target_compile_definitions(test_os_win_proxy_${_h} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+            set_target_properties(test_os_win_proxy_${_h} PROPERTIES CXX_EXTENSIONS OFF)
+            target_compile_options(test_os_win_proxy_${_h} PRIVATE ${CK3_OS_WARNINGS})
+            add_dependencies(test_os_win_proxy_${_h} ck3_bridge_win)
+        endforeach()
+        # test_os_win_proxy_load sits beside the built version.dll itself. The
+        # ck3.exe host gets a copy that is re-taken whenever the DLL relinks
+        # (a POST_BUILD copy on the test exe would go stale: the exe does not
+        # relink when only the DLL changes, and the test would grade the old DLL).
+        set(_ph ${CMAKE_CURRENT_BINARY_DIR}/proxyhost)
+        set_target_properties(test_os_win_proxy_host PROPERTIES OUTPUT_NAME ck3 RUNTIME_OUTPUT_DIRECTORY ${_ph})
+        add_custom_command(OUTPUT ${_ph}/version.dll
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${_ph}
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:ck3_bridge_win> ${_ph}/version.dll
+            DEPENDS ck3_bridge_win $<TARGET_FILE:ck3_bridge_win>
+            COMMENT "proxyhost/version.dll <- the built ck3_bridge_win")
+        add_custom_target(test_os_win_proxy_host_dll ALL DEPENDS ${_ph}/version.dll)
+        add_dependencies(test_os_win_proxy_host test_os_win_proxy_host_dll)
+        add_test(NAME test_os_win_proxy_load COMMAND test_os_win_proxy_load inert)
+        add_test(NAME test_os_win_proxy_refused COMMAND test_os_win_proxy_host refused)
+        # Wine resolves a DLL named version.dll to its builtin unless told
+        # native-first, exactly as the Proton recipe does. Harmless on Windows.
+        set_tests_properties(test_os_win_proxy_load test_os_win_proxy_refused PROPERTIES
+            ENVIRONMENT "WINEDLLOVERRIDES=version=n,b")
+        # The export table of the built DLL == the list (another reader: the
+        # generator's own PE parser), both directions.
+        find_package(Python3 COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME test_os_win_proxy_exports
+                COMMAND ${Python3_EXECUTABLE} -I
+                    ${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/gen_exports.py --check
+                    $<TARGET_FILE:ck3_bridge_win> ${CK3_PROXY_LISTS})
+        endif()
+    endif()
+endif()
+
+if(NOT CK3_PLATFORM STREQUAL "linux")
+    return()   # windows/macos: the platform layer is all there is to build
+endif()
+# ═════════════════════════════════════════════════════════════════════════════
+# PLATFORM LAYER — END
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Build as shared library (.so) for LD_PRELOAD injection
+add_library(ck3_bridge SHARED ${CK3_BRIDGE_SOURCES})
 
 # Build provenance — regenerated every build (git SHA, dirty state, offsets MD5,
 # build time) so a deployed .so can always be matched to its source commit.
@@ -1166,6 +1376,28 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_debug_verbs_negative_control PRIVATE Threads::Threads)
     target_compile_options(test_debug_verbs_negative_control PRIVATE -O2 -Wall -Wextra)
 
+    # lane-namekey: a name-cache MISS is answered as PENDING (`name_key` +
+    # `name_pending: true`, no `name`), never with the localization key
+    # presented as the name. Same sources as test_release_handler (the REAL
+    # dispatch_router.cpp) plus the REAL name_tables.cpp: the engine resolver
+    # is the documented test seam set_character_name_resolver(). The negative
+    # control builds dispatch_router.cpp with CK3_NAME_LEGACY_KEY_FALLBACK (the
+    # pre-fix reader) and MUST fail on the first-read assertions.
+    set(NAME_PENDING_SOURCES ${RELEASE_HANDLER_SOURCES})
+    list(REMOVE_ITEM NAME_PENDING_SOURCES test/test_release_handler.cpp)
+    list(APPEND NAME_PENDING_SOURCES test/name_pending_probe.cpp src/name_tables.cpp)
+    add_executable(name_pending_probe ${NAME_PENDING_SOURCES})
+    target_include_directories(name_pending_probe PRIVATE ${RELEASE_HANDLER_INCLUDES})
+    target_link_libraries(name_pending_probe PRIVATE Threads::Threads)
+    target_compile_options(name_pending_probe PRIVATE -O2 -Wall -Wextra)
+    add_executable(name_pending_probe_negative_control ${NAME_PENDING_SOURCES})
+    target_include_directories(name_pending_probe_negative_control PRIVATE
+        ${RELEASE_HANDLER_INCLUDES})
+    target_compile_definitions(name_pending_probe_negative_control PRIVATE
+        CK3_NAME_LEGACY_KEY_FALLBACK=1)
+    target_link_libraries(name_pending_probe_negative_control PRIVATE Threads::Threads)
+    target_compile_options(name_pending_probe_negative_control PRIVATE -O2 -Wall -Wextra)
+
     # rc2 B1 + B9: the REAL ipc_server.cpp on a real socket — the peer-uid
     # check is wired at accept(), the reader caps line length and nesting.
     # Inherits ck3_bridge's compile definitions, so it parses with the
@@ -1578,13 +1810,17 @@ endif()
                test_game_date test_war_history test_clock_rate
                test_flush_scheduler test_pipeline
                test_debug_verbs test_ipc_wiring test_handoff_player
-               add_claim_probe)
+               add_claim_probe name_pending_probe)
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
     # rc2 B2: the ON build must fail the same assertions.
     add_test(NAME test_debug_verbs_negative_control
              COMMAND test_debug_verbs_negative_control)
     set_tests_properties(test_debug_verbs_negative_control PROPERTIES WILL_FAIL TRUE)
+    # lane-namekey: the pre-fix reader must fail the same probe.
+    add_test(NAME name_pending_probe_negative_control
+             COMMAND name_pending_probe_negative_control)
+    set_tests_properties(name_pending_probe_negative_control PROPERTIES WILL_FAIL TRUE)
     # rc2 B1/B2 source censuses (python, no build products). Each has a
     # selftest (known-bad text MUST be flagged) and the B2 ones a control that
     # reads the tree as a debug build and MUST fail.

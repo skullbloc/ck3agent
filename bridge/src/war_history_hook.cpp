@@ -168,7 +168,7 @@ static void on_war_end(void* war_manager, void* war, int outcome, unsigned int n
 }
 
 void init_war_history_hook() {
-    uintptr_t target = g_base_addr + ck3::funcs::WAR_END_CORE;
+    uintptr_t target = bridge::game_fn(ck3::funcs::WAR_END_CORE);
     g_orig_war_end = install_hook(target, reinterpret_cast<void*>(on_war_end));
     if (g_orig_war_end) {
         ADLOG("war_history_hook: installed at 0x%lx (trampoline=%p)\n",

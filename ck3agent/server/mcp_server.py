@@ -2332,6 +2332,11 @@ async def _discover_targets(state, action: str, actor_id: int,
         for entry in items[:cap]:
             tid = entry.get(pool["id_key"])
             out = {"target_id": tid, "name": entry.get(pool.get("name_key", "name"))}
+            # lane-namekey: a row the bridge has not localized carries no name
+            # but `name_key` + `name_pending`; pass the state on, never the key as a name.
+            if entry.get("name_pending") and not out["name"]:
+                out["name_pending"] = True
+                out["name_key"] = entry.get("name_key")
             if annotate and tid:
                 ann_params = dict(annotate["params_keys"])
                 ann_params[annotate["target_key"]] = tid

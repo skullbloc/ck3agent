@@ -773,7 +773,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
     // On success: "Took decision. ai_will_do was %i" + enqueues CExecuteDecisionCommand
     // On failure: "Does not fulfill ai_potential" / "cannot afford" / "cannot take" / etc.
     auto ai_try_decision = reinterpret_cast<void*(*)(void*, void*, void*)>(
-        g_base_addr + ck3::funcs::AI_TRY_DECISION_CORE);
+        bridge::game_fn(ck3::funcs::AI_TRY_DECISION_CORE));
 
     // Use aligned buffer for std::string (24 bytes SSO + padding)
     // Must call destructor to prevent memory leak from heap-allocated strings
@@ -916,7 +916,7 @@ bool do_set_lifestyle_focus(const char* params_json, std::string* response_out) 
     // and we longjmp out WITHOUT restoring it, the manager is left pointing at our
     // fake scope and the game thread wedges (tick stops). So arm BEFORE the
     // sigsetjmp and restore on BOTH paths (normal + crash). (ck-49 harden, 20260614)
-    auto set_focus = reinterpret_cast<void(*)(void*, void*)>(g_base_addr + ck3::funcs::SET_FOCUS_APPLY);
+    auto set_focus = reinterpret_cast<void(*)(void*, void*)>(bridge::game_fn(ck3::funcs::SET_FOCUS_APPLY));
     uint64_t saved_rng = 0;
     // ck-zgh4 scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
@@ -1085,7 +1085,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     }
 
     auto build_scope = reinterpret_cast<void*(*)(void*)>(
-        g_base_addr + ck3::funcs::BUILD_TARGET_SCOPE);
+        bridge::game_fn(ck3::funcs::BUILD_TARGET_SCOPE));
 
     uintptr_t postype_ref = safe_read<uintptr_t>(tasktype + TASKTYPE_POSREF);
 
@@ -1282,11 +1282,11 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     // Command field buffer (no vtable needed): +0x20 pos id, +0x28 tasktype,
     //   +0x30.. scope-prep(buf, ctxB, ctxA, target_scope).
     auto scope_prep = reinterpret_cast<void(*)(void*, uint32_t, uint32_t, void*)>(
-        g_base_addr + ck3::funcs::COUNCIL_TASK_SCOPE_PREP);
+        bridge::game_fn(ck3::funcs::COUNCIL_TASK_SCOPE_PREP));
     auto cmd_validate = reinterpret_cast<char(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::COUNCIL_TASK_CMD_EXECUTE);
+        bridge::game_fn(ck3::funcs::COUNCIL_TASK_CMD_EXECUTE));
     auto task_store = reinterpret_cast<void(*)(void*, uint32_t, void*, void*)>(
-        g_base_addr + ck3::funcs::COUNCIL_TASK_STORE);
+        bridge::game_fn(ck3::funcs::COUNCIL_TASK_STORE));
 
     uint32_t ctx_a = safe_read<uint32_t>(position + ck3::funcs::COUNCIL_POS_CTX_A);  // councillor char id
     uint32_t ctx_b = safe_read<uint32_t>(position + ck3::funcs::COUNCIL_POS_CTX_B);  // ruler char id
@@ -1699,16 +1699,16 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     };
 
     auto build_scope = reinterpret_cast<void*(*)(void*)>(
-        g_base_addr + ck3::funcs::BUILD_TARGET_SCOPE);
+        bridge::game_fn(ck3::funcs::BUILD_TARGET_SCOPE));
     auto scope_prep = reinterpret_cast<void(*)(void*, uint32_t, uint32_t, void*)>(
-        g_base_addr + ck3::funcs::COUNCIL_TASK_SCOPE_PREP);
+        bridge::game_fn(ck3::funcs::COUNCIL_TASK_SCOPE_PREP));
     auto validate = reinterpret_cast<char(*)(void*, void*, long)>(
-        g_base_addr + ck3::funcs::COUNCIL_TASK_TARGET_VALIDATE);
+        bridge::game_fn(ck3::funcs::COUNCIL_TASK_TARGET_VALIDATE));
     // Full CanAssign (target oracle + councillor-side requirement check) — run only
     // on the ≤max_results oracle hits to annotate which are TRULY assignable (i.e.
     // set_council_task would apply + stick), not just target-eligible.
     auto cmd_validate = reinterpret_cast<char(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::COUNCIL_TASK_CMD_EXECUTE);
+        bridge::game_fn(ck3::funcs::COUNCIL_TASK_CMD_EXECUTE));
 
     // Title DB iteration bounds (county = tier 2).
     uintptr_t tdb = safe_read_offset<uintptr_t>(ck3::globals::TITLE_DB);
@@ -1779,14 +1779,8 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
             Hit h; h.title_id = title_id; h.holder_id = holder & 0xFFFFFF; h.assignable = false;
             // ck-fabtargets (L23): relevance key (0=de-jure-of-actor, 2=other).
             h.relevance = county_relevance(title_id);
-            // Name string lives at title+0x58 (GCC SSO std::string; first 8 bytes
-            // are a char* to the buffer) — same read other title handlers use.
-            uintptr_t name_ptr = safe_read<uintptr_t>(entry + ck3::title_obj::TITLE_DISPLAY_NAME);
-            if (name_ptr && is_mapped(name_ptr)) {
-                char nb[128] = {};
-                for (int k = 0; k < 127; k++) { nb[k] = safe_read<char>(name_ptr + k); if (!nb[k]) break; }
-                if (nb[0]) h.name = nb;
-            }
+            // The title's display name (a game std::string, read through the build's ABI)
+            h.name = ad_read_std_string(entry + ck3::title_obj::TITLE_DISPLAY_NAME);
             // Full CanAssign verdict (target oracle PLUS councillor-side check): build
             // the command field buffer and call the Validate slot. assignable=true ⇒
             // set_council_task(task, target_title_id) would actually apply + stick.
@@ -1849,7 +1843,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     // ck-fabtargets L23: the old title_id-only sort surfaced the lowest-id =
     // far English counties for a King of Italy; relevance pulls Italian counties
     // to the front), then by title_id for stable ordering. Agent reads the front.
-    std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
+    std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
         if (a.assignable != b.assignable) return a.assignable;   // assignable first
         if (a.relevance != b.relevance) return a.relevance < b.relevance;  // de-jure first
         return a.title_id < b.title_id;
@@ -1920,14 +1914,14 @@ namespace {
     // Returns -1 if not found. (entry+0x8 == array index == the command's +0x2c.)
     int resolve_building_index(const std::string& want, uint32_t* out_count) {
         uintptr_t db = safe_read_offset<uintptr_t>(ck3::globals::BUILDING_TYPE_DB);
-        uintptr_t arr = db ? safe_read<uintptr_t>(db + 0x88) : 0;
-        uint32_t count = db ? safe_read<uint32_t>(db + 0x90) : 0;
+        uintptr_t arr = db ? safe_read<uintptr_t>(db + ck3::game_db::ENTRIES_ARRAY) : 0;
+        uint32_t count = db ? safe_read<uint32_t>(db + ck3::game_db::ENTRY_COUNT) : 0;
         if (out_count) *out_count = count;
         if (!arr || !is_mapped(arr) || count == 0 || count > 5000) return -1;
         for (uint32_t i = 0; i < count; i++) {
             uintptr_t e = safe_read<uintptr_t>(arr + static_cast<uintptr_t>(i) * 8);
             if (!e || !is_mapped(e)) continue;
-            if (ad_read_std_string(e + 0x10) == want) {
+            if (ad_read_std_string(e + ck3::db_object::NAME_KEY) == want) {
                 uint32_t idx = safe_read<uint32_t>(e + 8);  // == i, the command's +0x2c
                 return static_cast<int>(idx);
             }
@@ -1984,7 +1978,7 @@ bool do_construction_check(const char* params_json, std::string* response_out) {
     fill_construction_cmd(cmd, actor_id, loc_id, slot, static_cast<uint32_t>(bt_index));
 
     auto validity = reinterpret_cast<uint8_t(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::ADD_CONSTRUCTION_VALIDITY);
+        bridge::game_fn(ck3::funcs::ADD_CONSTRUCTION_VALIDITY));
     bool valid = false;
     // ck-zgh4 scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
@@ -2071,10 +2065,10 @@ bool do_add_construction(const char* params_json, std::string* response_out) {
 
     // Function pointers (see ck3_offsets.h funcs: construction + dispatch).
     auto ctor = reinterpret_cast<void(*)(void*, uint32_t, uint32_t, uint32_t, void*)>(
-        g_base_addr + ck3::funcs::ADD_CONSTRUCTION_CTOR);
+        bridge::game_fn(ck3::funcs::ADD_CONSTRUCTION_CTOR));
     auto dispatch = reinterpret_cast<void(*)(void*, void*, int, int)>(
-        g_base_addr + ck3::funcs::GAME_COMMAND_DISPATCH);
-    auto base_dtor = reinterpret_cast<void(*)(void*)>(g_base_addr + 0x0755b650);  // FUN_0765b650
+        bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH));
+    auto base_dtor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));  // FUN_0765b650
 
     // bt_ref: ctor reads cmd+0x2c = *(bt_ref+8). {pad8; u32 building_index @ +8}.
     uint8_t bt_ref[16]; memset(bt_ref, 0, sizeof(bt_ref));
@@ -2138,13 +2132,13 @@ bool do_add_construction(const char* params_json, std::string* response_out) {
 // just the index). Returns 0 if not found.
 static uintptr_t resolve_building_obj(const std::string& want) {
     uintptr_t db = safe_read_offset<uintptr_t>(ck3::globals::BUILDING_TYPE_DB);
-    uintptr_t arr = db ? safe_read<uintptr_t>(db + 0x88) : 0;
-    uint32_t count = db ? safe_read<uint32_t>(db + 0x90) : 0;
+    uintptr_t arr = db ? safe_read<uintptr_t>(db + ck3::game_db::ENTRIES_ARRAY) : 0;
+    uint32_t count = db ? safe_read<uint32_t>(db + ck3::game_db::ENTRY_COUNT) : 0;
     if (!arr || !is_mapped(arr) || count == 0 || count > 5000) return 0;
     for (uint32_t i = 0; i < count; i++) {
         uintptr_t e = safe_read<uintptr_t>(arr + static_cast<uintptr_t>(i) * 8);
         if (!e || !is_mapped(e)) continue;
-        if (ad_read_std_string(e + 0x10) == want) return e;
+        if (ad_read_std_string(e + ck3::db_object::NAME_KEY) == want) return e;
     }
     return 0;
 }
@@ -2195,22 +2189,22 @@ bool do_construct_building(const char* params_json, std::string* response_out) {
           want.c_str(), (unsigned long)building, loc_id, actor);
 
     auto precheck = reinterpret_cast<bool(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::CONSTRUCTION_PRECHECK);
+        bridge::game_fn(ck3::funcs::CONSTRUCTION_PRECHECK));
     // category-specific starters (CAddBuildingEffect apply routing)
     auto start_special = reinterpret_cast<void(*)(void*, void*, int)>(
-        g_base_addr + ck3::funcs::CONSTRUCTION_START);            // cat 2
+        bridge::game_fn(ck3::funcs::CONSTRUCTION_START));            // cat 2
     auto start_duchy   = reinterpret_cast<void(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::CONSTRUCTION_START_DUCHY);      // cat 1
+        bridge::game_fn(ck3::funcs::CONSTRUCTION_START_DUCHY));      // cat 1
     auto find_slot     = reinterpret_cast<int(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::CONSTRUCTION_FIND_SLOT);        // cat 0
+        bridge::game_fn(ck3::funcs::CONSTRUCTION_FIND_SLOT));        // cat 0
     auto find_slot_fb  = reinterpret_cast<int(*)(void*)>(
-        g_base_addr + ck3::funcs::CONSTRUCTION_FIND_SLOT_FB);
+        bridge::game_fn(ck3::funcs::CONSTRUCTION_FIND_SLOT_FB));
     auto finalize_pend = reinterpret_cast<void(*)(void*)>(
-        g_base_addr + ck3::funcs::CONSTRUCTION_FINALIZE_PEND);
+        bridge::game_fn(ck3::funcs::CONSTRUCTION_FINALIZE_PEND));
     auto start_normal  = reinterpret_cast<void(*)(void*, void*, int, uint32_t)>(
-        g_base_addr + ck3::funcs::CONSTRUCTION_START_NORMAL);
+        bridge::game_fn(ck3::funcs::CONSTRUCTION_START_NORMAL));
     auto advance       = reinterpret_cast<void(*)(void*, int)>(
-        g_base_addr + ck3::funcs::CONSTRUCTION_ADVANCE);
+        bridge::game_fn(ck3::funcs::CONSTRUCTION_ADVANCE));
 
     // Resolve the province directly: LANDED_TITLE_DB[loc_id] (barony title obj) →
     // PROVINCE_PTR (+0x490). loc_id is the masked barony title id; the scope
@@ -3519,7 +3513,7 @@ bool do_select_observe_default(const char* params_json, std::string* response_ou
 // AI Subsystem Toggle
 // =============================================================================
 
-bool do_toggle_ai_subsystem(const char* params_json) {
+bool do_toggle_ai_subsystem(const char* params_json, std::string* out) {
     const char* subsystem = json_get_string(params_json, "subsystem");
     if (!subsystem) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] toggle_ai_subsystem: missing subsystem name\n");
@@ -3530,10 +3524,23 @@ bool do_toggle_ai_subsystem(const char* params_json) {
 
     for (size_t i = 0; i < g_subsystem_toggle_count; i++) {
         if (strcmp(g_subsystem_toggles[i].name, subsystem) == 0) {
-            auto* flag = reinterpret_cast<uint8_t*>(g_base_addr + g_subsystem_toggles[i].offset);
+            auto* flag = reinterpret_cast<volatile uint8_t*>(g_base_addr + g_subsystem_toggles[i].offset);
             *flag = enabled ? 1 : 0;
-            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] AI subsystem '%s' %s\n",
-                    subsystem, enabled ? "enabled" : "disabled");
+            // The byte as read back after the store: a witness beside the request
+            // (ADR 0001 P6 checks the write landed on each build's address).
+            const int after = *flag;
+            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] AI subsystem '%s' %s (byte now %d)\n",
+                    subsystem, enabled ? "enabled" : "disabled", after);
+            if (out) {
+                ResponseBuilder r; r.begin_object();
+                r.key("success"); r.value_bool(true);
+                r.key("action"); r.value_string("toggle_ai_subsystem");
+                r.key("subsystem"); r.value_string(g_subsystem_toggles[i].name);
+                r.key("enabled"); r.value_bool(enabled);
+                r.key("byte_after"); r.value_int(after);
+                r.end_object();
+                *out = r.take();
+            }
             return true;
         }
     }
@@ -3774,9 +3781,9 @@ static bool reject_forced_uncosted_high_stakes_law(const char* law_name, const c
 static size_t law_read_std_string(uintptr_t str_addr, char* out, size_t out_size) {
     if (!out || out_size == 0) return 0;
     out[0] = '\0';
-    uintptr_t data = safe_read<uintptr_t>(str_addr + 0x0);
-    uint64_t  len  = safe_read<uint64_t>(str_addr + 0x8);
-    if (len == 0 || len > 256) return 0;
+    uintptr_t data = 0;
+    uint64_t  len  = 0;   // game_string_view: the string ABI of the game's build
+    if (!game_string_view(str_addr, &data, &len) || len > 256) return 0;
     if (!data || !is_mapped(data)) return 0;
     size_t n = (len < out_size - 1) ? (size_t)len : out_size - 1;
     for (size_t i = 0; i < n; i++) {
@@ -3925,7 +3932,7 @@ static void diagnose_law_refusal(void* actor, uintptr_t law_obj, uintptr_t char_
     //    legacy CHARACTER_HAS_LAW offset (which lands mid-function).
     {
         auto has_law = reinterpret_cast<char(*)(void*, void*)>(
-            g_base_addr + ck3::funcs::CHARACTER_HAS_LAW_ENTRY);
+            bridge::game_fn(ck3::funcs::CHARACTER_HAS_LAW_ENTRY));
         if (is_mapped(reinterpret_cast<uintptr_t>(has_law))) {
             volatile char active = 0;
             watchdog_arm(2);
@@ -4002,10 +4009,10 @@ static bool dispatch_costed_law_command(void* actor, uintptr_t law_obj,
     if (out_eligible) *out_eligible = true;
     uint32_t actor_id = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(actor) + 0x18);  // FULL engine id
 
-    auto ctor = reinterpret_cast<void(*)(void*)>(g_base_addr + ck3::funcs::ADD_LAW_COMMAND_CTOR);
+    auto ctor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::ADD_LAW_COMMAND_CTOR));
     auto dispatch = reinterpret_cast<void(*)(void*, void*, int, int)>(
-        g_base_addr + ck3::funcs::GAME_COMMAND_DISPATCH);
-    auto base_dtor = reinterpret_cast<void(*)(void*)>(g_base_addr + 0x0755b650);  // FUN_0765b650
+        bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH));
+    auto base_dtor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));  // FUN_0765b650
 
     uint8_t cmd[0x48]; memset(cmd, 0, sizeof(cmd));
     void* out_a = nullptr;
@@ -4366,7 +4373,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
     // ── Legacy UNCOSTED setter path (non-high-stakes laws, or force_uncosted) ────
     // Use AddLawToCharacter: fn(char, law, mode, extra)
     using fn_add_law = void(*)(void*, void*, int, int);
-    auto add_law = reinterpret_cast<fn_add_law>(g_base_addr + ck3::funcs::ADD_REALM_LAW);
+    auto add_law = reinterpret_cast<fn_add_law>(bridge::game_fn(ck3::funcs::ADD_REALM_LAW));
 
     // AddLawToCharacter with mode=7 fires the law-pass EFFECT/EVENT, which advances
     // RNG via random_in_scope → the RandomScopeManager null-deref crash (same as
@@ -4455,7 +4462,7 @@ static bool character_has_raised_armies(uint32_t actor_char_id,
 
     using fn_army_enum = uintptr_t(*)(uintptr_t);
     auto army_enum = reinterpret_cast<fn_army_enum>(
-        g_base_addr + ck3::funcs::ARMY_ENUM_SUB);
+        bridge::game_fn(ck3::funcs::ARMY_ENUM_SUB));
     uintptr_t gs = safe_read_offset<uintptr_t>(ck3::globals::ARMY_ENUM_ENTRY);
     if (!gs) {
         if (out_owned_armies) *out_owned_armies = 0;
@@ -7056,9 +7063,9 @@ bool do_move_capital(const char* params_json, std::string* response_out) {
     void* county = reinterpret_cast<void*>(county_addr);
 
     auto validate = reinterpret_cast<bool(*)(void*, void*, int, long)>(
-        g_base_addr + ck3::funcs::CAPITAL_VALIDATE_APPLY);
+        bridge::game_fn(ck3::funcs::CAPITAL_VALIDATE_APPLY));
     auto relocate = reinterpret_cast<unsigned long(*)(void*, void*, long)>(
-        g_base_addr + ck3::funcs::CAPITAL_RELOCATE);
+        bridge::game_fn(ck3::funcs::CAPITAL_RELOCATE));
 
     bool valid = false, relocated = false;
     uint64_t saved_rng = 0;
@@ -7367,7 +7374,7 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
         }
 
         auto assign = reinterpret_cast<void(*)(void*, uint32_t, uint32_t, char, char)>(
-            g_base_addr + ck3::funcs::COUNCIL_SEAT_ASSIGN);
+            bridge::game_fn(ck3::funcs::COUNCIL_SEAT_ASSIGN));
 
         // ck-zgh4 scope latch: a restore was refused earlier in this
         // process, so the slot cannot be reasoned about. REFUSE — do not
@@ -7421,7 +7428,7 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
 
     // ── OCCUPIED/replace branch (swap-leaf path, unchanged) ──
     auto swap_leaf = reinterpret_cast<void(*)(void*, void*, uint32_t, uint32_t)>(
-        g_base_addr + ck3::funcs::SWAP_COUNCIL_RAW_LEAF);
+        bridge::game_fn(ck3::funcs::SWAP_COUNCIL_RAW_LEAF));
 
     // ck-zgh4 scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
@@ -7501,7 +7508,7 @@ static uintptr_t resolve_maa_type_obj(const std::string& want) {
     for (uint32_t i = 0; i < cnt; ++i) {
         uintptr_t e = safe_read<uintptr_t>(arr + static_cast<uintptr_t>(i) * 8);
         if (!e || !is_mapped(e)) continue;
-        if (ad_read_std_string(e + 0x10) == want) return e;
+        if (ad_read_std_string(e + ck3::db_object::NAME_KEY) == want) return e;
     }
     return 0;
 }
@@ -7584,11 +7591,11 @@ bool do_maa_recruit(const char* params_json, std::string* response_out) {
     //   ctor(cmd, actor_id, char_id, maa_type_obj, origin=0xFFFFFFFF, flag=1)
     //   Execute(cmd)  [PRIMARY this]   base_dtor(cmd)
     auto ctor = reinterpret_cast<void(*)(void*, uint32_t, uint32_t, void*, uint32_t, uint8_t)>(
-        g_base_addr + ck3::funcs::CREATE_MAA_CMD_CTOR);
+        bridge::game_fn(ck3::funcs::CREATE_MAA_CMD_CTOR));
     auto execute = reinterpret_cast<void(*)(void*)>(
-        g_base_addr + ck3::funcs::CREATE_MAA_CMD_EXECUTE);
+        bridge::game_fn(ck3::funcs::CREATE_MAA_CMD_EXECUTE));
     auto base_dtor = reinterpret_cast<void(*)(void*)>(
-        g_base_addr + ck3::funcs::CREATE_MAA_CMD_BASE_DTOR);
+        bridge::game_fn(ck3::funcs::CREATE_MAA_CMD_BASE_DTOR));
 
     uint8_t cmd[0x40]; memset(cmd, 0, sizeof(cmd));   // struct >=0x38; 0x40 buffer is safe
 
@@ -7748,9 +7755,9 @@ static bool maa_origin_dispatch(const char* params_json, std::string* response_o
     // (province ptr) by FUN_0635ba00; unstation sets it to the province sentinel.
     // Callee tree is bounded (array index + field setters, no loops/mutex/RNG-wedge) → safe.
     auto station_leaf = reinterpret_cast<void(*)(void*)>(
-        g_base_addr + ck3::funcs::MAA_STATION_APPLY_LEAF);
+        bridge::game_fn(ck3::funcs::MAA_STATION_APPLY_LEAF));
     auto unstation_leaf = reinterpret_cast<void(*)(void*)>(
-        g_base_addr + ck3::funcs::MAA_UNSTATION_APPLY_LEAF);
+        bridge::game_fn(ck3::funcs::MAA_UNSTATION_APPLY_LEAF));
 
     uint8_t cmd[0x40]; memset(cmd, 0, sizeof(cmd));
     *reinterpret_cast<uint32_t*>(cmd + 0x20) = regiment_id;
@@ -7866,7 +7873,7 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
         g_base_addr + ck3::globals::HIRE_MERC_CMD_CANEXEC);
     auto execute = reinterpret_cast<void(*)(void*)>(
         g_base_addr + ck3::globals::HIRE_MERC_CMD_EXECUTE);
-    auto base_dtor = reinterpret_cast<void(*)(void*)>(g_base_addr + 0x0755b650);
+    auto base_dtor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));
 
     uint8_t cmd[0x40]; memset(cmd, 0, sizeof(cmd));   // struct is 0x30; 0x40 buffer is safe
     uint8_t can = 0;
@@ -8204,7 +8211,7 @@ bool do_set_character_faith(const char* params_json, std::string* response_out) 
     // that null-derefs. Arm the fake RNG scope BEFORE sigsetjmp and restore on
     // BOTH paths so a crash doesn't wedge the game thread.
     auto set_faith = reinterpret_cast<void(*)(void*, unsigned int, char, char)>(
-        g_base_addr + ck3::funcs::SET_FAITH);
+        bridge::game_fn(ck3::funcs::SET_FAITH));
     uint64_t saved_rng = 0;
     // ck-zgh4 scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
@@ -8413,7 +8420,7 @@ bool do_set_character_culture(const char* params_json, std::string* response_out
     // Call SetCultureOnCharacter(char*, culture_obj*, flag=0) under the same
     // RNG-armed watchdog/sigsetjmp guard set_character_faith uses.
     auto set_culture = reinterpret_cast<void(*)(void*, void*, char)>(
-        g_base_addr + ck3::funcs::SET_CULTURE);
+        bridge::game_fn(ck3::funcs::SET_CULTURE));
     uint64_t saved_rng = 0;
     // ck-zgh4 scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not

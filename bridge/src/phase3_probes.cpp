@@ -24,6 +24,7 @@
 #include "bridge.h"
 #include "ck3_offsets.h"
 
+#include <iterator>
 #include <algorithm>
 #include <chrono>
 #include <cstring>

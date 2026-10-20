@@ -17,6 +17,11 @@
 #include <chrono>
 #include <thread>
 
+#ifdef _WIN32
+#include <intrin.h>                    // __readgsqword: the TLS block (P6)
+#include "windows/ck3_offsets_win.h"   // the TLS context and the destructor registration (P6)
+#endif
+
 namespace bridge {
 
 // Global deferred acceptance query slot
@@ -106,7 +111,13 @@ static TlsGuard read_tls_guard(const uint8_t* guard_byte) {
               g_tls_offsets_discovered ? "discovered" : "HARDCODED_FALLBACK");
         return TlsGuard::Unreadable;
     }
+#ifdef _WIN32
+    // MSVC packs the thread_local guards of a block into one dword, one bit each:
+    // this context's is bit 0 (AI_INTERACTION_CORE: test al,1 / or eax,1).
+    return (v & 1) == 0 ? TlsGuard::NeedsConstruct : TlsGuard::Ready;
+#else
     return v == 0 ? TlsGuard::NeedsConstruct : TlsGuard::Ready;
+#endif
 }
 
 // The STORE is guarded too. A readable address is not necessarily writable, and
@@ -117,7 +128,11 @@ static TlsGuard read_tls_guard(const uint8_t* guard_byte) {
 static bool set_tls_guard(uint8_t* guard_byte) {
     g_in_protected_region = true;
     if (sigsetjmp(g_recovery_point, 1) == 0) {
+#ifdef _WIN32
+        *guard_byte |= 1;   // the other bits are other thread_locals' guards
+#else
         *guard_byte = 1;
+#endif
         g_in_protected_region = false;
         return true;
     }
@@ -130,9 +145,9 @@ static bool set_tls_guard(uint8_t* guard_byte) {
 // Runtime-discovered vtable and dispatch manager offsets.
 // Populated by init_runtime_discovery() during first-tick init.
 // Default to hardcoded values; overridden if Zydis discovery succeeds.
-static uintptr_t g_send_cmd_vtable_offset  = 0x0bb73e38;  // CSendCharacterInteractionCommand vtable (from ctor at 0x609b410)
-static uintptr_t g_send_cmd_vtable2_offset = 0x0bb73ee8;  // CGameCommandHelper vtable (from ctor at 0x609b410)
-static uintptr_t g_dispatch_mgr_offset     = 0x0c59dd68;  // COMMAND_DISPATCH_MGR (DAT_0c69dd68 - 0x100000)
+static uintptr_t g_send_cmd_vtable_offset  = ck3::funcs::SEND_INTERACTION_CMD_VTABLE;  // CSendCharacterInteractionCommand vtable (from ctor at 0x609b410)
+static uintptr_t g_send_cmd_vtable2_offset = ck3::funcs::SEND_INTERACTION_CMD_VTABLE2;  // CGameCommandHelper vtable (from ctor at 0x609b410)
+static uintptr_t g_dispatch_mgr_offset     = ck3::globals::COMMAND_DISPATCH_MGR;  // COMMAND_DISPATCH_MGR (DAT_0c69dd68 - 0x100000)
 
 // Address of BUILD_SEND_CMD_FROM_BUF (CSendCharacterInteractionCommand ctor).
 // This function does: base_ctor + overwrite_vtables + deep_copy + compute_hashes.
@@ -159,7 +174,7 @@ static bool discover_tls_offsets() {
     // are in AI_INTERACTION_CORE (FUN_04dc4540), NOT AI_INTERACTION_DECISION (FUN_04dc4b90).
     // AI_INTERACTION_DECISION is the outer wrapper; CORE is the callee that actually
     // accesses the thread-local interaction context.
-    uintptr_t func_addr = g_base_addr + ck3::funcs::AI_INTERACTION_CORE;
+    uintptr_t func_addr = bridge::game_fn(ck3::funcs::AI_INTERACTION_CORE);
     if (!is_mapped(func_addr)) {
         ADLOG("TLS_DISCOVER: AI_INTERACTION_CORE at 0x%lx is not mapped\n", func_addr);
         return false;
@@ -361,17 +376,8 @@ static uint8_t g_patch_rel32[4] = {};
 //
 // IMPORTANT: Unlike the old prologue-hook approach, we call the ORIGINAL
 // GetAiWillDoScore directly (its prologue is intact — we never modified it).
-static int64_t hooked_GetAiWillDoScore(long* param_1) {
-    // Call the original scoring function directly (prologue is untouched)
-    auto orig = reinterpret_cast<int64_t(*)(long*)>(
-        g_base_addr + ck3::funcs::GET_AI_WILL_DO_SCORE);
-    int64_t real_score = 0;
-    try {
-        real_score = orig(param_1);
-    } catch (...) {
-        real_score = 0;
-    }
-
+// The decision, shared by both ABIs' entry points below.
+static int64_t score_with_forced_target(long* param_1, int64_t real_score) {
     uint32_t forced = g_force_target_id.load(std::memory_order_acquire);
     if (forced != 0) {
         uint32_t target_ref = *reinterpret_cast<uint32_t*>(
@@ -388,9 +394,45 @@ static int64_t hooked_GetAiWillDoScore(long* param_1) {
     return real_score;
 }
 
+#ifndef _WIN32
+static int64_t hooked_GetAiWillDoScore(long* param_1) {
+    // Call the original scoring function directly (prologue is untouched)
+    auto orig = reinterpret_cast<int64_t(*)(long*)>(
+        bridge::game_fn(ck3::funcs::GET_AI_WILL_DO_SCORE));
+    int64_t real_score = 0;
+    try {
+        real_score = orig(param_1);
+    } catch (...) {
+        real_score = 0;
+    }
+    return score_with_forced_target(param_1, real_score);
+}
+#else
+// MSVC (ck3_offsets_win.h funcs::GET_AI_WILL_DO_SCORE): a member function that
+// returns the fixed-point score through a hidden pointer, ctx in rcx and the slot
+// in rdx, returning the slot. The call site passes them so; this entry point
+// takes them so, and writes the same decision into the slot.
+static int64_t* hooked_GetAiWillDoScore(long* param_1, int64_t* out) {
+    auto orig = reinterpret_cast<int64_t* (*)(long*, int64_t*)>(
+        bridge::game_fn(ck3::funcs::GET_AI_WILL_DO_SCORE));
+    int64_t real_score = 0;
+    try {
+        orig(param_1, &real_score);
+    } catch (...) {
+        real_score = 0;
+    }
+    *out = score_with_forced_target(param_1, real_score);
+    return out;
+}
+#endif
+
 // Write bytes to an arbitrary address via /proc/self/mem (no mprotect needed).
 // Works on read-only .text pages.
 static bool write_code_bytes(uintptr_t addr, const void* data, size_t len) {
+#ifdef _WIN32
+    // No /proc/self/mem: protect, write, restore and flush (os::write_protected).
+    return write_to_readonly(reinterpret_cast<void*>(addr), data, len);
+#endif
     int fd = open("/proc/self/mem", O_RDWR);
     if (fd < 0) return false;
     ssize_t written = pwrite(fd, data, len, static_cast<off_t>(addr));
@@ -402,8 +444,8 @@ static bool write_code_bytes(uintptr_t addr, const void* data, size_t len) {
 // Scans AI_INTERACTION_CORE for the CALL to GetAiWillDoScore, builds a
 // trampoline near .text, and prepares the arm/disarm patch bytes.
 void install_score_hook() {
-    uintptr_t core_fn = g_base_addr + ck3::funcs::AI_INTERACTION_CORE;
-    uintptr_t score_fn = g_base_addr + ck3::funcs::GET_AI_WILL_DO_SCORE;
+    uintptr_t core_fn = bridge::game_fn(ck3::funcs::AI_INTERACTION_CORE);
+    uintptr_t score_fn = bridge::game_fn(ck3::funcs::GET_AI_WILL_DO_SCORE);
 
     if (!is_mapped(core_fn)) {
         ADLOG("SCORE_HOOK: AI_INTERACTION_CORE at 0x%lx not mapped, skipping\n", core_fn);
@@ -519,9 +561,103 @@ static void disarm_score_hook() {
 using fn_tls_construct   = void(*)(void* tls_ctx);
 using fn_tls_destructor  = void(*)(void* tls_ctx);
 
+#ifndef _WIN32
 } // namespace bridge (temporarily close to declare extern "C" at file scope)
 extern "C" int __cxa_thread_atexit(void (*)(void*), void*, void*);
 namespace bridge { // reopen
+#endif
+// The game's TLS-context destructor, registered the way the engine does it.
+// Windows: the CRT's per-thread list, with the engine's own thunk (it re-derives
+// the context from the TLS block and calls the destructor), as AI_INTERACTION_CORE
+// registers it (ck3_offsets_win.h funcs::TLS_REGISTER_DTOR).
+static inline void register_game_tls_dtor(void (*dtor)(void*), void* ctx) {
+#ifndef _WIN32
+    __cxa_thread_atexit(dtor, ctx, nullptr);
+#else
+    (void)dtor; (void)ctx;
+    using fn_register = int (*)(void (*)());
+    reinterpret_cast<fn_register>(g_base_addr + ck3_win::funcs::TLS_REGISTER_DTOR)(
+        reinterpret_cast<void (*)()>(g_base_addr + ck3_win::funcs::INTERACTION_TLS_DTOR_THUNK));
+#endif
+}
+
+#ifdef _WIN32
+// This thread's game interaction context on Windows: ck3.exe's TLS block is slot 0
+// of the TEB's TLS array ([gs:0x58]), the guard and the context at fixed offsets in
+// it (ck3_offsets_win.h struct_layout::INTERACTION_TLS_*). Linux derives both from
+// the FS base. 0 when the block cannot be read.
+static uintptr_t game_tls_block() {
+    const uintptr_t tls_array = __readgsqword(0x58);
+    return tls_array ? safe_read<uintptr_t>(tls_array) : 0;
+}
+#endif
+
+// This thread's game interaction context and its construction guard: Linux at fixed
+// negative offsets from the FS base (init_tls_offsets), Windows in ck3.exe's TLS
+// block. One routine for every caller that drives the context (the trigger query,
+// the direct dispatch). nullptr on success, else the refusal reason.
+static const char* locate_game_tls(uint8_t** guard_byte, void** tls_ctx) {
+#ifdef _WIN32
+    const uintptr_t block = game_tls_block();
+    if (block == 0) return "tls_block_unreadable";
+    *guard_byte = reinterpret_cast<uint8_t*>(block + ck3_win::struct_layout::INTERACTION_TLS_GUARD);
+    *tls_ctx = reinterpret_cast<void*>(block + ck3_win::struct_layout::INTERACTION_TLS_CONTEXT);
+#else
+    uintptr_t fs_base = 0;
+    syscall(SYS_arch_prctl, ARCH_GET_FS, &fs_base);
+    if (fs_base == 0) return "tls_fs_base_zero";
+    *guard_byte = reinterpret_cast<uint8_t*>(fs_base - g_tls_guard_offset);
+    *tls_ctx = reinterpret_cast<void*>(fs_base - g_tls_context_offset);
+#endif
+    return nullptr;
+}
+
+// CSendCharacterInteractionCommand's virtual clone and destruction, per ABI. Itanium:
+// [0] the complete destructor, [1] the deleting one, [9] clone(out, this). MSVC
+// (ck3_offsets_win.h struct_layout::SEND_CMD_VTABLE_*): [0] the scalar deleting
+// destructor (this, flags: 1 frees), clone(this, out) at [8]. The command object
+// itself is the same 0x368 bytes on both.
+static uintptr_t game_command_slot(void* cmd, size_t off) {
+    const uintptr_t vt = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(cmd));
+    return vt ? safe_read<uintptr_t>(vt + off) : 0;
+}
+static uintptr_t game_command_clone_fn(void* cmd) {
+#ifdef _WIN32
+    return game_command_slot(cmd, ck3_win::struct_layout::SEND_CMD_VTABLE_CLONE);
+#else
+    return game_command_slot(cmd, ck3::interaction_cmd::VTABLE_CLONE);
+#endif
+}
+static void* clone_game_command(uintptr_t clone_fn, void* cmd) {
+    void* out = nullptr;
+#ifdef _WIN32
+    reinterpret_cast<void* (*)(void*, void**)>(clone_fn)(cmd, &out);
+#else
+    reinterpret_cast<void* (*)(void**, void*)>(clone_fn)(&out, cmd);
+#endif
+    return out;
+}
+// Destroy and free a heap command (a clone the engine did not take).
+static void delete_game_command(void* cmd) {
+#ifdef _WIN32
+    const uintptr_t f = game_command_slot(cmd, ck3_win::struct_layout::SEND_CMD_VTABLE_DELETING_DTOR);
+    if (f && is_mapped(f)) reinterpret_cast<void* (*)(void*, uint32_t)>(f)(cmd, 1);
+#else
+    const uintptr_t f = game_command_slot(cmd, ck3::interaction_cmd::VTABLE_DELETING_DTOR);
+    if (f && is_mapped(f)) reinterpret_cast<void (*)(void*)>(f)(cmd);
+#endif
+}
+// Destroy a command in place (the stack-built wrapper), freeing nothing.
+static bool destroy_game_command_in_place(void* cmd) {
+    const uintptr_t f = game_command_slot(cmd, 0);
+    if (!f || !is_mapped(f)) return false;
+#ifdef _WIN32
+    reinterpret_cast<void* (*)(void*, uint32_t)>(f)(cmd, 0);
+#else
+    reinterpret_cast<void (*)(void*)>(f)(cmd);
+#endif
+    return true;
+}
 
 // DEAD_FOR_WAR_PER_CKE58L17.1 — declare_war_interaction is NOT a viable caller of
 // this function. Production dispatch now routes WAR_DECLARE intents through
@@ -546,25 +682,15 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
         return false;
     }
 
-    // --- Step 1: Get FS base and ensure TLS context is initialized ---
-    uintptr_t fs_base = 0;
-    syscall(SYS_arch_prctl, ARCH_GET_FS, &fs_base);
-    if (fs_base == 0) {
-        ADLOG("TLS_PIPELINE: ARCH_GET_FS returned 0 — cannot access TLS\n");
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "tls_fs_base_zero");
+    // --- Step 1: locate this thread's TLS context and ensure it is initialized ---
+    uint8_t* guard_byte = nullptr;
+    void* tls_ctx = nullptr;
+    if (const char* tls_err = locate_game_tls(&guard_byte, &tls_ctx)) {
+        ADLOG("TLS_PIPELINE: cannot locate the TLS context (%s)\n", tls_err);
+        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "%s", tls_err);
         return false;
     }
-    ADLOG("TLS_PIPELINE: FS_BASE = 0x%lx\n", fs_base);
-
-    // TLS guard byte: FS_BASE - g_tls_guard_offset
-    uint8_t* guard_byte = reinterpret_cast<uint8_t*>(fs_base - g_tls_guard_offset);
-    // TLS context: FS_BASE - g_tls_context_offset
-    void* tls_ctx = reinterpret_cast<void*>(fs_base - g_tls_context_offset);
-
-    ADLOG("TLS_PIPELINE: guard_byte at %p (offset -0x%lx), tls_ctx at %p (offset -0x%lx)\n",
-          guard_byte, (unsigned long)g_tls_guard_offset,
-          tls_ctx, (unsigned long)g_tls_context_offset);
+    ADLOG("TLS_PIPELINE: guard_byte at %p, tls_ctx at %p\n", guard_byte, tls_ctx);
 
     const TlsGuard guard_state = read_tls_guard(guard_byte);
     if (guard_state == TlsGuard::Unreadable) {
@@ -578,11 +704,11 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
         ADLOG("TLS_PIPELINE: TLS guard is 0 — constructing context\n");
 
         auto tls_construct = reinterpret_cast<fn_tls_construct>(
-            g_base_addr + ck3::funcs::INTERACTION_TLS_CONSTRUCT);
+            bridge::game_fn(ck3::funcs::INTERACTION_TLS_CONSTRUCT));
 
         if (!is_mapped(reinterpret_cast<uintptr_t>(tls_construct))) {
             ADLOG("TLS_PIPELINE: TLS_CONSTRUCT at 0x%lx not mapped\n",
-                  g_base_addr + ck3::funcs::INTERACTION_TLS_CONSTRUCT);
+                  bridge::game_fn(ck3::funcs::INTERACTION_TLS_CONSTRUCT));
             snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                      "tls_construct_not_mapped");
             return false;
@@ -617,11 +743,11 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
         // Register destructor via __cxa_thread_atexit for proper cleanup
         // Signature: int __cxa_thread_atexit(void (*dtor)(void*), void* obj, void* dso_handle)
         auto tls_dtor = reinterpret_cast<fn_tls_destructor>(
-            g_base_addr + ck3::funcs::INTERACTION_TLS_DESTRUCTOR);
+            bridge::game_fn(ck3::funcs::INTERACTION_TLS_DESTRUCTOR));
         // dso_handle: use the address of a known global in the CK3 binary
         // The original code uses &PTR (some global in the binary), but we can
         // pass nullptr since we're in the same module context as the game thread.
-        __cxa_thread_atexit(reinterpret_cast<void(*)(void*)>(tls_dtor), tls_ctx, nullptr);
+        register_game_tls_dtor(reinterpret_cast<void(*)(void*)>(tls_dtor), tls_ctx);
 
         if (!set_tls_guard(guard_byte)) {
             snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
@@ -635,15 +761,15 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
 
     // --- Function pointer resolution ---
     auto ctx_init = reinterpret_cast<fn_ctx_init>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_INIT);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_INIT));
     auto ctx_reset = reinterpret_cast<fn_ctx_reset>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_RESET);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_RESET));
     auto ctx_set_target = reinterpret_cast<fn_ctx_set_target>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_SET_TARGET);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_SET_TARGET));
     auto ctx_validate = reinterpret_cast<fn_ctx_validate>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_VALIDATE);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE));
     auto check_acceptance = reinterpret_cast<fn_try_send>(
-        g_base_addr + ck3::funcs::INTERACTION_TRY_SEND);
+        bridge::game_fn(ck3::funcs::INTERACTION_TRY_SEND));
 
     // Validate all function pointers are mapped
     if (!is_mapped(reinterpret_cast<uintptr_t>(ctx_init)) ||
@@ -659,6 +785,11 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
 
     // BUILD_SEND_CMD address (real function body, after thunk)
     uintptr_t build_cmd_addr = g_real_build_send_cmd_addr;
+#ifdef _WIN32
+    // init_runtime_discovery reads Linux code shapes and is not run on Windows; the
+    // constructor is a recipe there (os/windows/recipes.cpp).
+    if (!build_cmd_addr) build_cmd_addr = bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF);
+#endif
     if (!build_cmd_addr || !is_mapped(build_cmd_addr)) {
         ADLOG("TLS_PIPELINE: BUILD_SEND_CMD not resolved (0x%lx)\n", build_cmd_addr);
         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
@@ -735,8 +866,8 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
             // B) Look up valid CB from CASUS_BELLI_DB
             uintptr_t cb_db = safe_read<uintptr_t>(g_base_addr + ck3::globals::CASUS_BELLI_DB);
             if (cb_db && is_mapped(cb_db)) {
-                uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + 0x88);
-                int32_t cb_count = safe_read<int32_t>(cb_db + 0x94);
+                uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + ck3::game_db::ENTRIES_ARRAY);
+                int32_t cb_count = safe_read<int32_t>(cb_db + ck3::game_db::LIVE_COUNT);
                 if (cb_count < 0 || cb_count > 500) cb_count = 0;
 
                 ADLOG("TLS_PIPELINE: WAR — B) scanning %d CB types\n", cb_count);
@@ -746,7 +877,7 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
 
                 if (attacker && defender && cb_arr && is_mapped(cb_arr)) {
                     auto cb_validity_check = reinterpret_cast<bool(*)(void*, void*, void*, void*, int)>(
-                        g_base_addr + ck3::funcs::CB_VALIDITY_CHECK);
+                        bridge::game_fn(ck3::funcs::CB_VALIDITY_CHECK));
 
                     bool want_claim = (intent->title_id > 0);
 
@@ -872,7 +1003,7 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
             }
 
             // C) AttachCBState — write cb_type_ref to tls_ctx+0x338
-            uintptr_t attach_state_addr = g_base_addr + ck3::funcs::WAR_ATTACH_STATE;
+            uintptr_t attach_state_addr = bridge::game_fn(ck3::funcs::WAR_ATTACH_STATE);
             if (is_mapped(attach_state_addr)) {
                 auto attach_cb_state = reinterpret_cast<void(*)(void*, uintptr_t)>(attach_state_addr);
                 ADLOG("TLS_PIPELINE: WAR — C) AttachCBState(ctx+0x330, cb=0x%lx) [%s]\n",
@@ -903,7 +1034,7 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
                 *reinterpret_cast<uintptr_t*>(title_source + 0x08) = reinterpret_cast<uintptr_t>(s_tls_war_title_buf);
                 *reinterpret_cast<int32_t*>(title_source + 0x14) = 1;   // count = 1 title
 
-                uintptr_t attach_cb_addr = g_base_addr + ck3::funcs::WAR_ATTACH_CB;
+                uintptr_t attach_cb_addr = bridge::game_fn(ck3::funcs::WAR_ATTACH_CB);
                 if (is_mapped(attach_cb_addr)) {
                     auto attach_cb_title = reinterpret_cast<void(*)(void*, void*)>(attach_cb_addr);
                     ADLOG("TLS_PIPELINE: WAR — D) AttachCBTitle(ctx+0x330, title_id=%d)\n",
@@ -962,7 +1093,7 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
             }
 
             // F) Rebuild scope paths after manual edits
-            uintptr_t validate_scopes_addr = g_base_addr + ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES;
+            uintptr_t validate_scopes_addr = bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES);
             if (is_mapped(validate_scopes_addr)) {
                 auto validate_scopes = reinterpret_cast<void(*)(void*, int)>(validate_scopes_addr);
                 ADLOG("TLS_PIPELINE: WAR — F) ValidateScopes after CB injection\n");
@@ -984,6 +1115,9 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
         // Step 5: IsInteractionValid(tls_ctx)
         ADLOG("TLS_PIPELINE: CTX_VALIDATE\n");
         uint64_t valid_result = ctx_validate(reinterpret_cast<uintptr_t*>(tls_ctx));
+#ifdef _WIN32
+        valid_result &= 0xFF;   // MSVC returns the verdict in al (ck3_offsets_win.h)
+#endif
         if (valid_result == 0) {
             ADLOG("TLS_PIPELINE: CTX_VALIDATE returned 0 — interaction not valid for this target\n");
             snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
@@ -1065,32 +1199,23 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
         }
         ADLOG("TLS_PIPELINE: wrapper vtable = 0x%lx\n", wrapper_vtable);
 
-        // Step 8: Clone via vtable[9] (offset VTABLE_CLONE in vtable)
-        // Signature: void clone_fn(void* out_clone, void* source_wrapper)
-        uintptr_t clone_fn_ptr = safe_read<uintptr_t>(wrapper_vtable + ck3::interaction_cmd::VTABLE_CLONE);
+        // Step 8: Clone via the vtable (Linux [9], MSVC [8]: game_command_clone_fn)
+        uintptr_t clone_fn_ptr = game_command_clone_fn(wrapper_ptr);
         if (!clone_fn_ptr || !is_mapped(clone_fn_ptr)) {
-            ADLOG("TLS_PIPELINE: vtable[9] (clone) at vtable+0x48 invalid (0x%lx)\n",
-                  clone_fn_ptr);
+            ADLOG("TLS_PIPELINE: clone vtable slot invalid (0x%lx)\n", clone_fn_ptr);
             snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                      "clone_vtable_entry_invalid");
-            // Cleanup wrapper before returning
-            uintptr_t dtor_fn = safe_read<uintptr_t>(wrapper_vtable);  // vtable[0]
-            if (dtor_fn && is_mapped(dtor_fn)) {
-                reinterpret_cast<void(*)(void*)>(dtor_fn)(wrapper_ptr);
-            }
+            destroy_game_command_in_place(wrapper_ptr);   // cleanup wrapper before returning
             g_in_protected_region = false;
             watchdog_disarm();
             return false;
         }
 
-        // Clone allocates internally via operator new(0x368) and stores at *out_ptr.
-        // We pass a pointer-to-pointer; Clone writes the heap allocation address there.
-        void* clone_ptr = nullptr;
-
-        auto clone_fn = reinterpret_cast<void*(*)(void**, void*)>(clone_fn_ptr);
-        ADLOG("TLS_PIPELINE: CLONE via vtable[9] at 0x%lx (out=&clone_ptr, wrapper=%p)\n",
+        // Clone allocates internally via operator new(0x368) and returns it through
+        // an out pointer (argument order per ABI: clone_game_command).
+        ADLOG("TLS_PIPELINE: CLONE via vtable slot at 0x%lx (wrapper=%p)\n",
               clone_fn_ptr, wrapper_ptr);
-        clone_fn(&clone_ptr, wrapper_ptr);
+        void* clone_ptr = clone_game_command(clone_fn_ptr, wrapper_ptr);
 
         // Step 8.5 stripped: DEAD_FOR_WAR_PER_CKE58L17.1 — Gate-2 interaction_ptr
         // stamp and command-recorder bypass were war-specific workarounds for
@@ -1107,14 +1232,10 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
             snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                      "dispatch_gate_blocked_0x%02x", dispatch_gate);
             // Destroy clone since we won't dispatch it
-            uintptr_t clone_vtable = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(clone_ptr));
-            uintptr_t clone_deldtor = safe_read<uintptr_t>(clone_vtable + ck3::interaction_cmd::VTABLE_DELETING_DTOR); // vtable[1] = deleting dtor
-            if (clone_deldtor && is_mapped(clone_deldtor)) {
-                reinterpret_cast<void(*)(void*)>(clone_deldtor)(clone_ptr);
-            }
+            delete_game_command(clone_ptr);
         } else {
             auto game_dispatch = reinterpret_cast<fn_game_cmd_dispatch>(
-                g_base_addr + ck3::funcs::GAME_COMMAND_DISPATCH);
+                bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH));
 
             ADLOG("TLS_PIPELINE: GAME_COMMAND_DISPATCH(mgr=0x%lx, clone=%p, priority=7, 0)\n",
                   dispatch_mgr_ptr, clone_ptr);
@@ -1124,11 +1245,7 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
             // If not nulled, destroy the clone ourselves (dispatch may have failed)
             if (clone_ptr != nullptr) {
                 ADLOG("TLS_PIPELINE: clone_ptr not nulled by dispatch — destroying\n");
-                uintptr_t clone_vtable = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(clone_ptr));
-                uintptr_t clone_deldtor = safe_read<uintptr_t>(clone_vtable + ck3::interaction_cmd::VTABLE_DELETING_DTOR);
-                if (clone_deldtor && is_mapped(clone_deldtor)) {
-                    reinterpret_cast<void(*)(void*)>(clone_deldtor)(clone_ptr);
-                }
+                delete_game_command(clone_ptr);
             }
 
             dispatched = true;
@@ -1137,14 +1254,9 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
 
         // Step 8.5 recorder-restore removed alongside the earlier Step 8.5 stamp.
 
-        // Step 10: Cleanup wrapper (stack-allocated, call non-deleting destructor)
-        uintptr_t dtor_fn = safe_read<uintptr_t>(wrapper_vtable);
-        if (dtor_fn && is_mapped(dtor_fn)) {
-            ADLOG("TLS_PIPELINE: destroying wrapper via vtable[0] at 0x%lx\n", dtor_fn);
-            reinterpret_cast<void(*)(void*)>(dtor_fn)(wrapper_ptr);
-        } else {
-            ADLOG("TLS_PIPELINE: WARNING — wrapper dtor not mapped (0x%lx), skipping cleanup\n",
-                  dtor_fn);
+        // Step 10: Cleanup wrapper (stack-allocated: destroy in place, free nothing)
+        if (!destroy_game_command_in_place(wrapper_ptr)) {
+            ADLOG("TLS_PIPELINE: WARNING — wrapper dtor not mapped, skipping cleanup\n");
         }
 
     } catch (...) {
@@ -1295,39 +1407,39 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
 
     // --- Resolve function pointers ---
     auto build_interaction_cmd = reinterpret_cast<fn_build_send_interaction_cmd>(
-        g_base_addr + ck3::funcs::BUILD_SEND_INTERACTION_CMD);
+        bridge::game_fn(ck3::funcs::BUILD_SEND_INTERACTION_CMD));
     auto build_send_cmd = reinterpret_cast<fn_build_send_cmd_from_buf>(
-        g_base_addr + ck3::funcs::BUILD_SEND_CMD_FROM_BUF);
+        bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF));
     auto interaction_dtor = reinterpret_cast<fn_interaction_data_dtor>(
-        g_base_addr + ck3::funcs::INTERACTION_TLS_DESTRUCTOR);
+        bridge::game_fn(ck3::funcs::INTERACTION_TLS_DESTRUCTOR));
     auto game_dispatch = reinterpret_cast<fn_game_cmd_dispatch>(
-        g_base_addr + ck3::funcs::GAME_COMMAND_DISPATCH);
+        bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH));
 
     // Validate all function pointers are mapped
     if (!is_mapped(reinterpret_cast<uintptr_t>(build_interaction_cmd))) {
         ADLOG("DIRECT_CMD_V7: BUILD_SEND_INTERACTION_CMD at 0x%lx not mapped\n",
-              g_base_addr + ck3::funcs::BUILD_SEND_INTERACTION_CMD);
+              bridge::game_fn(ck3::funcs::BUILD_SEND_INTERACTION_CMD));
         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                  "build_interaction_cmd_not_mapped");
         return false;
     }
     if (!is_mapped(reinterpret_cast<uintptr_t>(build_send_cmd))) {
         ADLOG("DIRECT_CMD_V7: BUILD_SEND_CMD_FROM_BUF at 0x%lx not mapped\n",
-              g_base_addr + ck3::funcs::BUILD_SEND_CMD_FROM_BUF);
+              bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF));
         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                  "build_send_cmd_not_mapped");
         return false;
     }
     if (!is_mapped(reinterpret_cast<uintptr_t>(interaction_dtor))) {
         ADLOG("DIRECT_CMD_V7: INTERACTION_TLS_DESTRUCTOR at 0x%lx not mapped\n",
-              g_base_addr + ck3::funcs::INTERACTION_TLS_DESTRUCTOR);
+              bridge::game_fn(ck3::funcs::INTERACTION_TLS_DESTRUCTOR));
         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                  "interaction_dtor_not_mapped");
         return false;
     }
     if (!is_mapped(reinterpret_cast<uintptr_t>(game_dispatch))) {
         ADLOG("DIRECT_CMD_V7: GAME_COMMAND_DISPATCH at 0x%lx not mapped\n",
-              g_base_addr + ck3::funcs::GAME_COMMAND_DISPATCH);
+              bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH));
         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                  "game_dispatch_not_mapped");
         return false;
@@ -1425,7 +1537,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
         }
 
         // Re-validate scopes after manual ctx edits (SIGSEGV-protected)
-        uintptr_t validate_scopes_addr = g_base_addr + ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES;
+        uintptr_t validate_scopes_addr = bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES);
         if (is_mapped(validate_scopes_addr)) {
             auto validate_scopes = reinterpret_cast<void(*)(void*, int)>(validate_scopes_addr);
             ADLOG("DIRECT_CMD_V7: MARRIAGE — calling ValidateScopes at 0x%lx\n", validate_scopes_addr);
@@ -1493,7 +1605,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
         }
 
         // Re-validate scopes after manual ctx edits (SIGSEGV-protected) — clone of marriage.
-        uintptr_t validate_scopes_addr = g_base_addr + ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES;
+        uintptr_t validate_scopes_addr = bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES);
         if (is_mapped(validate_scopes_addr)) {
             auto validate_scopes = reinterpret_cast<void(*)(void*, int)>(validate_scopes_addr);
             ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — calling ValidateScopes at 0x%lx\n", validate_scopes_addr);
@@ -1567,7 +1679,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
             *reinterpret_cast<uint64_t*>(cmd_buf + 0x2F8) = static_cast<uint64_t>(title_packed_ref);
 
             // Re-validate scopes (reuse the same ValidateScopes pattern as marriage)
-            uintptr_t validate_scopes_addr = g_base_addr + ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES;
+            uintptr_t validate_scopes_addr = bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES);
             if (is_mapped(validate_scopes_addr)) {
                 auto validate_scopes = reinterpret_cast<void(*)(void*, int)>(validate_scopes_addr);
                 watchdog_arm(5);
@@ -1654,8 +1766,8 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
         {
             uintptr_t cb_db = safe_read<uintptr_t>(g_base_addr + ck3::globals::CASUS_BELLI_DB);
             if (cb_db && is_mapped(cb_db)) {
-                uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + 0x88);
-                int32_t cb_count = safe_read<int32_t>(cb_db + 0x94);
+                uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + ck3::game_db::ENTRIES_ARRAY);
+                int32_t cb_count = safe_read<int32_t>(cb_db + ck3::game_db::LIVE_COUNT);
                 if (cb_count < 0 || cb_count > 500) cb_count = 0;
 
                 ADLOG("DIRECT_CMD_V7: WAR — B.1) scanning %d CB types in CASUS_BELLI_DB\n", cb_count);
@@ -1665,7 +1777,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
 
                 if (attacker && defender && cb_arr && is_mapped(cb_arr)) {
                     auto cb_validity_check = reinterpret_cast<bool(*)(void*, void*, void*, void*, int)>(
-                        g_base_addr + ck3::funcs::CB_VALIDITY_CHECK);
+                        bridge::game_fn(ck3::funcs::CB_VALIDITY_CHECK));
 
                     // When title_id is set, prefer claim-type CBs (target_mode=6)
                     bool want_claim = (intent->title_id > 0);
@@ -1794,7 +1906,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
         if (found_cb_type != 0) {
             // WAR_ATTACH_STATE is trivial: *(cmd+0x330+8) = cb_type_ref
             // We can call the actual function or just write directly. Call it for correctness.
-            uintptr_t attach_state_addr = g_base_addr + ck3::funcs::WAR_ATTACH_STATE;
+            uintptr_t attach_state_addr = bridge::game_fn(ck3::funcs::WAR_ATTACH_STATE);
             if (is_mapped(attach_state_addr)) {
                 auto attach_cb_state = reinterpret_cast<void(*)(void*, uintptr_t)>(attach_state_addr);
                 ADLOG("DIRECT_CMD_V7: WAR — B.2) calling AttachCBState(cmd+0x330, cb=0x%lx) [%s]\n",
@@ -1840,7 +1952,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
             *reinterpret_cast<uintptr_t*>(title_source + 0x08) = reinterpret_cast<uintptr_t>(s_war_title_buf);
             *reinterpret_cast<int32_t*>(title_source + 0x14) = 1;   // count = 1 title
 
-            uintptr_t attach_cb_addr = g_base_addr + ck3::funcs::WAR_ATTACH_CB;
+            uintptr_t attach_cb_addr = bridge::game_fn(ck3::funcs::WAR_ATTACH_CB);
             if (is_mapped(attach_cb_addr)) {
                 auto attach_cb_title = reinterpret_cast<void(*)(void*, void*)>(attach_cb_addr);
                 ADLOG("DIRECT_CMD_V7: WAR — B.3) calling AttachCBTitle(cmd+0x330, title_source) "
@@ -1949,7 +2061,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
     // exclusion here is unnecessary.
     if (intent->cb_index >= 0 &&
         strcmp(intent->interaction_name.c_str(), "arrange_marriage_interaction") != 0) {
-        uintptr_t select_addr = g_base_addr + ck3::funcs::INTERACTION_SELECT_OPTION;
+        uintptr_t select_addr = bridge::game_fn(ck3::funcs::INTERACTION_SELECT_OPTION);
         if (is_mapped(select_addr)) {
             auto select_option = reinterpret_cast<void(*)(void*, int)>(select_addr);
             ADLOG("DIRECT_CMD_V7: SEND_OPTION — SelectOption(cmd, %d)\n", intent->cb_index);
@@ -1998,7 +2110,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
         // This constructs CSendCharacterInteractionCommand from the cmd_buf data.
         // It sets vtables, deep-copies interaction data, computes hashes.
         ADLOG("DIRECT_CMD_V7: Step 2 — BUILD_SEND_CMD_FROM_BUF(wrapper=%p, cmd_buf=%p) via 0x%lx\n",
-              wrapper_ptr, cmd_buf, g_base_addr + ck3::funcs::BUILD_SEND_CMD_FROM_BUF);
+              wrapper_ptr, cmd_buf, bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF));
         build_send_cmd(wrapper_ptr, cmd_buf);
 
         // Validate: wrapper should have a vtable pointer at offset 0
@@ -2016,29 +2128,22 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
         }
         ADLOG("DIRECT_CMD_V7: Step 2 complete — wrapper vtable = 0x%lx\n", wrapper_vtable);
 
-        // Step 3: Clone via vtable[9] (offset VTABLE_CLONE in vtable)
-        // Signature: void* clone_fn(void** out_clone, void* source_wrapper)
-        uintptr_t clone_fn_ptr = safe_read<uintptr_t>(wrapper_vtable + ck3::interaction_cmd::VTABLE_CLONE);
+        // Step 3: Clone via the vtable (per ABI: game_command_clone_fn / clone_game_command)
+        uintptr_t clone_fn_ptr = game_command_clone_fn(wrapper_ptr);
         if (!clone_fn_ptr || !is_mapped(clone_fn_ptr)) {
-            ADLOG("DIRECT_CMD_V7: vtable[9] (clone) at vtable+0x48 invalid (0x%lx)\n",
-                  clone_fn_ptr);
+            ADLOG("DIRECT_CMD_V7: clone vtable slot invalid (0x%lx)\n", clone_fn_ptr);
             snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                      "clone_vtable_entry_invalid");
             // Cleanup: destroy wrapper then cmd_buf
-            uintptr_t dtor_fn = safe_read<uintptr_t>(wrapper_vtable);  // vtable[0] = non-deleting dtor
-            if (dtor_fn && is_mapped(dtor_fn)) {
-                try { reinterpret_cast<void(*)(void*)>(dtor_fn)(wrapper_ptr); } catch (...) {}
-            }
+            try { destroy_game_command_in_place(wrapper_ptr); } catch (...) {}
             try { interaction_dtor(cmd_buf); } catch (...) {}
             g_in_protected_region = false;
             watchdog_disarm();
             return false;
         }
 
-        void* clone_ptr = nullptr;
-        auto clone_fn = reinterpret_cast<void*(*)(void**, void*)>(clone_fn_ptr);
-        ADLOG("DIRECT_CMD_V7: Step 3 — CLONE via vtable[9] at 0x%lx\n", clone_fn_ptr);
-        clone_fn(&clone_ptr, wrapper_ptr);
+        ADLOG("DIRECT_CMD_V7: Step 3 — CLONE via vtable slot at 0x%lx\n", clone_fn_ptr);
+        void* clone_ptr = clone_game_command(clone_fn_ptr, wrapper_ptr);
 
         if (!clone_ptr || !is_mapped(reinterpret_cast<uintptr_t>(clone_ptr))) {
             ADLOG("DIRECT_CMD_V7: Clone returned invalid pointer (0x%lx)\n",
@@ -2046,10 +2151,7 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
             snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                      "clone_returned_invalid");
             // Cleanup wrapper + cmd_buf
-            uintptr_t dtor_fn = safe_read<uintptr_t>(wrapper_vtable);
-            if (dtor_fn && is_mapped(dtor_fn)) {
-                try { reinterpret_cast<void(*)(void*)>(dtor_fn)(wrapper_ptr); } catch (...) {}
-            }
+            try { destroy_game_command_in_place(wrapper_ptr); } catch (...) {}
             try { interaction_dtor(cmd_buf); } catch (...) {}
             g_in_protected_region = false;
             watchdog_disarm();
@@ -2141,22 +2243,15 @@ static bool execute_direct_command_dispatch(Intent* intent, void* character, voi
         // If not nulled, destroy the clone ourselves.
         if (clone_ptr != nullptr) {
             ADLOG("DIRECT_CMD_V7: clone_ptr not nulled by dispatch — destroying\n");
-            uintptr_t clone_vtable = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(clone_ptr));
-            uintptr_t clone_deldtor = safe_read<uintptr_t>(clone_vtable + ck3::interaction_cmd::VTABLE_DELETING_DTOR);  // vtable[1] = deleting dtor
-            if (clone_deldtor && is_mapped(clone_deldtor)) {
-                try { reinterpret_cast<void(*)(void*)>(clone_deldtor)(clone_ptr); } catch (...) {}
-            }
+            try { delete_game_command(clone_ptr); } catch (...) {}
         }
 
         dispatched = true;
         ADLOG("DIRECT_CMD_V7: Step 4 complete — command dispatched\n");
 
-        // Step 5: Cleanup wrapper (stack-allocated, call non-deleting destructor)
-        uintptr_t dtor_fn = safe_read<uintptr_t>(wrapper_vtable);
-        if (dtor_fn && is_mapped(dtor_fn)) {
-            ADLOG("DIRECT_CMD_V7: Step 5 — destroying wrapper via vtable[0] at 0x%lx\n", dtor_fn);
-            reinterpret_cast<void(*)(void*)>(dtor_fn)(wrapper_ptr);
-        }
+        // Step 5: Cleanup wrapper (stack-allocated: destroy in place, free nothing)
+        ADLOG("DIRECT_CMD_V7: Step 5 — destroying wrapper in place\n");
+        destroy_game_command_in_place(wrapper_ptr);
 
         // Step 6: Cleanup cmd_buf via interaction data destructor
         ADLOG("DIRECT_CMD_V7: Step 6 — destroying cmd_buf via INTERACTION_TLS_DESTRUCTOR\n");
@@ -2312,7 +2407,7 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
           g_score_hook_installed ? "YES" : "NO");
 
     auto ai_decide = reinterpret_cast<bool(*)(void*, void*, uint32_t)>(
-        g_base_addr + ck3::funcs::AI_INTERACTION_DECISION);
+        bridge::game_fn(ck3::funcs::AI_INTERACTION_DECISION));
     uint32_t rng_seed = (actor_id ^ (g_tick_id.load() * 2654435761u)) & 0x7FFFFFFE;
 
     // --- Tilt: arm transient score hook + set force target ---
@@ -2325,7 +2420,7 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
     // Yesmen: disabled by default — the LLM should deal with realistic refusals.
     // Enable only if intent has force_accept flag (e.g., for testing).
     uint8_t* yesmen_flag = reinterpret_cast<uint8_t*>(
-        g_base_addr + ck3::funcs::DEBUG_FLAGS_BASE);
+        bridge::game_fn(ck3::funcs::DEBUG_FLAGS_BASE));
     uint8_t old_yesmen = 0;
     bool use_yesmen = intent->force_accept;  // opt-in per-intent (e.g. for testing)
     if (use_yesmen && is_mapped(reinterpret_cast<uintptr_t>(yesmen_flag))) {
@@ -2340,7 +2435,7 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
     // Bypass: skips interaction/scheme/decision preconditions (31 callers).
     // Only enabled when explicitly requested via force_bypass on the intent.
     uint8_t* bypass_flag = reinterpret_cast<uint8_t*>(
-        g_base_addr + ck3::funcs::DEBUG_FLAGS_BASE + ck3::funcs::DEBUG_BYPASS_OFFSET);
+        bridge::game_fn(ck3::funcs::DEBUG_FLAGS_BASE) + ck3::funcs::DEBUG_BYPASS_OFFSET);
     uint8_t old_bypass = 0;
     bool use_bypass = intent->force_bypass;
     if (use_bypass && is_mapped(reinterpret_cast<uintptr_t>(bypass_flag))) {
@@ -2576,7 +2671,7 @@ static void execute_war_debug_dispatch(Intent* intent, void* character, void* in
 
         // Replicate the v5 path from execute_direct_dispatch
         auto ai_decide = reinterpret_cast<bool(*)(void*, void*, uint32_t)>(
-            g_base_addr + ck3::funcs::AI_INTERACTION_DECISION);
+            bridge::game_fn(ck3::funcs::AI_INTERACTION_DECISION));
         uint32_t rng_seed = (actor_id ^ (g_tick_id.load() * 2654435761u)) & 0x7FFFFFFE;
 
         // Arm score hook to force target
@@ -2687,13 +2782,13 @@ static void execute_war_debug_dispatch(Intent* intent, void* character, void* in
         char crash_reason[128] = {};
 
         auto get_ai_ctrl = reinterpret_cast<void*(*)(void*)>(
-            g_base_addr + ck3::funcs::CHAR_GET_AI_CONTROLLER);
+            bridge::game_fn(ck3::funcs::CHAR_GET_AI_CONTROLLER));
         auto war_target_eval = reinterpret_cast<void*(*)(void*)>(
-            g_base_addr + ck3::funcs::AI_WAR_TARGET_EVAL);
+            bridge::game_fn(ck3::funcs::AI_WAR_TARGET_EVAL));
         auto war_declare_exec = reinterpret_cast<void(*)(void*, void*)>(
-            g_base_addr + ck3::funcs::AI_WAR_DECLARE_EXEC);
+            bridge::game_fn(ck3::funcs::AI_WAR_DECLARE_EXEC));
         auto war_post_decl = reinterpret_cast<void(*)(void*, int, int)>(
-            g_base_addr + ck3::funcs::AI_WAR_POST_DECL);
+            bridge::game_fn(ck3::funcs::AI_WAR_POST_DECL));
 
         // Clear pacing flag
         uint8_t* pacing_ptr = reinterpret_cast<uint8_t*>(
@@ -2934,7 +3029,7 @@ void process_acceptance_query() {
     // If the target would accept, the interaction IS DISPATCHED (not just queried).
     // To prevent unintended dispatch, we temporarily close the dispatch gate.
     auto ai_decide = reinterpret_cast<bool(*)(void*, void*, uint32_t)>(
-        g_base_addr + ck3::funcs::AI_INTERACTION_DECISION);
+        bridge::game_fn(ck3::funcs::AI_INTERACTION_DECISION));
     uint32_t rng_seed = (actor_id ^ (g_tick_id.load() * 2654435761u)) & 0x7FFFFFFE;
 
     // Close the dispatch gate to prevent AI_INTERACTION_DECISION from actually sending
@@ -3096,8 +3191,8 @@ void process_cb_query() {
         return;
     }
 
-    uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + 0x88);
-    int32_t cb_count = safe_read<int32_t>(cb_db + 0x94);
+    uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + ck3::game_db::ENTRIES_ARRAY);
+    int32_t cb_count = safe_read<int32_t>(cb_db + ck3::game_db::LIVE_COUNT);
     if (cb_count < 0 || cb_count > 500) cb_count = 0;
 
     if (!cb_arr || !is_mapped(cb_arr) || cb_count == 0) {
@@ -3111,7 +3206,18 @@ void process_cb_query() {
 
     // CB_VALIDITY_CHECK: bool(void* cb_type, void* output, void* attacker, void* defender, int skip_against)
     auto cb_validity_check = reinterpret_cast<bool(*)(void*, void*, void*, void*, int)>(
-        g_base_addr + ck3::funcs::CB_VALIDITY_CHECK);
+        bridge::game_fn(ck3::funcs::CB_VALIDITY_CHECK));
+    // A build with no address for the engine's check (Windows: poisoned until
+    // mapped) refuses here, instead of faulting once per CB and answering with
+    // whatever the fallback reasons made of it (P6 full1: 68 recovered faults).
+    if (!is_mapped(reinterpret_cast<uintptr_t>(cb_validity_check))) {
+        snprintf(g_cb_query.error, sizeof(g_cb_query.error), "function_not_mapped");
+        g_cb_query.results.clear();
+        stamp_service_end();
+        g_cb_query.state.store(3, std::memory_order_release);
+        ADLOG("CB_QUERY: CB_VALIDITY_CHECK not mapped in this build\n");
+        return;
+    }
 
     g_cb_query.results.clear();
     g_cb_query.results.reserve(cb_count);
@@ -3193,13 +3299,13 @@ void process_cb_query() {
         } else {
             // --- Step 2: resolve the pipeline functions. ---
             auto tls_construct  = reinterpret_cast<fn_tls_construct>(
-                g_base_addr + ck3::funcs::INTERACTION_TLS_CONSTRUCT);
+                bridge::game_fn(ck3::funcs::INTERACTION_TLS_CONSTRUCT));
             auto ctx_init       = reinterpret_cast<fn_ctx_init>(
-                g_base_addr + ck3::funcs::INTERACTION_CTX_INIT);
+                bridge::game_fn(ck3::funcs::INTERACTION_CTX_INIT));
             auto ctx_reset      = reinterpret_cast<fn_ctx_reset>(
-                g_base_addr + ck3::funcs::INTERACTION_CTX_RESET);
+                bridge::game_fn(ck3::funcs::INTERACTION_CTX_RESET));
             auto ctx_set_target = reinterpret_cast<fn_ctx_set_target>(
-                g_base_addr + ck3::funcs::INTERACTION_CTX_SET_TARGET);
+                bridge::game_fn(ck3::funcs::INTERACTION_CTX_SET_TARGET));
             auto trigger_eval   = reinterpret_cast<bool(*)(uintptr_t, uintptr_t)>(
                 g_base_addr + ck3::trigger_eval_funcs::SCRIPT_TRIGGER_EVALUATOR);
 
@@ -3362,9 +3468,9 @@ void process_cb_query() {
         // (+0x578) search matched WAR PARTICIPANTS, corrupting the relation-mode gate
         // (false in_alliance). TRUCE keeps GET_TRUCE_LIST (+0x6A0 = genuine truce list).
         auto get_truce_list = reinterpret_cast<uintptr_t(*)(void*)>(
-            g_base_addr + ck3::funcs::GET_TRUCE_LIST);
+            bridge::game_fn(ck3::funcs::GET_TRUCE_LIST));
         auto simd_find = reinterpret_cast<uintptr_t(*)(uintptr_t, uintptr_t, void*)>(
-            g_base_addr + ck3::funcs::SIMD_FIND_LONG);
+            bridge::game_fn(ck3::funcs::SIMD_FIND_LONG));
 
         const bool i2_funcs_mapped =
             is_mapped(reinterpret_cast<uintptr_t>(get_truce_list))    &&
@@ -3680,7 +3786,7 @@ void process_cb_query() {
         // engine's, the safe direction).
         if (strict_mode && i2_eval_ok) {
             auto get_relation_mode = reinterpret_cast<int(*)(void*, void*)>(
-                g_base_addr + ck3::funcs::AI_CB_TITLE_RELATION_MODE);
+                bridge::game_fn(ck3::funcs::AI_CB_TITLE_RELATION_MODE));
             int  relation_mode    = 0;
             bool relation_mode_ok = false;
             if (is_mapped(reinterpret_cast<uintptr_t>(get_relation_mode))) {
@@ -3955,7 +4061,7 @@ void process_cb_query() {
     // freeing, so a partially-set-up buffer is safe to destruct.
     if (stage2_buf_constructed) {
         auto tls_destruct = reinterpret_cast<fn_tls_destructor>(
-            g_base_addr + ck3::funcs::INTERACTION_TLS_DESTRUCTOR);
+            bridge::game_fn(ck3::funcs::INTERACTION_TLS_DESTRUCTOR));
         if (is_mapped(reinterpret_cast<uintptr_t>(tls_destruct))) {
             watchdog_arm(2);
             g_in_protected_region = true;
@@ -4623,9 +4729,9 @@ static bool is_snake_upper_key(const char* s, size_t n) {
 static size_t safe_read_std_string(uintptr_t addr, char* out, size_t out_size) {
     if (!out || out_size == 0) return 0;
     out[0] = '\0';
-    uintptr_t data_ptr = safe_read<uintptr_t>(addr);
-    uint64_t len = safe_read<uint64_t>(addr + 8);
-    if (!data_ptr || len == 0 || len > 1024) return 0;
+    uintptr_t data_ptr = 0;
+    uint64_t len = 0;   // game_string_view: the string ABI of the game's build
+    if (!game_string_view(addr, &data_ptr, &len) || len > 1024) return 0;
     if (!is_mapped(data_ptr)) return 0;
     size_t n = (len < out_size - 1) ? static_cast<size_t>(len) : out_size - 1;
     for (size_t i = 0; i < n; ++i) {
@@ -4741,13 +4847,16 @@ static const struct {
     const char* name;
     uint32_t    offset;
 } g_trigger_slots[] = {
-    { 0, "is_valid",                       0x0BC0 },
-    { 1, "is_shown",                       0x0D80 },
-    { 2, "is_valid_showing_failures_only", 0x0F40 },
-    { 3, "can_be_sent_despite_rejection",  0x12C0 },
-    { 4, "can_send",                       0x1100 },
-    { 5, "auto_accept",                    0x0E60 },
-    { 6, "on_auto_accept",                 0x1020 },
+    // The offsets by their header names (the Linux values unchanged; the Windows
+    // build's header carries the measured +0x18 band). The slot names are the
+    // reply's vocabulary, older than the ck-angk renames beside them.
+    { 0, "is_valid",                       ck3::interaction_def::IS_SHOWN_TRIGGER },        // 0x0BC0
+    { 1, "is_shown",                       ck3::interaction_def::IS_VALID_TRIGGER },        // 0x0D80
+    { 2, "is_valid_showing_failures_only", ck3::interaction_def::HAS_VALID_TARGET },        // 0x0F40
+    { 3, "can_be_sent_despite_rejection",  ck3::interaction_def::CAN_SEND_FINAL_TRIGGER },  // 0x12C0
+    { 4, "can_send",                       ck3::interaction_def::CAN_BE_PICKED_TRIGGER },   // 0x1100
+    { 5, "auto_accept",                    ck3::interaction_def::IS_VALID_TRIGGER_AI },     // 0x0E60
+    { 6, "on_auto_accept",                 ck3::interaction_def::HAS_VALID_TARGET_AI },     // 0x1020
 };
 static constexpr int NUM_TRIGGER_SLOTS = 7;
 
@@ -4811,17 +4920,14 @@ void process_trigger_query() {
     }
 
     // --- Set up TLS context for scope construction ---
-    uintptr_t fs_base = 0;
-    syscall(SYS_arch_prctl, ARCH_GET_FS, &fs_base);
-    if (fs_base == 0) {
-        snprintf(g_trigger_query.error, sizeof(g_trigger_query.error), "tls_fs_base_zero");
+    uint8_t* guard_byte = nullptr;
+    void* tls_ctx = nullptr;
+    if (const char* tls_err = locate_game_tls(&guard_byte, &tls_ctx)) {
+        snprintf(g_trigger_query.error, sizeof(g_trigger_query.error), "%s", tls_err);
         g_trigger_query.result_count = 0;
         g_trigger_query.state.store(3, std::memory_order_release);
         return;
     }
-
-    uint8_t* guard_byte = reinterpret_cast<uint8_t*>(fs_base - g_tls_guard_offset);
-    void* tls_ctx = reinterpret_cast<void*>(fs_base - g_tls_context_offset);
 
     // ck-62eo: same guard, same helpers. This copy was missed by my first pass
     // and caught by the acceptance counting dereferences.
@@ -4837,7 +4943,7 @@ void process_trigger_query() {
     // Ensure TLS context is constructed
     if (tq_guard == TlsGuard::NeedsConstruct) {
         auto tls_construct = reinterpret_cast<fn_tls_construct>(
-            g_base_addr + ck3::funcs::INTERACTION_TLS_CONSTRUCT);
+            bridge::game_fn(ck3::funcs::INTERACTION_TLS_CONSTRUCT));
         if (!is_mapped(reinterpret_cast<uintptr_t>(tls_construct))) {
             snprintf(g_trigger_query.error, sizeof(g_trigger_query.error),
                      "tls_construct_not_mapped");
@@ -4873,8 +4979,8 @@ void process_trigger_query() {
         watchdog_disarm();
 
         auto tls_dtor = reinterpret_cast<fn_tls_destructor>(
-            g_base_addr + ck3::funcs::INTERACTION_TLS_DESTRUCTOR);
-        __cxa_thread_atexit(reinterpret_cast<void(*)(void*)>(tls_dtor), tls_ctx, nullptr);
+            bridge::game_fn(ck3::funcs::INTERACTION_TLS_DESTRUCTOR));
+        register_game_tls_dtor(reinterpret_cast<void(*)(void*)>(tls_dtor), tls_ctx);
         if (!set_tls_guard(guard_byte)) {
             snprintf(g_trigger_query.error, sizeof(g_trigger_query.error),
                      "tls_guard_unwritable");
@@ -4887,11 +4993,11 @@ void process_trigger_query() {
 
     // Initialize interaction context: CTX_INIT → CTX_RESET → SET_TARGET
     auto ctx_init = reinterpret_cast<fn_ctx_init>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_INIT);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_INIT));
     auto ctx_reset = reinterpret_cast<fn_ctx_reset>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_RESET);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_RESET));
     auto ctx_set_target = reinterpret_cast<fn_ctx_set_target>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_SET_TARGET);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_SET_TARGET));
 
     if (!is_mapped(reinterpret_cast<uintptr_t>(ctx_init)) ||
         !is_mapped(reinterpret_cast<uintptr_t>(ctx_reset)) ||
@@ -5192,8 +5298,8 @@ static bool handle_set_truce(const std::vector<std::string>& tokens,
         return false;
     }
 
-    uintptr_t got_addr = g_base_addr + ck3::funcs::GET_OR_CREATE_RELATION;
-    uintptr_t tae_addr = g_base_addr + ck3::funcs::TRUCE_ADD_ENTRY;
+    uintptr_t got_addr = bridge::game_fn(ck3::funcs::GET_OR_CREATE_RELATION);
+    uintptr_t tae_addr = bridge::game_fn(ck3::funcs::TRUCE_ADD_ENTRY);
     if (!is_mapped(got_addr) || !is_mapped(tae_addr)) {
         out_msg = "set_truce: engine functions not mapped";
         return false;
@@ -5878,8 +5984,8 @@ void init_runtime_discovery() {
     ADLOG("RUNTIME_DISCOVERY: Starting Zydis-based vtable/global discovery\n");
 
     // Diagnostic dumps BEFORE discovery — see actual instructions at target addresses
-    uintptr_t build_send_addr = g_base_addr + ck3::funcs::BUILD_SEND_CMD_FROM_BUF;
-    uintptr_t dispatch_addr = g_base_addr + ck3::funcs::GAME_COMMAND_DISPATCH;
+    uintptr_t build_send_addr = bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF);
+    uintptr_t dispatch_addr = bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH);
     dump_function_diagnostics("BUILD_SEND_CMD_FROM_BUF", build_send_addr);
     dump_function_diagnostics("GAME_COMMAND_DISPATCH", dispatch_addr);
 
@@ -5979,7 +6085,7 @@ void init_runtime_discovery() {
     //
     // The fix: use BUILD_SEND_CMD_FROM_BUF directly. It takes (void* out_cmd, uintptr_t tls_ctx).
     {
-        g_real_build_send_cmd_addr = g_base_addr + ck3::funcs::BUILD_SEND_CMD_FROM_BUF;
+        g_real_build_send_cmd_addr = bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF);
         ADLOG("RUNTIME_DISCOVERY: BUILD_SEND_CMD = 0x%lx (direct, no thunk follow)\n",
               g_real_build_send_cmd_addr);
     }

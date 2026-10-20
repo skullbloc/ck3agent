@@ -16,6 +16,9 @@
 #include "episode_policy.h"
 #include "budget_ledger.h"
 #include "board.h"
+#ifdef _WIN32
+#include "windows/ck3_offsets_win.h"   // ck3_win::globals::AI_TOGGLE (P6)
+#endif
 #include <rapidjson/document.h>
 
 #include <chrono>
@@ -38,15 +41,15 @@ fn_get_council_instance g_get_council_instance = nullptr;
 // Initialize function pointers from base address
 void init_action_dispatch() {
     g_ai_char_toggle = reinterpret_cast<fn_ai_char_toggle>(
-        g_base_addr + ck3::funcs::AI_CHAR_TOGGLE);
+        bridge::game_fn(ck3::funcs::AI_CHAR_TOGGLE));
     g_char_is_alive = reinterpret_cast<fn_char_is_alive>(
-        g_base_addr + ck3::funcs::CHAR_IS_ALIVE);
+        bridge::game_fn(ck3::funcs::CHAR_IS_ALIVE));
     g_get_ai_ctrl = reinterpret_cast<fn_get_ai_controller>(
-        g_base_addr + ck3::funcs::CHAR_GET_AI_CONTROLLER);
+        bridge::game_fn(ck3::funcs::CHAR_GET_AI_CONTROLLER));
     g_get_council_config = reinterpret_cast<fn_get_council_config>(
-        g_base_addr + ck3::funcs::GET_COUNCIL_CONFIG);
+        bridge::game_fn(ck3::funcs::GET_COUNCIL_CONFIG));
     g_get_council_instance = reinterpret_cast<fn_get_council_instance>(
-        g_base_addr + ck3::funcs::GET_COUNCIL_INSTANCE);
+        bridge::game_fn(ck3::funcs::GET_COUNCIL_INSTANCE));
     // NOTE: g_compute_war_score removed — calling FUN_066ba0d0 from tick hook
     // context crashes. Using battle_score memory reads instead.
 }
@@ -184,7 +187,7 @@ uint32_t get_liege_id_from_addr(uintptr_t char_addr) {
 
 uint32_t game_string_hash(const char* data, uint32_t len) {
     auto hash_fn = reinterpret_cast<uint32_t(*)(uint32_t, const char*, uint32_t)>(
-        g_base_addr + ck3::funcs::STRING_HASH);
+        bridge::game_fn(ck3::funcs::STRING_HASH));
     return hash_fn(0, data, len);
 }
 
@@ -397,13 +400,17 @@ const char* trait_category_name(uint8_t cat) {
 
 bool read_db_obj_name(uintptr_t obj_ptr, const char*& name_out, size_t& len_out) {
     if (!obj_ptr) return false;
-    uintptr_t name_addr = safe_read<uintptr_t>(obj_ptr + ck3::db_object::NAME_KEY);
-    if (!name_addr || !is_mapped(name_addr)) return false;
+    // NAME_KEY is a std::string; game_string_view reads it for the game's ABI
+    // (NAME_LENGTH, +8 from it, is the libstdc++ length word).
+    uintptr_t name_addr = 0;
+    uint64_t name_len = 0;
+    if (!game_string_view(obj_ptr + ck3::db_object::NAME_KEY, &name_addr, &name_len)) return false;
+    if (!is_mapped(name_addr)) return false;
     const char* name = reinterpret_cast<const char*>(name_addr);
     // Basic validation: first char must be printable ASCII
     uint8_t first_byte = safe_read<uint8_t>(name_addr);
     if (first_byte < 0x20 || first_byte > 0x7e) return false;
-    len_out = safe_read<uint64_t>(obj_ptr + ck3::db_object::NAME_LENGTH);
+    len_out = name_len;
     if (len_out == 0 || len_out > 256) return false;
     if (!is_mapped_range(name_addr, len_out)) return false;
     name_out = name;
@@ -460,21 +467,63 @@ void emit_culture_fields_by_id(ResponseBuilder& r, uint32_t culture_id,
     emit_culture_fields(r, obj, culture_id, id_key, name_key, script_key);
 }
 
-// Read character name from memory.
-std::string ad_read_char_name(uintptr_t c) {
-    if (!safe_ptr(c)) return {};
-    // Try the name cache first
+// Read a character's name from memory: the localized name from the cache,
+// or — on a miss — the localization KEY marked pending (see CharName).
+//
+// lane-namekey. Before this, a cache miss returned the key AS the name, so
+// the first reads of a session (the game paused before any tick has run
+// populate_name_cache) handed every client `E_thelred` where a name belongs;
+// the hook, two campaign notes and whoami-before-time-moved all show it. The
+// reader thread cannot localize (the engine's resolver is game-thread only —
+// name_tables.cpp, "Flow"), and the only on-tick service path the bridge has
+// for a PAUSED game is the deferred-drain coordinator, which pulses the clock
+// unpaused for a tick (deferred_drain.cpp): a side effect a name READ must
+// not have. So the miss stays a miss, the id stays queued for the next tick,
+// and the reply states the three things it knows: no name yet, this key,
+// pending.
+CharName ad_read_char_name_full(uintptr_t c) {
+    CharName out{std::string(), std::string(), false};
+    if (!safe_ptr(c)) return out;
+    // The name cache first. A miss QUEUES the id for the game thread.
     uint32_t char_id = safe_read<uint32_t>(c + ck3::character::ID) & 0xFFFFFF;
     if (char_id != 0 && char_id != 0xFFFFFF) {
         std::string cached = get_cached_character_name(char_id);
-        if (!cached.empty()) return cached;
+        if (!cached.empty()) { out.name = std::move(cached); return out; }
     }
-    // Fallback: return the raw loc key
+    // Miss: read the key off the object for the diagnostic field. It is NOT
+    // the name.
     uintptr_t override_flag = safe_read<uintptr_t>(c + ck3::character::OVERRIDE_FLAG);
     uintptr_t name_addr = (override_flag != 0)
         ? (c + ck3::character::OVERRIDE_NAME)
         : (c + ck3::character::FIRST_NAME);
-    return ad_read_std_string(name_addr);
+    out.key = ad_read_std_string(name_addr);
+#ifdef CK3_NAME_LEGACY_KEY_FALLBACK
+    // NEGATIVE CONTROL ONLY (name_pending_probe_negative_control): the
+    // pre-fix behaviour, the key presented as the name. Never set in a build
+    // that ships.
+    out.name = out.key;
+    out.key.clear();
+    return out;
+#else
+    out.pending = !out.key.empty();
+    return out;
+#endif
+}
+
+std::string ad_read_char_name(uintptr_t c) {
+    return ad_read_char_name_full(c).name;
+}
+
+void emit_char_name(ResponseBuilder& r, uintptr_t c) {
+    CharName n = ad_read_char_name_full(c);
+    if (!n.name.empty()) {
+        r.key("name"); r.value_string(n.name.c_str(), n.name.size());
+        return;
+    }
+    if (n.pending) {
+        r.key("name_key"); r.value_string(n.key.c_str(), n.key.size());
+        r.key("name_pending"); r.value_bool(true);
+    }
 }
 
 void emit_char_names(ResponseBuilder& r, uintptr_t c) {
@@ -482,10 +531,15 @@ void emit_char_names(ResponseBuilder& r, uintptr_t c) {
     // safe_read calls would return 0 on bad c (so no crash), but we'd emit
     // misleading "house_id=0" fields. Guard once at entry instead.
     if (!c || !is_mapped(c)) return;
-    // Character name: stored directly on CCharacter at +0x20 (with override at +0x40)
-    std::string name = ad_read_char_name(c);
-    if (!name.empty()) {
-        r.key("name"); r.value_string(name.c_str(), name.size());
+    // Character name: `name` when localized, else `name_key` + `name_pending`
+    // (lane-namekey; the key is stored directly on CCharacter at +0x20, with
+    // the override at +0x40).
+    CharName n = ad_read_char_name_full(c);
+    if (!n.name.empty()) {
+        r.key("name"); r.value_string(n.name.c_str(), n.name.size());
+    } else if (n.pending) {
+        r.key("name_key"); r.value_string(n.key.c_str(), n.key.size());
+        r.key("name_pending"); r.value_bool(true);
     } else if (g_logfile) {
         uint32_t cid = safe_read<uint32_t>(c + ck3::character::ID) & 0xFFFFFF;
         fprintf(g_logfile, "[CK3-Bridge] emit_char_names: char %u name empty (override_flag=%p)\n",
@@ -550,7 +604,7 @@ void emit_char_names(ResponseBuilder& r, uintptr_t c) {
     if (faith_id != 0 && faith_id != 0xFFFFFFFF) {
         uintptr_t faith_obj = ad_db_lookup(ck3::globals::FAITH_INDEXED_DB, faith_id);
         if (faith_obj) {
-            std::string fn = ad_read_std_string(faith_obj + 0x10);
+            std::string fn = ad_read_std_string(faith_obj + ck3::db_object::NAME_KEY);
             if (!fn.empty()) { r.key("faith"); r.value_string(fn.c_str(), fn.size()); }
         }
     }
@@ -602,45 +656,56 @@ void enable_all_ai() {
 // Subsystem Toggles
 // =============================================================================
 
+// The RVA of AI subsystem toggle i (i = the Linux offset from AI_TOGGLE_BASE).
+// Linux: one contiguous block. Windows: MSVC split the 38 bytes into five runs,
+// so there is no base to add to (ck3_offsets_win.h globals::AI_TOGGLE, P6).
+static constexpr uintptr_t ai_toggle_rva(size_t i) {
+#ifdef _WIN32
+    return ck3_win::globals::AI_TOGGLE[i];
+#else
+    return ck3::globals::AI_TOGGLE_BASE + i;
+#endif
+}
+
 const SubsystemToggle g_subsystem_toggles[] = {
-    {"Decisions",              ck3::globals::AI_TOGGLE_BASE + 0x00},
-    {"GrantRevokeTitles",      ck3::globals::AI_TOGGLE_BASE + 0x01},
-    {"SetRealmCapital",        ck3::globals::AI_TOGGLE_BASE + 0x02},
-    {"Lifestyles",             ck3::globals::AI_TOGGLE_BASE + 0x03},
-    {"DynastyLegacies",        ck3::globals::AI_TOGGLE_BASE + 0x04},
-    {"HousePower",             ck3::globals::AI_TOGGLE_BASE + 0x05},
-    {"CultureTraditions",      ck3::globals::AI_TOGGLE_BASE + 0x06},
-    {"DeclareWar",             ck3::globals::AI_TOGGLE_BASE + 0x07},
-    {"Faction",                ck3::globals::AI_TOGGLE_BASE + 0x08},
-    {"Marriages",              ck3::globals::AI_TOGGLE_BASE + 0x09},
-    {"Council",                ck3::globals::AI_TOGGLE_BASE + 0x0A},
-    {"CouncilTasks",           ck3::globals::AI_TOGGLE_BASE + 0x0B},
-    {"SchemeCountermeasures",  ck3::globals::AI_TOGGLE_BASE + 0x0C},
-    {"CallAllies",             ck3::globals::AI_TOGGLE_BASE + 0x0D},
-    {"Development",            ck3::globals::AI_TOGGLE_BASE + 0x0E},
-    {"ReligiousReformation",   ck3::globals::AI_TOGGLE_BASE + 0x0F},
-    {"SuccessionElection",     ck3::globals::AI_TOGGLE_BASE + 0x10},
-    {"SuccessionAppointment",  ck3::globals::AI_TOGGLE_BASE + 0x11},
-    {"Goals",                  ck3::globals::AI_TOGGLE_BASE + 0x12},
-    {"Interactions",           ck3::globals::AI_TOGGLE_BASE + 0x13},
-    {"Laws",                   ck3::globals::AI_TOGGLE_BASE + 0x14},
-    {"PrimaryTitle",           ck3::globals::AI_TOGGLE_BASE + 0x15},
-    {"Capital",                ck3::globals::AI_TOGGLE_BASE + 0x16},
-    {"ScriptedGui",            ck3::globals::AI_TOGGLE_BASE + 0x17},
-    {"Artifacts",              ck3::globals::AI_TOGGLE_BASE + 0x18},
-    {"CourtAmenities",         ck3::globals::AI_TOGGLE_BASE + 0x19},
-    {"CourtTypes",             ck3::globals::AI_TOGGLE_BASE + 0x1A},
-    {"CourtPositions",         ck3::globals::AI_TOGGLE_BASE + 0x1B},
-    {"CourtLanguage",          ck3::globals::AI_TOGGLE_BASE + 0x1C},
-    {"HostActivities",         ck3::globals::AI_TOGGLE_BASE + 0x1D},
-    {"AttendOpenActivities",   ck3::globals::AI_TOGGLE_BASE + 0x1E},
-    {"VassalStance",           ck3::globals::AI_TOGGLE_BASE + 0x1F},
-    {"Accolades",              ck3::globals::AI_TOGGLE_BASE + 0x20},
-    {"StationMenAtArms",       ck3::globals::AI_TOGGLE_BASE + 0x21},
-    {"TaxCollector",           ck3::globals::AI_TOGGLE_BASE + 0x22},
-    {"Legends",                ck3::globals::AI_TOGGLE_BASE + 0x23},
-    {"Situations",             ck3::globals::AI_TOGGLE_BASE + 0x24},
-    {"GreatProjects",          ck3::globals::AI_TOGGLE_BASE + 0x25},
+    {"Decisions",              ai_toggle_rva(0x00)},
+    {"GrantRevokeTitles",      ai_toggle_rva(0x01)},
+    {"SetRealmCapital",        ai_toggle_rva(0x02)},
+    {"Lifestyles",             ai_toggle_rva(0x03)},
+    {"DynastyLegacies",        ai_toggle_rva(0x04)},
+    {"HousePower",             ai_toggle_rva(0x05)},
+    {"CultureTraditions",      ai_toggle_rva(0x06)},
+    {"DeclareWar",             ai_toggle_rva(0x07)},
+    {"Faction",                ai_toggle_rva(0x08)},
+    {"Marriages",              ai_toggle_rva(0x09)},
+    {"Council",                ai_toggle_rva(0x0A)},
+    {"CouncilTasks",           ai_toggle_rva(0x0B)},
+    {"SchemeCountermeasures",  ai_toggle_rva(0x0C)},
+    {"CallAllies",             ai_toggle_rva(0x0D)},
+    {"Development",            ai_toggle_rva(0x0E)},
+    {"ReligiousReformation",   ai_toggle_rva(0x0F)},
+    {"SuccessionElection",     ai_toggle_rva(0x10)},
+    {"SuccessionAppointment",  ai_toggle_rva(0x11)},
+    {"Goals",                  ai_toggle_rva(0x12)},
+    {"Interactions",           ai_toggle_rva(0x13)},
+    {"Laws",                   ai_toggle_rva(0x14)},
+    {"PrimaryTitle",           ai_toggle_rva(0x15)},
+    {"Capital",                ai_toggle_rva(0x16)},
+    {"ScriptedGui",            ai_toggle_rva(0x17)},
+    {"Artifacts",              ai_toggle_rva(0x18)},
+    {"CourtAmenities",         ai_toggle_rva(0x19)},
+    {"CourtTypes",             ai_toggle_rva(0x1A)},
+    {"CourtPositions",         ai_toggle_rva(0x1B)},
+    {"CourtLanguage",          ai_toggle_rva(0x1C)},
+    {"HostActivities",         ai_toggle_rva(0x1D)},
+    {"AttendOpenActivities",   ai_toggle_rva(0x1E)},
+    {"VassalStance",           ai_toggle_rva(0x1F)},
+    {"Accolades",              ai_toggle_rva(0x20)},
+    {"StationMenAtArms",       ai_toggle_rva(0x21)},
+    {"TaxCollector",           ai_toggle_rva(0x22)},
+    {"Legends",                ai_toggle_rva(0x23)},
+    {"Situations",             ai_toggle_rva(0x24)},
+    {"GreatProjects",          ai_toggle_rva(0x25)},
 };
 const size_t g_subsystem_toggle_count = sizeof(g_subsystem_toggles) / sizeof(g_subsystem_toggles[0]);
 
@@ -1279,7 +1344,7 @@ bool do_release_character(const char* params_json, std::string* out) {
     void* ctrl = lookup_character(char_id);
     if (ctrl && !is_sentinel(ctrl)) {
         uintptr_t c = reinterpret_cast<uintptr_t>(ctrl);
-        uintptr_t core_data = read<uintptr_t>(c + 0x1A8);
+        uintptr_t core_data = read<uintptr_t>(c + ck3::character::REALM_DATA);
         if (core_data) {
             uintptr_t ai_ctrl = read<uintptr_t>(core_data + ck3::core_data::AI_CONTROLLER);
             if (ai_ctrl) {
@@ -2251,8 +2316,8 @@ static bool case_set_speed(const char* params_json, std::string* /*response_out*
     return do_set_speed(params_json);
 }
 
-static bool case_toggle_ai_subsystem(const char* params_json, std::string* /*response_out*/) {
-    return do_toggle_ai_subsystem(params_json);
+static bool case_toggle_ai_subsystem(const char* params_json, std::string* response_out) {
+    return do_toggle_ai_subsystem(params_json, response_out);
 }
 
 static bool case_set_character_ai(const char* params_json, std::string* response_out) {

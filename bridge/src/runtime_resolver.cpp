@@ -11,8 +11,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#ifndef _WIN32
 #include <link.h>    // dl_iterate_phdr
 #include <elf.h>
+#else
+#include "os/os.h"
+#include <windows.h>
+#endif
 #include <Zydis/Zydis.h>
 
 // Bridge logging (defined in bridge_init.cpp, inside namespace bridge)
@@ -33,6 +38,7 @@ struct PhdrCallbackData {
     bool found;
 };
 
+#ifndef _WIN32
 static int phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
     auto* d = static_cast<PhdrCallbackData*>(data);
 
@@ -100,9 +106,31 @@ static int phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
     return 1; // stop iteration
 }
 
+#endif  // !_WIN32
+
 bool init_context(uintptr_t base_addr, ResolverContext* ctx) {
     memset(ctx, 0, sizeof(*ctx));
     ctx->base_addr = base_addr;
+#ifdef _WIN32
+    // PE sections: .text (code), .rdata (vtables, RTTI COLs, strings), .data.
+    // MSVC keeps vtables in .rdata, so it stands in for both the Itanium
+    // .rodata and .data.rel.ro. (No caller runs the RTTI scanner on Windows:
+    // it is Itanium-only; P1's anchors are pinned by identity instead.)
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base_addr);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base_addr + dos->e_lfanew);
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec) {
+        MemoryRegion r{base_addr + sec->VirtualAddress, base_addr + sec->VirtualAddress + sec->Misc.VirtualSize,
+                       (sec->Characteristics & IMAGE_SCN_MEM_READ) != 0,
+                       (sec->Characteristics & IMAGE_SCN_MEM_WRITE) != 0,
+                       (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0};
+        if (memcmp(sec->Name, ".text", 6) == 0) ctx->text = r;
+        else if (memcmp(sec->Name, ".rdata", 7) == 0) { ctx->rodata = r; ctx->data_relro = r; }
+        else if (memcmp(sec->Name, ".data", 6) == 0) ctx->data_bss = r;
+    }
+    ctx->regions_valid = ctx->text.size() > 0 && ctx->rodata.size() > 0;
+    return ctx->regions_valid;
+#else
 
     PhdrCallbackData data = { base_addr, ctx, false };
     dl_iterate_phdr(phdr_callback, &data);
@@ -113,6 +141,7 @@ bool init_context(uintptr_t base_addr, ResolverContext* ctx) {
     }
 
     return ctx->regions_valid;
+#endif
 }
 
 // ============================================================================
@@ -1016,6 +1045,7 @@ struct BuildIdCallbackData {
     bool found;
 };
 
+#ifndef _WIN32
 static int buildid_phdr_callback(struct dl_phdr_info* info, size_t, void* data) {
     auto* d = static_cast<BuildIdCallbackData*>(data);
     if (info->dlpi_addr != d->base_addr)
@@ -1103,6 +1133,32 @@ static BuildIdResult check_build_id(uintptr_t base_addr) {
          w.loosen_attempted ? "yes" : "no");
     return BuildIdResult::MATCH;
 }
+
+#else
+// Windows: the identity is the PE CodeView RSDS record (GUID + age), checked by
+// the proxy DLL's identity gate against pinned_identity.h before the bridge
+// starts at all. The witness READS that result (one check, several readers):
+// it never runs a second comparison.
+static BuildIdResult check_build_id(uintptr_t) {
+    bridge::BuildIdWitness w;
+    bridge::resolve_build_id_strictness(w);
+    bridge::os::BinaryIdentity id{};
+    const auto r = bridge::os::binary_identity(&id);
+    if (!bridge::os::succeeded(r) || id.observed_hex[0] == '\0') {
+        RLOG("WARNING: no PE identity witness (%s)", r.detail);
+        w.status = bridge::BuildIdCheck::NOT_FOUND;
+        bridge::set_build_id_witness(w);
+        return BuildIdResult::NOT_FOUND;
+    }
+    w.observed_hex = id.observed_hex;
+    const bool match = strcmp(id.check, "match") == 0;
+    w.status = match ? bridge::BuildIdCheck::MATCH : bridge::BuildIdCheck::MISMATCH;
+    bridge::set_build_id_witness(w);
+    RLOG("PE identity (%s): %s, gate check=%s", bridge::os::identity_format_string(id.format),
+         id.observed_hex, id.check);
+    return match ? BuildIdResult::MATCH : BuildIdResult::MISMATCH;
+}
+#endif  // !_WIN32
 
 void observe_build_id(uintptr_t base_addr) {
     // The whole of leg (e)'s bridge half: read what is ACTUALLY loaded, record

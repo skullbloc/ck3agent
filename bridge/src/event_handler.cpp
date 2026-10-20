@@ -130,7 +130,16 @@ static void* get_game_state_root() {
 // For cross-thread use, fall back to raw byte writes.
 typedef void (*pause_set_fn)(void* idler, int pause_val, int player_id);
 
+// Delayed unpause using PAUSE_SET for proper state propagation after game load.
+// Uses a flag checked in on_tick (game thread safe) instead of calling from a timer thread.
+static std::atomic<int> g_delayed_unpause_ticks{0};
+
 void game_pause() {
+    // A pause cancels the PAUSE_SET(0) that a recent game_unpause queued for the
+    // next tick: otherwise that tick, if it comes after this pause, unpauses the
+    // game again (P6 full1: the deferred coordinator's re-pause undone on one
+    // platform and not the other, by timing alone).
+    g_delayed_unpause_ticks.store(0, std::memory_order_relaxed);
     void* idler = get_idler();
     if (!idler) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_pause: CJominiIdler singleton is null\n");
@@ -138,11 +147,26 @@ void game_pause() {
     }
     auto* flag = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PAUSE_FLAG);
     *flag = 1;
+#ifdef _WIN32
+    // Windows (ADR 0001 P6, full4): after game_unpause's synchronous PAUSE_SET(0),
+    // the byte alone did not stop the engine: the deferred coordinator's re-pause
+    // logged {paused=1} and the clock ran on through the next twelve deferred
+    // queries (wars started at ticks 18 and 26). PAUSE_SET(1), the engine's own
+    // path, the same call game_unpause makes with 0, guarded the same way. Linux
+    // keeps the byte write: every Linux run paused on it.
+    {
+        int player_id = *reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PLAYER_ID);
+        g_in_protected_region = true;
+        if (sigsetjmp(g_recovery_point, 1) == 0) {
+            auto fn = reinterpret_cast<pause_set_fn>(bridge::game_fn(ck3::funcs::PAUSE_SET));
+            fn(idler, 1, player_id);
+        } else if (g_logfile) {
+            fprintf(g_logfile, "[CK3-Bridge] game_pause: PAUSE_SET(1) faulted; the pause byte is set\n");
+        }
+        g_in_protected_region = false;
+    }
+#endif
 }
-
-// Delayed unpause using PAUSE_SET for proper state propagation after game load.
-// Uses a flag checked in on_tick (game thread safe) instead of calling from a timer thread.
-static std::atomic<int> g_delayed_unpause_ticks{0};
 
 void game_unpause() {
     void* idler = get_idler();
@@ -201,7 +225,7 @@ void game_unpause() {
                 "[CK3-Bridge] game_unpause: synchronous PAUSE_SET faulted (sig=%d) — "
                 "falling back to deferred tick\n", sig);
         } else {
-            auto fn = reinterpret_cast<pause_set_fn>(g_base_addr + ck3::funcs::PAUSE_SET);
+            auto fn = reinterpret_cast<pause_set_fn>(bridge::game_fn(ck3::funcs::PAUSE_SET));
             fn(idler, 0, player_id);
             g_in_protected_region = false;
             watchdog_disarm();
@@ -241,7 +265,7 @@ void check_delayed_unpause() {
             if (idler) {
                 int player_id = *reinterpret_cast<int32_t*>(
                     reinterpret_cast<uintptr_t>(idler) + ck3::idler::PLAYER_ID);
-                auto fn = reinterpret_cast<pause_set_fn>(g_base_addr + ck3::funcs::PAUSE_SET);
+                auto fn = reinterpret_cast<pause_set_fn>(bridge::game_fn(ck3::funcs::PAUSE_SET));
                 fn(idler, 0, player_id);
             }
         }
@@ -669,8 +693,8 @@ bool select_event_option(uint32_t instance_id, int option_index) {
 
     // Build the command on the stack
     alignas(16) uint8_t cmd_buf[0x30] = {};  // 0x28 + padding
-    *reinterpret_cast<uintptr_t*>(cmd_buf + 0x00) = g_base_addr + 0x0bb13b60;  // vtable1
-    *reinterpret_cast<uintptr_t*>(cmd_buf + 0x18) = g_base_addr + 0x0bb13c10;  // vtable2 (helper)
+    *reinterpret_cast<uintptr_t*>(cmd_buf + 0x00) = g_base_addr + ck3::funcs::SELECT_EVENT_OPTION_CMD_VTABLE;  // vtable1
+    *reinterpret_cast<uintptr_t*>(cmd_buf + 0x18) = g_base_addr + ck3::funcs::SELECT_EVENT_OPTION_CMD_VTABLE2;  // vtable2 (helper)
     *reinterpret_cast<int32_t*>(cmd_buf + 0x20) = static_cast<int32_t>(instance_id);
     *reinterpret_cast<int32_t*>(cmd_buf + 0x24) = option_index;
 
@@ -678,7 +702,17 @@ bool select_event_option(uint32_t instance_id, int option_index) {
     // Signature: void(void* helper, uint32_t cmd_type)
     // cmd_type 0x27d4 = CSelectEventOptionCommand type hash
     auto game_cmd_dispatch = reinterpret_cast<void(*)(void*, uint32_t)>(
-        g_base_addr + 0x05edde90);  // GameCommand__Dispatch
+        bridge::game_fn(ck3::funcs::GAME_CMD_DISPATCH_HELPER));  // GameCommand__Dispatch
+    // A build with no address for the dispatcher or the command's vtables (the
+    // Windows header poisons unmapped ones) refuses here, before the fault path
+    // below would clear the event-pause count for an option nobody chose.
+    if (!is_mapped(reinterpret_cast<uintptr_t>(game_cmd_dispatch)) ||
+        !is_mapped(*reinterpret_cast<uintptr_t*>(cmd_buf + 0x00)) ||
+        !is_mapped(*reinterpret_cast<uintptr_t*>(cmd_buf + 0x18))) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: REFUSED, the command's "
+                "dispatcher or vtables are not mapped in this build\n");
+        return false;
+    }
 
     watchdog_arm(5);
     g_in_protected_region = true;

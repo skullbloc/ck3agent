@@ -20,10 +20,12 @@ log = logging.getLogger(__name__)
 # derived client (harness, overlay poller, async client) follow automatically —
 # pass `socket_path=` explicitly to talk to a different instance in-process.
 try:                                   # normal: `ck3agent.server.bridge_client`
+    from .instance import bridge_endpoint as _bridge_endpoint
     from .instance import socket_path as _resolve_socket_path
     from .instance import check_peer as _check_peer
     from .instance import check_socket_owner as _check_socket_owner
 except ImportError:                    # bare: sys.path points at ck3agent/server
+    from instance import bridge_endpoint as _bridge_endpoint
     from instance import socket_path as _resolve_socket_path
     from instance import check_peer as _check_peer
     from instance import check_socket_owner as _check_socket_owner
@@ -261,8 +263,15 @@ def split_frame_line(line: bytes) -> list:
 class BridgeClient:
     """Manages the Unix socket connection to the in-process bridge DLL."""
 
-    def __init__(self, socket_path: str = SOCKET_PATH):
+    def __init__(self, socket_path: str = SOCKET_PATH, endpoint: Optional[str] = None):
         self.socket_path = socket_path
+        #: ADR 0001 (Windows port): the path of the bridge's endpoint.json. Set,
+        #: the client connects over TCP loopback and presents the token in it
+        #: (the Windows bridge has no AF_UNIX socket and no peer-uid check).
+        #: None (the default) takes $CK3_BRIDGE_ENDPOINT, else on Windows the
+        #: bridge's own endpoint.json (instance.windows_endpoint_path); with
+        #: neither, the AF_UNIX path above, unchanged.
+        self.endpoint = endpoint if endpoint is not None else _bridge_endpoint()
         self.sock: Optional[socket.socket] = None
         self._buf = b""
         #: ck-1qj0. Documents already decoded off a framing line and not yet
@@ -294,6 +303,8 @@ class BridgeClient:
         Outside the legacy layout, refuses a socket this uid does not own and a
         peer with another uid (rc2 B1).
         """
+        if self.endpoint is not None:
+            return self._connect_tcp(timeout)
         s = None
         try:
             _check_socket_owner(self.socket_path)
@@ -306,6 +317,41 @@ class BridgeClient:
             return True
         except (socket.error, OSError) as e:
             log.error("Failed to connect to bridge: %s", e)
+            if s is not None:
+                s.close()
+            self.sock = None
+            return False
+
+    def _connect_tcp(self, timeout: float) -> bool:
+        """The Windows bridge's transport: TCP loopback, admitted by the token in
+        endpoint.json ({"transport","endpoint","token","pid"}). The first line
+        sent is {"auth": token}; the bridge answers {"type": "auth_ok"} or closes.
+        A non-loopback address is refused here, whatever the file says."""
+        s = None
+        try:
+            with open(self.endpoint, encoding="utf-8") as f:
+                ep = json.load(f)
+            if ep.get("transport") != "tcp_loopback":
+                raise OSError(f"endpoint transport {ep.get('transport')!r} is not tcp_loopback")
+            host, port = str(ep["endpoint"]).rsplit(":", 1)
+            if host != "127.0.0.1":
+                raise OSError(f"refusing a non-loopback endpoint: {ep['endpoint']}")
+            s = socket.create_connection((host, int(port)), timeout=timeout)
+            self.sock = s
+            self.send({"auth": ep["token"]})
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                msg = self.recv(timeout=max(0.1, deadline - time.monotonic()))
+                if msg is None:
+                    break
+                if msg.get("type") == "auth_ok":
+                    log.info("Connected to bridge at %s (tcp_loopback, pid %s)", ep["endpoint"], ep.get("pid"))
+                    return True
+                if msg.get("type") in ("auth_refused", "error"):
+                    raise OSError(f"bridge refused the token: {msg}")
+            raise OSError("no auth_ok from the bridge within the timeout")
+        except (socket.error, OSError, ValueError, KeyError) as e:
+            log.error("Failed to connect to bridge endpoint %s: %s", self.endpoint, e)
             if s is not None:
                 s.close()
             self.sock = None

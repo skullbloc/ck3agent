@@ -103,8 +103,8 @@ int main() {
     std::memset(&b, 0x5a, sizeof(b));
     const os::Result r = os::binary_identity(&b);
     check(os::succeeded(r), "binary_identity: ok");
-    check(b.check && std::strcmp(b.check, "unchecked") == 0,
-          "check is unchecked: no PE identity constant exists to compare with");
+    check(b.check && std::strcmp(b.check, "mismatch") == 0,
+          "check is mismatch: the P4 gate compared this test exe with the pinned ck3.exe");
 
     MODULEINFO mi{};
     check(K32GetModuleInformation(GetCurrentProcess(), GetModuleHandleW(nullptr), &mi, sizeof(mi)) &&

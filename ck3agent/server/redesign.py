@@ -759,6 +759,7 @@ def actor_echo(char: dict | None, requested_id: int, is_player: bool = False,
     cid = requested_id
     name = None
     alive = True
+    pending, pending_key = False, None
     if isinstance(char, dict):
         sect = char.get("character") if isinstance(char.get("character"), dict) else char
         cid = _as_int(sect.get("character_id") or sect.get("id") or requested_id) or requested_id
@@ -769,9 +770,19 @@ def actor_echo(char: dict | None, requested_id: int, is_player: bool = False,
                 or char.get("name"))
         if "alive" in sect:
             alive = bool(sect.get("alive"))
+        # lane-namekey: a name the bridge has not localized yet is PENDING, not
+        # absent. The bridge omits `name` and sends `name_key` (the game's
+        # localization key, `E_thelred` for Æthelred — not a name) plus
+        # `name_pending: true` until the game thread resolves it on a tick; a
+        # paused game resolves nothing. Carry that state through so the reader
+        # of this echo knows a null name means "not yet", never "unnamed".
+        if not name and (sect.get("name_pending") or char.get("name_pending")):
+            pending = True
+            pending_key = sect.get("name_key") or char.get("name_key")
     return {
         "id": cid, "name": name, "alive": alive,
         "is_controlled": is_controlled, "is_player": is_player,
+        **({"name_pending": True, "name_key": pending_key} if pending else {}),
     }
 
 

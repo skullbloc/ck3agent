@@ -150,7 +150,7 @@ bool do_get_ai_personality(const char* params_json, std::string* out) {
     // different values and the lock lookup misses → reads return the engine's
     // recomputed defaults (the "drift" in A7). See set/hook/apply below.
     uint32_t cid = read<uint32_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::ID) & 0xFFFFFF;
-    uintptr_t core_data = read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + 0x1a8);
+    uintptr_t core_data = read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::REALM_DATA);
     if (!core_data) {
         ADLOG("get_ai_personality: no core_data for character %u\n", cid);
         if (out) *out = R"({"success":false,"action":"get_ai_personality","reason":"no_core_data"})";
@@ -202,6 +202,14 @@ bool do_get_ai_personality(const char* params_json, std::string* out) {
     if (has_lock) {
         r.key("locked"); r.value_bool(true);
     }
+    // The engine's own bytes, whatever the lock map says: `personality` above
+    // reports a held lock's values, so it cannot show whether the writes reached
+    // the game. Nine axes (dominance has no engine byte). ADR 0001 P6.
+    r.key("engine"); r.begin_object();
+    for (int i = 0; i < 9; i++) {
+        r.key(axis_names[i]); r.value_int(static_cast<int>(safe_read<int8_t>(personality_ptr + i)));
+    }
+    r.end_object();
 
     // Emit basic context
     uintptr_t c = reinterpret_cast<uintptr_t>(char_ptr);
@@ -249,7 +257,7 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
 
     // Mask lower 24 bits — see get_ai_personality (A7 lock-map key consistency).
     uint32_t cid = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::ID) & 0xFFFFFF;
-    uintptr_t core_data = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + 0x1a8);
+    uintptr_t core_data = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::REALM_DATA);
     if (!core_data) {
         ADLOG("set_ai_personality: no core_data for character %u\n", cid);
         if (out) *out = R"({"success":false,"action":"set_ai_personality","reason":"no_core_data"})";
@@ -464,7 +472,7 @@ void apply_personality_locks() {
         if (!char_ptr || is_sentinel(char_ptr)) continue;
         if (!g_char_is_alive(char_ptr)) continue;
 
-        uintptr_t core_data = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + 0x1a8);
+        uintptr_t core_data = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::REALM_DATA);
         if (!core_data) continue;
 
         uintptr_t personality_ptr = safe_read<uintptr_t>(core_data + ck3::core_data::PERSONALITY_PTR);
@@ -510,7 +518,7 @@ static int personality_getter_hook(void* character, int axis) {
     }
 
     // Not locked — replicate original getter via safe_read (lock-free)
-    uintptr_t core_data = safe_read<uintptr_t>(c + 0x1a8);
+    uintptr_t core_data = safe_read<uintptr_t>(c + ck3::character::REALM_DATA);
     if (!core_data) return 0;
     uintptr_t personality_ptr = safe_read<uintptr_t>(core_data + ck3::core_data::PERSONALITY_PTR);
     if (!personality_ptr) return 0;

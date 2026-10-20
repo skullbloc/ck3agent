@@ -4,8 +4,9 @@ Goal: get CK3's Windows binary running on a Linux box so the proxy-DLL bridge
 can be developed and probed there (ADR 0001, phases P3 and P4). Evidence from
 Proton is MEDIUM until repeated on real Windows (limits in the ADR).
 
-**Status: steps 3, 4 and 5 were run once, on 2026-10-19, on one Linux
-machine with no Steam client installed;** their notes say what was seen and
+**Status: steps 3, 4, 5 and 6 were run on 2026-10-19 on one Linux machine with
+no Steam client installed (step 4 with the bridge DLL, on the pinned 1.18.3.1
+depot and on 1.20.1.1; step 6 with the 867 observer save);** their notes say what was seen and
 where the commands had to change. Steps 1 and 2 are still UNVERIFIED here.
 When you run a step, edit its tag and say what you saw. Never share the
 downloaded files.
@@ -128,52 +129,82 @@ What happened, run by run:
 - The fallback "a second Steam library with Proton forced for CK3" needs the
   Steam client and was not tried.
 
-## 4. Load a proxy DLL  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014]
+## 4. Load the bridge DLL  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014: match on 1.18.3.1, REFUSED on 1.20.1.1]
 
-Put a DLL named after one of the imports from step 2 (`version.dll`; `ck3.exe`
-imports `VERSION.dll` and `WINMM.dll`) next to `ck3.exe`, and tell Wine to
+The bridge DLL is `ck3_bridge_win`, built as `version.dll` (`ck3.exe` imports
+`VERSION.dll` and `WINMM.dll`; it calls `GetFileVersionInfoA`,
+`GetFileVersionInfoSizeA` and `VerQueryValueA` from it). Build it with the
+clang-cl/xwin toolchain (or MSVC) and put it next to `ck3.exe`, telling Wine to
 prefer it over the builtin:
 
 ```bash
-cp version.dll "$DEPOT/binaries/"          # refuse if a version.dll is already there
+cmake -S bridge -B bridge/build/win -G Ninja -DCK3_PLATFORM=windows \
+      -DCMAKE_TOOLCHAIN_FILE=$PWD/bridge/cmake/toolchains/clang-cl-xwin.cmake
+cmake --build bridge/build/win --target ck3_bridge_win     # -> bridge/build/win/version.dll
+cp bridge/build/win/version.dll "$DEPOT/binaries/"   # refuse if a version.dll is already there
 export WINEDLLOVERRIDES="version=n,b"      # native first, builtin as fallback
 export WINEDEBUG=+loaddll                  # logs which DLL was actually loaded
 # start as in step 3, then:
-grep -i 'version.dll' "$PROTON_LOG_DIR/steam-1158310.log"
+grep -i 'loaddll.*version.dll' "$PROTON_LOG_DIR/steam-1158310.log"
+cat "$PFX/pfx/drive_c/users/steamuser/AppData/Local/ck3agent/bridge.log"
 ```
 
 With `PROTON_LOG=1` the Wine debug output goes to the log file, not to the
-terminal; without it, it goes to stderr. Seen in the log of the `ck3.exe`
-process:
+terminal. Seen in the log, thread `0144` being the game's loader:
 
 ```
-trace:loaddll:build_module Loaded L"Z:\\...\\binaries\\VERSION.dll" at 00006FFFFB7B0000: native
-trace:loaddll:build_module Loaded L"C:\\windows\\system32\\version.dll" at 00006FFFFDCE0000: builtin
+0144:trace:loaddll:build_module Loaded L"Z:\\mnt\\data\\ck3-win-1183\\binaries\\VERSION.dll" at 00006FFFFB820000: native
+0170:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\version.dll" at 00006FFFFDCE0000: builtin
 ```
 
-The second line is the proxy loading the real DLL by full path; it is a
-different module at a different base, so a full-path load does not hand the
-proxy back to itself. The other `builtin` version.dll lines in the log belong
-to Proton's `steam.exe` and helper processes.
+The second line is the DLL's init thread loading the real DLL by full path: a
+different module at a different base, so the full-path load does not hand the
+proxy back to itself. Without the DLL, thread `0144` loads the builtin instead.
 
-The stub used is `bridge/src/os/win/proxy_stub/` (source; build with
-`build.sh`, `x86_64-w64-mingw32-gcc` or llvm-mingw's clang). It forwards every
-export of the real DLL through a pointer resolved on attach and appends one line
-per attach to `C:\ck3_proxy_stub.log` (`$PFX/pfx/drive_c/` under Proton):
+What the DLL does (`bridge/src/os/windows/dll_main.cpp`, `proxy.cpp`):
+`DllMain` records the module and starts one thread, nothing else. That thread
+resolves the forwards to `<System32>\version.dll` (a forward called earlier
+resolves on its own thread, lock-free), checks that the host is `ck3.exe`,
+then runs the identity gate: the CodeView GUID+age and `SizeOfImage` of the
+running image against the pinned 1.18.3.1 constants
+(`bridge/src/os/windows/pinned_identity.h`; the file SHA-256 is the key only
+when no CodeView record is readable, and is otherwise reported as a second
+witness). It logs to `%LOCALAPPDATA%\ck3agent\bridge.log` (the instance paths;
+`%TEMP%\ck3_bridge_win.log` if they are refused). On `match`, a build with the
+bridge core (`CK3_WIN_BRIDGE_CORE`, on by default since P5) starts the bridge
+observe-only: no hooks, an IPC listener on TCP loopback (§7). The P4 runs below
+were made before that, with nothing started on `match`. On any other build it logs
+`REFUSED` with both identities, starts nothing, and keeps forwarding; the game
+runs normally. The pinned 1.18.3.1 depot:
 
 ```
-attach 2026-10-19T01:38:43Z pid=356 tid=360 self=00006ffffb7b0000 (Z:\...\binaries\VERSION.dll) exe=Z:\...\binaries\ck3.exe real=00006ffffdce0000 (C:\windows\system32\version.dll) err=0 resolved=16/16 missing=[]
+[ck3_bridge_win] forward real=C:\windows\system32\version.dll module=00006FFFFDCE0000 err=0 resolved=16/17 missing=[GetFileVersionInfoByHandle] first=init_thread
+[ck3_bridge_win] host exe=Z:\mnt\data\ck3-win-1183\binaries\ck3.exe is_game=1
+[ck3_bridge_win] identity observed format=pe_codeview_rsds key=3e26a827c47a4fb0a8633288849287c800000001 size_of_image=94806016 sha256=2f1358c0...2fccb0f (416ms)
+[ck3_bridge_win] identity match key=codeview+size_of_image sha256_witness=agreed: nothing started (ADR P4: no hooks, no IPC listener)
+[ck3_bridge_win] calls after 90000ms: GetFileVersionInfoSizeW=1 GetFileVersionInfoW=1 VerQueryValueW=4
 ```
 
-The game reached the main menu with the proxy in place. Its per-export call
-counters, read from the live process (`/proc/<pid>/mem` at the counters'
-addresses), showed the forwards in use by then: `GetFileVersionInfoSizeW` 1,
-`GetFileVersionInfoW` 1, `VerQueryValueW` 4. The export list is generated from
-Wine's `version.dll` (16 names); Windows' own also exports
-`GetFileVersionInfoByHandle`, so regenerate the list from a real System32 copy
-before the Windows run (P7). `LoadLibraryW` from `DllMain` works under Wine's
-loader; that says nothing about Windows' loader lock. The real bridge DLL
-does not exist yet (P2 and P4). Do not chain over an existing proxy DLL.
+The 1.20.1.1 depot (public branch):
+
+```
+[ck3_bridge_win] identity observed format=pe_codeview_rsds key=0df59548663d4c98a61c878362242e2b00000001 size_of_image=102600704 sha256=12cbd0d6...8a008939 (447ms)
+[ck3_bridge_win] identity REFUSED check=mismatch key=codeview+size_of_image why=CodeView GUID+age and SizeOfImage both differ from the pin sha256_witness=disagreed: nothing started, forwarding only; the game keeps running
+```
+
+Both reached the main menu with the DLL in place, and neither game process
+had a TCP or UDP listener (`ss -ltnup`; its only listening socket is the
+NVIDIA driver's `@cuda-uvmfd-...` abstract socket, present without the DLL
+too). The export list is generated from Wine's builtin `version.dll` (16
+names) plus `GetFileVersionInfoByHandle`, which Windows' own exports and Wine's
+lacks (`bridge/src/os/windows/version_exports_extra.h`); regenerate from a real
+System32 copy before the Windows run (P7). Evidence and timings:
+`re/findings/windows/re_p4_proxy_gate.md` in the research checkout. Do not
+chain over an existing proxy DLL.
+
+The P3 load-check stub (`bridge/src/os/win/proxy_stub/`, forwards only, logs to
+`C:\ck3_proxy_stub.log`) is kept as a diagnostic for a proxy load that fails
+silently.
 
 ## 5. Take an ELF core of the Wine process  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014, gdb 17.2]
 
@@ -231,6 +262,100 @@ Seen: `MZ` at the base, `PE\0\0` at `e_lfanew` 0x158, `ImageBase` and
 `.text`'s raw offset. The reader's ELF-magic base search cannot find a PE,
 hence the sidecar. `CoreReader.validate_base` checks for ELF magic and will
 not apply. The reader lives in the research checkout and is not published yet.
+
+## 6. Load a save  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014: 1.18.3.1, the 867 observer save]
+
+The Windows game keeps its user data inside the prefix:
+`$PFX/pfx/drive_c/users/steamuser/Documents/Paradox Interactive/Crusader Kings III/`.
+Put the save in `save games/` there, write `continue_game.json` beside it with
+`"title": "<save name without .ck3>"`, and start the game with `--continuelastsave`
+(`proton run ck3.exe --continuelastsave`). It loads straight into the save. An
+observer save stops at the character-select lobby, with the clock not running.
+Remove both files afterwards.
+
+- **Without a Steam client the game owns no DLC.** A save that lists DLCs (a
+  `dlcs={...}` line in its `meta_data`) fails with "Failed to Load Savegame", and
+  `error.log` names each missing DLC. Removing that list from both copies of
+  `meta_data` (the text block after the header and the top of the zipped
+  `gamestate`) lets it load. The research checkout's
+  `re/scripts/windows/strip_save_dlcs.py` does exactly that. Not tested with the
+  Steam client running.
+- Seen: `debug.log` `End loading of history` at about +90 s. The logs then go
+  quiet, and the lobby showed 1 January 867. The ELF core (§5) taken there was
+  16.6 GB apparent and 8.6 GB on disk.
+- For a comparison with the Linux build, load **the same file** in a plain Linux
+  game (no bridge, or `CK3_SUPPRESS_AUTO_UNPAUSE=1`). A bridge-loaded Linux game
+  runs its clock: one reached 869.07.12 while sitting in the lobby, and the
+  Windows game stayed at 867.01.01. Check the date in both cores before comparing
+  anything.
+
+## 7. Talk to the bridge (observe only)  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014: 1.18.3.1, the 867 save, every query_* answered]
+
+With the bridge core in `version.dll` (§4), a `match` starts the bridge with no
+hooks and an IPC listener on TCP loopback. It writes the endpoint into the
+per-user state directory, where a client finds the address and the token:
+
+```bash
+E="$PFX/pfx/drive_c/users/steamuser/AppData/Local/ck3agent/endpoint.json"
+cat "$E"     # {"transport":"tcp_loopback","endpoint":"127.0.0.1:<port>","token":"<64 hex>","pid":<n>}
+```
+
+The client's first line must be `{"auth":"<token>"}`; the bridge answers
+`{"type":"auth_ok"}` (or `auth_refused` and closes). After that the protocol is
+the Linux one (NDJSON). `CK3_BRIDGE_PORT` fixes the port; otherwise the system
+picks a free one. The research checkout's `re/scripts/windows/parity_probe.py
+--endpoint "$E" --plan plan.json --out windows.jsonl` does the handshake and
+records every reply; `node/p5-win-v1.sh` is the whole run (stage the save,
+start, wait, probe, kill the recorded pid, remove the DLL and the endpoint).
+
+Seen in `bridge.log` at the menu or in the lobby:
+
+```
+[CK3-Bridge] IPC listening on 127.0.0.1:44835 (tcp_loopback); endpoint C:\users\steamuser\AppData\Local\ck3agent\endpoint.json
+[CK3-Bridge] Initialization complete (Windows, observe-only)
+```
+
+- Since P6 the bridge is no longer observe-only (§8); the offset validation
+  checks the Windows names and passes, and a `DEGRADED MODE` verdict now means
+  what it means on Linux: IPC only, no hooks.
+- A read the Windows header cannot place (a poisoned constant) fails cleanly; a
+  degraded reply logs `poison_index=<i>`, which names the constant in the
+  build's `win_offsets/report.json`.
+- The game can exit on its own when the GPU is short of memory
+  (`vkAllocateMemory` failing in the Proton log); the node's headless compositor
+  has held 4.3 of 6 GiB with no game running. Check `nvidia-smi` first.
+
+Parity with the Linux bridge on the same save, the method and the results:
+`re/findings/windows/re_p5_observe_parity.md` in the research checkout.
+
+## 8. Steer through the bridge (the AI-tick hook)  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014: 1.18.3.1, the 867 save, PROTON_USE_WINED3D=1]
+
+On `match` the bridge installs the AI-tick hook once the save has loaded (a swap of
+one slot in CAIManager's +8 vtable) and from then on works as on Linux: a client
+that handshakes with `"mode":"control"` can claim a character and steer it
+(personality axes, AI subsystem toggles, the character's AI, pause and speed).
+Seen in `bridge.log`:
+
+```
+[CK3-Bridge] Tick hook installed (Windows): +8 vtable[1] (orig=000000014175AB80 -> on_tick_internal)
+[CK3-Bridge] BUILD-B: First tick received — DORMANT -> ACTIVE
+[CK3-Bridge] Watchdog: Windows thread interrupt (tid=...; armed per calling thread)
+```
+
+The first tick comes with the first unpause: the bridge unpauses a loaded game by
+itself unless `CK3_SUPPRESS_AUTO_UNPAUSE=1` is set (the parity runs set it, so the
+clock moves only when a plan step moves it). Not on Windows yet: the observers that
+Linux builds on inline hooks (war score, war and scheme creation, marriages,
+council tasks, the CB selector, the off-goal veto), CB and interaction validity
+(they refuse or report the engine call failed), and localized character names
+(`name_pending` stays true).
+
+**Renderer.** On the node the game died at the end of loading under DXVK, in
+`vkAllocateMemory` (the GPU short of memory; the bridge not involved, a run without
+the hook died the same way). `PROTON_USE_WINED3D=1` (OpenGL) loaded every time;
+`DXVK_CONFIG="dxgi.maxDeviceMemory = 1024"` did not help. `node/p6-win-v1.sh` in the
+research checkout runs the parity plan and a steering plan; P6 results:
+`re/findings/windows/re_p6_hooks_steering.md`.
 
 ## What to report
 

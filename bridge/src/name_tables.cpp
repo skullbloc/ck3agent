@@ -955,6 +955,12 @@ const char* resolve_decision_name(uint32_t hash) {
 //   3. Next reader query for the same id returns the resolved name.
 //
 // Pattern: game thread populates the cache, reader thread reads under a mutex.
+//
+// What a miss looks like to a client (lane-namekey): the reply carries NO
+// `name`; it carries `name_key` (the key on the object, `E_thelred`) and
+// `name_pending: true` (ad_read_char_name_full / emit_char_name in
+// dispatch_router.cpp). A paused game runs no on_tick, so step 2 waits for
+// time to move; the bridge never pulses the clock for a name read.
 
 using fn_resolve_name = std::string*(*)(std::string*, void*);
 
@@ -1072,8 +1078,12 @@ void populate_name_cache() {
     }
 
     auto resolve_fn = reinterpret_cast<fn_resolve_name>(
-        g_base_addr + ck3::funcs::CHAR_FIRST_NAME_RESOLVED);
+        bridge::game_fn(ck3::funcs::CHAR_FIRST_NAME_RESOLVED));
     if (!resolve_fn && !override_fn) return;
+    // No address for the engine's resolver in this build (Windows: poisoned until
+    // mapped): names stay pending, as they are before the first tick, rather than
+    // faulting once per tick (P6 full1).
+    if (!override_fn && !is_mapped(reinterpret_cast<uintptr_t>(resolve_fn))) return;
 
     int resolved = 0;
     int skipped = 0;
@@ -1095,7 +1105,8 @@ void populate_name_cache() {
                 continue;
             }
 
-            resolve_fn(&name, reinterpret_cast<void*>(char_ptr));
+            bridge::game_first_name_resolved(reinterpret_cast<uintptr_t>(resolve_fn), &name,
+                                             reinterpret_cast<void*>(char_ptr));
         }
 
         if (!name.empty()) {

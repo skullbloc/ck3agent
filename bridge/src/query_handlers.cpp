@@ -26,6 +26,17 @@
 
 namespace bridge {
 
+void log_degraded_read(const char* action) {
+    if (!g_logfile) return;
+    const unsigned long long a = safe_read_last_fault();
+    fprintf(g_logfile, "[CK3-Bridge] %s degraded: %d unreadable read(s), last addr=0x%llx", action,
+            safe_read_fault_count(), a);
+    if ((a >> 52) == 0x7FF)
+        fprintf(g_logfile, " (poisoned RVA: poison_index=%llu field_offset=0x%llx)", (a >> 40) & 0xFFF,
+                (a - g_base_addr) & 0xFFFFFFFFFFull);
+    fprintf(g_logfile, "\n");
+}
+
 // Runtime flag arming the do_query_war_stance AI-mgr coordinator record walk.
 // DEFAULT OFF — the record↔war-id match key (rec+0x18) is decompile-confirmed
 // (FUN_04e60920) but not yet live-probed on a known-at-war record
@@ -203,8 +214,8 @@ static void probe_alliance_truce(void* attacker_char, void* defender_char,
     if (!defender_char || is_sentinel(defender_char)) return;
     uint32_t defender_id = char_get_id(defender_char) & 0xFFFFFF;
     if (defender_id == 0) return;
-    auto get_truce_list = reinterpret_cast<uintptr_t(*)(void*)>(g_base_addr + ck3::funcs::GET_TRUCE_LIST);
-    auto simd_find      = reinterpret_cast<uintptr_t(*)(uintptr_t, uintptr_t, void*)>(g_base_addr + ck3::funcs::SIMD_FIND_LONG);
+    auto get_truce_list = reinterpret_cast<uintptr_t(*)(void*)>(bridge::game_fn(ck3::funcs::GET_TRUCE_LIST));
+    auto simd_find      = reinterpret_cast<uintptr_t(*)(uintptr_t, uintptr_t, void*)>(bridge::game_fn(ck3::funcs::SIMD_FIND_LONG));
     const bool truce_funcs_mapped =
         is_mapped(reinterpret_cast<uintptr_t>(get_truce_list)) &&
         is_mapped(reinterpret_cast<uintptr_t>(simd_find));
@@ -511,7 +522,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
 
     // Age: call GET_AGE(char*) -> int16 (years) — wrapped in sigsetjmp
     {
-        auto fn_age = reinterpret_cast<int16_t(*)(void*)>(g_base_addr + ck3::funcs::GET_AGE);
+        auto fn_age = reinterpret_cast<int16_t(*)(void*)>(bridge::game_fn(ck3::funcs::GET_AGE));
         volatile int16_t age = 0;
         int sig = sigsetjmp(g_recovery_point, 1);
         if (sig == 0) {
@@ -920,6 +931,7 @@ bool do_query_character(const char* params_json, std::string* out) {
     if (safe_read_had_fault()) {
         r.key("degraded");    r.value_bool(true);
         r.key("fault_count"); r.value_int(safe_read_fault_count());
+        log_degraded_read("query_character");
 #ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
         char addr_buf[24];
         snprintf(addr_buf, sizeof(addr_buf), "0x%lx", safe_read_last_fault());
@@ -955,7 +967,7 @@ bool do_query_opinion(const char* params_json, std::string* out) {
 
     using fn_opinion = int(*)(void*, void*);
     static fn_opinion get_opinion = reinterpret_cast<fn_opinion>(
-        g_base_addr + ck3::funcs::GET_OPINION_OF);
+        bridge::game_fn(ck3::funcs::GET_OPINION_OF));
     int opinion = get_opinion(actor, target);
     if (opinion < -200 || opinion > 200) opinion = 0;  // sanity clamp
 
@@ -999,7 +1011,7 @@ bool do_query_opinion_breakdown(const char* params_json, std::string* out) {
     // Get total opinion via engine function
     using fn_opinion = int(*)(void*, void*);
     static fn_opinion get_opinion = reinterpret_cast<fn_opinion>(
-        g_base_addr + ck3::funcs::GET_OPINION_OF);
+        bridge::game_fn(ck3::funcs::GET_OPINION_OF));
     int total_opinion = get_opinion(actor, target);
     if (total_opinion < -200 || total_opinion > 200) total_opinion = 0;
 
@@ -1138,7 +1150,7 @@ bool do_query_opinion_breakdown(const char* params_json, std::string* out) {
                     if (!sr_type_ptr || (!sr_type_ptr || !is_mapped(sr_type_ptr))) continue;
 
                     // Try reading a name from the type object
-                    std::string rel_name = ad_read_std_string(sr_type_ptr + 0x10);
+                    std::string rel_name = ad_read_std_string(sr_type_ptr + ck3::db_object::NAME_KEY);
 
                     // Read opinion contribution — typically at +0x20 in the entry
                     int32_t sr_opinion = safe_read<int32_t>(sr_base + 0x20);
@@ -1553,6 +1565,7 @@ bool do_query_realm(const char* params_json, std::string* out) {
     if (safe_read_had_fault()) {
         r.key("degraded");    r.value_bool(true);
         r.key("fault_count"); r.value_int(safe_read_fault_count());
+        log_degraded_read("query_realm");
 #ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
         char addr_buf[24];
         snprintf(addr_buf, sizeof(addr_buf), "0x%lx", safe_read_last_fault());
@@ -1570,6 +1583,97 @@ bool do_query_realm(const char* params_json, std::string* out) {
 // Round 6 P4: these are TITLE IDs, not character IDs. FUN_0674ae20
 // (GetLineOfSuccession) looks up each title_id in the landed title DB.
 // Max heirs capped by DAT_0c3a86c8.
+// ─────────────────────────────────────────────────────────────────────────────
+// Effective per-title succession rule (order/division/rank), resolved the CORRECT
+// way per re_per_title_succession.md §0/§2/§3. The OLD code read raw bytes at
+// title+0x380/+0x384 as if title+0x380 were an inline 6-byte SSuccessionRule — but
+// title+0x380 is a CPdxVector<CTitleSuccessionLaw*> (data ptr @ +0x380, count @
+// +0x38C), so those bytes were the LOW BYTES OF THE VECTOR DATA POINTER (garbage).
+//
+// Correct resolution (PURE READ — no engine call, every deref is_mapped-gated):
+//   • title-scoped laws: walk the SUCC_LAW_VECTOR_DATA[] (count = SUCC_LAW_VECTOR_COUNT),
+//     reading each law element's SSuccessionRule VALUE at (elem + 0xB08). Each title
+//     law only sets the axes it defines; merge non-"unset" axes onto the output.
+//   • 0-custom title (count==0): the effective rule is the HOLDER's REALM law —
+//     walk title_realm_laws::ACTIVE_LAW_ARRAY (holder_title_realm + 0x200, count
+//     +0x208), reading each CLaw*'s SSuccessionRule at (CLaw* + 0xB08), merging
+//     succession-relevant axes (order/division/rank) where defined.
+// This mirrors init_succession_rule_from_title's merge without calling it.
+//
+// 0x09=unset order, 0x02=unset division/rank are the engine's "axis not set"
+// sentinels; we treat them as "do not override".
+struct EffSuccRule {
+    uint8_t order; uint8_t division; uint8_t rank;
+    // query_succession's other axes (P5: it read title+0x381.. raw, the vector's pointer bytes)
+    uint8_t traversal = 3; uint8_t gender = 5; uint8_t faith = 3;
+};
+
+static void merge_rule_value(EffSuccRule& acc, uintptr_t rule_base) {
+    if (!rule_base || !is_mapped(rule_base)) return;
+    uint8_t o = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_ORDER);
+    uint8_t d = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_DIVISION);
+    uint8_t k = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_RANK);
+    if (o != 9) acc.order = o;        // 9 = unset order
+    if (d != 2) acc.division = d;     // 2 = unset division
+    if (k != 2) acc.rank = k;         // 2 = unset rank
+    uint8_t t = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_TRAVERSAL);
+    uint8_t g = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_GENDER);
+    uint8_t f = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_FAITH_REQ);
+    if (t != 3) acc.traversal = t;    // 3 = unset traversal
+    if (g != 5) acc.gender = g;       // 5 = unset gender
+    if (f != 3) acc.faith = f;        // 3 = unset faith requirement
+}
+
+// holder_title_realm: the *(char+0x1B8) title_realm of the title's holder, used
+// for the realm-law fallback. Pass 0 to skip the fallback (still safe).
+static EffSuccRule resolve_effective_succ_rule(uintptr_t tptr, uintptr_t holder_title_realm) {
+    EffSuccRule acc = { 9 /*unset order*/, 2 /*unset div*/, 2 /*unset rank*/ };
+    if (!tptr || !is_mapped(tptr)) return acc;
+
+    int32_t law_count = safe_read<int32_t>(tptr + ck3::title_obj::SUCC_LAW_VECTOR_COUNT);
+    uintptr_t law_arr = safe_read<uintptr_t>(tptr + ck3::title_obj::SUCC_LAW_VECTOR_DATA);
+    if (law_count < 0 || law_count > 64) law_count = 0;  // sanity clamp
+    if (law_arr && !is_mapped(law_arr)) { law_arr = 0; law_count = 0; }
+
+    if (law_count > 0 && law_arr) {
+        // title carries its own succession law(s): merge their value structs.
+        for (int32_t i = 0; i < law_count; i++) {
+            uintptr_t elem = safe_read<uintptr_t>(law_arr + i * sizeof(uintptr_t));
+            if (!elem || elem < 0x10000 || !is_mapped(elem)) continue;
+            merge_rule_value(acc, elem + ck3::title_obj::SUCC_LAW_RULE_AT_ELEM);
+        }
+        return acc;
+    }
+
+    // 0-custom title: effective rule = holder's REALM succession law.
+    if (holder_title_realm && is_mapped(holder_title_realm)) {
+        uintptr_t active_arr = safe_read<uintptr_t>(holder_title_realm + ck3::title_realm_laws::ACTIVE_LAW_ARRAY);
+        int32_t active_cnt   = safe_read<int32_t>(holder_title_realm + ck3::title_realm_laws::ACTIVE_LAW_COUNT);
+        if (active_cnt < 0 || active_cnt > 512) active_cnt = 0;
+        if (active_arr && is_mapped(active_arr)) {
+            for (int32_t i = 0; i < active_cnt; i++) {
+                uintptr_t claw = safe_read<uintptr_t>(active_arr + i * sizeof(uintptr_t));
+                if (!claw || claw < 0x10000 || !is_mapped(claw)) continue;
+                merge_rule_value(acc, claw + ck3::realm_law_entry::SUCCESSION_RULES);
+            }
+        }
+    }
+    return acc;
+}
+
+// The effective rule of a title, its realm-law fallback taken from the title's own
+// holder. Every succession reader goes through this (P5: seven handlers read the
+// deprecated title+0x380.. bytes, which are the law vector's data pointer).
+static EffSuccRule title_succ_rule(uintptr_t tptr) {
+    uintptr_t holder_tr = 0;
+    if (tptr && is_mapped(tptr)) {
+        uint32_t h = safe_read<uint32_t>(tptr + ck3::title_obj::HOLDER_CHAR_ID);
+        void* holder = (h && h != 0xFFFFFFFF) ? lookup_character(h) : nullptr;
+        if (holder && !is_sentinel(holder)) holder_tr = resolve_title_realm(reinterpret_cast<uintptr_t>(holder));
+    }
+    return resolve_effective_succ_rule(tptr, holder_tr);
+}
+
 bool do_query_succession(const char* params_json, std::string* out) {
     void* character = resolve_character(params_json);
     if (!character || is_sentinel(character)) {
@@ -1669,12 +1773,16 @@ bool do_query_succession(const char* params_json, std::string* out) {
 
     // Emit primary title succession rules
     if (best_title_ptr) {
-        uint8_t order     = safe_read<uint8_t>(best_title_ptr + ck3::title_obj::SUCC_ORDER);
-        uint8_t traversal = safe_read<uint8_t>(best_title_ptr + ck3::title_obj::SUCC_TRAVERSAL);
-        uint8_t gender    = safe_read<uint8_t>(best_title_ptr + ck3::title_obj::SUCC_GENDER);
-        uint8_t rank      = safe_read<uint8_t>(best_title_ptr + ck3::title_obj::SUCC_RANK);
-        uint8_t division  = safe_read<uint8_t>(best_title_ptr + ck3::title_obj::SUCC_DIVISION);
-        uint8_t faith_req = safe_read<uint8_t>(best_title_ptr + ck3::title_obj::SUCC_FAITH_REQ);
+        // The effective rule: the title's own succession laws, else the holder's
+        // realm law (resolve_effective_succ_rule). The raw title+0x380.. bytes read
+        // here before P5 were the law vector's data pointer (they differed per run).
+        const EffSuccRule eff = resolve_effective_succ_rule(best_title_ptr, resolve_title_realm(c));
+        uint8_t order     = eff.order;
+        uint8_t traversal = eff.traversal;
+        uint8_t gender    = eff.gender;
+        uint8_t rank      = eff.rank;
+        uint8_t division  = eff.division;
+        uint8_t faith_req = eff.faith;
 
         std::string tname = ad_read_std_string(best_title_ptr + ck3::db_object::NAME_KEY);
         r.key("primary_title_id"); r.value_uint(best_title_id & 0xFFFFFF);
@@ -1801,9 +1909,9 @@ bool do_query_succession(const char* params_json, std::string* out) {
         }
         r.key("tier"); r.value_int(tier);
 
-        uint8_t order     = safe_read<uint8_t>(tptr + ck3::title_obj::SUCC_ORDER);
-        uint8_t gender    = safe_read<uint8_t>(tptr + ck3::title_obj::SUCC_GENDER);
-        uint8_t division  = safe_read<uint8_t>(tptr + ck3::title_obj::SUCC_DIVISION);
+        uint8_t order     = title_succ_rule(tptr).order;
+        uint8_t gender    = title_succ_rule(tptr).gender;
+        uint8_t division  = title_succ_rule(tptr).division;
 
         r.key("succession_order"); r.value_string(decode_succ_order(order));
         r.key("gender_law"); r.value_string(decode_gender_law(gender));
@@ -1879,74 +1987,6 @@ bool do_query_succession(const char* params_json, std::string* out) {
 // computing path (build_title_heir_list / ExecuteSuccession), which would
 // allocate and touch succession scratch. See re_per_title_succession.md §4 and
 // re_succession_preview_audit.md.
-// ─────────────────────────────────────────────────────────────────────────────
-// Effective per-title succession rule (order/division/rank), resolved the CORRECT
-// way per re_per_title_succession.md §0/§2/§3. The OLD code read raw bytes at
-// title+0x380/+0x384 as if title+0x380 were an inline 6-byte SSuccessionRule — but
-// title+0x380 is a CPdxVector<CTitleSuccessionLaw*> (data ptr @ +0x380, count @
-// +0x38C), so those bytes were the LOW BYTES OF THE VECTOR DATA POINTER (garbage).
-//
-// Correct resolution (PURE READ — no engine call, every deref is_mapped-gated):
-//   • title-scoped laws: walk the SUCC_LAW_VECTOR_DATA[] (count = SUCC_LAW_VECTOR_COUNT),
-//     reading each law element's SSuccessionRule VALUE at (elem + 0xB08). Each title
-//     law only sets the axes it defines; merge non-"unset" axes onto the output.
-//   • 0-custom title (count==0): the effective rule is the HOLDER's REALM law —
-//     walk title_realm_laws::ACTIVE_LAW_ARRAY (holder_title_realm + 0x200, count
-//     +0x208), reading each CLaw*'s SSuccessionRule at (CLaw* + 0xB08), merging
-//     succession-relevant axes (order/division/rank) where defined.
-// This mirrors init_succession_rule_from_title's merge without calling it.
-//
-// 0x09=unset order, 0x02=unset division/rank are the engine's "axis not set"
-// sentinels; we treat them as "do not override".
-struct EffSuccRule { uint8_t order; uint8_t division; uint8_t rank; };
-
-static void merge_rule_value(EffSuccRule& acc, uintptr_t rule_base) {
-    if (!rule_base || !is_mapped(rule_base)) return;
-    uint8_t o = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_ORDER);
-    uint8_t d = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_DIVISION);
-    uint8_t k = safe_read<uint8_t>(rule_base + ck3::title_obj::SUCC_RULE_RANK);
-    if (o != 9) acc.order = o;        // 9 = unset order
-    if (d != 2) acc.division = d;     // 2 = unset division
-    if (k != 2) acc.rank = k;         // 2 = unset rank
-}
-
-// holder_title_realm: the *(char+0x1B8) title_realm of the title's holder, used
-// for the realm-law fallback. Pass 0 to skip the fallback (still safe).
-static EffSuccRule resolve_effective_succ_rule(uintptr_t tptr, uintptr_t holder_title_realm) {
-    EffSuccRule acc = { 9 /*unset order*/, 2 /*unset div*/, 2 /*unset rank*/ };
-    if (!tptr || !is_mapped(tptr)) return acc;
-
-    int32_t law_count = safe_read<int32_t>(tptr + ck3::title_obj::SUCC_LAW_VECTOR_COUNT);
-    uintptr_t law_arr = safe_read<uintptr_t>(tptr + ck3::title_obj::SUCC_LAW_VECTOR_DATA);
-    if (law_count < 0 || law_count > 64) law_count = 0;  // sanity clamp
-    if (law_arr && !is_mapped(law_arr)) { law_arr = 0; law_count = 0; }
-
-    if (law_count > 0 && law_arr) {
-        // title carries its own succession law(s): merge their value structs.
-        for (int32_t i = 0; i < law_count; i++) {
-            uintptr_t elem = safe_read<uintptr_t>(law_arr + i * sizeof(uintptr_t));
-            if (!elem || elem < 0x10000 || !is_mapped(elem)) continue;
-            merge_rule_value(acc, elem + ck3::title_obj::SUCC_LAW_RULE_AT_ELEM);
-        }
-        return acc;
-    }
-
-    // 0-custom title: effective rule = holder's REALM succession law.
-    if (holder_title_realm && is_mapped(holder_title_realm)) {
-        uintptr_t active_arr = safe_read<uintptr_t>(holder_title_realm + ck3::title_realm_laws::ACTIVE_LAW_ARRAY);
-        int32_t active_cnt   = safe_read<int32_t>(holder_title_realm + ck3::title_realm_laws::ACTIVE_LAW_COUNT);
-        if (active_cnt < 0 || active_cnt > 512) active_cnt = 0;
-        if (active_arr && is_mapped(active_arr)) {
-            for (int32_t i = 0; i < active_cnt; i++) {
-                uintptr_t claw = safe_read<uintptr_t>(active_arr + i * sizeof(uintptr_t));
-                if (!claw || claw < 0x10000 || !is_mapped(claw)) continue;
-                merge_rule_value(acc, claw + ck3::realm_law_entry::SUCCESSION_RULES);
-            }
-        }
-    }
-    return acc;
-}
-
 bool do_query_title_succession_map(const char* params_json, std::string* out) {
     void* character = resolve_character(params_json);
     if (!character || is_sentinel(character)) {
@@ -2522,7 +2562,7 @@ void emit_monthly_telemetry(int32_t raw_date) {
         int32_t rt = safe_read<int32_t>(td + ck3::title_realm::TIER);
         if (rt >= 1 && rt <= 7) tier = rt;
         uintptr_t gov_obj = safe_read<uintptr_t>(td + ck3::title_realm::GOVERNMENT_TYPE_PTR);
-        if (gov_obj && is_mapped(gov_obj)) government = ad_read_std_string(gov_obj + 0x10);
+        if (gov_obj && is_mapped(gov_obj)) government = ad_read_std_string(gov_obj + ck3::db_object::NAME_KEY);
 
         // Primary title key = first held title's type NAME_KEY.
         uintptr_t arr = safe_read<uintptr_t>(td + ck3::title_realm::TITLE_ARRAY_PTR);
@@ -2609,7 +2649,7 @@ static void emit_neighbor_info(ResponseBuilder& r, void* character, void* neighb
         // WITHOUT trial-and-error valid_cbs_strict against every neighbor.
         uintptr_t gov_obj = safe_read<uintptr_t>(td + ck3::title_realm::GOVERNMENT_TYPE_PTR);
         if (gov_obj && is_mapped(gov_obj)) {
-            gov = ad_read_std_string(gov_obj + 0x10);
+            gov = ad_read_std_string(gov_obj + ck3::db_object::NAME_KEY);
         }
     }
 
@@ -2633,7 +2673,7 @@ static void emit_neighbor_info(ResponseBuilder& r, void* character, void* neighb
     {
         using fn_opinion = int(*)(void*, void*);
         static fn_opinion get_opinion = reinterpret_cast<fn_opinion>(
-            g_base_addr + ck3::funcs::GET_OPINION_OF);
+            bridge::game_fn(ck3::funcs::GET_OPINION_OF));
         int op = get_opinion(character, neighbor_ptr);
         if (op < -200 || op > 200) op = 0;
         r.key("opinion"); r.value_int(op);
@@ -3028,15 +3068,10 @@ bool do_query_claims(const char* params_json, std::string* out) {
                 r.begin_object();
                 r.key("title_id"); r.value_uint(county_id);
 
-                // Try to get county name
-                uintptr_t name_ptr = safe_read<uintptr_t>(county_obj + 0x58);
-                if ((name_ptr && is_mapped(name_ptr))) {
-                    char name_buf[128] = {};
-                    for (int k = 0; k < 127; k++) {
-                        name_buf[k] = safe_read<char>(name_ptr + k);
-                        if (!name_buf[k]) break;
-                    }
-                    if (name_buf[0]) { r.key("name"); r.value_string(name_buf); }
+                // County name (a game std::string: read through the build's string ABI)
+                {
+                    std::string cname = ad_read_std_string(county_obj + ck3::title_obj::TITLE_DISPLAY_NAME);
+                    if (!cname.empty()) { r.key("name"); r.value_string(cname.c_str(), cname.size()); }
                 }
 
                 r.key("holder_id"); r.value_uint(holder_id);
@@ -3045,15 +3080,8 @@ bool do_query_claims(const char* params_json, std::string* out) {
                 void* holder = lookup_character(holder_raw);
                 if (holder && !is_sentinel(holder)) {
                     uintptr_t h_addr = reinterpret_cast<uintptr_t>(holder);
-                    uintptr_t h_name = safe_read<uintptr_t>(h_addr + 0x20);
-                    if ((h_name && is_mapped(h_name))) {
-                        char hname[128] = {};
-                        for (int k = 0; k < 127; k++) {
-                            hname[k] = safe_read<char>(h_name + k);
-                            if (!hname[k]) break;
-                        }
-                        if (hname[0]) { r.key("holder_name"); r.value_string(hname); }
-                    }
+                    std::string hname = ad_read_std_string(h_addr + ck3::character::FIRST_NAME);
+                    if (!hname.empty()) { r.key("holder_name"); r.value_string(hname.c_str(), hname.size()); }
                 }
 
                 r.key("duchy_id"); r.value_uint(duchy_id);
@@ -4502,7 +4530,7 @@ bool do_query_county_neighbors(const char* params_json, std::string* out) {
             }
         }
         std::vector<std::pair<uint32_t, int>> rows(by_ruler.begin(), by_ruler.end());
-        std::sort(rows.begin(), rows.end(), [](const std::pair<uint32_t, int>& a,
+        std::stable_sort(rows.begin(), rows.end(), [](const std::pair<uint32_t, int>& a,
                                                const std::pair<uint32_t, int>& b) {
             return a.second != b.second ? a.second > b.second : a.first < b.first; });
         r.key("realm_county_count"); r.value_int(static_cast<int>(realm_counties.size()));
@@ -5126,6 +5154,7 @@ bool do_query_wars(const char* params_json, std::string* out) {
     if (safe_read_had_fault()) {
         r.key("degraded");    r.value_bool(true);
         r.key("fault_count"); r.value_int(safe_read_fault_count());
+        log_degraded_read("query_wars");
 #ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
         char addr_buf[24];
         snprintf(addr_buf, sizeof(addr_buf), "0x%lx", safe_read_last_fault());
@@ -5947,7 +5976,7 @@ bool do_query_council(const char* params_json, std::string* out) {
                     std::string task_name;
                     uintptr_t cur_task = safe_read<uintptr_t>(pos_obj + ck3::globals::COUNCIL_POS_CURRENT_TASK);
                     if (cur_task && is_mapped(cur_task))
-                        task_name = ad_read_std_string(cur_task + 0x10);
+                        task_name = ad_read_std_string(cur_task + ck3::db_object::NAME_KEY);
                     // Holder resolution (fixed 20260619): +0x30 is a DISPLAY field that
                     // reads 0xFFFFFF even for FILLED seats — always blank for the
                     // chaplain/consort seats, and for some AI realms blank on EVERY seat.
@@ -5977,7 +6006,7 @@ bool do_query_council(const char* params_json, std::string* out) {
                     std::string pos_key;
                     {
                         uintptr_t pos_type = (cur_task && is_mapped(cur_task))
-                                           ? safe_read<uintptr_t>(cur_task + 0x30) : 0;
+                                           ? safe_read<uintptr_t>(cur_task + ck3::council_task_type::POSITION_TYPE_PTR) : 0;
                         const char* pkey_ptr = nullptr;
                         size_t pkey_len = 0;
                         if (pos_type && is_mapped(pos_type) &&
@@ -6302,12 +6331,17 @@ bool do_query_hireable_mercenaries(const char* params_json, std::string* out) {
             rows.push_back(row);
         }
     }
+    // Ties are broken by company id: std::sort is not stable, and libstdc++ and the
+    // MSVC STL order equal keys differently (P5: two 2312-man companies swapped).
     if (have_actor_xy) {
-        std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
             if (a.has_dist != b.has_dist) return a.has_dist;
-            return a.has_dist ? a.dist2 < b.dist2 : a.men > b.men; });
+            if (a.has_dist && a.dist2 != b.dist2) return a.dist2 < b.dist2;
+            if (!a.has_dist && a.men != b.men) return a.men > b.men;
+            return a.id < b.id; });
     } else {
-        std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.men > b.men; });
+        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+            return a.men != b.men ? a.men > b.men : a.id < b.id; });
     }
     size_t listed = rows.size();
     if (max_results > 0 && rows.size() > static_cast<size_t>(max_results)) rows.resize(max_results);
@@ -6552,7 +6586,7 @@ bool do_query_factions(const char* params_json, std::string* out) {
                 // --- Faction type name ---
                 uintptr_t type_ptr = safe_read<uintptr_t>(fo + ck3::faction_v2::TYPE_PTR);
                 if (type_ptr && is_mapped(type_ptr)) {
-                    std::string type_name = ad_read_std_string(type_ptr + 0x10);
+                    std::string type_name = ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY);
                     if (!type_name.empty()) {
                         r.key("type"); r.value_string(type_name.c_str(), type_name.size());
                     } else {
@@ -6712,7 +6746,7 @@ bool do_query_vassal_loyalty(const char* params_json, std::string* out) {
     // vassal v is GET_OPINION_OF(v, ruler) — v's opinion of the liege.
     using fn_opinion = int(*)(void*, void*);
     static fn_opinion get_opinion = reinterpret_cast<fn_opinion>(
-        g_base_addr + ck3::funcs::GET_OPINION_OF);
+        bridge::game_fn(ck3::funcs::GET_OPINION_OF));
 
     // --- Build a vassal-id → faction membership map from the ruler's factions ---
     // A vassal is "in_faction" if it appears as a (non-invalidated) char member
@@ -6733,7 +6767,7 @@ bool do_query_vassal_loyalty(const char* params_json, std::string* out) {
                 std::string ftype = "unknown";
                 uintptr_t type_ptr = safe_read<uintptr_t>(fo + ck3::faction_v2::TYPE_PTR);
                 if (type_ptr && is_mapped(type_ptr)) {
-                    std::string tn = ad_read_std_string(type_ptr + 0x10);
+                    std::string tn = ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY);
                     if (!tn.empty()) ftype = tn;
                 }
 
@@ -6807,7 +6841,7 @@ bool do_query_vassal_loyalty(const char* params_json, std::string* out) {
     }
 
     // Sort ascending by opinion_of_me (least loyal first); stable tiebreak by id.
-    std::sort(rows.begin(), rows.end(), [](const VassalRow& a, const VassalRow& b) {
+    std::stable_sort(rows.begin(), rows.end(), [](const VassalRow& a, const VassalRow& b) {
         if (a.opinion_of_me != b.opinion_of_me) return a.opinion_of_me < b.opinion_of_me;
         return a.id < b.id;
     });
@@ -6909,7 +6943,7 @@ bool do_query_faction_threat(const char* params_json, std::string* out) {
                 // Type name
                 uintptr_t type_ptr = safe_read<uintptr_t>(fo + ck3::faction_v2::TYPE_PTR);
                 if (type_ptr && is_mapped(type_ptr)) {
-                    std::string type_name = ad_read_std_string(type_ptr + 0x10);
+                    std::string type_name = ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY);
                     if (!type_name.empty()) {
                         r.key("type"); r.value_string(type_name.c_str(), type_name.size());
                     } else {
@@ -7066,7 +7100,7 @@ bool do_query_armies(const char* params_json, std::string* out) {
     // FUN_06061870(GAME_STATE_ROOT) → sub-object, +0x50=army ID array, +0x5c=count
     using fn_army_enum = uintptr_t(*)(uintptr_t);
     auto army_enum = reinterpret_cast<fn_army_enum>(
-        g_base_addr + ck3::funcs::ARMY_ENUM_SUB);
+        bridge::game_fn(ck3::funcs::ARMY_ENUM_SUB));
     uintptr_t gs = safe_read_offset<uintptr_t>(ck3::globals::ARMY_ENUM_ENTRY);
 
     r.key("armies");
@@ -7112,18 +7146,19 @@ bool do_query_armies(const char* params_json, std::string* out) {
                     // Check combat/retreating status via function pointers
                     using fn_bool_army = bool(*)(uintptr_t);
                     auto in_combat = reinterpret_cast<fn_bool_army>(
-                        g_base_addr + ck3::funcs::ARMY_IN_COMBAT);
+                        bridge::game_fn(ck3::funcs::ARMY_IN_COMBAT));
                     auto is_retreating = reinterpret_cast<fn_bool_army>(
-                        g_base_addr + ck3::funcs::ARMY_IS_RETREATING);
+                        bridge::game_fn(ck3::funcs::ARMY_IS_RETREATING));
                     r.key("in_combat");    r.value_bool(in_combat(army_ptr));
                     r.key("is_retreating");r.value_bool(is_retreating(army_ptr));
                 }
 
-                // Commander
-                using fn_get_cmd = uint32_t(*)(uintptr_t);
-                auto get_commander = reinterpret_cast<fn_get_cmd>(
-                    g_base_addr + ck3::funcs::ARMY_GET_COMMANDER);
-                uint32_t cmd_id = get_commander(army_ptr);
+                // Commander: the army's own field. (This used to call
+                // ARMY_GET_COMMANDER and keep its result as a u32 id, but that
+                // function returns a SCOPE POINTER (FUN_06682250: [link+0x18] or
+                // NoTargetScope), so the reported id was the low bits of a heap
+                // address. Found by the Windows parity run, lane-p5.)
+                uint32_t cmd_id = safe_read<uint32_t>(army_ptr + ck3::army_obj::COMMANDER_CHAR_ID);
                 if (cmd_id != 0 && cmd_id != 0xFFFFFFFF) {
                     r.key("commander_id"); r.value_uint(cmd_id & 0xFFFFFF);
                 }
@@ -8244,12 +8279,12 @@ bool do_get_ai_evaluations(const char* params_json, std::string* out) {
     // B1: nearest-first when geography resolved (capital-centroid distance);
     // otherwise the legacy military-rank ordering.
     if (have_origin) {
-        std::sort(ruler_candidates.begin(), ruler_candidates.end(),
+        std::stable_sort(ruler_candidates.begin(), ruler_candidates.end(),
             [](const RulerCandidate& a, const RulerCandidate& b) {
                 return a.dsq < b.dsq;
             });
     } else {
-        std::sort(ruler_candidates.begin(), ruler_candidates.end(),
+        std::stable_sort(ruler_candidates.begin(), ruler_candidates.end(),
             [](const RulerCandidate& a, const RulerCandidate& b) {
                 return a.mil > b.mil;
             });
@@ -8463,9 +8498,9 @@ namespace {
 size_t dv_read_std_string(uintptr_t addr, char* out, size_t out_size) {
     if (!out || out_size == 0) return 0;
     out[0] = '\0';
-    uintptr_t data_ptr = safe_read<uintptr_t>(addr);
-    uint64_t len = safe_read<uint64_t>(addr + 8);
-    if (!data_ptr || len == 0 || len > 1024) return 0;
+    uintptr_t data_ptr = 0;
+    uint64_t len = 0;   // game_string_view: the string ABI of the game's build
+    if (!game_string_view(addr, &data_ptr, &len) || len > 1024) return 0;
     if (!is_mapped(data_ptr)) return 0;
     size_t n = (len < out_size - 1) ? static_cast<size_t>(len) : out_size - 1;
     for (size_t i = 0; i < n; ++i) {
@@ -9162,7 +9197,7 @@ static bool collect_engine_truce_partners(void* character,
     out_ids.clear();
     if (!character || is_sentinel(character)) return false;
     auto get_truce_list = reinterpret_cast<uintptr_t(*)(void*)>(
-        g_base_addr + ck3::funcs::GET_TRUCE_LIST);
+        bridge::game_fn(ck3::funcs::GET_TRUCE_LIST));
     if (!is_mapped(reinterpret_cast<uintptr_t>(get_truce_list))) return false;
     volatile bool ok_v = false;
     int sig = sigsetjmp(g_recovery_point, 1);
@@ -9655,8 +9690,9 @@ bool do_query_available_cbs(const char* params_json, std::string* out) {
 
                         // If target specified, check if this title's holder matches
                         if (target_id > 0) {
-                            // holder ref at title+0x1B0 (from R8V analysis)
-                            uint32_t holder_ref = safe_read<uint32_t>(title_obj + 0x1B0);
+                            // The title's holder (title+0x1B0, read here before P5, is not a
+                            // holder: 0 on 902 of 907 sampled titles of the 867 core).
+                            uint32_t holder_ref = safe_read<uint32_t>(title_obj + ck3::title_obj::HOLDER_CHAR_ID);
                             bool matches_target = ((holder_ref & 0xFFFFFF) == target_id);
                             r.key("held_by_target"); r.value_bool(matches_target);
                         }
@@ -9678,8 +9714,8 @@ bool do_query_available_cbs(const char* params_json, std::string* out) {
     {
         uintptr_t cb_db = safe_read<uintptr_t>(g_base_addr + ck3::globals::CASUS_BELLI_DB);
         if (cb_db && is_mapped(cb_db)) {
-            uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + 0x88);
-            int32_t cb_count = safe_read<int32_t>(cb_db + 0x94);
+            uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + ck3::game_db::ENTRIES_ARRAY);
+            int32_t cb_count = safe_read<int32_t>(cb_db + ck3::game_db::LIVE_COUNT);
             if (cb_count < 0 || cb_count > 500) cb_count = 0;
 
             if (cb_arr && is_mapped(cb_arr)) {
@@ -9687,14 +9723,12 @@ bool do_query_available_cbs(const char* params_json, std::string* out) {
                     uintptr_t cb_type = safe_read<uintptr_t>(cb_arr + i * 8);
                     if (!cb_type || !is_mapped(cb_type)) continue;
 
-                    // Check if CB is enabled (+0x73e)
-                    uint8_t enabled = safe_read<uint8_t>(cb_type + 0x73e);
+                    uint8_t enabled = safe_read<uint8_t>(cb_type + ck3::cb_type::ENABLED_FLAG);
                     if (!enabled) continue;
 
                     r.begin_object();
 
-                    // CB index at +0x08
-                    uint32_t cb_idx = safe_read<uint32_t>(cb_type + 0x08);
+                    uint32_t cb_idx = safe_read<uint32_t>(cb_type + ck3::cb_type::DB_INDEX);
                     r.key("index"); r.value_uint(cb_idx);
 
                     // CB name at +0x10 (ptr to string)
@@ -9704,8 +9738,8 @@ bool do_query_available_cbs(const char* params_json, std::string* out) {
                         r.key("name"); r.value_string(cb_name, cb_name_len);
                     }
 
-                    // Target mode at +0x738 (0=none, 6=claim, other=title)
-                    int32_t target_mode = safe_read<int32_t>(cb_type + 0x738);
+                    // Target mode (0=none, 6=claim, other=title)
+                    int32_t target_mode = safe_read<int32_t>(cb_type + ck3::cb_type::TARGET_MODE);
                     const char* mode_str = (target_mode == 0) ? "none" :
                                            (target_mode == 6) ? "claim" : "title";
                     r.key("target_mode"); r.value_string(mode_str);
@@ -10103,7 +10137,7 @@ static bool cb_actor_is_tribal(void* actor_char) {
     if (!tr || !is_mapped(tr)) return false;
     uintptr_t gov_obj = safe_read<uintptr_t>(tr + ck3::title_realm::GOVERNMENT_TYPE_PTR);
     if (!gov_obj || !is_mapped(gov_obj)) return false;
-    std::string gov = ad_read_std_string(gov_obj + 0x10);
+    std::string gov = ad_read_std_string(gov_obj + ck3::db_object::NAME_KEY);
     return gov.find("tribal") != std::string::npos;
 }
 
@@ -10400,7 +10434,7 @@ bool do_query_cb_validity_strict(const char* params_json, std::string* out) {
     }
     {
         std::vector<std::string> names = summary.disabled_cb_names;
-        std::sort(names.begin(), names.end());
+        std::stable_sort(names.begin(), names.end());
         r.key("disabled_cb_names"); r.begin_array();
         for (const auto& n : names) r.value_string(n.c_str());
         r.end_array();
@@ -11376,8 +11410,8 @@ bool do_query_cb_catalog(const char* /*params_json*/, std::string* out) {
     }
 
     // DB layout: +0x88 = array of CCasusBelliType*, +0x94 = count (int32)
-    uintptr_t cb_arr  = safe_read<uintptr_t>(cb_db + 0x88);
-    int32_t   cb_count = safe_read<int32_t>(cb_db + 0x94);
+    uintptr_t cb_arr  = safe_read<uintptr_t>(cb_db + ck3::game_db::ENTRIES_ARRAY);
+    int32_t   cb_count = safe_read<int32_t>(cb_db + ck3::game_db::LIVE_COUNT);
     if (cb_count < 0 || cb_count > 500) cb_count = 0;
 
     if (!cb_arr || !is_mapped(cb_arr) || cb_count == 0) {
@@ -11753,21 +11787,21 @@ bool do_search_characters(const char* params_json, std::string* out) {
     if (age_sort) {
         if (descending) {
             // Oldest first = lowest birth_date_short
-            std::sort(heap.begin(), heap.end(), [](const Candidate& a, const Candidate& b) {
+            std::stable_sort(heap.begin(), heap.end(), [](const Candidate& a, const Candidate& b) {
                 return a.sort_key < b.sort_key;
             });
         } else {
-            std::sort(heap.begin(), heap.end(), [](const Candidate& a, const Candidate& b) {
+            std::stable_sort(heap.begin(), heap.end(), [](const Candidate& a, const Candidate& b) {
                 return a.sort_key > b.sort_key;
             });
         }
     } else {
         if (descending) {
-            std::sort(heap.begin(), heap.end(), [](const Candidate& a, const Candidate& b) {
+            std::stable_sort(heap.begin(), heap.end(), [](const Candidate& a, const Candidate& b) {
                 return a.sort_key > b.sort_key;
             });
         } else {
-            std::sort(heap.begin(), heap.end(), [](const Candidate& a, const Candidate& b) {
+            std::stable_sort(heap.begin(), heap.end(), [](const Candidate& a, const Candidate& b) {
                 return a.sort_key < b.sort_key;
             });
         }
@@ -11792,11 +11826,9 @@ bool do_search_characters(const char* params_json, std::string* out) {
         uint32_t id = safe_read<uint32_t>(c + ck3::character::ID) & 0xFFFFFF;
         r.key("id"); r.value_uint(id);
 
-        // Name
-        std::string name = ad_read_char_name(c);
-        if (!name.empty()) {
-            r.key("name"); r.value_string(name.c_str(), name.size());
-        }
+        // Name: `name`, or `name_key` + `name_pending` until the game thread
+        // localizes it (lane-namekey).
+        emit_char_name(r, c);
 
         // ck-a1fw: is_dead exposed so harness can consume filter=dead/all results.
         uint8_t dead_byte = safe_read<uint8_t>(c + ck3::character::DEAD_FLAG);
@@ -11864,14 +11896,14 @@ bool do_search_characters(const char* params_json, std::string* out) {
             if (is_ruler) {
                 uintptr_t gov_obj = safe_read<uintptr_t>(title_realm + ck3::title_realm::GOVERNMENT_TYPE_PTR);
                 if (gov_obj && is_mapped(gov_obj)) {
-                    std::string gov = ad_read_std_string(gov_obj + 0x10);
+                    std::string gov = ad_read_std_string(gov_obj + ck3::db_object::NAME_KEY);
                     if (!gov.empty()) { r.key("government"); r.value_string(gov.c_str(), gov.size()); }
                 }
             }
 
             // Age (call GET_AGE for proper display value)
             {
-                auto fn_age = reinterpret_cast<int16_t(*)(void*)>(g_base_addr + ck3::funcs::GET_AGE);
+                auto fn_age = reinterpret_cast<int16_t(*)(void*)>(bridge::game_fn(ck3::funcs::GET_AGE));
                 int16_t age = fn_age(reinterpret_cast<void*>(c));
                 r.key("age"); r.value_int(age);
             }
@@ -12071,7 +12103,7 @@ bool do_query_marriage_candidates(const char* params_json, std::string* out) {
 
     ADLOG("marriage_candidates: scan done scanned=%d matched=%d kept=%zu scan_keep=%d\n",
           scanned, matched, heap.size(), scan_keep);
-    std::sort(heap.begin(), heap.end(), [](const Cand& a, const Cand& b) { return a.key > b.key; });
+    std::stable_sort(heap.begin(), heap.end(), [](const Cand& a, const Cand& b) { return a.key > b.key; });
 
     // FIX I14: range is already enforced in the scan (cand.dist set there). Take the
     // first max_results, and for the non-range path compute distance for display only.
@@ -12103,10 +12135,9 @@ bool do_query_marriage_candidates(const char* params_json, std::string* out) {
         uintptr_t c = cand.ptr;
         r.begin_object();
         r.key("id"); r.value_uint(safe_read<uint32_t>(c + ck3::character::ID) & 0xFFFFFF);
-        std::string nm = ad_read_char_name(c);
-        if (!nm.empty()) { r.key("name"); r.value_string(nm.c_str(), nm.size()); }
+        emit_char_name(r, c);   // name, or name_key + name_pending (lane-namekey)
         {
-            auto fn_age = reinterpret_cast<int16_t(*)(void*)>(g_base_addr + ck3::funcs::GET_AGE);
+            auto fn_age = reinterpret_cast<int16_t(*)(void*)>(bridge::game_fn(ck3::funcs::GET_AGE));
             int16_t age = fn_age(reinterpret_cast<void*>(c));
             r.key("age"); r.value_int(age);
             r.key("likely_adult"); r.value_bool(age >= 16);
@@ -12260,11 +12291,8 @@ bool do_query_title_claimants(const char* params_json, std::string* out) {
             r.begin_object();
             r.key("char_id"); r.value_uint(char_id);
 
-            // Character name
-            std::string cname = ad_read_char_name(c);
-            if (!cname.empty()) {
-                r.key("name"); r.value_string(cname.c_str(), cname.size());
-            }
+            // Character name: name, or name_key + name_pending (lane-namekey)
+            emit_char_name(r, c);
 
             // Is alive?
             bool alive = g_char_is_alive ? g_char_is_alive(reinterpret_cast<void*>(c)) : true;
@@ -12579,9 +12607,9 @@ bool do_query_title_succession(const char* params_json, std::string* out) {
         }
     }
 
-    uint8_t order    = safe_read<uint8_t>(tobj + ck3::title_obj::SUCC_ORDER);
-    uint8_t gender   = safe_read<uint8_t>(tobj + ck3::title_obj::SUCC_GENDER);
-    uint8_t division = safe_read<uint8_t>(tobj + ck3::title_obj::SUCC_DIVISION);
+    uint8_t order    = title_succ_rule(tobj).order;
+    uint8_t gender   = title_succ_rule(tobj).gender;
+    uint8_t division = title_succ_rule(tobj).division;
     r.key("succession_order"); r.value_string(dec_order(order));
     r.key("gender_law"); r.value_string(dec_gender(gender));
     r.key("title_division"); r.value_string(dec_div(division));
@@ -12989,7 +13017,7 @@ bool do_query_valid_war_targets(const char* params_json, std::string* out) {
             uintptr_t tltr = safe_read<uintptr_t>(tlp + ck3::character::TITLE_REALM_DATA);
             if (tltr && is_mapped(tltr)) {
                 uintptr_t gov_obj = safe_read<uintptr_t>(tltr + ck3::title_realm::GOVERNMENT_TYPE_PTR);
-                if (gov_obj && is_mapped(gov_obj)) gov = ad_read_std_string(gov_obj + 0x10);
+                if (gov_obj && is_mapped(gov_obj)) gov = ad_read_std_string(gov_obj + ck3::db_object::NAME_KEY);
             }
             bool tribal = gov.find("tribal") != std::string::npos;
 
@@ -13714,7 +13742,7 @@ bool do_query_conquest_targets(const char* params_json, std::string* out) {
     //        remaining), partial before expansion targets, adjacent before far,
     //        British before non-British. The engine-check loop below consumes this
     //        order, so the most actionable targets get the authoritative checks. ---
-    std::sort(duchies.begin(), duchies.end(), [](const DuchyRollup& a, const DuchyRollup& b){
+    std::stable_sort(duchies.begin(), duchies.end(), [](const DuchyRollup& a, const DuchyRollup& b){
         if (a.partial != b.partial) return a.partial;            // partial (foothold) first
         if (a.partial) {                                         // among partials: closest to completion
             if (a.held != b.held) return a.held > b.held;        // more held first
@@ -14065,8 +14093,8 @@ bool do_query_cb_options(const char* params_json, std::string* out) {
     uintptr_t idef = reinterpret_cast<uintptr_t>(interaction);
 
     // --- Read option array from interaction definition ---
-    uintptr_t option_array_ptr = safe_read<uintptr_t>(idef + 0x2530);
-    int32_t option_count = safe_read<int32_t>(idef + 0x253C);
+    uintptr_t option_array_ptr = safe_read<uintptr_t>(idef + ck3::interaction_def::OPTION_ARRAY_PTR);
+    int32_t option_count = safe_read<int32_t>(idef + ck3::interaction_def::OPTION_COUNT);
 
     ADLOG("query_cb_options: idef=0x%lx option_array=0x%lx option_count=%d\n",
           idef, option_array_ptr, option_count);
@@ -14085,11 +14113,11 @@ bool do_query_cb_options(const char* params_json, std::string* out) {
 
     // --- Resolve function pointers ---
     auto build_interaction_cmd = reinterpret_cast<fn_build_send_interaction_cmd_q>(
-        g_base_addr + ck3::funcs::BUILD_SEND_INTERACTION_CMD);
+        bridge::game_fn(ck3::funcs::BUILD_SEND_INTERACTION_CMD));
     auto check_pop = reinterpret_cast<fn_check_populate>(
-        g_base_addr + ck3::funcs::INTERACTION_CHECK_POPULATE);
+        bridge::game_fn(ck3::funcs::INTERACTION_CHECK_POPULATE));
     auto populate = reinterpret_cast<fn_populate_options>(
-        g_base_addr + ck3::funcs::INTERACTION_POPULATE_OPTIONS);
+        bridge::game_fn(ck3::funcs::INTERACTION_POPULATE_OPTIONS));
 
     if (!is_mapped(reinterpret_cast<uintptr_t>(build_interaction_cmd)) ||
         !is_mapped(reinterpret_cast<uintptr_t>(check_pop)) ||
@@ -14199,7 +14227,7 @@ bool do_query_cb_options(const char* params_json, std::string* out) {
         uintptr_t opt = option_array_ptr + (static_cast<uintptr_t>(i) * 0x7D0);
         if (!is_mapped_range(opt, 0x3B0)) continue;
 
-        uint32_t flag_key = safe_read<uint32_t>(opt + 0x3A8);
+        uint32_t flag_key = safe_read<uint32_t>(opt + ck3::interaction_def::OPT_FLAG_KEY_HASH);
 
         r.begin_object();
         r.key("index"); r.value_int(i);
@@ -15461,13 +15489,13 @@ bool do_query_building_types(const char* params_json, std::string* out) {
         r.key("category"); r.value_uint(category);
 
         // Source file path
-        auto source = ad_read_std_string(btype + ck3::building_type::SOURCE_FILE_PATH);
+        auto source = safe_read_script_text(btype + ck3::building_type::SOURCE_FILE_PATH);
         if (!source.empty()) {
             r.key("source_file"); r.value_string(source.c_str(), source.size());
         }
 
         // Enable trigger name
-        auto trigger = ad_read_std_string(btype + ck3::building_type::ENABLE_TRIGGER);
+        auto trigger = safe_read_script_text(btype + ck3::building_type::ENABLE_TRIGGER);
         if (!trigger.empty()) {
             r.key("enable_trigger"); r.value_string(trigger.c_str(), trigger.size());
         }
@@ -15554,7 +15582,7 @@ bool do_query_election_state(const char* params_json, std::string* out) {
             uint32_t tid = safe_read<uint32_t>(title_arr_ptr + i * sizeof(uint32_t));
             uintptr_t tptr = lookup_title_obj(tid & 0xFFFFFF);
             if (!tptr) continue;
-            uint8_t order = safe_read<uint8_t>(tptr + ck3::title_obj::SUCC_ORDER);
+            uint8_t order = title_succ_rule(tptr).order;
             if (order != 1) continue;  // only election titles
             uintptr_t type_ptr = safe_read<uintptr_t>(tptr + ck3::title_obj::TITLE_TYPE_PTR);
             if (!type_ptr) continue;
@@ -15600,7 +15628,7 @@ bool do_query_election_state(const char* params_json, std::string* out) {
     }
 
     // Succession order for context
-    uint8_t succ_order = safe_read<uint8_t>(tobj + ck3::title_obj::SUCC_ORDER);
+    uint8_t succ_order = title_succ_rule(tobj).order;
     const char* order_str = "unknown";
     switch (succ_order) {
         case 0: order_str = "inheritance"; break;
@@ -15733,7 +15761,7 @@ bool do_query_election_state(const char* params_json, std::string* out) {
     // Sort by score
     std::vector<std::pair<uint32_t, int32_t>> sorted_scores(
         candidate_scores.begin(), candidate_scores.end());
-    std::sort(sorted_scores.begin(), sorted_scores.end(),
+    std::stable_sort(sorted_scores.begin(), sorted_scores.end(),
         [](const auto& a, const auto& b) { return a.second > b.second; });
 
     for (const auto& [cid, score] : sorted_scores) {
@@ -16300,7 +16328,7 @@ bool do_query_partition_preview(const char* params_json, std::string* out) {
         if (tier <= 1) continue;  // skip baronies
 
         uint32_t dejure = safe_read<uint32_t>(tptr + ck3::title_obj::DE_JURE_PARENT);
-        uint8_t division = safe_read<uint8_t>(tptr + ck3::title_obj::SUCC_DIVISION);
+        uint8_t division = title_succ_rule(tptr).division;
         uint8_t skip_flag = safe_read<uint8_t>(tptr + ck3::title_obj::TITLE_SKIP_FLAG_2D);
         if (skip_flag) continue;
 
@@ -16319,7 +16347,7 @@ bool do_query_partition_preview(const char* params_json, std::string* out) {
     }
 
     // Check if primary title uses partition
-    uint8_t primary_division = safe_read<uint8_t>(primary_title_ptr + ck3::title_obj::SUCC_DIVISION);
+    uint8_t primary_division = title_succ_rule(primary_title_ptr).division;
     bool is_partition = (primary_division == 1);
 
     // Get heir list from primary title
@@ -16404,8 +16432,8 @@ bool do_query_partition_preview(const char* params_json, std::string* out) {
         }
 
         // Read de jure scoring weights
-        int32_t own_weight = safe_read<int32_t>(g_base_addr + ck3::funcs::PARTITION_DEJURE_OWN_WEIGHT);
-        int32_t other_weight = safe_read<int32_t>(g_base_addr + ck3::funcs::PARTITION_DEJURE_OTHER_WEIGHT);
+        int32_t own_weight = safe_read<int32_t>(bridge::game_fn(ck3::funcs::PARTITION_DEJURE_OWN_WEIGHT));
+        int32_t other_weight = safe_read<int32_t>(bridge::game_fn(ck3::funcs::PARTITION_DEJURE_OTHER_WEIGHT));
         if (own_weight == 0) own_weight = 100;
         if (other_weight == 0) other_weight = 50;
 
@@ -16634,15 +16662,12 @@ bool do_query_innovation_progress(const char* params_json, std::string* out) {
     std::vector<uintptr_t> known_type_ptrs;
     if ((known_data && is_mapped(known_data)) && known_count > 0) {
         known_type_ptrs.reserve(known_count);
+        // The elements ARE the types (CPdxArray<CCultureInnovationType*>, as the header
+        // says): before P5 this read elem+0x10 as an instance's type pointer, which on
+        // Linux is the type's key-string data, so era bins counted text bytes.
         for (int32_t k = 0; k < known_count; k++) {
-            uintptr_t innov_inst_ptr = safe_read<uintptr_t>(known_data + k * 8);
-            if ((innov_inst_ptr && is_mapped(innov_inst_ptr))) {
-                uintptr_t type_ptr = safe_read<uintptr_t>(innov_inst_ptr +
-                                                     innovation_instance::INNOVATION_TYPE_PTR);
-                if ((type_ptr && is_mapped(type_ptr))) {
-                    known_type_ptrs.push_back(type_ptr);
-                }
-            }
+            uintptr_t type_ptr = safe_read<uintptr_t>(known_data + k * 8);
+            if (type_ptr && is_mapped(type_ptr)) known_type_ptrs.push_back(type_ptr);
         }
     }
 
@@ -17107,9 +17132,9 @@ bool do_query_succession_simulation(const char* params_json, std::string* out) {
         if (skip_flag) continue;
 
         uint32_t dejure = safe_read<uint32_t>(tptr + ck3::title_obj::DE_JURE_PARENT) & 0xFFFFFF;
-        uint8_t order = safe_read<uint8_t>(tptr + ck3::title_obj::SUCC_ORDER);
-        uint8_t division = safe_read<uint8_t>(tptr + ck3::title_obj::SUCC_DIVISION);
-        uint8_t rank = safe_read<uint8_t>(tptr + ck3::title_obj::SUCC_RANK);
+        uint8_t order = title_succ_rule(tptr).order;
+        uint8_t division = title_succ_rule(tptr).division;
+        uint8_t rank = title_succ_rule(tptr).rank;
 
         std::string key;
         uintptr_t type_ptr = safe_read<uintptr_t>(tptr + ck3::title_obj::TITLE_TYPE_PTR);
@@ -17205,7 +17230,7 @@ bool do_query_succession_simulation(const char* params_json, std::string* out) {
 
     // --- Step 2: Handle partition titles ---
     // Check primary title's division
-    uint8_t primary_division = safe_read<uint8_t>(primary_title_ptr + ck3::title_obj::SUCC_DIVISION);
+    uint8_t primary_division = title_succ_rule(primary_title_ptr).division;
     bool is_partition = (primary_division == 1);
 
     // Pre-assign primary title to primary heir
@@ -17245,8 +17270,8 @@ bool do_query_succession_simulation(const char* params_json, std::string* out) {
         }
 
         // Read scoring weights
-        int32_t own_weight = safe_read<int32_t>(g_base_addr + ck3::funcs::PARTITION_DEJURE_OWN_WEIGHT);
-        int32_t other_weight = safe_read<int32_t>(g_base_addr + ck3::funcs::PARTITION_DEJURE_OTHER_WEIGHT);
+        int32_t own_weight = safe_read<int32_t>(bridge::game_fn(ck3::funcs::PARTITION_DEJURE_OWN_WEIGHT));
+        int32_t other_weight = safe_read<int32_t>(bridge::game_fn(ck3::funcs::PARTITION_DEJURE_OTHER_WEIGHT));
         if (own_weight == 0) own_weight = 100;
         if (other_weight == 0) other_weight = 50;
 
@@ -17405,7 +17430,7 @@ bool do_query_succession_simulation(const char* params_json, std::string* out) {
     r.key("is_partition"); r.value_bool(is_partition);
 
     // Rank of partition (confederate vs regular)
-    uint8_t primary_rank = safe_read<uint8_t>(primary_title_ptr + ck3::title_obj::SUCC_RANK);
+    uint8_t primary_rank = title_succ_rule(primary_title_ptr).rank;
     const char* rank_str = (primary_rank == 0) ? "confederate" : (primary_rank == 1) ? "regular" : "none";
     r.key("partition_type"); r.value_string(rank_str);
     r.end_object();
@@ -17695,17 +17720,8 @@ bool do_query_trigger_result(const char* params_json, std::string* out) {
 // Read RTTI class name from a vtable pointer.
 // Itanium ABI: vtable[-1] → typeinfo, typeinfo+8 → mangled name.
 static std::string read_rtti_name(uintptr_t vtable_ptr) {
-    if ((!vtable_ptr || !is_mapped(vtable_ptr))) return "";
-    uintptr_t typeinfo = safe_read<uintptr_t>(vtable_ptr - 8);
-    if ((!typeinfo || !is_mapped(typeinfo))) return "";
-    uintptr_t name_ptr = safe_read<uintptr_t>(typeinfo + 8);
-    if ((!name_ptr || !is_mapped(name_ptr))) return "";
     char buf[128] = {};
-    for (int i = 0; i < 127; i++) {
-        uint8_t ch = safe_read<uint8_t>(name_ptr + i);
-        if (ch == 0 || ch < 0x20 || ch > 0x7e) { buf[i] = 0; break; }
-        buf[i] = static_cast<char>(ch);
-    }
+    if (!game_rtti_name(vtable_ptr, buf, sizeof buf)) return "";
     // Skip leading digits (mangled name length prefix like "11CAndTrigger")
     const char* p = buf;
     while (*p >= '0' && *p <= '9') p++;
@@ -17764,7 +17780,7 @@ bool do_query_trigger_slots(const char* params_json, std::string* out) {
     uintptr_t idef = reinterpret_cast<uintptr_t>(interaction);
 
     // Read AI response flag (controls can_send bypass)
-    uint8_t ai_flag = safe_read<uint8_t>(idef + 0x2A12);
+    uint8_t ai_flag = safe_read<uint8_t>(idef + ck3::interaction_def::AI_RESPONSE_FLAG);
 
     ResponseBuilder r;
     r.begin_object();
@@ -17869,7 +17885,7 @@ bool do_query_debug_flags(const char* /*params_json*/, std::string* out) {
     r.begin_object();
     r.key("query"); r.value_string("debug_flags");
 
-    uintptr_t flags_base = g_base_addr + ck3::funcs::DEBUG_FLAGS_BASE;
+    uintptr_t flags_base = bridge::game_fn(ck3::funcs::DEBUG_FLAGS_BASE);
     if (!is_mapped(flags_base)) {
         r.key("error"); r.value_string("debug_flags_base_not_mapped");
         r.end_object();
@@ -18083,6 +18099,7 @@ bool do_query_character_memories(const char* params_json, std::string* out) {
     if (safe_read_had_fault()) {
         r.key("degraded"); r.value_bool(true);
         r.key("fault_count"); r.value_int(safe_read_fault_count());
+        log_degraded_read("query_character_memories");
     }
 
     r.end_object();

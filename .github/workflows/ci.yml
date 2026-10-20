@@ -167,6 +167,26 @@ jobs:
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
       - name: tools/inspect_binary.py tests
         run: python -m pytest tests/test_inspect_binary.py
+      # The Windows installer (ADR 0001 P7 prep): both scripts must parse under
+      # PowerShell 7 and under Windows PowerShell 5.1, which is what a user who
+      # right-clicks "Run with PowerShell" gets. Running them needs the pinned
+      # ck3.exe (installer/windows/test_install_ps1.sh, and P7 on a real VM).
+      - name: Installer scripts parse (PowerShell 7)
+        shell: pwsh
+        run: |
+          foreach ($f in 'installer/windows/install.ps1', 'installer/windows/uninstall.ps1') {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$null, [ref]$errs)
+            if ($errs) { $errs | ForEach-Object { Write-Error "$f: $_" }; exit 1 }
+          }
+      - name: Installer scripts parse (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          foreach ($f in 'installer/windows/install.ps1', 'installer/windows/uninstall.ps1') {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$null, [ref]$errs)
+            if ($errs) { $errs | ForEach-Object { Write-Error "$f: $_" }; exit 1 }
+          }
       # The server suite has never run on Windows. It reports here and does not
       # gate (release.yml needs this workflow) until it is green on this OS;
       # then drop continue-on-error. ADR 0001 P2: "engine-free tests pass on 3 OSes".

@@ -10,14 +10,16 @@
 // SizeOfImage is always reported (image_size), and the file SHA-256 always
 // rides along as the second witness (image_sha256).
 //
-// `check` is always "unchecked": offset_version.h carries no PE identity
-// constants yet (the ADR adds PE_PDB_GUID / PE_PDB_AGE with P1), and a
-// comparison against nothing would be a default dressed up as a verdict.
+// `check` is the P4 identity gate's verdict (identity_gate.h) against the
+// pinned 1.18.3.1 constants (pinned_identity.h): "match", "mismatch", or
+// "not_found" when nothing could be observed. The DLL's init thread logs the
+// same outcome; neither reader re-derives it.
 // Computed once per process and cached: the hash reads the whole exe, so
 // callers keep the first call off the init path, as the ADR requires.
 
 #include "win_internal.h"
 
+#include "identity_gate.h"
 #include "os/sha256.h"
 
 #include <cstring>
@@ -114,7 +116,10 @@ Result binary_identity(BinaryIdentity* out) {
     if (!out) return win::failed(ERROR_INVALID_PARAMETER, "out is null");
     static std::once_flag once;
     static Cached cached;
-    std::call_once(once, [] { cached = compute(); });
+    std::call_once(once, [] {
+        cached = compute();
+        cached.id.check = identity_gate(cached.id, pinned_identity()).check;
+    });
     *out = cached.id;
     return cached.result;
 }

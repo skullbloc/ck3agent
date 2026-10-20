@@ -235,6 +235,44 @@ def test_an_unlocalized_name_key_is_never_printed_as_the_name():
     assert hook.NAME_PENDING not in rows[1]
 
 
+def test_a_pending_name_from_the_bridge_prints_the_note_and_never_the_key():
+    """lane-namekey: the bridge now states a name-cache miss instead of
+    disguising it — no `name`, plus `name_key` (the localization key) and
+    `name_pending: true`. The hook prints the note from `name_pending`, and
+    the key under `name_key` never reaches the page."""
+    hook = load_hook()
+    pl = two_rulers(paused=True)
+
+    def profile(p):
+        cid = p.get("character_id") or 13902
+        prof = dict(PROFILES[cid])
+        if cid == 13902:
+            del prof["name"]
+            prof.update({"name_key": "E_thelred", "name_pending": True})
+        return {"data": prof}
+
+    pl["query_character"] = profile
+    out = report_p(hook, pl)
+    assert "E_thelred" not in out and "name_key" not in out
+    you = next(ln for ln in out.splitlines() if ln.startswith("- You: id 13902"))
+    assert "Wessex" in you and hook.NAME_PENDING in you
+    rows = [ln for ln in out.splitlines() if ln.startswith("    - id ")]
+    assert rows[0].startswith("    - id 13902 · Wessex (primary)"), rows
+    assert hook.NAME_PENDING in rows[0]
+    assert "pause to read" not in rows[0] and "profile unavailable" not in rows[0]
+    assert rows[1].startswith("    - id 12145 · **Boris** · Bulgaria"), rows
+    assert hook.NAME_PENDING not in rows[1]
+
+
+def test_name_pending_reads_the_flag_and_falls_back_to_the_key_guard():
+    hook = load_hook()
+    assert hook.name_pending({"name_key": "E_thelred", "name_pending": True}) is True
+    assert hook.name_pending({"name": "E_thelred"}) is True          # an older bridge
+    assert hook.name_pending({"name": "Æthelred"}) is False
+    assert hook.name_pending({"name": "Æthelred", "name_pending": False}) is False
+    assert hook.name_pending({}) is False and hook.name_pending(None) is False
+
+
 def test_a_localized_name_carries_no_pending_note():
     hook = load_hook()
     out = report_p(hook, two_rulers(paused=True))

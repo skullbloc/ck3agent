@@ -4,9 +4,12 @@
 #pragma once
 
 #include "world_identity.h"
+#include "format_fixed2.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <algorithm>
 #include <atomic>
 #include <fcntl.h>
@@ -21,6 +24,9 @@
 
 #include "intent_queue.h"
 #include "session.h"
+#ifdef _WIN32
+#include "os/os.h"   // write_protected (write_to_readonly)
+#endif
 
 namespace bridge {
 
@@ -36,6 +42,23 @@ extern uintptr_t g_base_addr;
 extern uintptr_t g_image_end;
 
 // Resolve a compile-time offset to a runtime address
+// The address of a game function, from its ck3::funcs:: RVA (ADR 0001 P5). Every call
+// into the game goes through this. Linux: the image base plus the RVA, nothing else.
+// Windows (os/windows/recipes.cpp): a function MSVC inlined, or one that is a plain
+// read of measured offsets, has a bridge-side RECIPE with the same signature, and the
+// generated Windows ck3_offsets.h marks its RVA so this returns the recipe; any other
+// RVA is the image base plus the RVA (a poisoned one faults, in a guarded region).
+#ifdef _WIN32
+uintptr_t game_fn_win(uintptr_t rva);
+#endif
+inline uintptr_t game_fn(uintptr_t rva) {
+#ifdef _WIN32
+    return game_fn_win(rva);
+#else
+    return g_base_addr + rva;
+#endif
+}
+
 inline void* resolve(uintptr_t offset) {
     return reinterpret_cast<void*>(g_base_addr + offset);
 }
@@ -122,6 +145,10 @@ inline int safe_read_fault_count() {
 inline uintptr_t safe_read_last_fault() {
     return g_safe_read_last_fault_addr;
 }
+// The bridge log (never a reply: a process VA defeats ASLR) names the last
+// unreadable address behind a degraded reply. On Windows a poisoned RVA
+// (CK3_WIN_UNMAPPED_N(i), top bits 0x7FF) carries i, report.json poison_index.
+void log_degraded_read(const char* action);
 
 // Safe read using process_vm_readv — returns default T{} on unmapped memory.
 // Never crashes, even on completely invalid addresses.
@@ -191,37 +218,143 @@ inline bool safe_read_bytes(uintptr_t addr, void* out, size_t len) {
 // (null-trimmed) string in `out`; false (out cleared) on any anomaly.
 inline constexpr size_t kMaxGameStringLen = 4096;  // sane cap; real keys/names << this
 
+// Where a game std::string's characters are, and how many, for the ABI the game
+// was built with (ADR 0001 P5). Every reader of a game string goes through this;
+// a reader that reads "+8 = length" itself is reading libstdc++ on any platform.
+//   libstdc++ (Linux):  _M_p (char*) +0, _M_string_length +8, SSO buffer +16
+//   MSVC (Windows):     union { char buf[16]; char* ptr; } +0, size +16,
+//                       capacity +24; the characters are INLINE (at +0) while
+//                       capacity <= 15, else at ptr. Measured in P3: 40,138
+//                       character names equal the Linux text read this way.
+// Reads through process_vm_readv (never dereferences). False on an implausible
+// control block: a size of 0 or over the cap, a capacity below the size, a data
+// pointer outside user space.
+inline bool game_string_view(uintptr_t str_addr, uintptr_t* data_out, uint64_t* size_out) {
+    if (str_addr < 0x10000 || str_addr > 0x7FFFFFFFFFFF) return false;
+    auto rd = [](uintptr_t a, void* dst, size_t n) {
+        struct iovec local  = { dst, n };
+        struct iovec remote = { reinterpret_cast<void*>(a), n };
+        return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(n);
+    };
+    uint64_t size = 0;
+    uintptr_t data_ptr = 0;
+#ifdef _WIN32
+    uint64_t cap = 0;
+    if (!rd(str_addr + 16, &size, sizeof size) || !rd(str_addr + 24, &cap, sizeof cap)) return false;
+    if (cap < size) return false;
+    if (cap <= 15) {
+        data_ptr = str_addr;
+    } else if (!rd(str_addr, &data_ptr, sizeof data_ptr)) {
+        return false;
+    }
+#else
+    if (!rd(str_addr + 8, &size, sizeof size)) return false;
+    if (!rd(str_addr, &data_ptr, sizeof data_ptr)) return false;
+#endif
+    if (size == 0 || size > kMaxGameStringLen) return false;
+    if (data_ptr < 0x10000 || data_ptr > 0x7FFFFFFFFFFF) return false;
+    *data_out = data_ptr;
+    *size_out = size;
+    return true;
+}
+
+// The bounded, EFAULT-safe copy behind both string readers below.
+inline bool copy_game_bytes(uintptr_t data_ptr, uint64_t size, std::string& out);
+
 inline bool safe_read_game_string(uintptr_t str_addr, std::string& out) {
     out.clear();
-    // Plausible std::string control block?
-    if (str_addr < 0x10000 || str_addr > 0x7FFFFFFFFFFF) return false;
-
-    // Read the length field FIRST, via process_vm_readv (never dereference).
+    // The length is read FIRST and bounded before anything else (game_string_view):
+    // a garbage length never reaches an allocation, and nothing is dereferenced.
     uint64_t size = 0;
-    {
-        struct iovec local  = { &size, sizeof(size) };
-        struct iovec remote = { reinterpret_cast<void*>(str_addr + 8), sizeof(size) };
-        if (process_vm_readv(getpid(), &local, 1, &remote, 1, 0)
-                != static_cast<ssize_t>(sizeof(size))) {
-            return false;
-        }
-    }
-    // Reject garbage lengths: 0 (nothing to read) or anything beyond the cap
-    // (a negative int that became a huge unsigned, or a clobbered field).
-    if (size == 0 || size > kMaxGameStringLen) return false;
-
-    // Read the data pointer (_M_p), again without dereferencing.
     uintptr_t data_ptr = 0;
-    {
-        struct iovec local  = { &data_ptr, sizeof(data_ptr) };
-        struct iovec remote = { reinterpret_cast<void*>(str_addr), sizeof(data_ptr) };
-        if (process_vm_readv(getpid(), &local, 1, &remote, 1, 0)
-                != static_cast<ssize_t>(sizeof(data_ptr))) {
-            return false;
-        }
-    }
-    if (data_ptr < 0x10000 || data_ptr > 0x7FFFFFFFFFFF) return false;
+    if (!game_string_view(str_addr, &data_ptr, &size)) return false;
+    return copy_game_bytes(data_ptr, size, out);
+}
 
+// A script-location text: {const char* text; uint32 length; ...}, the same on both
+// builds (a building's source file and enable trigger, a law's on_pass/can_keep).
+// On Linux it reads like a libstdc++ string by coincidence; on Windows it is not an
+// MSVC std::string, so it must not go through game_string_view (P5).
+inline bool safe_read_script_text(uintptr_t addr, std::string& out) {
+    out.clear();
+    struct { uint64_t ptr, len; } h{};   // one range: the Windows shim reads one at a time
+    struct iovec local  = { &h, sizeof h };
+    struct iovec remote = { reinterpret_cast<void*>(addr), sizeof h };
+    if (process_vm_readv(getpid(), &local, 1, &remote, 1, 0) != static_cast<ssize_t>(sizeof h)) return false;
+    const uintptr_t data_ptr = static_cast<uintptr_t>(h.ptr);
+    // The length is 32 bits: on Windows the upper half of that word is not written
+    // (0x6f00'0000'001b for a 27-byte text, P5: 20 of 281 building triggers).
+    const uint64_t size = h.len & 0xFFFFFFFFull;
+    if (size == 0 || size > kMaxGameStringLen) return false;
+    if (data_ptr < 0x10000 || data_ptr > 0x7FFFFFFFFFFF) return false;
+    return copy_game_bytes(data_ptr, size, out);
+}
+inline std::string safe_read_script_text(uintptr_t addr) {
+    std::string s;
+    safe_read_script_text(addr, s);
+    return s;
+}
+
+// The class name behind a vtable, in the Itanium spelling the bridge's catalogues
+// use ("11CAndTrigger": length prefix kept). Linux: vtable[-1] -> typeinfo, +8 ->
+// the name. Windows (MSVC RTTI): vtable[-1] -> complete-object locator (signature
+// 1), its TypeDescriptor RVA at +0x0C, the decorated name at TypeDescriptor+0x10
+// (".?AVCAndTrigger@@"); a plain class name is respelled "<len><name>". Nested and
+// template names have no such respelling here: false (P5).
+// The engine's CCharacter::GetFirstNameResolved (funcs::CHAR_FIRST_NAME_RESOLVED).
+// Itanium (Linux): std::string* fn(std::string* out, CCharacter*). MSVC: a member
+// function returning a class, so `this` (the character) is in rcx and the return
+// slot in rdx (ck3_offsets_win.h). A long name is allocated by the game's malloc:
+// the static UCRT's, on the process heap, as the bridge's (P6), so the caller's
+// std::string frees it normally.
+inline std::string* game_first_name_resolved(uintptr_t fn, std::string* out, void* c) {
+#ifdef _WIN32
+    return reinterpret_cast<std::string* (*)(void*, std::string*)>(fn)(c, out);
+#else
+    return reinterpret_cast<std::string* (*)(std::string*, void*)>(fn)(out, c);
+#endif
+}
+
+inline bool game_rtti_name(uintptr_t vptr, char* out, size_t out_size) {
+    if (!vptr || !is_mapped(vptr) || !out || out_size == 0) return false;
+    out[0] = '\0';
+#ifdef _WIN32
+    uintptr_t col = safe_read<uintptr_t>(vptr - sizeof(uintptr_t));
+    if (!col || !is_mapped(col) || safe_read<uint32_t>(col) != 1) return false;
+    uint32_t td_rva = safe_read<uint32_t>(col + 0x0C);
+    if (!td_rva) return false;
+    char dec[128] = {};
+    uintptr_t name = g_base_addr + td_rva + 0x10;
+    size_t n = 0;
+    while (n + 1 < sizeof dec) {
+        uint8_t ch = safe_read<uint8_t>(name + n);
+        if (ch == 0 || ch < 0x20 || ch > 0x7e) break;
+        dec[n++] = static_cast<char>(ch);
+    }
+    // ".?AV<name>@@" or ".?AU<name>@@", no '@' or '?' inside <name>
+    if (n < 7 || std::strncmp(dec, ".?A", 3) != 0 || (dec[3] != 'V' && dec[3] != 'U') ||
+        dec[n - 1] != '@' || dec[n - 2] != '@') return false;
+    const size_t len = n - 6;
+    for (size_t i = 4; i < 4 + len; i++) if (dec[i] == '@' || dec[i] == '?') return false;
+    int w = std::snprintf(out, out_size, "%zu%.*s", len, static_cast<int>(len), dec + 4);
+    return w > 0 && static_cast<size_t>(w) < out_size;
+#else
+    uintptr_t typeinfo = safe_read<uintptr_t>(vptr - sizeof(uintptr_t));
+    if (!typeinfo || !is_mapped(typeinfo)) return false;
+    uintptr_t name_ptr = safe_read<uintptr_t>(typeinfo + sizeof(uintptr_t));
+    if (!name_ptr || !is_mapped(name_ptr)) return false;
+    size_t n = 0;
+    while (n + 1 < out_size) {
+        uint8_t ch = safe_read<uint8_t>(name_ptr + n);
+        if (ch == 0 || ch < 0x20 || ch > 0x7e) break;
+        out[n++] = static_cast<char>(ch);
+    }
+    out[n] = '\0';
+    return n > 0;
+#endif
+}
+
+inline bool copy_game_bytes(uintptr_t data_ptr, uint64_t size, std::string& out) {
     // The FULL data range must be mapped per our /proc/self/maps snapshot…
     if (!is_mapped_range(data_ptr, size)) return false;
 
@@ -259,6 +392,27 @@ inline std::string safe_read_game_string(uintptr_t str_addr) {
 // pages (RELRO) that should be R-only. Now queries /proc/self/maps for the
 // actual original permissions and restores them exactly.
 // =============================================================================
+#ifdef _WIN32
+// Windows (ADR 0001 P6): no /proc/self/maps to read the old protection from (the
+// Linux version's fallback, R|X, would leave a read-only vtable page executable).
+// VirtualProtect returns the region's old protection; the destructor restores it
+// and flushes the i-cache. An executable region stays executable while writable.
+// Defined in bridge_init.cpp, out of line, so <windows.h> stays out of this header.
+bool win_make_writable(void* addr, size_t len, unsigned long* old_prot);
+void win_restore_protection(void* addr, size_t len, unsigned long old_prot);
+class ScopedWritable {
+    void* page_;
+    size_t len_;
+    unsigned long orig_prot_ = 0;
+    bool ok_ = false;
+public:
+    ScopedWritable(void* addr, size_t len)
+        : page_(addr), len_(len), ok_(win_make_writable(addr, len, &orig_prot_)) {}
+    ~ScopedWritable() { if (ok_) win_restore_protection(page_, len_, orig_prot_); }
+    ScopedWritable(const ScopedWritable&) = delete;
+    ScopedWritable& operator=(const ScopedWritable&) = delete;
+};
+#else
 class ScopedWritable {
     void* page_;
     size_t len_;
@@ -304,6 +458,7 @@ public:
     ScopedWritable(const ScopedWritable&) = delete;
     ScopedWritable& operator=(const ScopedWritable&) = delete;
 };
+#endif
 
 // =============================================================================
 // Permission-free memory write via /proc/self/mem
@@ -316,6 +471,11 @@ public:
 // Returns true on success, false on failure.
 // =============================================================================
 inline bool write_to_readonly(void* addr, const void* data, size_t len) {
+#ifdef _WIN32
+    // No /proc/self/mem: the platform cell protects, writes, restores each
+    // region's protection and flushes the i-cache for code (os/windows/write_protected.cpp).
+    return bridge::os::succeeded(bridge::os::write_protected(reinterpret_cast<uintptr_t>(addr), data, len));
+#endif
     int fd = open("/proc/self/mem", O_RDWR);
     if (fd < 0) return false;
     ssize_t written = pwrite(fd, data, len, static_cast<off_t>(reinterpret_cast<uintptr_t>(addr)));
@@ -468,6 +628,14 @@ bool start_ipc_server(const char* socket_path = nullptr);
 
 // Stop the IPC server
 void stop_ipc_server();
+
+#ifdef _WIN32
+// DLL_PROCESS_DETACH at process exit: the OS has already ended the IPC threads,
+// and joining under the loader lock would hang; give up their handles so the
+// CRT's static destructors do not std::terminate on a joinable std::thread
+// (a game exit was turned into an abort() fail-fast, P5 full11).
+void abandon_ipc_threads();
+#endif
 
 // ck-6kvq.5: a declared save identity can REFUTE a session's recorded world, in
 // which case SessionRegistry::reconcile_declared_world erases that session and

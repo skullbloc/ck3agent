@@ -182,7 +182,7 @@ static char on_interaction_try_send(uintptr_t* tls_ctx, long extra) {
 // =============================================================================
 
 void init_marriage_observation_hook() {
-    uintptr_t target = g_base_addr + ck3::funcs::INTERACTION_TRY_SEND;
+    uintptr_t target = bridge::game_fn(ck3::funcs::INTERACTION_TRY_SEND);
     g_orig_interaction_try_send = install_hook(target,
         reinterpret_cast<void*>(on_interaction_try_send));
 

@@ -1956,6 +1956,13 @@ namespace funcs {
     constexpr uintptr_t CAPITAL_RELOCATE            = 0x061206b0;  // HIGH: FUN_062206b0(char*, county_title*, err_ctx) — capital relocate apply (err_ctx=0 = AI/no-reason path)
     constexpr uintptr_t CAPITAL_VALIDATE_APPLY      = 0x0611fe70;  // HIGH: FUN_0621fe70(char*, county_title*, mode, err_ctx) — county-tier + capital-barony validate; returns bool
     constexpr uintptr_t CJOMINI_COMMAND_BASE_CTOR   = 0x0755b630;  // HIGH: CJominiCommandBase::ctor(cmd, 0) (ck capital lane)
+    // ADR 0001 P6: names for addresses the bridge spelled as bare literals, so a
+    // port's header can say where (or that) they are; values unchanged.
+    constexpr uintptr_t CJOMINI_COMMAND_BASE_DTOR   = CREATE_MAA_CMD_BASE_DTOR;  // HIGH: the one base dtor every bridge-built command calls (action_handlers.cpp x3, intent_dispatch.cpp)
+    constexpr uintptr_t SELECT_EVENT_OPTION_CMD_VTABLE  = 0x0bb13b60;  // MEDIUM: CSelectEventOptionCommand primary vtable (Phase 24 decompile; event_handler.cpp select_event_option)
+    constexpr uintptr_t SELECT_EVENT_OPTION_CMD_VTABLE2 = 0x0bb13c10;  // MEDIUM: its helper (+0x18) vtable, same source
+    constexpr uintptr_t SEND_INTERACTION_CMD_VTABLE  = 0x0bb73e38;  // MEDIUM: CSendCharacterInteractionCommand vtable (lea in ctor 0x609b410); runtime discovery may override (ai_eval_hook.cpp)
+    constexpr uintptr_t SEND_INTERACTION_CMD_VTABLE2 = 0x0bb73ee8;  // MEDIUM: its CGameCommandHelper vtable, same ctor
     // GAME_COMMAND_DISPATCH already defined above (0x07560390); g_CommandDispatchManager = globals::COMMAND_DISPATCH_MGR (0x0c59dd68)
 
     // Round 7: Vitals
@@ -2938,6 +2945,10 @@ namespace lifestyle_perk {
 namespace game_db {
     constexpr size_t ENTRIES_ARRAY   = 0x088;  // HIGH: ptr to typed entry pointer array
     constexpr size_t ENTRY_COUNT     = 0x090;  // HIGH: uint32, number of entries
+    // lane-p5 (core, 867.01.01): on 25 script databases +0x90 is the CAPACITY and
+    // +0x94 the live count (CLawDatabase 243 / 188, CFocusTypeDatabase 32 / 28, ...);
+    // they are equal only when the array is full. Readers wanting "how many" use this.
+    constexpr size_t LIVE_COUNT      = 0x094;  // MEDIUM: uint32, live entries (25 databases, one core)
 }
 
 // =============================================================================
@@ -4267,6 +4278,12 @@ namespace council_assign {
 namespace council_pos_type {
     constexpr size_t NAME_KEY           = 0x10;   // CONFIRMED: std::string, e.g. "councillor_chancellor" (R10-1)
 }
+// The council task type (a council position's current task, *(pos_obj +
+// COUNCIL_POS_CURRENT_TASK), key at db_object::NAME_KEY) and its position type.
+// The offset was a literal in query_council and council_task_hook (lane-p5 named it).
+namespace council_task_type {
+    constexpr size_t POSITION_TYPE_PTR  = 0x30;   // HIGH: ptr, CCouncilPositionType* (514/514 positions reach councillor_* keys, 867 core)
+}
 
 // =============================================================================
 // CSuccessionElectionState (at CLandedTitle+0x280, present on ALL titles)
@@ -4632,6 +4649,7 @@ namespace interaction_def {
     constexpr size_t HOSTILE_FLAG         = 0x2A33; // MEDIUM: byte, static hostile interaction flag
     constexpr size_t AI_BEHAVIOR_FLAG     = 0x2A37; // MEDIUM: byte, AI-specific behavior flag
     constexpr size_t TARGET_REQUIRED_FLAG = 0x2A41; // MEDIUM: byte, whether target must be alive
+    constexpr size_t AI_RESPONSE_FLAG     = 0x2A12; // LOW: byte, the "AI response flag" query_trigger_slots reports (ai_response_flag); named from that one reader (P5), meaning not verified
     constexpr size_t USE_MODE_FLAG        = 0xB3C;  // MEDIUM: int32, 0=use trigger at +0x1480, else +0xae0
     // Trigger region — inline CAndTrigger blocks (stride 0xE0, label_ptr at slot+0x28).
     //

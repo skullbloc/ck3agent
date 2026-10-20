@@ -227,6 +227,54 @@ def normalise_id(raw: Optional[str]) -> str:
     return raw
 
 
+# ── the Windows bridge's endpoint (ADR 0001) ────────────────────────────────
+# The Windows bridge listens on TCP loopback and writes {transport, endpoint,
+# token, pid} to <state dir>\endpoint.json. Its paths are bridge/src/os/
+# win_paths.cpp's rules; this mirrors the part a client needs (the state dir), and
+# test_instance_windows_endpoint.py runs the cases of the C++ rule test
+# (test_os_win_paths_rules.cpp) against it. One difference, on purpose: a
+# non-slug CK3_INSTANCE_ID raises here (InvalidInstanceId, as everywhere in this
+# module) where the bridge falls back to `default` and reports a config error.
+ENV_ENDPOINT = "CK3_BRIDGE_ENDPOINT"
+
+
+def windows_endpoint_path(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """<state dir>\\endpoint.json on Windows rules; None with no base directory."""
+    env = os.environ if env is None else env
+
+    def nonempty(key: str) -> Optional[str]:
+        v = env.get(key)
+        return v if v else None
+
+    def join(a: str, b: str) -> str:
+        return a + b if a.endswith(("\\", "/")) else a + "\\" + b
+
+    if (la := nonempty("LOCALAPPDATA")) is not None:
+        base = join(la, "ck3agent")
+    elif (up := nonempty("USERPROFILE")) is not None:
+        base = join(join(join(up, "AppData"), "Local"), "ck3agent")
+    else:
+        return None
+    iid = normalise_id(env.get(ENV_ID))
+    if iid == DEFAULT_INSTANCE_ID:
+        state = base
+    else:
+        root = nonempty("CK3_INSTANCE_ROOT")
+        state = join(root if root is not None else join(base, "inst"), iid)
+    return join(state, "endpoint.json")
+
+
+def bridge_endpoint(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """The endpoint.json a client should use, or None for the AF_UNIX socket:
+    $CK3_BRIDGE_ENDPOINT on any OS, else the Windows rule on Windows."""
+    env = os.environ if env is None else env
+    if env.get(ENV_ENDPOINT):
+        return env[ENV_ENDPOINT]
+    if os.name == "nt":
+        return windows_endpoint_path(env)
+    return None
+
+
 def is_default(instance_id: Optional[str]) -> bool:
     return normalise_id(instance_id) == DEFAULT_INSTANCE_ID
 

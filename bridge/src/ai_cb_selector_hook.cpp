@@ -143,10 +143,18 @@ static void bridge_noop_free(void* /*self*/, void* /*data*/, size_t /*elemsize*/
     // single war_post_decl call that consumes the override.
 }
 
-// 8 slots so any incidental vtable read stays in-bounds; only [3] is ever called.
+// 8 slots so any incidental vtable read stays in-bounds; only the free slot is
+// ever called. Itanium: [3] (+0x18, after the two destructors). MSVC: [2] (+0x10,
+// one deleting destructor; ck3_offsets_win.h struct_layout::ALLOCATOR_FREE_SLOT).
 static void* g_fake_alloc_vtable[8] = {
+#ifdef _WIN32
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&bridge_noop_free),  // [2] == offset 0x10 == free (MSVC)
+    nullptr,
+#else
     nullptr, nullptr, nullptr,
     reinterpret_cast<void*>(&bridge_noop_free),  // [3] == offset 0x18 == free
+#endif
     nullptr, nullptr, nullptr, nullptr,
 };
 // The allocator object: first qword is the vtable pointer.
@@ -456,7 +464,7 @@ bool do_set_cb_selector_override(const char* params_json,
 // =============================================================================
 
 void init_ai_cb_selector_hook() {
-    uintptr_t target = g_base_addr + ck3::funcs::AI_CB_SELECTOR;
+    uintptr_t target = bridge::game_fn(ck3::funcs::AI_CB_SELECTOR);
     g_orig_ai_cb_selector = install_hook(target,
         reinterpret_cast<void*>(on_ai_cb_selector));
 
@@ -499,7 +507,7 @@ static void on_war_decl_handler(void* req, void* ctx) {
 
 void init_war_decl_handler_hook() {
     // raw 0x065db970 = DECLARE_WAR_SPECIAL_HANDLER (ck3_offsets.h).
-    uintptr_t target = g_base_addr + 0x065db970;
+    uintptr_t target = bridge::game_fn(::event_weight::DECLARE_WAR_SPECIAL_HANDLER);
     g_orig_war_decl_handler = install_hook(target,
         reinterpret_cast<void*>(on_war_decl_handler));
     if (g_orig_war_decl_handler) {

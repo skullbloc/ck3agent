@@ -19,8 +19,10 @@ from bridge_client import (  # noqa: F401  (HandshakeRefused re-exported)
 class AsyncBridgeClient:
     """Async-compatible bridge client wrapping the sync BridgeClient."""
 
-    def __init__(self, socket_path: str = SOCKET_PATH):
-        self._sync = BridgeClient(socket_path)
+    def __init__(self, socket_path: str = SOCKET_PATH, endpoint: Optional[str] = None):
+        # endpoint: the Windows bridge's endpoint.json (BridgeClient resolves the
+        # default: $CK3_BRIDGE_ENDPOINT, else Windows' own path, else AF_UNIX).
+        self._sync = BridgeClient(socket_path, endpoint=endpoint)
 
     async def connect(self, timeout: float = 5.0) -> bool:
         return await asyncio.to_thread(self._sync.connect, timeout)

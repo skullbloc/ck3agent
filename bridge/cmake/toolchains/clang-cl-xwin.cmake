@@ -47,16 +47,23 @@ set(CMAKE_CXX_COMPILER "${CK3_LLVM_BIN}/clang-cl")
 set(CMAKE_LINKER       "${CK3_LLVM_BIN}/lld-link")
 set(CMAKE_AR           "${CK3_LLVM_BIN}/llvm-lib")
 set(CMAKE_RC_COMPILER  "${CK3_LLVM_BIN}/llvm-rc")
-set(CMAKE_MT           "${CK3_LLVM_BIN}/llvm-mt")
+# llvm-mingw ships no llvm-mt; without one, link with /MANIFEST:NO (nothing here
+# needs an embedded manifest) instead of failing in CMake's manifest step.
+if(EXISTS "${CK3_LLVM_BIN}/llvm-mt")
+    set(CMAKE_MT "${CK3_LLVM_BIN}/llvm-mt")
+    set(_nomanifest "")
+else()
+    set(_nomanifest " /MANIFEST:NO")
+endif()
 
 set(_xw "${CK3_XWIN_DIR}")
 set(_inc "-imsvc ${_xw}/crt/include -imsvc ${_xw}/sdk/include/ucrt -imsvc ${_xw}/sdk/include/um -imsvc ${_xw}/sdk/include/shared")
 set(CMAKE_C_FLAGS_INIT   "${_inc}")
 set(CMAKE_CXX_FLAGS_INIT "${_inc} /EHsc")
 set(_lib "/libpath:${_xw}/crt/lib/x86_64 /libpath:${_xw}/sdk/lib/um/x86_64 /libpath:${_xw}/sdk/lib/ucrt/x86_64")
-set(CMAKE_EXE_LINKER_FLAGS_INIT    "${_lib}")
-set(CMAKE_SHARED_LINKER_FLAGS_INIT "${_lib}")
-set(CMAKE_MODULE_LINKER_FLAGS_INIT "${_lib}")
+set(CMAKE_EXE_LINKER_FLAGS_INIT    "${_lib}${_nomanifest}")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "${_lib}${_nomanifest}")
+set(CMAKE_MODULE_LINKER_FLAGS_INIT "${_lib}${_nomanifest}")
 # xwin ships the release CRT only (no msvcrtd.lib), and a static CRT needs no
 # VC++ redistributable under wine: /MT everywhere, probes built as Release.
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)

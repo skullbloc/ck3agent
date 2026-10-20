@@ -18,6 +18,12 @@
 
 #include <Zydis/Zydis.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <atomic>
+#include "windows/ck3_offsets_win.h"   // the reviewed targets (P6)
+#endif
+
 // Log to the bridge log file only (stderr is unsafe in pressure-vessel)
 static void hlog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 static void hlog(const char* fmt, ...) {
@@ -222,7 +228,56 @@ static void write_abs_jmp(void* location, void* target_addr) {
     p[11] = 0xE0;
 }
 
+#ifdef _WIN32
+// ADR 0001 P6. An inline hook on Windows is installed only at a target whose hook
+// prototype was checked against the MSVC function (ck3_offsets_win.h says how for
+// each): the ABIs differ in more than registers (a struct over 8 bytes is returned
+// through a hidden pointer, a member function takes `this` before it, an engine
+// allocator's free sits at another vtable slot), so the Linux prototype is no
+// evidence. Every other target is refused, an unmapped (poisoned) one included.
+static const uint32_t kWinReviewedHookRvas[] = {
+    ck3_win::funcs::AI_WAR_POST_DECL,   // on_ai_war_post_decl(void* ai_ctrl, int rng, int bypass)
+    ck3_win::funcs::AI_CB_SELECTOR,     // on_ai_cb_selector(void* result, void* ai_ctrl, int rng)
+    ck3_win::funcs::WAR_END_CORE,       // on_war_end(void* mgr, void* war, int outcome, unsigned notify)
+    ck3_win::funcs::CREATE_ACTIVE_SCHEME,  // on_create_active_scheme(mgr, type, owner, scope, p5, p6) -> void*
+    ck3_win::funcs::INTERACTION_TRY_SEND,  // on_interaction_try_send(uintptr_t* ctx, long extra) -> char
+    ck3_win::funcs::WAR_SCORE_UPDATE,   // on_war_score_update(void* war); components adapted in war_score_hook.cpp
+    ck3_win::funcs::LOBBY_VIEW_CTOR,    // lobby_view_ctor_hook(this, a2, a3) -> this (MSVC ctor)
+};
+
+// The INT3-first install's window. Linux has a SIGTRAP handler for a thread that
+// enters the function while its first byte is 0xCC; here a vectored handler does
+// the same: a breakpoint inside the window resumes at the INT3's own address, which
+// by then (or on a later try) holds the hook's first byte.
+static std::atomic<uintptr_t> g_install_lo{0}, g_install_hi{0};
+static LONG CALLBACK install_breakpoint_veh(EXCEPTION_POINTERS* ep) {
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_BREAKPOINT) return EXCEPTION_CONTINUE_SEARCH;
+    const auto a = reinterpret_cast<uintptr_t>(ep->ExceptionRecord->ExceptionAddress);
+    if (a < g_install_lo.load() || a >= g_install_hi.load()) return EXCEPTION_CONTINUE_SEARCH;
+    ep->ContextRecord->Rip = static_cast<DWORD64>(a);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+#endif
+
 void* install_hook(uintptr_t target_addr, void* hook_fn) {
+#ifdef _WIN32
+    {
+        bool reviewed = false;
+        for (uint32_t rva : kWinReviewedHookRvas)
+            reviewed = reviewed || target_addr == g_base_addr + rva;
+        if (!reviewed) {
+            hlog("[CK3-Bridge] install_hook REFUSED at 0x%llx: not a reviewed Windows hook target "
+                 "(ADR 0001 P6: per-hook MSVC signature review)\n", (unsigned long long)target_addr);
+            return nullptr;
+        }
+        static PVOID veh = AddVectoredExceptionHandler(1, install_breakpoint_veh);
+        if (!veh) {
+            hlog("[CK3-Bridge] install_hook REFUSED at 0x%llx: no breakpoint handler for the "
+                 "INT3 window\n", (unsigned long long)target_addr);
+            return nullptr;
+        }
+    }
+#endif
     // Find a free hook slot
     HookEntry* entry = nullptr;
     for (size_t i = 0; i < MAX_HOOKS; i++) {
@@ -537,6 +592,10 @@ void* install_hook(uintptr_t target_addr, void* hook_fn) {
 
         uint8_t* target_bytes = reinterpret_cast<uint8_t*>(target_addr);
 
+#ifdef _WIN32
+        g_install_lo.store(target_addr);
+        g_install_hi.store(target_addr + total);
+#endif
         // Step 1: INT3 at byte 0 — atomically traps any thread entering
         target_bytes[0] = 0xCC;
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
@@ -562,6 +621,11 @@ void* install_hook(uintptr_t target_addr, void* hook_fn) {
 
         // Step 3: Write byte 0 with the real opcode — hook is now live
         target_bytes[0] = 0x48;  // REX.W prefix of MOV RAX, imm64
+#ifdef _WIN32
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        g_install_hi.store(0);
+        g_install_lo.store(0);
+#endif
     }
     // ScopedWritable destructor restores R+X permissions
 

@@ -101,11 +101,11 @@ public:
     void value_int(int64_t v) { buf_ += std::to_string(v); buf_ += ','; }
     void value_uint(uint64_t v) { buf_ += std::to_string(v); buf_ += ','; }
     void value_float(float v) {
-        char tmp[32]; snprintf(tmp, sizeof(tmp), "%.2f", v);
+        char tmp[48]; format_fixed2(v, tmp, sizeof(tmp));
         buf_ += tmp; buf_ += ',';
     }
     void value_double(double v) {
-        char tmp[32]; snprintf(tmp, sizeof(tmp), "%.2f", v);
+        char tmp[48]; format_fixed2(v, tmp, sizeof(tmp));
         buf_ += tmp; buf_ += ',';
     }
     // ck-ijfa: a RATE needs more than two decimals. 0.076 game-days per
@@ -211,7 +211,30 @@ void collect_dejure_counties(uint32_t title_id, std::vector<uint32_t>& out,
 
 std::string ad_read_std_string(uintptr_t str_addr);
 uintptr_t ad_db_lookup(uintptr_t db_global, uint32_t id);
+
+// A character's name as the bridge can state it right now (lane-namekey).
+//
+// The game stores a LOCALIZATION KEY on CCharacter (+0x20, `E_thelred` for
+// Æthelred); the display name comes from the engine's resolver, which only
+// the game thread may call. The reader thread serves a query from the name
+// cache (name_tables.cpp) and, on a miss, queues the id for the game thread
+// to resolve on its next tick. Until that tick — the first reads of a
+// session, a paused game — the bridge has the key and not the name, and it
+// says so: `name` is empty, `pending` is true and `key` carries the key. A
+// key is never returned AS the name.
+struct CharName {
+    std::string name;     // the localized display name, or empty
+    std::string key;      // the localization key on the object (diagnostic, not a name)
+    bool        pending;  // true: the name is queued for the game thread; `key` is set
+};
+CharName ad_read_char_name_full(uintptr_t c);
+// The localized name, or EMPTY on a cache miss (the miss queues resolution).
+// Never the localization key — see CharName.
 std::string ad_read_char_name(uintptr_t c);
+// Emit the name fields for `c`: `name` when localized; otherwise `name_key`
+// and `name_pending: true` (no `name`). Every character-bearing reply that
+// carries a top-level `name` goes through this.
+void emit_char_name(ResponseBuilder& r, uintptr_t c);
 void emit_char_names(ResponseBuilder& r, uintptr_t c);
 // FIX #culture_name: emit culture_id + culture (display name +0x260) + culture_key
 // (scripted key +0x1C8). Safe on null/unmapped obj (emits just the id).
@@ -520,7 +543,7 @@ bool do_set_speed(const char* params_json);
 bool do_inject_mouse_click(const char* params_json, std::string* response_out);
 bool do_select_observe_default(const char* params_json, std::string* response_out);
 bool do_enter_observe_mode(const char* params_json, std::string* response_out);
-bool do_toggle_ai_subsystem(const char* params_json);
+bool do_toggle_ai_subsystem(const char* params_json, std::string* out = nullptr);
 bool do_set_character_ai(const char* params_json);
 
 // =============================================================================

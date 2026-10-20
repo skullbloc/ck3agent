@@ -2,6 +2,9 @@
 // `ck3agent/server/instance.py`; pinned by `scripts/test_multi_instance.py`.
 #include "instance_paths.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#ifdef _WIN32
+#include "os/os.h"
+#endif
 
 #include <cerrno>
 #include <cstdlib>
@@ -181,6 +184,29 @@ bool verify_private(const std::string& d, std::string* why) {
 }
 
 void init_once() {
+#ifdef _WIN32
+    // Windows: the paths cell resolves the same rules (os/win_paths.cpp, one
+    // rule module with its own tests) under %LOCALAPPDATA%\ck3agent, which is
+    // per-user, and creates the directories. Nothing to verify per uid.
+    {
+        const std::string lay = env_stripped("CK3_INSTANCE_LAYOUT");
+        g_legacy = false;
+        g_layout_refused = !lay.empty() && lay != "user";
+        bridge::os::Paths op{};
+        const bridge::os::Result r = bridge::os::paths(&op);
+        g_id = op.instance_id ? op.instance_id : kDefaultId;
+        g_refused = !env_stripped("CK3_INSTANCE_ID").empty() && !valid_id(env_stripped("CK3_INSTANCE_ID").c_str());
+        g_socket = op.socket ? op.socket : "";
+        g_tele = op.telemetry_dir ? op.telemetry_dir : "";
+        g_log = op.bridge_log ? op.bridge_log : "";
+        g_log_archive = op.log_archive_dir ? op.log_archive_dir : "";
+        g_state_dir = op.state_dir ? op.state_dir : "";
+        g_base = g_dir = g_state_dir;
+        if (!bridge::os::succeeded(r))
+            g_config_err = std::string("paths cell refused: ") + r.detail;
+        return;
+    }
+#endif
     const std::string lay = env_stripped("CK3_INSTANCE_LAYOUT");
     if (!lay.empty()) {
         g_legacy = lay == "legacy";
@@ -268,6 +294,13 @@ int state_fd() {
 
 void instance_make_dirs() {
     ensure();
+#ifdef _WIN32
+    {   // the paths cell created base, state, telemetry and log-archive dirs
+        std::lock_guard<std::mutex> lk(g_err_mu);
+        g_private_err = g_config_err;
+        return;
+    }
+#endif
     const mode_t m = instance_dir_mode();
     const bool is_default = (g_id == kDefaultId);
     if (!g_config_err.empty()) {
@@ -362,6 +395,10 @@ bool stripped_equals(const char* v, const char* want) {
 }  // namespace
 
 bool instance_boot_log_base(char* out, size_t n) {
+#ifdef _WIN32
+    (void)out; (void)n;
+    return false;   // the boot log is the Linux dll_init's; Windows logs from bridge_init
+#endif
     // The same order as user_base(), minus the passwd lookup (not safe here).
     char run[64];
     snprintf(run, sizeof run, "/run/user/%u", static_cast<unsigned>(geteuid()));
@@ -453,6 +490,11 @@ FILE* open_regular(int dfd, const char* name, const char* mode) {
 FILE* instance_state_fopen(const char* name, const char* mode) {
     ensure();
     if (!name || !*name || strchr(name, '/') || !mode) { errno = EINVAL; return nullptr; }
+#ifdef _WIN32
+    if (strchr(name, '\\')) { errno = EINVAL; return nullptr; }
+    if (!instance_private_dir_ok()) { errno = EACCES; return nullptr; }
+    return open_regular(AT_FDCWD, (g_state_dir + "\\" + name).c_str(), mode);
+#endif
     const int dfd = state_fd();
     if (dfd < 0) { errno = EACCES; return nullptr; }
     return open_regular(dfd, name, mode);
@@ -476,6 +518,11 @@ int instance_state_open_fd(const char* name) {
 int instance_state_unlink(const char* name) {
     ensure();
     if (!name || !*name || strchr(name, '/')) { errno = EINVAL; return -1; }
+#ifdef _WIN32
+    if (strchr(name, '\\')) { errno = EINVAL; return -1; }
+    if (!instance_private_dir_ok()) { errno = EACCES; return -1; }
+    return ::_unlink((g_state_dir + "\\" + name).c_str());
+#endif
     const int dfd = state_fd();
     if (dfd < 0) { errno = EACCES; return -1; }
     return ::unlinkat(dfd, name, 0);
