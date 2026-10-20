@@ -85,6 +85,11 @@ uint32_t client_slot_open(ClientSlot& s, int fd, uint64_t connect_ts) {
     }
     s.connect_ts = connect_ts;
     s.handshaked = false;
+#ifdef _WIN32
+    s.authed = false;   // the first line must carry the endpoint token
+#else
+    s.authed = true;    // admitted by uid at accept
+#endif
     return gen;
 }
 

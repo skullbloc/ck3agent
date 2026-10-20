@@ -40,6 +40,37 @@ constexpr const char* GAME_VERSION  = "1.18.3.1"; // CK3 patch version. HIGH: th
 constexpr const char* GAME_PLATFORM = "linux";     // linux / windows
 constexpr const char* BINARY_MD5    = "09ba163bbff47f2eb8a69692536307e6";
 
+// ─── Windows PE identity (ADR 0001 "Binary identity"; lane-p0p1 2026-10-19) ──
+// Per-platform siblings of BUILD_ID for the Windows build of the SAME pinned
+// version: ck3.exe of CK3 1.18.3.1 from the Steam `1.18.3` branch (buildid
+// 21768289; launcher-settings.json rawVersion "1.18.3.1"; titus_branch.txt
+// release/1.18.3, titus_rev.txt 7b069e36…, equal to the Linux reference).
+// Nothing in the Linux build reads them. Each value HIGH: the inspect JSON
+// (tools/inspect_binary.py on the depot) and the independent parser
+// re/scripts/windows/pe_manual.py agree byte for byte; SHA-256 also by
+// sha256sum on node and workstation. Evidence: re/findings/windows/W0-binary-report.md.
+namespace windows {
+constexpr const char* PE_GAME_VERSION = "1.18.3.1";   // HIGH: launcher-settings.json rawVersion
+
+// CodeView RSDS record (debug directory entry type 2). GUID as text, and the
+// 16 raw bytes as stored in the file (Data1/2/3 little-endian, then Data4).
+constexpr const char* PE_PDB_GUID_STR = "3E26A827-C47A-4FB0-A863-3288849287C8";  // HIGH
+constexpr uint8_t PE_PDB_GUID[] = {
+    0x27, 0xa8, 0x26, 0x3e, 0x7a, 0xc4, 0xb0, 0x4f,
+    0xa8, 0x63, 0x32, 0x88, 0x84, 0x92, 0x87, 0xc8
+};                                                    // HIGH
+constexpr uint32_t PE_PDB_AGE       = 1;              // HIGH
+// TimeDateStamp is a clock time (no REPRO debug entry; 2026-02-03T15:58:44Z,
+// the `1.18.3` branch's Steam build date), so TIMESTAMP + SIZE_OF_IMAGE is a
+// usable fallback key if the debug directory were ever absent.
+constexpr uint32_t PE_TIMESTAMP     = 0x69821B34;     // HIGH: 1770134324
+constexpr uint32_t PE_SIZE_OF_IMAGE = 0x05A6A000;     // HIGH: 94806016
+constexpr uint64_t IMAGE_BASE       = 0x140000000ull; // HIGH: optional-header ImageBase (Ghidra VA = IMAGE_BASE + RVA)
+// Second identity witness (ADR amendment): SHA-256 of the image file on disk.
+constexpr const char* IMAGE_SHA256  =
+    "2f1358c0ed3378656fa0fea7738d79d0fa30c9bb23d365d76aa647d0a2fccb0f";  // HIGH (93,388,408 bytes)
+} // namespace windows
+
 // ─── Offset Header Revision ──────────────────────────────────────────────
 // Bumped on every significant update to ck3_offsets.h or signatures.h.
 // Lets the agent and bridge know which "generation" of offsets they have.

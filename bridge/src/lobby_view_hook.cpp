@@ -20,6 +20,9 @@
 #include "bridge.h"
 #include "ck3_offsets.h"
 #include "observer_data_functions.h"
+#ifdef _WIN32
+#include "windows/ck3_offsets_win.h"
+#endif
 
 #include <atomic>
 #include <cstdint>
@@ -42,13 +45,22 @@ static std::atomic<void*> g_lobby_view_singleton{nullptr};
 //   void __regcall ctor(this=rdi, arg2=rsi, arg3=rdx)
 // The third arg (rdx) is stashed at *this+0xd0 inside the body, which makes
 // it look like an "owner" or "parent view" reference.
+#ifdef _WIN32
+// MSVC: a constructor returns `this` in rax, and a caller may use it.
+using LobbyViewCtor = void* (*)(void* /*this*/, void* /*arg2*/, void* /*arg3*/);
+#else
 using LobbyViewCtor = void (*)(void* /*this*/, void* /*arg2*/, void* /*arg3*/);
+#endif
 static LobbyViewCtor g_ctor_trampoline = nullptr;
 
 // The hook function. We use C linkage to keep the calling convention sane
 // (System V AMD64 ABI: first six int/ptr args in rdi/rsi/rdx/rcx/r8/r9 —
 // same as the original constructor's ABI).
+#ifdef _WIN32
+extern "C" void* lobby_view_ctor_hook(void* this_, void* arg2, void* arg3) {
+#else
 extern "C" void lobby_view_ctor_hook(void* this_, void* arg2, void* arg3) {
+#endif
     // Chain to the original constructor first so the object is fully built
     // by the time we record the pointer. install_hook returns a trampoline
     // that re-executes the stolen prologue bytes then jumps past the hook
@@ -69,6 +81,9 @@ extern "C" void lobby_view_ctor_hook(void* this_, void* arg2, void* arg3) {
                 this_, arg2, arg3);
         fflush(bridge::g_logfile);
     }
+#ifdef _WIN32
+    return this_;
+#endif
 }
 
 // Public accessor for other bridge translation units (e.g. action_handlers).
@@ -88,7 +103,13 @@ bool install_lobby_view_hook() {
         return false;
     }
 
+#ifdef _WIN32
+    // observer_data_functions.h is a Linux-only table (gen_win_offsets reads only
+    // ck3_offsets.h): the Windows constructor comes from ck3_offsets_win.h.
+    uintptr_t ctor_addr = bridge::g_base_addr + ck3_win::funcs::LOBBY_VIEW_CTOR;
+#else
     uintptr_t ctor_addr = bridge::g_base_addr + ck3::lobby_view::CONSTRUCTOR_BODY;
+#endif
     void* tramp = bridge::install_hook(ctor_addr, reinterpret_cast<void*>(&lobby_view_ctor_hook));
     if (!tramp) {
         if (bridge::g_logfile) {

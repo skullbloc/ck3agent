@@ -38,7 +38,14 @@
 #include <ctime>
 #include <dlfcn.h>
 #include <fcntl.h>
+#ifndef _WIN32
 #include <link.h>
+#else
+#include "os/os.h"
+#include <windows.h>
+#include <condition_variable>
+#include "windows/ck3_offsets_win.h"   // ck3_win::funcs: the MSVC CAIManager vtables (P6)
+#endif
 #include <pthread.h>
 #include <signal.h>
 #include <setjmp.h>
@@ -302,6 +309,14 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
 // cannot silently displace the net again. Idempotent and cheap (one sigaction
 // read when already armed). NOT async-signal code — runs on the game thread.
 static void rearm_sigsegv_safety_net(const char* when) {
+#ifdef _WIN32
+    // Windows: the fault net is the shim's first-position vectored handler
+    // (posix_shim.cpp); CK3's crash reporter may have been added in front of it.
+    const int rc = ck3_win_rearm_fault_recovery();
+    if (strcmp(when, "first_on_tick") == 0 || rc != 0)
+        blog("[CK3-Bridge] fault net re-arm (vectored handler, %s): %s\n", when, rc == 0 ? "ok" : "FAILED");
+    return;
+#endif
     struct sigaction cur = {};
     if (sigaction(SIGSEGV, nullptr, &cur) != 0) {
         blog("[CK3-Bridge] SIGSEGV safety net re-arm FAILED: sigaction read errno=%d (%s)\n",
@@ -371,6 +386,98 @@ static void bridge_sigalrm_handler(int /*sig*/) {
     }
 }
 
+#ifdef _WIN32
+// --- Windows dispatch watchdog (ADR 0001 P6) ---
+// No SIGALRM to deliver into the game thread: one watchdog thread polls the
+// deadline and, once it passes, interrupts the thread that armed it through the
+// shim (ck3_win_watchdog_interrupt: suspend, check, redirect to siglongjmp with
+// 2, the Linux handler's value). Lock-free on purpose: the watched thread may be
+// suspended at any instruction, so it must never hold anything this thread
+// waits for. The interrupt only lands while the thread runs game or bridge code
+// (see the shim); elsewhere the thread is left alone and retried next poll.
+static std::atomic<uint64_t> g_ww_gen{0};          // 0 = disarmed; else the arm's generation
+static std::atomic<uint64_t> g_ww_next_gen{0};
+static std::atomic<unsigned long> g_ww_tid{0};
+static std::atomic<const bool*> g_ww_region{nullptr};
+static std::atomic<int64_t> g_ww_deadline_ms{0};
+static HANDLE g_ww_wake = nullptr;
+static uintptr_t g_self_lo = 0, g_self_hi = 0;      // this DLL's image
+
+static int64_t win_now_ms() { return static_cast<int64_t>(GetTickCount64()); }
+
+static void win_watchdog_loop() {
+    uint64_t logged_outside = 0;
+    for (;;) {
+        const uint64_t gen = g_ww_gen.load(std::memory_order_acquire);
+        if (!gen) { WaitForSingleObject(g_ww_wake, INFINITE); continue; }
+        const int64_t left = g_ww_deadline_ms.load(std::memory_order_acquire) - win_now_ms();
+        if (left > 0) { WaitForSingleObject(g_ww_wake, static_cast<DWORD>(left < 50 ? left : 50)); continue; }
+        const uintptr_t lo[2] = {g_base_addr, g_self_lo}, hi[2] = {g_image_end, g_self_hi};
+        uintptr_t rip = 0;
+        // The arm may have been replaced or disarmed since gen was read: the
+        // interrupt re-reads nothing, so check the generation again right before.
+        if (g_ww_gen.load(std::memory_order_acquire) != gen) continue;
+        const int rc = ck3_win_watchdog_interrupt(g_ww_tid.load(), g_ww_region.load(), lo, hi, 2, &rip);
+        if (rc == 2) {
+            if (logged_outside != gen) {
+                logged_outside = gen;
+                blog("[CK3-Bridge] Watchdog: deadline passed, tid=%lu outside game code (rip=0x%llx); retrying\n",
+                     g_ww_tid.load(), static_cast<unsigned long long>(rip));
+            }
+            Sleep(20);
+            continue;
+        }
+        // 0 interrupted, 1 already out of the region, -1 failed: this arm is spent.
+        uint64_t spent = gen;
+        g_ww_gen.compare_exchange_strong(spent, 0);
+        blog("[CK3-Bridge] Watchdog: tid=%lu %s (rip=0x%llx)\n", g_ww_tid.load(),
+             rc == 0 ? "interrupted (timeout, siglongjmp 2)" : rc == 1 ? "had left the region" : "interrupt FAILED",
+             static_cast<unsigned long long>(rip));
+    }
+}
+
+static void win_watchdog_start() {
+    if (g_ww_wake) return;
+    g_ww_wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    HMODULE self = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCSTR>(&win_watchdog_start), &self) && self) {
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(self);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(reinterpret_cast<uintptr_t>(self) + dos->e_lfanew);
+        g_self_lo = reinterpret_cast<uintptr_t>(self);
+        g_self_hi = g_self_lo + nt->OptionalHeader.SizeOfImage;
+    }
+    std::thread(win_watchdog_loop).detach();
+}
+
+static void win_watchdog_arm(unsigned secs) {
+    g_ww_gen.store(0, std::memory_order_release);   // no stale arm fires mid-update
+    g_ww_tid.store(GetCurrentThreadId());
+    g_ww_region.store(&g_in_protected_region);
+    g_ww_deadline_ms.store(win_now_ms() + static_cast<int64_t>(secs) * 1000);
+    g_ww_gen.store(g_ww_next_gen.fetch_add(1) + 1, std::memory_order_release);
+    if (g_ww_wake) SetEvent(g_ww_wake);
+}
+
+// ScopedWritable's Windows half (bridge.h): the old protection comes back from
+// VirtualProtect itself.
+bool win_make_writable(void* addr, size_t len, unsigned long* old_prot) {
+    MEMORY_BASIC_INFORMATION mbi;
+    if (VirtualQuery(addr, &mbi, sizeof(mbi)) != sizeof(mbi) || mbi.State != MEM_COMMIT) return false;
+    const DWORD exec = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    DWORD prev = 0;
+    if (!VirtualProtect(addr, len, (mbi.Protect & exec) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE, &prev))
+        return false;
+    *old_prot = prev;
+    return true;
+}
+void win_restore_protection(void* addr, size_t len, unsigned long old_prot) {
+    DWORD prev = 0;
+    VirtualProtect(addr, len, static_cast<DWORD>(old_prot), &prev);
+    FlushInstructionCache(GetCurrentProcess(), addr, len);
+}
+#endif
+
 // --- Per-thread SIGALRM timer (replaces process-wide alarm()) ---
 // Uses SIGEV_THREAD_ID to guarantee delivery to the game thread,
 // preventing the "SIGALRM hits wrong thread" hang bug.
@@ -385,6 +492,13 @@ void watchdog_init() {
     register_thread(ThreadRole::GameThread);
 
     if (g_watchdog_initialized) return;
+#ifdef _WIN32
+    win_watchdog_start();
+    g_watchdog_initialized = true;
+    blog("[CK3-Bridge] Watchdog: Windows thread interrupt (tid=%lu; armed per calling thread)\n",
+         GetCurrentThreadId());
+    return;
+#endif
 
     struct sigevent sev = {};
     sev.sigev_notify = SIGEV_THREAD_ID;
@@ -401,6 +515,10 @@ void watchdog_init() {
 }
 
 void watchdog_arm(unsigned secs) {
+#ifdef _WIN32
+    win_watchdog_arm(secs);
+    return;
+#endif
     // ck-4ot67: unblock SIGALRM on the calling thread before arming. The engine
     // may have inherited or set a thread-level SIGALRM mask elsewhere during a
     // tick (parallel worker setup, allocator critical sections, etc.). If the
@@ -422,6 +540,10 @@ void watchdog_arm(unsigned secs) {
 }
 
 void watchdog_disarm() {
+#ifdef _WIN32
+    g_ww_gen.store(0, std::memory_order_release);
+    return;
+#endif
     if (g_watchdog_initialized) {
         struct itimerspec its = {};  // all zeros = disarm
         timer_settime(g_watchdog_timer, 0, &its, nullptr);
@@ -461,6 +583,30 @@ std::shared_mutex g_ranges_mutex;
 void refresh_memory_map() {
     std::vector<MemRange> ranges;
     ranges.reserve(256);
+#ifdef _WIN32
+    // Committed, accessible regions of this process (the /proc/self/maps
+    // equivalent), merged where contiguous. PAGE_GUARD and PAGE_NOACCESS
+    // regions are not readable and are left out.
+    {
+        MEMORY_BASIC_INFORMATION mbi;
+        uintptr_t a = 0x10000;
+        while (a < 0x7FFFFFFFFFFF && VirtualQuery(reinterpret_cast<LPCVOID>(a), &mbi, sizeof(mbi)) == sizeof(mbi)) {
+            const uintptr_t start = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+            const uintptr_t end = start + mbi.RegionSize;
+            const bool readable = mbi.State == MEM_COMMIT &&
+                !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) && mbi.Protect != 0;
+            if (readable) {
+                if (!ranges.empty() && ranges.back().end == start) ranges.back().end = end;
+                else ranges.push_back({start, end});
+            }
+            if (end <= a) break;
+            a = end;
+        }
+        std::unique_lock<std::shared_mutex> lock(g_ranges_mutex);
+        g_valid_ranges = std::move(ranges);
+        return;
+    }
+#endif
     FILE* f = fopen("/proc/self/maps", "r");
     if (!f) return;
     char line[256];
@@ -517,6 +663,16 @@ static bool g_hooked_internal_vtable = false;
 // Check if we're running inside the actual CK3 process (not Steam or a helper).
 // Returns true only if /proc/self/exe basename is exactly "ck3".
 static bool is_ck3_process() {
+#ifdef _WIN32
+    // The proxy DLL's identity gate has already matched ck3.exe by CodeView
+    // GUID + SizeOfImage before anything here runs; this is the name check only.
+    char exe_path[1024] = {};
+    const DWORD n = GetModuleFileNameA(nullptr, exe_path, sizeof(exe_path));
+    if (n == 0 || n >= sizeof(exe_path)) return false;
+    const char* b = exe_path;
+    for (const char* q = exe_path; *q; ++q) if (*q == '\\' || *q == '/') b = q + 1;
+    return _stricmp(b, "ck3.exe") == 0;
+#else
     // Check /proc/self/exe — the most reliable indicator
     char exe_path[512] = {};
     ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
@@ -529,6 +685,7 @@ static bool is_ck3_process() {
         }
     }
     return false;
+#endif
 }
 
 // Forward declaration
@@ -558,6 +715,21 @@ static bool is_game_ready() {
 // With ASLR, the binary is loaded at a random base address.
 // All our offsets are relative to this base.
 static uintptr_t find_binary_base() {
+#ifdef _WIN32
+    {
+        // The main module's base and SizeOfImage (the PE equivalent of the
+        // PT_LOAD span); MZ/PE is checked by the identity gate already.
+        const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr));
+        if (!base) return 0;
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+        g_image_end = base + nt->OptionalHeader.SizeOfImage;
+        blog("[CK3-Bridge] PE base: 0x%llx end: 0x%llx (image %llu MB)\n",
+             (unsigned long long)base, (unsigned long long)g_image_end,
+             (unsigned long long)((g_image_end - base) >> 20));
+        return base;
+    }
+#else
     // Method 1 (most reliable): dl_iterate_phdr gives the actual load address
     struct CallbackData {
         uintptr_t base;
@@ -682,10 +854,15 @@ static uintptr_t find_binary_base() {
     }
 
     return data.base;
+#endif
 }
 
 // Safely check if a memory address is readable (mapped) without segfaulting.
 static bool is_addr_readable(uintptr_t addr) {
+#ifdef _WIN32
+    unsigned char b;
+    return bridge::os::succeeded(bridge::os::safe_read(&b, addr, 1));
+#endif
     // Method 1: write() to /dev/null — returns -1 with EFAULT if unmapped
     int fd = open("/dev/null", O_WRONLY);
     if (fd < 0) return false;
@@ -785,7 +962,17 @@ static void record_b_write_verdict(const char* action_name, const char* req_id,
     g_intent_queue.store_completed(rec);
 }
 
-// Thunk wrapper for internal vtable hook.
+#ifdef _WIN32
+// The game's MainTick, from the +8 vtable slot (install_main_tick_hooks), and
+// on_tick's orig() for it: MSVC's MainTick takes this = object+8.
+static void* g_win_main_tick = nullptr;
+static void win_main_tick_orig(void* ai_manager) {
+    reinterpret_cast<void(*)(void*)>(g_win_main_tick)(
+        reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(ai_manager) + 8));
+}
+#endif
+
+// Thunk wrapper for internal vtable hook (Linux), and the +8 vtable hook (Windows).
 // Adjusts `this` by -8 (secondary base -> real CAIManager) then delegates.
 void on_tick_internal(void* secondary_base) {
     void* ai_manager = reinterpret_cast<void*>(
@@ -805,12 +992,59 @@ void on_tick_internal(void* secondary_base) {
 // since the vtable swap uses /proc/self/mem (atomic 8-byte pointer write).
 // ─────────────────────────────────────────────────────────────────────────
 static bool install_main_tick_hooks() {
-    uintptr_t vtable_addr = g_base_addr + ck3::funcs::CAIMAN_VTABLE;
-    uintptr_t ivtable_addr = g_base_addr + ck3::funcs::CAIMAN_INTERNAL_VTABLE;
+#ifdef _WIN32
+    {
+        // ADR 0001 P6. MSVC puts MainTick in the vtable of CAIManager's +8
+        // subobject (the base that introduced it), slot MAIN_TICK_SLOT, called
+        // with this = object+8; there is no thunk and no slot in the +0 vtable
+        // (ck3_offsets_win.h funcs). One swap: the slot -> on_tick_internal,
+        // which takes 8 off as it does for the Linux thunk. on_tick's orig() is
+        // win_main_tick_orig, which adds the 8 back for the game's function.
+        namespace w = ck3_win::funcs;
+        const uintptr_t vt = g_base_addr + w::CAIMAN_VTABLE_SUB8;
+        auto* slots = reinterpret_cast<uintptr_t*>(vt);
+        const uintptr_t expected = g_base_addr + w::AI_MANAGER_MAIN_TICK;
+        const size_t slot = w::MAIN_TICK_SLOT;
+        blog("[CK3-Bridge] Installing tick hook (Windows): CAIManager +8 vtable at 0x%llx slot %zu, "
+             "MainTick 0x%llx\n", (unsigned long long)vt, slot, (unsigned long long)expected);
+        if (!is_addr_readable(vt + slot * sizeof(uintptr_t))) {
+            blog("[CK3-Bridge] ERROR: the +8 vtable is not readable; no hook\n");
+            return false;
+        }
+        const uintptr_t cur = slots[slot];
+        if (cur != expected) {
+            // Not this build's layout, or already swapped by someone: refuse
+            // rather than chain to an unknown target.
+            blog("[CK3-Bridge] ERROR: +8 vtable[%zu] = 0x%llx, not MainTick; no hook\n", slot,
+                 (unsigned long long)cur);
+            return false;
+        }
+        g_win_main_tick = reinterpret_cast<void*>(cur);
+        g_orig_main_tick = reinterpret_cast<void*>(&win_main_tick_orig);
+        const uintptr_t new_val = reinterpret_cast<uintptr_t>(&on_tick_internal);
+        if (!write_to_readonly(&slots[slot], &new_val, sizeof(uintptr_t)) || slots[slot] != new_val) {
+            blog("[CK3-Bridge] ERROR: +8 vtable[%zu] swap failed; no hook\n", slot);
+            g_orig_main_tick = nullptr;
+            return false;
+        }
+        // Restored by bridge_shutdown's internal-vtable branch.
+        g_vtable2_addr = vt;
+        g_vtable2_tick_slot = static_cast<int>(slot);
+        g_orig_main_tick_thunk = g_win_main_tick;
+        g_hooked_internal_vtable = true;
+        g_used_inline_hook = false;
+        g_main_tick_hooks_installed.store(true, std::memory_order_release);
+        blog("[CK3-Bridge] Tick hook installed (Windows): +8 vtable[%zu] (orig=%p -> on_tick_internal)\n",
+             slot, g_win_main_tick);
+        return true;
+    }
+#endif
+    uintptr_t vtable_addr = bridge::game_fn(ck3::funcs::CAIMAN_VTABLE);
+    uintptr_t ivtable_addr = bridge::game_fn(ck3::funcs::CAIMAN_INTERNAL_VTABLE);
     auto* vtable = reinterpret_cast<uintptr_t*>(vtable_addr);
     auto* ivtable = reinterpret_cast<uintptr_t*>(ivtable_addr);
-    uintptr_t expected_tick = g_base_addr + ck3::funcs::AI_MANAGER_MAIN_TICK;
-    uintptr_t expected_thunk = g_base_addr + ck3::funcs::AI_MANAGER_MAIN_TICK_THUNK;
+    uintptr_t expected_tick = bridge::game_fn(ck3::funcs::AI_MANAGER_MAIN_TICK);
+    uintptr_t expected_thunk = bridge::game_fn(ck3::funcs::AI_MANAGER_MAIN_TICK_THUNK);
 
     blog("[CK3-Bridge] Installing tick hook via DUAL vtable swap (deferred until game-ready)...\n");
     blog("[CK3-Bridge]   primary vtable at 0x%lx, internal vtable at 0x%lx\n",
@@ -988,6 +1222,17 @@ void bridge_init() {
     }
 
     // Install SIGSEGV handler for crash recovery in protected regions
+#ifdef _WIN32
+    // Windows: protected-region faults recover through the shim's first-position
+    // vectored handler; there is no SIGTRAP (no INT3-first hooks before P6) and
+    // no SIGALRM watchdog (see watchdog_init).
+    if (ck3_win_install_fault_recovery() == 0) {
+        blog("[CK3-Bridge] Fault net installed (vectored handler, first position)\n");
+    } else {
+        blog("[CK3-Bridge] ERROR: fault net (vectored handler) not installed; refusing to start\n");
+        return;
+    }
+#else
     {
         struct sigaction sa;
         sa.sa_sigaction = bridge_sigsegv_handler;
@@ -1016,6 +1261,7 @@ void bridge_init() {
         sigaction(SIGALRM, &sa, nullptr);
         blog("[CK3-Bridge] SIGALRM watchdog installed (%us timeout)\n", DISPATCH_TIMEOUT_SECS);
     }
+#endif
 
     // Step 1: Find ASLR base and determine Ghidra image base offset
     g_base_addr = find_binary_base();
@@ -1023,7 +1269,15 @@ void bridge_init() {
         blog("[CK3-Bridge] ERROR: Could not find CK3 binary base address\n");
         return;
     }
-    blog("[CK3-Bridge] Binary base: 0x%lx\n", g_base_addr);
+    blog("[CK3-Bridge] Binary base: 0x%llx\n", static_cast<unsigned long long>(g_base_addr));
+
+    // The game-function pointers the action handlers call (g_char_is_alive,
+    // g_get_ai_ctrl, ...): address arithmetic only, so set them here, before the
+    // IPC listener opens. Set on the first tick alone, a claim made while the
+    // loaded game was still paused called a null pointer (P6 smoke4:
+    // set_controlled_character -> memory_access_fault at tick 0, either platform).
+    // The first-tick call below repeats it, harmlessly.
+    init_action_dispatch();
 
     // Step 2: Verify we're in the right binary
     // Use safe read: check that game_state_root address is accessible
@@ -1092,6 +1346,7 @@ void bridge_init() {
         }
         return;
     }
+    if (!validation.degraded)
     blog("[CK3-Bridge] Offset validation passed (%d/%d groups, %d/%d checks)\n",
          validation.groups_passed, validation.total_groups,
          validation.checks_passed, validation.total_checks);
@@ -1106,6 +1361,21 @@ void bridge_init() {
     // the game starts opening multiplayer/observer UI — well after dlopen —
     // but installing early avoids races with that path. install_hook only
     // touches .text bytes; it does not depend on game state.
+#ifdef _WIN32
+    // ADR 0001 P6: the same path as Linux from here (IPC listener, the deferred
+    // main-tick hook on game-ready, auto-unpause). Windows adds one thread: the
+    // fault ring is drained to the log once a second (the vectored handler may
+    // not do I/O), and the readable-range table is refreshed while no tick runs
+    // (paused, or before the hook is in; on_tick refreshes it after).
+    std::thread([]() {
+        for (;;) {
+            if (g_session_state.load(std::memory_order_acquire) == SessionState::DORMANT || is_paused())
+                refresh_memory_map();
+            ck3_win_drain_faults(g_logfile);
+            usleep(1000000);
+        }
+    }).detach();
+#endif
     if (::ck3_bridge::install_lobby_view_hook()) {
         blog("[CK3-Bridge] Step 3b: LobbyView constructor hook installed\n");
     } else {
@@ -1214,6 +1484,13 @@ void bridge_init() {
                 blog("[CK3-Bridge] Hook-installer: tick received, done!\n");
                 return;
             }
+            // Until the first tick, nothing else refreshes the readable-range
+            // table, and the save's objects are allocated after game-ready: every
+            // is_mapped() check on them failed, so pre-tick reads (a paused game
+            // just loaded) answered character_not_found (measured: P5 parity
+            // run, query_alliances / query_call_to_arms at the load date). From
+            // the first tick on, on_tick refreshes as before.
+            refresh_memory_map();
 
             if (cooldown_ticks > 0) {
                 cooldown_ticks--;
@@ -1260,7 +1537,7 @@ void bridge_shutdown() {
     if (g_orig_main_tick) {
         if (g_used_inline_hook) {
             // Inline hook: remove by restoring original bytes via remove_hook
-            remove_hook(g_base_addr + ck3::funcs::AI_MANAGER_MAIN_TICK);
+            remove_hook(bridge::game_fn(ck3::funcs::AI_MANAGER_MAIN_TICK));
             blog("[CK3-Bridge] Restored inline hook (original bytes restored)\n");
         } else if (g_vtable_tick_slot >= 0 && g_vtable_addr != 0) {
             // Primary vtable hook: restore the original vtable entry
@@ -1842,6 +2119,17 @@ void on_tick(void* ai_manager) {
             blog("[CK3-Bridge] BUILD-B: WARNING: init_name_tables() threw exception\n");
         }
 
+#ifdef _WIN32
+        // ADR 0001 P6: both read the LINUX binary's code shapes (the FS-based TLS
+        // block, the send-command ctor's lea pattern). On ck3.exe a shape match
+        // would be a different value, not a failure, so they are not run. The
+        // trigger query and the direct dispatch reach the TLS context through the
+        // Windows TLS block (ai_eval_hook.cpp locate_game_tls); the command
+        // vtables and dispatch manager keep their header names, which the
+        // Windows header poisons where no Windows value is mapped.
+        blog("[CK3-Bridge] BUILD-C: TLS offsets and runtime discovery not run on Windows "
+             "(Linux code shapes; P6)\n");
+#else
         // Init TLS offsets (enables send_interaction's execute_direct_dispatch)
         try {
             blog("[CK3-Bridge] BUILD-C: Initializing TLS offsets...\n");
@@ -1859,6 +2147,7 @@ void on_tick(void* ai_manager) {
         } catch (...) {
             blog("[CK3-Bridge] BUILD-C: WARNING: init_runtime_discovery() threw exception\n");
         }
+#endif
 
         // Init event handler (enables event observation and response)
         try {
@@ -2813,6 +3102,13 @@ if (bridge::ai_watch_requested()) {
 // DLL entry points (called by dynamic linker)
 // =============================================================================
 
+#ifdef _WIN32
+// Windows: no ELF constructor (it would run under the loader lock). The proxy
+// DLL's init thread calls this after the identity gate matched (dll_main.cpp).
+extern "C" void ck3_bridge_start(void) {
+    bridge::bridge_init();
+}
+#else
 __attribute__((constructor))
 static void dll_init() {
     // Diagnostic-first marker (ck-fj23): proves whether the .so constructor
@@ -2849,3 +3145,4 @@ static void dll_fini() {
         bridge::bridge_shutdown();
     }
 }
+#endif

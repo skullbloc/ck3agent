@@ -19,7 +19,7 @@ def=$out/version_proxy.def
 {
   echo "LIBRARY version.dll"
   echo "EXPORTS"
-  sed -nE 's/^X\(([A-Za-z0-9_]+), *[0-9]+\).*/  \1=proxy_\1/p' "$here/version_exports.h"
+  sed -nE 's/^X\(([A-Za-z0-9_]+), *[0-9]+\).*/  \1=proxy_\1/p' "$here/../../windows/version_exports.h"
 } > "$def"
 want=$(grep -c '=proxy_' "$def")
 [ "$want" -gt 0 ] || { echo "build.sh: no exports parsed from version_exports.h" >&2; exit 1; }
@@ -29,7 +29,7 @@ want=$(grep -c '=proxy_' "$def")
 
 # Check the result's export table against the list (fail open: any parse
 # trouble is a failure, never a pass).
-got=$(python3 -I "$here/gen_exports.py" "$out/version.dll" | grep -c '^X(' || true)
+got=$(python3 -I "$here/../../windows/gen_exports.py" "$out/version.dll" | grep -c '^X(' || true)
 if [ "$got" != "$want" ]; then
   echo "build.sh: version.dll exports $got names, list has $want" >&2
   exit 1

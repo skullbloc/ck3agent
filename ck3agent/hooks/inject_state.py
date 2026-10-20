@@ -165,19 +165,35 @@ NAME_PENDING = "name not localized yet (the game resolves it on its next tick)"
 def display_name(v):
     """A character name fit to print, or None.
 
-    The bridge answers a name-cache MISS with the character's localization KEY
-    as stored on CCharacter (`E_thelred` for Æthelred, `Bj_rn` for Björn): its
-    reader thread cannot call the game's localizer, so it queues the id for the
-    game thread, which resolves it on its next tick (bridge/src/name_tables.cpp).
-    Until time moves — the first snapshot of a run, a paused game — every read
-    of that ruler returns the key, which is how lane-multi run 3 printed
-    `E_thelred` where whoami, a few turns later, said `Æthelred`. A key is not
-    a name: an underscore never occurs in a display name, so a string carrying
-    one is omitted rather than printed as the ruler's name.
+    The bridge's reader thread cannot call the game's localizer: on a name-cache
+    MISS it queues the id for the game thread, which resolves it on its next
+    tick (bridge/src/name_tables.cpp). Until time moves — the first snapshot of
+    a run, a paused game — the bridge has only the localization KEY stored on
+    CCharacter (`E_thelred` for Æthelred, `Bj_rn` for Björn). Since lane-namekey
+    it says so: no `name`, plus `name_key` and `name_pending: true`, and
+    `name_pending(d)` below is what the ruler lines read. Before that fix it
+    returned the key AS the name, which is how lane-multi run 3 printed
+    `E_thelred` where whoami, a few turns later, said `Æthelred`. This guard
+    stays for an older bridge: a key is not a name, an underscore never occurs
+    in a display name, so a string carrying one is omitted rather than printed.
     """
     if not isinstance(v, str) or not v.strip() or "_" in v:
         return None
     return v
+
+
+def name_pending(d):
+    """Whether a profile's name is still waiting on the game thread.
+
+    True when the bridge says so (`name_pending`), or — an older bridge — when
+    the `name` it sent is a localization key rather than a name.
+    """
+    if not isinstance(d, dict):
+        return False
+    if d.get("name_pending"):
+        return True
+    raw = d.get("name")
+    return isinstance(raw, str) and bool(raw.strip()) and display_name(raw) is None
 
 
 def frame(body):
@@ -418,8 +434,7 @@ def rulers_block(puller, bstate, controlled, ch, active_wars, paused, extras=Non
             else:
                 prof, wars_n = extras.get(cid, ({}, None))
             seg = "    - id %s" % _fmt_num(cid)
-            raw_nm = g(prof, "name")
-            nm = display_name(raw_nm)
+            nm = display_name(g(prof, "name"))
             if nm:
                 seg += " · **%s**" % nm
             ttl = g(prof, "primary_title_name", "primary_title_key", "primary_title")
@@ -427,7 +442,7 @@ def rulers_block(puller, bstate, controlled, ch, active_wars, paused, extras=Non
                 seg += " · %s" % ttl
             if i == 0:
                 seg += " (primary)"
-            if not nm and raw_nm:
+            if not nm and name_pending(prof):
                 seg += " · " + NAME_PENDING
             elif not nm and paused is not True:
                 seg += " · name: pause to read"
@@ -514,9 +529,8 @@ def build_report(puller):
 
     # --- Character profile fields ------------------------------------------
     title = g(ch, "primary_title_name", "primary_title_key", "primary_title")
-    raw_name = g(ch, "name")
-    name = display_name(raw_name) or title
-    name_pending = bool(raw_name) and display_name(raw_name) is None
+    name = display_name(g(ch, "name")) or title
+    name_is_pending = name_pending(ch)
     age = g(ch, "age")
     tier = g(ch, "ruler_tier", "tier", "primary_title_tier")
     gold = g(ch, "gold")
@@ -600,7 +614,7 @@ def build_report(puller):
         if title:
             you += " · %s" % title
         you += " (tier %s)" % _fmt_num(tier)
-        if name_pending:
+        if name_is_pending:
             you += " · " + NAME_PENDING
         if imprisoned:
             you += " · **IMPRISONED**"

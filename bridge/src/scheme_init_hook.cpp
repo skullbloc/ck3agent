@@ -315,7 +315,7 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
 // =============================================================================
 
 void init_scheme_init_hook() {
-    uintptr_t target = g_base_addr + ck3::funcs::CREATE_ACTIVE_SCHEME;
+    uintptr_t target = bridge::game_fn(ck3::funcs::CREATE_ACTIVE_SCHEME);
     g_orig_create_active_scheme = install_hook(target,
         reinterpret_cast<void*>(on_create_active_scheme));
 

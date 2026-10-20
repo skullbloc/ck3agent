@@ -143,7 +143,7 @@ static void on_ai_council_tasks(void* char_ptr, uint32_t p2) {
 // =============================================================================
 
 void init_council_suppress_hook() {
-    uintptr_t target = g_base_addr + ck3::funcs::AI_COUNCIL_TASKS_PER_RULER;
+    uintptr_t target = bridge::game_fn(ck3::funcs::AI_COUNCIL_TASKS_PER_RULER);
     g_orig_ai_council_tasks =
         install_hook(target, reinterpret_cast<void*>(on_ai_council_tasks));
 

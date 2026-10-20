@@ -15,6 +15,8 @@ upstream) ships as `ck3agent/data/trigger_subclasses.csv`; it is per platform to
 | `offsets/signatures.h` | 34 prologue byte patterns resolved at load; its header gives the wildcard rules |
 | `offsets/observer_data_functions.h` | GUI data-function callbacks for observer actions |
 | `offsets/offset_version.h` | the one supported BuildID; the bridge refuses any other |
+| `offsets/windows/ck3_offsets.generated.h` | GENERATED at export: the Windows build's offsets under the Linux names; its header lists the input shas and the pinned ck3.exe |
+| `offsets/windows/ck3_offsets_win.h` | GENERATED at export: the Windows-only names (`ck3_win::`), values without the research annotations |
 | `rtti/rtti_scanner.py` | ELF Itanium RTTI scan: typeinfo, vtables, class names to CSV |
 | `scripts/ghidra/start.sh` | starts `ghserver.py` detached; configuration in its header |
 | `scripts/ghidra/ghserver.py` | resident read-only Ghidra query server (pyghidra), one per project |

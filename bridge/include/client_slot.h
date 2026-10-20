@@ -46,7 +46,7 @@
 
 namespace bridge {
 
-struct Session;  // session.h
+class Session;  // session.h (the tag must match: the MSVC ABI mangles it)
 
 // One IPC client connection.
 //
@@ -65,6 +65,10 @@ struct ClientSlot {
     uint64_t connect_ts = 0;
     uint32_t gen = 0;            // bumped on every open AND every release
     bool handshaked = false;
+    // ADR 0001 P5: Windows admits a connection by the endpoint token on its
+    // first line (ipc_server.cpp); Linux admits by uid at accept, so a Linux
+    // slot opens authenticated.
+    bool authed = false;
     std::mutex send_mtx;         // serializes writes to this slot's fd
     // M1 multi-agent session bound to this slot.  Released when the slot is
     // released (disconnect / stale displacement).

@@ -122,6 +122,20 @@ it never changes the speed. A drain that does not finish in time returns
 `valid_cbs_strict` and `interaction_validity` are single-flight: allow 6 s,
 and never call them in parallel. A second call gets `cb_query_busy`.
 
+### 3.6 Character names
+
+The game stores a localization key on each character (`E_thelred` for
+Æthelred); only the game thread can turn it into a name. A read served from
+the bridge's name cache carries `name`. A read that misses the cache carries
+no `name`: it carries `name_key` (the key, for diagnosis — it is not a name)
+and `name_pending: true`, and the id is queued for the game thread, which
+resolves it on its next tick. A paused game runs no tick, so the first reads
+of a session stay pending until time moves; the bridge never unpauses for a
+name read. A character-bearing reply with neither `name` nor `name_pending`
+had no readable name at all. The MCP server's actor echo (`controlled`,
+`added`, the `actor` of every actor-bearing tool) carries the same two keys
+when the name is pending. Show the note, never the key.
+
 ## 4. Observation
 
 Nothing is pushed. Every observation is a request.

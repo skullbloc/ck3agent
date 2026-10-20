@@ -58,6 +58,79 @@
 #include <algorithm>
 #include <atomic>
 
+#ifdef _WIN32
+// ── ADR 0001 P5: the Windows transport ─────────────────────────────────────
+// The listener is TCP on 127.0.0.1 (the transport cell), and the socket calls
+// below map the POSIX spellings this file uses onto Winsock, file-locally:
+//   read/recv   recv; MSG_DONTWAIT is a zero-timeout WSAPoll first
+//   send        send (MSG_NOSIGNAL is 0: no SIGPIPE on Windows)
+//   close       closesocket (every close() in this file is of a socket)
+//   poll        WSAPoll
+//   getsockopt  SO_PEERCRED refuses: admission is the endpoint token instead
+// A connection is ADMITTED by its first line, {"auth":"<token>"}, the token
+// being the one this process wrote to <state dir>/endpoint.json (a per-user
+// directory); until then nothing it sends is parsed. Linux admits by uid at
+// accept (SO_PEERCRED), which a loopback TCP peer cannot offer.
+#include "os/os.h"
+#include <bcrypt.h>
+static int ck3_ipc_set_errno() {
+    switch (WSAGetLastError()) {
+        case WSAEWOULDBLOCK: errno = EAGAIN; break;
+        case WSAECONNRESET: case WSAECONNABORTED: errno = ECONNRESET; break;
+        case WSAENOTSOCK: errno = EBADF; break;
+        default: errno = EIO; break;
+    }
+    return -1;
+}
+static ssize_t ck3_ipc_recv(int fd, void* buf, size_t n, int flags) {
+    if (flags & MSG_DONTWAIT) {
+        WSAPOLLFD p{static_cast<SOCKET>(fd), POLLRDNORM, 0};
+        const int r = WSAPoll(&p, 1, 0);
+        if (r == 0) { errno = EAGAIN; return -1; }
+        if (r < 0) return ck3_ipc_set_errno();
+    }
+    const int r = ::recv(static_cast<SOCKET>(fd), static_cast<char*>(buf), static_cast<int>(n),
+                         flags & MSG_PEEK);
+    return r == SOCKET_ERROR ? ck3_ipc_set_errno() : r;
+}
+static ssize_t ck3_ipc_send(int fd, const void* buf, size_t n, int) {
+    const int r = ::send(static_cast<SOCKET>(fd), static_cast<const char*>(buf), static_cast<int>(n), 0);
+    return r == SOCKET_ERROR ? ck3_ipc_set_errno() : r;
+}
+static ssize_t ck3_ipc_read(int fd, void* buf, size_t n) { return ck3_ipc_recv(fd, buf, n, 0); }
+static int ck3_ipc_close(int fd) { return closesocket(static_cast<SOCKET>(fd)) == 0 ? 0 : ck3_ipc_set_errno(); }
+static int ck3_ipc_poll(WSAPOLLFD* p, unsigned long n, int timeout_ms) { return WSAPoll(p, n, timeout_ms); }
+static int ck3_ipc_getsockopt(int fd, int level, int opt, void* v, socklen_t* len) {
+    if (level == SOL_SOCKET && opt == SO_PEERCRED) { errno = ENOSYS; return -1; }
+    return ::getsockopt(static_cast<SOCKET>(fd), level, opt, static_cast<char*>(v), len) == 0 ? 0 : ck3_ipc_set_errno();
+}
+static int ck3_ipc_accept(int fd, struct sockaddr* a, socklen_t* l) {
+    const SOCKET c = ::accept(static_cast<SOCKET>(fd), a, l);
+    return c == INVALID_SOCKET ? ck3_ipc_set_errno() : static_cast<int>(c);
+}
+#define read       ck3_ipc_read
+#define recv       ck3_ipc_recv
+#define send       ck3_ipc_send
+#define close      ck3_ipc_close
+#define poll       ck3_ipc_poll
+#define getsockopt ck3_ipc_getsockopt
+#define accept     ck3_ipc_accept
+// The endpoint token (hex of 16 random bytes) and the file it was published in.
+static std::string g_win_token;
+static std::string g_win_endpoint_file;
+// Constant-time comparison of the presented token with ours.
+static bool ck3_ipc_token_ok(const std::string& line) {
+    rapidjson::Document d;
+    d.Parse(line.c_str(), line.size());
+    if (d.HasParseError() || !d.IsObject() || !d.HasMember("auth") || !d["auth"].IsString()) return false;
+    const std::string got(d["auth"].GetString(), d["auth"].GetStringLength());
+    if (g_win_token.empty() || got.size() != g_win_token.size()) return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < got.size(); ++i) diff |= static_cast<unsigned char>(got[i] ^ g_win_token[i]);
+    return diff == 0;
+}
+#endif
+
 namespace bridge {
 
 // SIGSEGV recovery (defined in bridge_init.cpp)
@@ -445,7 +518,7 @@ static std::string handshake_provenance_fields() {
         "CK3_BOARD_ADMIN_TOKEN",
         "CK3_STRICT_BUILD_ID", "CK3_BRIDGE_STRICT", "CK3_SUPPRESS_AUTO_UNPAUSE",
         "CK3_INSTANCE_LAYOUT", "CK3_INSTANCE_ID", "CK3_INSTANCE_ROOT", "CK3_INSTANCE_DIR",
-        "CK3_BRIDGE_SOCKET", "CK3_TELE", "CK3_BRIDGE_LOG", "CK3_BRIDGE_LOG_ARCHIVE_DIR",
+        "CK3_BRIDGE_SOCKET", "CK3_BRIDGE_PORT", "CK3_TELE", "CK3_BRIDGE_LOG", "CK3_BRIDGE_LOG_ARCHIVE_DIR",
         "CK3_BRIDGE_SEND_TIMEOUT_MS", "CK3_BRIDGE_TRACE", "CK3_AI_WATCH",
         "CK3_LAW_TRIGGER_HARVEST", "CK3_TRIGGER_CATALOGUE_CSV",
         "CK3_UNAVAIL_ANOMALY_WALL_S", "CK3_UNAVAIL_EXCLUSION_FRACTION", "CK3_UNAVAIL_X_DAYS",
@@ -950,7 +1023,7 @@ static bool send_to_slot(int idx, uint32_t gen, const char* json_data, size_t le
 
     ssize_t sent = 0;
     while (sent < static_cast<ssize_t>(len)) {
-        struct pollfd pfd = {fd, POLLOUT, 0};
+        struct pollfd pfd = {static_cast<decltype(pollfd::fd)>(fd), POLLOUT, 0};
         int pr = poll(&pfd, 1, g_send_timeout_ms);
         if (pr <= 0 || !(pfd.revents & POLLOUT))
             return fail(sent > 0 ? bridge::SendStage::kSendError
@@ -967,7 +1040,7 @@ static bool send_to_slot(int idx, uint32_t gen, const char* json_data, size_t le
     // The trailing newline IS the frame terminator for a line-framed client.
     // Failing here is not a dropped reply: the body is already in the client's
     // buffer and its reader will never yield it.
-    struct pollfd pfd = {fd, POLLOUT, 0};
+    struct pollfd pfd = {static_cast<decltype(pollfd::fd)>(fd), POLLOUT, 0};
     int pr = poll(&pfd, 1, g_send_timeout_ms);
     if (pr <= 0 || !(pfd.revents & POLLOUT))
         return fail(bridge::SendStage::kNewlineFailed, (size_t)sent, 0);
@@ -1774,6 +1847,45 @@ static void reader_loop() {
                 // waiting for a request_id-matched reply — in ANY pause state.
                 // Such envelopes now flow down the normal action path, where the
                 // unregistered-name guard answers them with a typed redirect.
+#ifdef _WIN32
+                // The token gate: a slot that has not authenticated may send
+                // exactly one line, and it must be {"auth":"<token>"}.
+                {
+                    bool authed;
+                    {
+                        std::lock_guard<std::mutex> lock(g_client_mutex);
+                        authed = g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen &&
+                                 g_clients[idx].authed;
+                    }
+                    if (!authed) {
+                        const bool ok = ck3_ipc_token_ok(line_buf);
+                        {
+                            std::lock_guard<std::mutex> lock(g_client_mutex);
+                            if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen) {
+                                if (ok) g_clients[idx].authed = true;
+                            }
+                        }
+                        if (ok) {
+                            static const char kOk[] = "{\"type\":\"auth_ok\"}";
+                            send_observation(kOk, sizeof(kOk) - 1);
+                            if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                                "[CK3-Bridge] slot=%d authenticated (endpoint token)\n", idx);
+                            line_buf.clear();
+                            continue;
+                        }
+                        static const char kNo[] = "{\"type\":\"error\",\"error\":\"auth_refused\","
+                            "\"hint\":\"send {\\\"auth\\\":\\\"<token from endpoint.json>\\\"} as the first line\"}";
+                        send_observation(kNo, sizeof(kNo) - 1);
+                        if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                            "[CK3-Bridge] REFUSED slot=%d: first line is not the endpoint token\n", idx);
+                        std::lock_guard<std::mutex> lock(g_client_mutex);
+                        if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen)
+                            release_slot_locked(idx, "auth refused");
+                        dropped = true;
+                        break;
+                    }
+                }
+#endif
                 bool is_handshake = (line_buf.find("\"type\"") != std::string::npos &&
                                      line_buf.find("\"handshake\"") != std::string::npos &&
                                      line_buf.find("\"handshake_ack\"") == std::string::npos &&
@@ -2243,6 +2355,9 @@ static void server_loop() {
         g_accept_loop_total_accepts.fetch_add(1, std::memory_order_relaxed);
 
         // rc2 B1: only our own uid may talk to the bridge (legacy: any uid).
+        // Windows: there is no peer uid on loopback TCP; the first line's token
+        // admits (reader_loop), so nothing is decided here.
+#ifndef _WIN32
         {
             struct ucred pc;
             socklen_t pc_len = sizeof(pc);
@@ -2261,6 +2376,7 @@ static void server_loop() {
                 continue;
             }
         }
+#endif
 
         if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Agent connected (fd=%d)\n", client);
 
@@ -2405,6 +2521,41 @@ bool start_ipc_server(const char* socket_path) {
     };
     if (!bridge::instance_private_dir_ok())
         return refuse(bridge::instance_private_dir_error());
+#ifdef _WIN32
+    {
+        // TCP loopback (the transport cell), an OS-assigned port unless
+        // CK3_BRIDGE_PORT names one, and a fresh random token. Both go to
+        // <state dir>/endpoint.json; the token admits a connection.
+        char addr[32] = "127.0.0.1:0";
+        if (const char* port = getenv("CK3_BRIDGE_PORT")) snprintf(addr, sizeof addr, "127.0.0.1:%s", port);
+        bridge::os::Endpoint ep{bridge::os::TransportKind::tcp_loopback, addr};
+        bridge::os::Handle lh = bridge::os::kInvalidHandle;
+        const bridge::os::Result lr = bridge::os::transport_listen(ep, &lh);
+        if (!bridge::os::succeeded(lr)) return refuse(lr.detail);
+        bridge::os::ipc_endpoint(&ep);   // the address with the port the OS chose
+        unsigned char rnd[16];
+        if (BCryptGenRandom(nullptr, rnd, sizeof rnd, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+            bridge::os::transport_close(lh);
+            return refuse("no random token (BCryptGenRandom failed)");
+        }
+        char hex[33];
+        for (int i = 0; i < 16; ++i) snprintf(hex + 2 * i, 3, "%02x", rnd[i]);
+        g_win_token = hex;
+        FILE* ef = bridge::instance_state_fopen("endpoint.json", "w");
+        if (!ef) { bridge::os::transport_close(lh); return refuse("cannot write endpoint.json in the state dir"); }
+        fprintf(ef, "{\"transport\":\"tcp_loopback\",\"endpoint\":\"%s\",\"token\":\"%s\",\"pid\":%d}\n",
+                ep.address, g_win_token.c_str(), static_cast<int>(GetCurrentProcessId()));
+        fclose(ef);
+        g_win_endpoint_file = std::string(bridge::instance_state_dir()) + "\\endpoint.json";
+        g_server_fd = static_cast<int>(lh);
+        if (bridge::g_logfile) fprintf(bridge::g_logfile,
+            "[CK3-Bridge] IPC listening on %s (tcp_loopback); endpoint %s\n", ep.address, g_win_endpoint_file.c_str());
+        g_server_running = true;
+        g_server_thread = std::thread(server_loop);
+        g_reader_thread = std::thread(reader_loop);
+        return true;
+    }
+#endif
     if (strlen(socket_path) >= sizeof(((struct sockaddr_un*)nullptr)->sun_path))
         return refuse("path longer than sun_path");
     {
@@ -2465,6 +2616,14 @@ bool start_ipc_server(const char* socket_path) {
     return true;
 }
 
+#ifdef _WIN32
+void abandon_ipc_threads() {
+    g_server_running = false;
+    if (g_server_thread.joinable()) g_server_thread.detach();
+    if (g_reader_thread.joinable()) g_reader_thread.detach();
+}
+#endif
+
 void stop_ipc_server() {
     g_server_running = false;
 
@@ -2485,7 +2644,11 @@ void stop_ipc_server() {
         g_server_fd = -1;
     }
 
+#ifdef _WIN32
+    bridge::instance_state_unlink("endpoint.json");
+#else
     unlink(g_socket_path);
+#endif
 }
 
 bool agent_connected() {

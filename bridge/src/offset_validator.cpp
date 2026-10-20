@@ -4,6 +4,9 @@
 
 #include "bridge.h"
 #include "ck3_offsets.h"
+#ifdef _WIN32
+#include "windows/ck3_offsets_win.h"   // the MSVC-only names the Windows rows check (P6)
+#endif
 
 #include <cstdarg>
 #include <cstdio>
@@ -78,7 +81,13 @@ static const OffsetCheck db_checks[] = {
 // AI vtable addresses: must be readable and contain valid function pointers
 static const OffsetCheck vtable_checks[] = {
     {"CAIMAN_VTABLE",          ck3::funcs::CAIMAN_VTABLE,          OffsetCheck::PTR_MAPPED, 0, 0},
+#ifdef _WIN32
+    // MSVC has no internal vtable with a MainTick thunk: the tick lives in the +8
+    // subobject's vtable, which is what the Windows hook swaps (P6).
+    {"CAIMAN_VTABLE_SUB8",     ck3_win::funcs::CAIMAN_VTABLE_SUB8, OffsetCheck::PTR_MAPPED, 0, 0},
+#else
     {"CAIMAN_INTERNAL_VTABLE", ck3::funcs::CAIMAN_INTERNAL_VTABLE, OffsetCheck::PTR_MAPPED, 0, 0},
+#endif
 };
 
 // AI function addresses: the function entry points must be in mapped executable memory
@@ -94,7 +103,12 @@ static const OffsetCheck func_checks[] = {
 // We check readability here since game may not be loaded yet at init time
 static const OffsetCheck game_state_checks[] = {
     {"MAX_GAME_SPEED",     ck3::globals::MAX_GAME_SPEED,     OffsetCheck::READABLE,   0, 0},
+#ifdef _WIN32
+    // No contiguous toggle block on MSVC: the first of the 38 (ck3_offsets_win.h).
+    {"AI_TOGGLE[0]",       ck3_win::globals::AI_TOGGLE[0],    OffsetCheck::READABLE,   0, 0},
+#else
     {"AI_TOGGLE_BASE",     ck3::globals::AI_TOGGLE_BASE,     OffsetCheck::READABLE,   0, 0},
+#endif
     {"AI_RNG_COUNTER",     ck3::globals::AI_RNG_COUNTER,     OffsetCheck::READABLE,   0, 0},
 };
 
@@ -131,6 +145,11 @@ static constexpr int NUM_GROUPS = sizeof(all_groups) / sizeof(all_groups[0]);
 
 static bool run_check(uintptr_t base, const OffsetCheck& check) {
     uintptr_t addr = base + check.offset;
+#ifdef _WIN32
+    // A function MSVC inlined is a recipe (the bridge's own code, recipes.inc):
+    // what the bridge calls is what game_fn() returns, so check that.
+    if ((check.offset >> 52) == 0x7FE) addr = bridge::game_fn(check.offset);
+#endif
 
     switch (check.type) {
     case OffsetCheck::READABLE:
@@ -175,7 +194,7 @@ OffsetValidationResult validate_offsets() {
     }
 
     vlog("=== Offset Regression Test Suite ===\n");
-    vlog("Binary base: 0x%lx\n", base);
+    vlog("Binary base: 0x%llx\n", static_cast<unsigned long long>(base));
 
     int groups_passed = 0;
     int groups_failed = 0;
@@ -197,8 +216,8 @@ OffsetValidationResult validate_offsets() {
                 total_passed++;
             } else {
                 group_fail++;
-                vlog("  FAIL: %s::%s (offset=0x%lx)\n",
-                     group.name, check.name, check.offset);
+                vlog("  FAIL: %s::%s (offset=0x%llx)\n",
+                     group.name, check.name, static_cast<unsigned long long>(check.offset));
             }
         }
 

@@ -63,10 +63,10 @@ Handle from_sock(SOCKET s) { return static_cast<Handle>(s); }
 
 Result ipc_endpoint(Endpoint* out) {
     if (!out) return win::failed(ERROR_INVALID_PARAMETER, "out is null");
-    // Port 0 = OS-assigned; the real port is known only after transport_listen
-    // (endpoint.json, written in P4, carries it to the client).
+    // Port 0 = OS-assigned; the real port is known only after transport_listen,
+    // which records it here (the bridge publishes it in endpoint.json).
     out->kind = TransportKind::tcp_loopback;
-    out->address = "127.0.0.1:0";
+    out->address = g_endpoint_addr;
     return win::ok();
 }
 

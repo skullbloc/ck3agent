@@ -751,7 +751,7 @@ bool execute_war_intent(Intent* intent) {
     // with a global fallback.
 
     auto get_ai_ctrl = reinterpret_cast<void*(*)(void*)>(
-        g_base_addr + ck3::funcs::CHAR_GET_AI_CONTROLLER);
+        bridge::game_fn(ck3::funcs::CHAR_GET_AI_CONTROLLER));
 
     void* ai_ctrl = nullptr;
 
@@ -816,11 +816,11 @@ bool execute_war_intent(Intent* intent) {
 
     // Function pointers for the war pipeline
     auto war_target_eval = reinterpret_cast<void*(*)(void*)>(
-        g_base_addr + ck3::funcs::AI_WAR_TARGET_EVAL);
+        bridge::game_fn(ck3::funcs::AI_WAR_TARGET_EVAL));
     auto war_declare_exec = reinterpret_cast<void(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::AI_WAR_DECLARE_EXEC);
+        bridge::game_fn(ck3::funcs::AI_WAR_DECLARE_EXEC));
     auto war_post_decl = reinterpret_cast<void(*)(void*, int, int)>(
-        g_base_addr + ck3::funcs::AI_WAR_POST_DECL);
+        bridge::game_fn(ck3::funcs::AI_WAR_POST_DECL));
 
     // War suppress flag — temporarily clear it (same as CMD_AI_DECLARE_WAR)
     uint8_t* war_suppress_ptr = reinterpret_cast<uint8_t*>(
@@ -964,8 +964,8 @@ bool execute_war_intent(Intent* intent) {
         bool armed_override = false;
         if (target != nullptr && intent->cb_index >= 0 && intent->title_id > 0) {
             uintptr_t cb_db = read<uintptr_t>(g_base_addr + ck3::globals::CASUS_BELLI_DB);
-            uintptr_t cb_arr = cb_db ? read<uintptr_t>(cb_db + 0x88) : 0;
-            int32_t   cb_cnt = cb_db ? read<int32_t>(cb_db + 0x94) : 0;
+            uintptr_t cb_arr = cb_db ? read<uintptr_t>(cb_db + ck3::game_db::ENTRIES_ARRAY) : 0;
+            int32_t   cb_cnt = cb_db ? read<int32_t>(cb_db + ck3::game_db::LIVE_COUNT) : 0;
             uintptr_t cb_ref = 0;
             if (cb_arr && is_mapped(cb_arr) &&
                 intent->cb_index < cb_cnt && cb_cnt > 0 && cb_cnt <= 500) {
@@ -1228,7 +1228,7 @@ bool execute_decision_intent(Intent* intent) {
     // On success: result starts with "Took decision."; enqueues CExecuteDecisionCommand.
     // On failure: "Does not fulfill ai_potential" / "cannot afford" / "cannot take" / etc.
     auto ai_try_decision = reinterpret_cast<void*(*)(void*, void*, void*)>(
-        g_base_addr + ck3::funcs::AI_TRY_DECISION_CORE);
+        bridge::game_fn(ck3::funcs::AI_TRY_DECISION_CORE));
 
     alignas(8) char result_storage[32] = {};
     void* result_ptr = result_storage;
@@ -1670,8 +1670,8 @@ bool execute_war_create_core_intent(Intent* intent) {
             g_in_protected_region = false; watchdog_disarm();
             return reject("cb_db_unmapped");
         }
-        uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + 0x88);
-        int32_t   cb_count = safe_read<int32_t>(cb_db + 0x94);
+        uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + ck3::game_db::ENTRIES_ARRAY);
+        int32_t   cb_count = safe_read<int32_t>(cb_db + ck3::game_db::LIVE_COUNT);
         if (!cb_arr || !is_mapped(cb_arr) || cb_count <= 0 || cb_count > 500) {
             g_in_protected_region = false; watchdog_disarm();
             return reject("cb_db_invalid");
@@ -1964,9 +1964,9 @@ bool execute_war_create_core_intent(Intent* intent) {
             // exact #119 symptom that boxed the Britannia agent in). TRUCE keeps the
             // GET_TRUCE_LIST search — that list (+0x6A0) is the genuine truce list.
             auto get_truce_list = reinterpret_cast<uintptr_t(*)(void*)>(
-                g_base_addr + ck3::funcs::GET_TRUCE_LIST);
+                bridge::game_fn(ck3::funcs::GET_TRUCE_LIST));
             auto simd_find = reinterpret_cast<uintptr_t(*)(uintptr_t, uintptr_t, void*)>(
-                g_base_addr + ck3::funcs::SIMD_FIND_LONG);
+                bridge::game_fn(ck3::funcs::SIMD_FIND_LONG));
 
             const bool at_funcs_mapped =
                 is_mapped(reinterpret_cast<uintptr_t>(get_truce_list))    &&
@@ -2125,7 +2125,7 @@ bool execute_war_create_core_intent(Intent* intent) {
 
         if (gate_this_cb) {
             auto cb_validity_check = reinterpret_cast<bool(*)(void*, void*, void*, void*, int)>(
-                g_base_addr + ck3::funcs::CB_VALIDITY_CHECK);
+                bridge::game_fn(ck3::funcs::CB_VALIDITY_CHECK));
 
             if (!is_mapped(reinterpret_cast<uintptr_t>(cb_validity_check))) {
                 // Fail open: validity fn unmapped → proceed to create the war.
@@ -2279,7 +2279,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     if (!root_slot || !is_mapped(root_slot)) return reject("game_state_root_unmapped");
 
     using GsResolveFn = uintptr_t (*)(uintptr_t);
-    auto gs_resolve = reinterpret_cast<GsResolveFn>(g_base_addr + ck3::funcs::GAME_STATE_FROM_ROOT);
+    auto gs_resolve = reinterpret_cast<GsResolveFn>(bridge::game_fn(ck3::funcs::GAME_STATE_FROM_ROOT));
     uintptr_t game_state = 0;
     {
         watchdog_arm(2);
@@ -2297,7 +2297,7 @@ bool execute_war_create_core_intent(Intent* intent) {
         // checkpoint and the next ("gs_resolve done") localizes the hang to
         // the engine call itself (and the watchdog timeout should follow).
         IQLOG("WAR_CREATE_CORE_DIRECT step=4 gs_resolve calling engine: fn=0x%lx root_slot=0x%lx\n",
-              (unsigned long)g_base_addr + ck3::funcs::GAME_STATE_FROM_ROOT,
+              (unsigned long)bridge::game_fn(ck3::funcs::GAME_STATE_FROM_ROOT),
               (unsigned long)root_slot);
         try { game_state = gs_resolve(root_slot); }
         catch (...) { g_in_protected_region = false; watchdog_disarm(); return reject("game_state_resolve_exception"); }
@@ -2356,7 +2356,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     // 6) Acquire game lock matching the special-interaction handler.
     IQLOG("WAR_CREATE_CORE_DIRECT step=6 lock_acquire: calling FUN_076facf0\n");
     using NoArgFn = void (*)();
-    auto lock_acquire = reinterpret_cast<NoArgFn>(g_base_addr + ck3::funcs::GAME_LOCK_ACQUIRE);
+    auto lock_acquire = reinterpret_cast<NoArgFn>(bridge::game_fn(ck3::funcs::GAME_LOCK_ACQUIRE));
     {
         watchdog_arm(2);
         g_in_protected_region = true;
@@ -2385,7 +2385,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                                        uintptr_t current_date_ptr,
                                        void* optional_titles_vec);  // param_8: NULL→name-gen(crash); non-NULL→skip
     auto war_create_core = reinterpret_cast<WarCreateFn>(
-        g_base_addr + ck3::funcs::WAR_CREATE_CORE);
+        bridge::game_fn(ck3::funcs::WAR_CREATE_CORE));
 
     uintptr_t returned_war = 0;
     bool      crashed = false;
@@ -2431,7 +2431,7 @@ bool execute_war_create_core_intent(Intent* intent) {
             // means the engine call itself is the wedge point, and the watchdog
             // must convert it into a timeout reject within 4s.
             IQLOG("WAR_CREATE_CORE_DIRECT step=7 PRE_WCC_CALL: fn=0x%lx gs=0x%lx atk=%u def=%u clmt=%u cb=0x%lx params=%p date=0x%lx opt_titles=%p\n",
-                  (unsigned long)(g_base_addr + ck3::funcs::WAR_CREATE_CORE),
+                  (unsigned long)(bridge::game_fn(ck3::funcs::WAR_CREATE_CORE)),
                   (unsigned long)game_state, atk_id, def_id, claimant,
                   (unsigned long)cb_type_ptr,
                   (void*)cb_params_buf,
@@ -2463,7 +2463,7 @@ bool execute_war_create_core_intent(Intent* intent) {
         uintptr_t name_null_sent = safe_read<uintptr_t>(g_base_addr + ck3::globals::WAR_DB_SENTINEL);
         if (!crashed && returned_war && returned_war != name_null_sent && safe_ptr(returned_war)) {
             using NameGenFn = void (*)(uintptr_t war, uintptr_t game_state);
-            auto name_gen = reinterpret_cast<NameGenFn>(g_base_addr + 0x065b62c0);
+            auto name_gen = reinterpret_cast<NameGenFn>(bridge::game_fn(ck3::funcs::WAR_NAME_GENERATE));
             watchdog_arm(3);
             g_in_protected_region = true;
             int nsig = sigsetjmp(g_recovery_point, 1);
@@ -2904,9 +2904,9 @@ bool execute_scheme_cancel_intent(Intent* intent) {
     uintptr_t gsr = read<uintptr_t>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
     if (!gsr) return reject("game_state_root_null");
     auto get_scheme_mgr = reinterpret_cast<void*(*)(void*)>(
-        g_base_addr + ck3::funcs::GET_SCHEME_MANAGER);
+        bridge::game_fn(ck3::funcs::GET_SCHEME_MANAGER));
     auto remove_scheme = reinterpret_cast<void(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::REMOVE_ACTIVE_SCHEME);
+        bridge::game_fn(ck3::funcs::REMOVE_ACTIVE_SCHEME));
 
     uint64_t saved_rng = 0;
     // ck-zgh4 scope latch: a restore was refused earlier in this process,
@@ -3041,10 +3041,10 @@ bool execute_scheme_intent(Intent* intent) {
     uintptr_t gsr = read<uintptr_t>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
     if (!gsr) return reject("game_state_root_null");
     auto get_scheme_mgr = reinterpret_cast<void*(*)(void*)>(
-        g_base_addr + ck3::funcs::GET_SCHEME_MANAGER);
+        bridge::game_fn(ck3::funcs::GET_SCHEME_MANAGER));
     auto create_scheme = reinterpret_cast<void*(*)(void*, void*, void*, uint64_t,
                                                    uint64_t, uint64_t)>(
-        g_base_addr + ck3::funcs::CREATE_ACTIVE_SCHEME);
+        bridge::game_fn(ck3::funcs::CREATE_ACTIVE_SCHEME));
 
     uint64_t saved_rng = 0;
     // ck-zgh4 scope latch: a restore was refused earlier in this process,
@@ -3406,7 +3406,7 @@ bool execute_war_force_offensive_stance_intent(Intent* intent) {
     // select+refine over. We write NOTHING into the sublist ourselves.
     using ObjBootstrapFn = void (*)(void* rec);
     auto obj_bootstrap = reinterpret_cast<ObjBootstrapFn>(
-        g_base_addr + ck3::funcs::COORD_OBJ_BOOTSTRAP);
+        bridge::game_fn(ck3::funcs::COORD_OBJ_BOOTSTRAP));
 
     // B1a: zero the re-eval cooldowns so COORD_STANCE_TICK takes BOTH gated branches:
     //   rec+0x94<2 → selector FUN_04e66550 (writes the stance to rec+0x70)
@@ -3415,7 +3415,7 @@ bool execute_war_force_offensive_stance_intent(Intent* intent) {
     // the stance. Then call the engine's own tick.
     using StanceTickFn = void (*)(void* rec, void* seed);
     auto stance_tick = reinterpret_cast<StanceTickFn>(
-        g_base_addr + ck3::funcs::COORD_STANCE_TICK);
+        bridge::game_fn(ck3::funcs::COORD_STANCE_TICK));
 
     // Build the seed struct the engine's caller (FUN_04dedd40) passes as param_2.
     // FUN_04e66220 does not read param_2, but mirror the ABI: {game_date_qword, seed}.
@@ -3629,7 +3629,7 @@ bool execute_break_alliance_intent(Intent* intent) {
     //     relation gate, but gives a clean "not_allied" rejection instead of a
     //     silent no-op dissolve. IsAlliedTo(actor, ally) → bool.
     auto is_allied_to = reinterpret_cast<bool(*)(void*, void*)>(
-        g_base_addr + ck3::funcs::ALLIANCE_IS_ALLIED_TO);
+        bridge::game_fn(ck3::funcs::ALLIANCE_IS_ALLIED_TO));
     bool allied_before = false;
     {
         // The read is a small binary-search + flag check; guard it lightly under
@@ -3814,7 +3814,7 @@ bool execute_raise_armies_intent(Intent* intent) {
     }
 
     auto raise_all = reinterpret_cast<unsigned long(*)(void*, int)>(
-        g_base_addr + ck3::funcs::ARMY_RAISE_ALL);
+        bridge::game_fn(ck3::funcs::ARMY_RAISE_ALL));
     if (!is_mapped(reinterpret_cast<uintptr_t>(raise_all))) {
         intent->rejected = true;
         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
@@ -4002,7 +4002,7 @@ bool execute_raise_raiders_intent(Intent* intent) {
     // The toggle-raiding dispatch path: void(int intent_index). intent_index=0
     // is the default toggle-raiding (avoids the ==2 branch).
     auto toggle_raiding = reinterpret_cast<void(*)(int)>(
-        g_base_addr + ck3::funcs::ARMY_TOGGLE_RAIDING_DISPATCH);
+        bridge::game_fn(ck3::funcs::ARMY_TOGGLE_RAIDING_DISPATCH));
     if (!is_mapped(reinterpret_cast<uintptr_t>(toggle_raiding))) {
         intent->rejected = true;
         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
@@ -4273,10 +4273,10 @@ bool execute_create_title_intent(Intent* intent) {
 
     // Resolve function pointers up front (mapping-checked).
     auto base_ctor = reinterpret_cast<void(*)(void*, unsigned char)>(
-        g_base_addr + 0x0755b630);  // CJominiCommandBase_ctor (image 0x765b630)
+        bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_CTOR));  // CJominiCommandBase_ctor (image 0x765b630)
     auto execute = reinterpret_cast<void(*)(void*)>(
-        g_base_addr + ck3::funcs::CREATE_TITLE_CMD_EXECUTE);  // FUN_067cabf0(cmd)
-    auto base_dtor = reinterpret_cast<void(*)(void*)>(g_base_addr + 0x0755b650);  // FUN_0765b650
+        bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_EXECUTE));  // FUN_067cabf0(cmd)
+    auto base_dtor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));  // FUN_0765b650
     if (!is_mapped(reinterpret_cast<uintptr_t>(base_ctor)) ||
         !is_mapped(reinterpret_cast<uintptr_t>(execute))) {
         return reject("create_title_fn_unmapped");
@@ -4325,8 +4325,8 @@ bool execute_create_title_intent(Intent* intent) {
         // Build the command: base ctor sets the CJominiCommandBase vtable + flag +
         // zeroes +0x0c/+0x14; then stamp both command vtables + ruler + title.
         base_ctor(cmd, 0);
-        *reinterpret_cast<uintptr_t*>(cmd + 0x00) = g_base_addr + ck3::funcs::CREATE_TITLE_CMD_VTABLE;
-        *reinterpret_cast<uintptr_t*>(cmd + 0x18) = g_base_addr + ck3::funcs::CREATE_TITLE_CMD_VTABLE2;
+        *reinterpret_cast<uintptr_t*>(cmd + 0x00) = bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_VTABLE);
+        *reinterpret_cast<uintptr_t*>(cmd + 0x18) = bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_VTABLE2);
         *reinterpret_cast<uint32_t*>(cmd + 0x20)  = ruler_handle;
         *reinterpret_cast<uint32_t*>(cmd + 0x24)  = title_id;
 

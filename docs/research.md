@@ -167,6 +167,7 @@ reads from the environment of each program the launcher execs, to stay preloaded
 | `CK3_INSTANCE_ROOT` | paths | parent directory for named instances |
 | `CK3_INSTANCE_DIR` | paths | episode directory fallback: `$CK3_INSTANCE_DIR/episode` |
 | `CK3_BRIDGE_SOCKET` | paths | socket path |
+| `CK3_BRIDGE_PORT` | paths | Windows only: the TCP loopback port to listen on; a free port by default (the bound address goes to `endpoint.json`) |
 | `CK3_BRIDGE_LOG` | paths | bridge log path |
 | `CK3_BRIDGE_LOG_ARCHIVE_DIR` | paths | where rotated bridge logs are gzipped |
 | `CK3_TELE` | paths | telemetry directory, which holds the action log |

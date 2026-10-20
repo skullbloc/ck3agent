@@ -483,24 +483,11 @@ static const struct {
 static constexpr size_t NUM_BORROW_SLOTS =
     sizeof(k_borrow_slots) / sizeof(*k_borrow_slots);
 
-// Read the Itanium RTTI class name behind a vtable pointer (vtable[-1] →
-// typeinfo, typeinfo+8 → mangled name, digit length-prefix kept so it
-// compares against catalogue keys like "11CAndTrigger"). Local mirror of
-// query_handlers.cpp read_rtti_name (file-static there).
+// The RTTI class name behind a vtable pointer, digit length-prefix kept so it
+// compares against catalogue keys like "11CAndTrigger" (bridge.h game_rtti_name,
+// both ABIs).
 static bool rtti_class_name(uintptr_t vptr, char* out, size_t out_size) {
-    if (!vptr || !is_mapped(vptr) || !out || out_size == 0) return false;
-    uintptr_t typeinfo = safe_read<uintptr_t>(vptr - sizeof(uintptr_t));
-    if (!typeinfo || !is_mapped(typeinfo)) return false;
-    uintptr_t name_ptr = safe_read<uintptr_t>(typeinfo + sizeof(uintptr_t));
-    if (!name_ptr || !is_mapped(name_ptr)) return false;
-    size_t n = 0;
-    while (n + 1 < out_size) {
-        uint8_t ch = safe_read<uint8_t>(name_ptr + n);
-        if (ch == 0 || ch < 0x20 || ch > 0x7e) break;
-        out[n++] = static_cast<char>(ch);
-    }
-    out[n] = '\0';
-    return n > 0;
+    return game_rtti_name(vptr, out, out_size);
 }
 
 // A borrowable head must look like a real compiled trigger node: fully
@@ -676,13 +663,13 @@ void process_named_trigger_query() {
     void*    tls_ctx    = reinterpret_cast<void*>(fs_base - kTlsContextOffsetDefault);
 
     auto tls_construct  = reinterpret_cast<fn_tls_construct>(
-        g_base_addr + ck3::funcs::INTERACTION_TLS_CONSTRUCT);
+        bridge::game_fn(ck3::funcs::INTERACTION_TLS_CONSTRUCT));
     auto ctx_init       = reinterpret_cast<fn_ctx_init>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_INIT);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_INIT));
     auto ctx_reset      = reinterpret_cast<fn_ctx_reset>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_RESET);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_RESET));
     auto ctx_set_target = reinterpret_cast<fn_ctx_set_target>(
-        g_base_addr + ck3::funcs::INTERACTION_CTX_SET_TARGET);
+        bridge::game_fn(ck3::funcs::INTERACTION_CTX_SET_TARGET));
 
     if (!is_mapped(reinterpret_cast<uintptr_t>(tls_construct)) ||
         !is_mapped(reinterpret_cast<uintptr_t>(ctx_init)) ||

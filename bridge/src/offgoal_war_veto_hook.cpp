@@ -92,7 +92,7 @@ static void on_ai_war_post_decl(void* ai_ctrl, int rng, int bypass) {
 }
 
 void init_offgoal_war_veto_hook() {
-    uintptr_t target = g_base_addr + ck3::funcs::AI_WAR_POST_DECL;
+    uintptr_t target = bridge::game_fn(ck3::funcs::AI_WAR_POST_DECL);
     g_orig_ai_war_post_decl =
         install_hook(target, reinterpret_cast<void*>(on_ai_war_post_decl));
     if (g_orig_ai_war_post_decl)

@@ -43,7 +43,7 @@ static DWORD WINAPI fallback_fail(void) {
 /* Pointer table and call counters, one per export. Global (not static) so the
  * top-level asm thunks can name them. */
 #define X(name, ord) void *real_##name = (void *)fallback_fail; volatile LONG calls_##name;
-#include "version_exports.h"
+#include "../../windows/version_exports.h"
 #undef X
 
 /* Thunks: exported under the real names via version_proxy.def. Registers and
@@ -56,7 +56,7 @@ static DWORD WINAPI fallback_fail(void) {
             "proxy_" #name ":\n"                       \
             "  lock incl calls_" #name "(%rip)\n"      \
             "  jmp *real_" #name "(%rip)\n");
-#include "version_exports.h"
+#include "../../windows/version_exports.h"
 #undef X
 
 static HMODULE g_self;
@@ -122,7 +122,7 @@ static void on_attach(void) {
             strcat(missing, " " #name);                                    \
         }                                                                  \
     } while (0);
-#include "version_exports.h"
+#include "../../windows/version_exports.h"
 #undef X
     log_line("attach %04u-%02u-%02uT%02u:%02u:%02uZ pid=%lu tid=%lu self=%p (%s) exe=%s "
              "real=%p (%s) err=%lu resolved=%d/%d missing=[%s]",
@@ -139,7 +139,7 @@ static void on_detach(void) {
         snprintf(one, sizeof one, " %s=%ld", #name, (long)calls_##name);     \
         if (strlen(buf) + strlen(one) < sizeof buf) strcat(buf, one);        \
     }
-#include "version_exports.h"
+#include "../../windows/version_exports.h"
 #undef X
     log_line("detach pid=%lu calls:%s", GetCurrentProcessId(), buf[0] ? buf : " none");
 }

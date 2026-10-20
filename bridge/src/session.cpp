@@ -5,6 +5,7 @@
 #include "bridge.h"
 #include "action_dispatch_internal.h"
 
+#include <cinttypes>
 #include <algorithm>
 #include <chrono>
 #include <limits>
@@ -1352,7 +1353,7 @@ std::string generate_session_id() {
                        .count();
     uint64_t n = counter.fetch_add(1, std::memory_order_relaxed);
     char buf[64];
-    snprintf(buf, sizeof(buf), "sess_%016lx_%08lx", now, n);
+    snprintf(buf, sizeof(buf), "sess_%016" PRIx64 "_%08" PRIx64, now, n);   // PRIx64: long is 32-bit on Windows
     return std::string(buf);
 }
 

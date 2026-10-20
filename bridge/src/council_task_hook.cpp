@@ -122,7 +122,7 @@ static void on_set_council_task(void* effect_obj, char flag) {
                                 uintptr_t pos_inter = safe_read<uintptr_t>(entry + ck3::council_assign::INTERMEDIATE_PTR);
                                 if (pos_inter && pos_inter > 0x10000 && is_mapped(pos_inter)) {
                                     // Position type object at *(pos_inter+0x30)
-                                    uintptr_t pos_type_obj = safe_read<uintptr_t>(pos_inter + 0x30);
+                                    uintptr_t pos_type_obj = safe_read<uintptr_t>(pos_inter + ck3::council_task_type::POSITION_TYPE_PTR);
                                     if (pos_type_obj && pos_type_obj > 0x10000 && is_mapped(pos_type_obj)) {
                                         std::string pname = ad_read_std_string(
                                             pos_type_obj + ck3::council_pos_type::NAME_KEY);
@@ -159,7 +159,7 @@ static void on_set_council_task(void* effect_obj, char flag) {
 
                 // Try to find the ruler from the councillor's council instance
                 // core_data = *(char+0x1A8), council_instance = *(core_data+0x4E8)
-                uintptr_t core_data = safe_read<uintptr_t>(coun_char + 0x1A8);
+                uintptr_t core_data = safe_read<uintptr_t>(coun_char + ck3::character::REALM_DATA);
                 if (core_data && core_data > 0x10000 && is_mapped(core_data)) {
                     uintptr_t council_inst = safe_read<uintptr_t>(
                         core_data + ck3::core_data::COUNCIL_INSTANCE_PTR);
@@ -240,7 +240,22 @@ static void on_set_council_task(void* effect_obj, char flag) {
 // =============================================================================
 
 void init_council_task_hook() {
-    uintptr_t target = g_base_addr + ck3::funcs::SET_COUNCIL_TASK;
+    // NOT INSTALLED (ADR 0001 P6, found reviewing the hook for MSVC). The target is
+    // not the setter this hook was written for: ck3_offsets.h has SET_COUNCIL_TASK
+    // as the task-AVAILABILITY check (corrected 20260612), and its decompile is
+    // `bool SetCouncilTask(long obj, uint32 task, uint64 x)`: it uses all three
+    // arguments and returns the answer. The hook's prototype is
+    // `void(void* effect_obj, char flag)`: it passed the original two of them and
+    // returned nothing, so every caller of the check read whatever the hook left in
+    // rax, and the records it kept read effect-object fields off a different
+    // object. The live per-seat read (emit_live_council_seats) does not use them.
+    // `query_council_tasks` without a character now reports no hook assignments.
+    if ((true)) {
+        ADLOG("council_task_hook: not installed (SET_COUNCIL_TASK is an availability "
+              "check, bool(obj, u32, u64), not the setter the hook expects)\n");
+        return;
+    }
+    uintptr_t target = bridge::game_fn(ck3::funcs::SET_COUNCIL_TASK);
     g_orig_set_council_task = install_hook(target, reinterpret_cast<void*>(on_set_council_task));
 
     if (g_orig_set_council_task) {
@@ -292,7 +307,7 @@ static void emit_live_council_seats(ResponseBuilder& r, void* character) {
                 std::string task_name;
                 uintptr_t cur_task = safe_read<uintptr_t>(pos_obj + ck3::globals::COUNCIL_POS_CURRENT_TASK);
                 if (cur_task && is_mapped(cur_task))
-                    task_name = ad_read_std_string(cur_task + 0x10);
+                    task_name = ad_read_std_string(cur_task + ck3::db_object::NAME_KEY);
 
                 // Position key/name
                 std::string pos_key;

@@ -42,8 +42,14 @@ Each call returns a typed `Result` (`ok` / `failed` / `not_routed` /
   `unavailable_on_platform` — a proxy DLL replaces it).
 - **Portable helpers** used by the cells live beside the layer and build on all
   three OSes: `bridge/src/os/sha256.cpp`, `pe_image.cpp`, `win_paths.cpp`.
-- **The Windows DLL** `ck3_bridge_win` is the layer plus an inert `DllMain`; the
-  proxy export table is phase P4.
+- **The Windows DLL** `ck3_bridge_win` is built as `version.dll` (phase P4): the
+  layer, a forward for every export of the real `version.dll`
+  (`windows/proxy.cpp`; the `.def` is generated from `windows/version_exports.h`
+  and `version_exports_extra.h`), and a `DllMain` that starts one init thread.
+  That thread runs the identity gate against the pinned 1.18.3.1 `ck3.exe`
+  (`windows/pinned_identity.h`) and logs `match` or `REFUSED`; it starts nothing
+  else (no hooks, no IPC listener) on either. Tests: `test_os_win_identity_gate`,
+  `test_os_win_proxy_load`, `test_os_win_proxy_refused`, `test_os_win_proxy_exports`.
 
 Configure with `-DCK3_PLATFORM=windows` (MSVC, or `clang-cl` + `xwin` from
 Linux — see below) or `-DCK3_PLATFORM=macos` (Apple clang); the CMake file then

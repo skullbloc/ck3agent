@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Generate the export list of the stub proxy DLL from a real version.dll.
+"""Generate the export list of the proxy version.dll from a real version.dll.
 
-The list is read from the export table of the DLL the stub stands in for (the
+The list is read from the export table of the DLL the proxy stands in for (the
 Wine/Proton builtin, or a Windows System32 copy), never typed by hand, so a
-missing export is a difference between two binaries and not a typo.
+missing export is a difference between two binaries and not a typo. Readers:
+ck3_bridge_win (bridge/CMakeLists.txt generates proxy.def from it; proxy.cpp
+has one forward per name) and the P3 stub (../win/proxy_stub/).
 
     python3 -I gen_exports.py <path/to/version.dll> > version_exports.h
+    python3 -I gen_exports.py --check <built.dll> <list.h>...
+
+--check compares the named exports of a BUILT proxy with the union of the
+X(name, ...) lines of the list files, and exits 1 on any difference (either
+direction), printing it; any parse trouble also exits non-zero, never 0.
 
 Stdlib only. Named exports only. A forwarder entry in the source DLL is still
 emitted: the stub resolves it at run time with GetProcAddress, which follows
@@ -60,7 +67,35 @@ def exports(path):
     return cstr(name_rva), n_funcs, out
 
 
+def check(dll_path, lists):
+    import re
+    want = set()
+    for p in lists:
+        for line in open(p, encoding="ascii"):
+            m = re.match(r"X\(([A-Za-z0-9_]+), *[0-9]+\)", line)
+            if m:
+                want.add(m.group(1))
+    if not want:
+        raise SystemExit(f"--check: no X(name, ord) lines in {lists}")
+    _, n_funcs, names = exports(dll_path)
+    got = {n for n, _, _ in names}
+    extra, missing = sorted(got - want), sorted(want - got)
+    print(f"{dll_path}: {len(got)} named exports ({n_funcs} total); list: {len(want)}")
+    for n in missing:
+        print(f"MISSING from the DLL: {n}")
+    for n in extra:
+        print(f"EXTRA in the DLL (not in the list): {n}")
+    if extra or missing or n_funcs != len(got):
+        if n_funcs != len(got):
+            print(f"the DLL has {n_funcs - len(got)} export(s) without a name")
+        raise SystemExit(1)
+    print("export table == list")
+
+
 def main():
+    if len(sys.argv) >= 4 and sys.argv[1] == "--check":
+        check(sys.argv[2], sys.argv[3:])
+        return
     if len(sys.argv) != 2:
         raise SystemExit(__doc__)
     dll, n_funcs, names = exports(sys.argv[1])
