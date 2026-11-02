@@ -4,7 +4,9 @@
 //   personality.cpp, ai_eval_hook.cpp
 #pragma once
 
+#include "faction_war.h"
 #include "bridge.h"
+#include "engine_bool.h"     // L14 S3: a game function's bool is its AL
 #include "ck3_offsets.h"
 #include "name_tables.h"
 #include "personality_locks.h"
@@ -14,6 +16,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <utility>
 #include <algorithm>
 #include <unordered_map>
 #include <set>
@@ -34,6 +37,24 @@ namespace bridge {
 // SIGSEGV recovery (defined in bridge_init.cpp)
 extern thread_local sigjmp_buf g_recovery_point;
 extern thread_local bool g_in_protected_region;
+
+// A war's target titles: the casus belli's title array, uint32 title refs
+// (war_obj::CB_TITLE_ARRAY, count CB_TITLE_COUNT). Writes up to `cap` ids
+// (24-bit) to `out`, returns how many. Every reader of a war's targets goes
+// through this. Until cleanup 2026.11 (lane l6, F10) four readers stepped the
+// array by 8 bytes: the first id was right and every later one was the bytes
+// past it (Saffarid-Tahirid War in dump ck3_20260625_152901_ivar867 holds
+// 0x186b, 0x181d, and the second came back as whatever followed), so
+// target_titles differed between launches.
+inline int read_war_target_titles(uintptr_t war_ptr, uint32_t* out, int cap) {
+    const uintptr_t arr = safe_read<uintptr_t>(war_ptr + ck3::war_obj::CB_TITLE_ARRAY);
+    int32_t n = safe_read<int32_t>(war_ptr + ck3::war_obj::CB_TITLE_COUNT);
+    if (!arr || !is_mapped(arr) || n <= 0) return 0;
+    if (n > cap) n = cap;
+    for (int32_t i = 0; i < n; i++)
+        out[i] = safe_read<uint32_t>(arr + static_cast<uintptr_t>(i) * sizeof(uint32_t)) & 0xFFFFFF;
+    return n;
+}
 
 // =============================================================================
 // Function Pointers (initialized in dispatch_router.cpp)
@@ -134,6 +155,75 @@ private:
     std::string buf_;
 };
 
+// A reply whose reads faulted somewhere but that stands without them (a list
+// that skipped an unreadable entry, a field it could not read): the reply says
+// so instead of passing a 0 off as a value. Call it inside the open reply
+// object when safe_read_had_fault() after the handler's own safe_read_clear().
+// The process VA (fault_addr) is a debug-build key: it defeats ASLR (rc2 B2).
+inline void emit_degraded(ResponseBuilder& r, const char* action) {
+    r.key("degraded");    r.value_bool(true);
+    r.key("fault_count"); r.value_int(safe_read_fault_count());
+    log_degraded_read(action);
+#ifdef CK3_BRIDGE_DEBUG_VERBS
+    char addr_buf[24];
+    snprintf(addr_buf, sizeof(addr_buf), "0x%llx", static_cast<unsigned long long>(safe_read_last_fault()));
+    r.key("fault_addr");  r.value_string(addr_buf);
+#endif
+}
+
+// Adds "degraded":true,"fault_count":N to a reply object (a handler that
+// bracketed its reads with FaultScope). Left as it is: an empty reply, one that
+// is not an object, the memory_access_fault reply, and one that already says
+// "degraded" (emit_degraded's own key). No other reply key is spelled
+// "degraded" (get_offset_validation's verdict is offsets_degraded), so the
+// guard cannot mistake a handler's own field for the marker.
+inline void mark_reply_degraded(std::string& reply, int fault_count) {
+    if (reply.empty() || reply.back() != '}' || reply == MEMORY_ACCESS_FAULT_REPLY ||
+        reply.find("\"degraded\":") != std::string::npos) return;
+    reply.pop_back();
+    const size_t k = reply.find_last_not_of(" \t\r\n");
+    if (k != std::string::npos && reply[k] != '{') reply += ',';
+    reply += "\"degraded\":true,\"fault_count\":";
+    reply += std::to_string(fault_count);
+    reply += '}';
+}
+
+// The fault bracket of a handler whose reply stands without a read that
+// faulted (ff3 N1): constructed first thing in the handler, it calls
+// safe_read_clear(); on the way out, by any return, it asks
+// safe_read_had_fault() and, when a read faulted, the reply the handler left in
+// *out says so (mark_reply_degraded) and the bridge log names the address
+// (log_degraded_read). It nests: it saves the fault record it found on
+// entry and adds it back on exit (L14 S4), so a handler that another handler
+// calls (query's routes, declare_war's pre-validation) reports its own faults in
+// its own reply and wipes nothing its caller recorded (a siglongjmp past it
+// skips the restore: that path answers memory_access_fault). A 0 that a
+// faulted read returned is never passed off as a value with nothing said. A handler that cannot answer without the read
+// (an actor id, a pointer it writes through) checks safe_read_had_fault()
+// itself and answers memory_access_fault (answer_memory_access_fault).
+// bridge/scripts/inline_safety_static.py requires one or the other in every
+// inline handler that reads game memory.
+class FaultScope {
+public:
+    FaultScope(const char* action, std::string* out)
+        : action_(action), out_(out), outer_(safe_read_save()) {
+        safe_read_clear();
+    }
+    ~FaultScope() {
+        if (safe_read_had_fault()) {
+            log_degraded_read(action_);
+            if (out_) mark_reply_degraded(*out_, safe_read_fault_count());
+        }
+        safe_read_restore(outer_);
+    }
+    FaultScope(const FaultScope&) = delete;
+    FaultScope& operator=(const FaultScope&) = delete;
+private:
+    const char* action_;
+    std::string* out_;
+    SafeReadRecord outer_;   // the caller's fault record, added back on exit
+};
+
 // =============================================================================
 // JSON Helpers (dispatch_router.cpp)
 // =============================================================================
@@ -190,6 +280,15 @@ void emit_monthly_telemetry(int32_t raw_date);
 
 uintptr_t resolve_title_realm(uintptr_t char_addr);
 uint32_t get_liege_id_from_addr(uintptr_t char_addr);
+// A ruler's direct vassals (ids), from its vassal contracts: vassal_roster.h.
+std::vector<uint32_t> direct_vassal_ids(uintptr_t title_realm, uint32_t ruler_id);
+uintptr_t vassal_contract_with(uintptr_t title_realm, uint32_t ruler_id, uint32_t vassal_id);
+std::vector<std::pair<uint32_t, uintptr_t>> vassal_contracts(uintptr_t title_realm, uint32_t ruler_id);
+// One obligation of a vassal contract: its type key, its level and where the level lives.
+struct ContractObligation { std::string key; uint8_t level = 0; uintptr_t level_addr = 0; };
+std::vector<ContractObligation> contract_obligations(uintptr_t contract);
+// A construction's days_left, progress_per_day and time_factor (building_slots).
+void emit_construction_progress(ResponseBuilder& r, uintptr_t slot_container);
 uintptr_t lookup_title_obj(uint32_t title_id);
 int get_title_tier(uintptr_t title_ptr);
 
@@ -204,13 +303,54 @@ uint32_t resolve_title_id_by_key(const char* key);
 // de-jure meter. Defined in intent_dispatch.cpp.
 void collect_dejure_counties(uint32_t title_id, std::vector<uint32_t>& out,
                              std::vector<uint32_t>& seen, int depth);
+// THE de-jure share (L14 FB m-2), intent_dispatch.cpp: the de-jure counties of
+// a title and how many a character in `ruler`'s realm (the ruler or a vassal at
+// any depth: char_in_realm_of) holds. The create_title gate and the meter
+// (query_dejure_progress) both count through it.
+struct DejureCounty {
+    uint32_t county_id;
+    uint32_t holder_id;   // 0 when unheld or unreadable
+    bool     in_realm;
+};
+struct DejureShare {
+    int held;
+    int total;
+};
+bool char_in_realm_of(uint32_t cid, uint32_t ruler);
+DejureShare dejure_share(uint32_t title_id, uint32_t ruler, std::vector<DejureCounty>* rows);
 
 // =============================================================================
 // DB Object / String Helpers (dispatch_router.cpp)
 // =============================================================================
 
 std::string ad_read_std_string(uintptr_t str_addr);
+
+// The war's CB script name ("county_conquest_cb"): the CCasusBelli sub-object's
+// type ref (war_obj::CB_TYPE_REF, HIGH) names a CB db object whose NAME_KEY is
+// the key declare_war sends as casus_belli. "" when the ref is null or the name
+// unreadable (never a guessed name). THE one read of a war's CB type name (L15
+// witness n1): query_wars' two paths and get_active_wars (query_handlers.cpp),
+// the observation war list (observation.cpp), the declaration hook and the
+// war-history hook all call it. The string read is safe_read_game_string's
+// (EFAULT-safe, length-bounded), so a stale ref reads "" rather than faulting.
+inline std::string war_cb_type_name(uintptr_t war_ptr) {
+    const uintptr_t cb_type_ref = safe_read<uintptr_t>(war_ptr + ck3::war_obj::CB_TYPE_REF);
+    if (!cb_type_ref) return std::string();
+    return ad_read_std_string(cb_type_ref + ck3::db_object::NAME_KEY);
+}
+
 uintptr_t ad_db_lookup(uintptr_t db_global, uint32_t id);
+uintptr_t ad_db_lookup_keyed(uintptr_t db_global, uint32_t id, size_t key_offset);
+
+// Lane l4 (re/findings/re_interactions.md, defined in ai_eval_hook.cpp): the name of a
+// scope-name registry id, and an interaction's send-option flag names in script order.
+std::string scope_name_for_id(uint32_t id);
+std::vector<std::string> interaction_send_option_names(void* interaction);
+
+// Lane l4 (defined in query_handlers.cpp): the engine's matrilinear_marriage reading of
+// two spouses (re_interactions.md §4) — true when the husband->wife relation carries the
+// matrilineal flag. Pure reads.
+bool marriage_is_matrilineal(uintptr_t char_a, uintptr_t char_b);
 
 // A character's name as the bridge can state it right now (lane-namekey).
 //
@@ -236,6 +376,26 @@ std::string ad_read_char_name(uintptr_t c);
 // carries a top-level `name` goes through this.
 void emit_char_name(ResponseBuilder& r, uintptr_t c);
 void emit_char_names(ResponseBuilder& r, uintptr_t c);
+std::string dynasty_name(uintptr_t dyn_obj);    // THE dynasty-name reader: NAME (+0x80); "" when absent (L14 S4, FB M-2)
+std::string char_dynasty_name(uintptr_t c);     // a character's dynasty, through dynasty_name; "" when it does not resolve
+std::string house_name(uintptr_t house_obj);    // THE house-name reader: NAME (+0x248, House_GetName); "" when absent (L14 FB M-1)
+std::string char_house_name(uintptr_t c);       // a character's house, through house_name; "" when it does not resolve
+// A localized name and its scripted key ("Norse"/"norse"); empty when unread.
+struct NamePair {
+    std::string name;
+    std::string key;
+};
+// THE faith lookup: FAITH_DB keyed at faith::FAITH_ID (+0x08); 0 when absent.
+// ad_db_lookup (key at +0x10) answers 0 for every faith.
+uintptr_t faith_lookup(uint32_t faith_id);
+NamePair faith_names(uint32_t faith_id);         // DISPLAY_NAME (+0xC0) / FAITH_KEY (+0x98)
+NamePair culture_obj_names(uintptr_t culture_obj);  // NAME (+0x260) / SCRIPT_KEY (+0x1C8)
+NamePair culture_names(uint32_t culture_id);     // CULTURE_INDEXED_DB -> culture_obj_names
+// Emit faith (display) + faith_key (scripted) for a faith id; nothing when it
+// does not resolve.
+void emit_faith_fields(ResponseBuilder& r, uint32_t faith_id,
+                       const char* name_key = "faith",
+                       const char* script_key = "faith_key");
 // FIX #culture_name: emit culture_id + culture (display name +0x260) + culture_key
 // (scripted key +0x1C8). Safe on null/unmapped obj (emits just the id).
 void emit_culture_fields(ResponseBuilder& r, uintptr_t culture_obj, uint32_t culture_id,
@@ -295,7 +455,6 @@ bool do_query_succession(const char* params_json, std::string* out);
 // is_mapped; reads the engine's cached per-title heir array, never calls the
 // computing succession path. Defined in query_handlers.cpp.
 bool do_query_title_succession_map(const char* params_json, std::string* out);
-bool do_query_borders(const char* params_json, std::string* out);
 bool do_query_claims(const char* params_json, std::string* out);
 bool do_query_de_jure(const char* params_json, std::string* out);
 bool do_query_county_details(const char* params_json, std::string* out);
@@ -327,7 +486,7 @@ bool do_query_war_score_breakdown(const char* params_json, std::string* out);
 bool do_query_war_stance(const char* params_json, std::string* out);
 // Runtime flag: arm the AI-mgr coordinator record walk inside do_query_war_stance.
 // DEFAULT OFF — the record↔war-id match key (rec+0x18) is decompile-confirmed but
-// not yet live-probed on a known-at-war record (re_query_war_stance.md §6). When OFF
+// unprobed live on a known-at-war record (re_query_war_stance.md §6). When OFF
 // the handler still returns occupation-derived stance from the war-score cache.
 extern std::atomic<bool> g_war_stance_record_walk_enabled;
 bool do_query_council(const char* params_json, std::string* out);
@@ -336,6 +495,8 @@ bool do_query_vassal_loyalty(const char* params_json, std::string* out);
 bool do_query_faction_threat(const char* params_json, std::string* out);
 bool do_query_schemes(const char* params_json, std::string* out);
 bool do_query_incoming_schemes(const char* params_json, std::string* out);
+// l3-schemes (scheme_engine.cpp): the engine's scheme type database.
+bool do_query_scheme_types(const char* params_json, std::string* out);
 bool do_query_armies(const char* params_json, std::string* out);
 bool do_query_lifestyle(const char* params_json, std::string* out);
 bool do_query_interaction_acceptance(const char* params_json, std::string* out);
@@ -386,8 +547,6 @@ bool do_query_dynasty(const char* params_json, std::string* out);
 bool do_query_levy_readiness(const char* params_json, std::string* out);
 bool do_query_partition_preview(const char* params_json, std::string* out);
 bool do_query_succession_simulation(const char* params_json, std::string* out);
-bool do_query_pending_events(const char* params_json, std::string* out);
-bool do_query_event_probabilities(const char* params_json, std::string* out);
 bool do_query_building_types(const char* params_json, std::string* out);
 bool do_query_memory_probe(const char* params_json, std::string* out);
 bool do_query_character_memories(const char* params_json, std::string* out);
@@ -421,13 +580,13 @@ bool do_list_decisions_annotated(const char* params_json, std::string* response_
 // =============================================================================
 
 bool do_send_interaction(const char* params_json, std::string* response_out);
+bool do_query_interaction_check(const char* params_json, std::string* response_out);
 bool do_send_decision(const char* params_json, std::string* response_out);
 bool do_set_lifestyle_focus(const char* params_json, std::string* response_out);
 bool do_set_education_focus(const char* params_json, std::string* response_out);
 bool do_set_council_task(const char* params_json, std::string* response_out);
 bool do_query_fabricate_targets(const char* params_json, std::string* response_out);
 bool do_construction_check(const char* params_json, std::string* response_out);
-bool do_add_construction(const char* params_json, std::string* response_out);
 bool do_construct_building(const char* params_json, std::string* response_out);
 
 // ALLOW_RANDOM_IN_SCOPE guard (intent_dispatch.cpp) — arm a per-thread fake RNG
@@ -437,7 +596,6 @@ bool do_construct_building(const char* params_json, std::string* response_out);
 bool arm_fake_random_scope(uint64_t* out_saved);
 void restore_fake_random_scope(uint64_t saved);
 bool do_declare_war(const char* params_json, std::string* response_out);
-bool do_declare_war_debug(const char* params_json, std::string* response_out);
 bool do_queue_intent(const char* params_json, std::string* response_out);
 bool do_query_intents(const char* params_json, std::string* response_out);
 bool do_query_intent_results(const char* params_json, std::string* response_out);
@@ -448,26 +606,8 @@ bool do_query_intent_results(const char* params_json, std::string* response_out)
 bool do_query_dispatch_result(const char* params_json, std::string* response_out);
 bool do_cancel_intent(const char* params_json, std::string* response_out);
 bool do_clear_intents(const char* params_json, std::string* response_out);
-bool do_respond_event(const char* params_json, std::string* response_out);
 bool do_change_realm_law(const char* params_json, std::string* response_out);
 bool do_pre_validate_war(const char* params_json, std::string* response_out);
-bool do_execute_console_command(const char* params_json, std::string* response_out);
-bool do_execute_scripted_effect(const char* params_json, std::string* response_out);
-bool do_execute_engine_effect(const char* params_json, std::string* response_out);
-// break-alliance (re_break_alliance_impl.md). The literal CBreakAllowAllianceEffect
-// break via the gated break_alliance_cmd (Path B). BUILD-READY but observer-save-
-// GATED: the direct-cmd arg unwrap + packed-ref masking are unverified live
-// (MEDIUM), so the real engine call only runs behind an explicit
-// confirm_observer_save=true param. Default returns an honest gated refusal and
-// points the agent at the safe-now `conqueror`-variable scripted-effect lever.
-bool do_break_alliance(const char* params_json, std::string* response_out);
-// ck-kkaxx / ck-zvu5l.3: generalised script-effect primitive. Parses the
-// outer `<effect> = { … }` block structurally and routes known effects to
-// existing direct-call handlers (today: `start_war` → call_war_create_core).
-// Other outer effects return `not_implemented_pending_compiler_re` until the
-// PDX-script compiler entry point (ck-zvu5l.1 / .2) lands.
-// See re/findings/re_script_block_compiler_quest.md.
-bool do_execute_script_block(const char* params_json, std::string* response_out);
 // ck-eyfb: direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect.
 // ck-j3vb0: `action_label` overrides the response's "action" string so
 // declare_war's force-path branch can surface a unified action name to
@@ -506,7 +646,6 @@ bool do_probe_interaction_cascade(const char* params_json, std::string* response
 bool do_probe_gate_4_slots(const char* params_json, std::string* response_out);
 bool do_list_pending_interactions(const char* params_json, std::string* response_out);
 bool do_tick_diff(const char* params_json, std::string* response_out);
-bool do_probe_war_orphans(const char* params_json, std::string* response_out);
 // Game-thread processor for probe_interaction_cascade; called from drain_and_execute_intents.
 // Returns true if there was a pending cascade query that was processed.
 void process_cascade_query();
@@ -537,13 +676,17 @@ void council_lock_remove(uint32_t char_id);
 extern std::atomic<bool> g_offgoal_veto_enabled;
 void init_offgoal_war_veto_hook();
 bool do_set_offgoal_veto(const char* params_json, std::string* out);
+// The clock verbs. do_X is the session's (origin Session); clock_verb_X names
+// another origin (the pipeline's flush effects). Both go through clock_write.
 bool do_pause_game(const char* params_json);
 bool do_unpause_game(const char* params_json);
 bool do_set_speed(const char* params_json);
+bool clock_verb_pause(ClockOrigin origin, const char* params_json);
+bool clock_verb_unpause(ClockOrigin origin, const char* params_json);
+bool clock_verb_speed(ClockOrigin origin, const char* params_json);
 bool do_inject_mouse_click(const char* params_json, std::string* response_out);
 bool do_select_observe_default(const char* params_json, std::string* response_out);
 bool do_enter_observe_mode(const char* params_json, std::string* response_out);
-bool do_toggle_ai_subsystem(const char* params_json, std::string* out = nullptr);
 bool do_set_character_ai(const char* params_json);
 
 // =============================================================================
@@ -559,37 +702,79 @@ bool do_set_ai_personality(const char* params_json, std::string* out);
 
 bool execute_direct_dispatch(Intent* intent, void* character, void* interaction);
 
-// Console command execution on the game thread (ai_eval_hook.cpp)
-void execute_console_intent(Intent* intent);
-
-// Scripted-effect invocation on the game thread (intent_dispatch.cpp, ck-7ejs).
-// Looks up a CJominiScriptedEffectTemplate by name in the user-scripted DB and
-// runs its compiled effect tree on the supplied character as ROOT scope.
-bool execute_scripted_effect_intent(Intent* intent);
-
 // ck-eyfb: direct WAR_CREATE_CORE invocation (intent_dispatch.cpp).
 // Mirrors WAR_DECLARE_SPECIAL_HANDLER (FUN_065db970): resolves CB by name,
 // builds a minimal CB-params struct with a single-title array, and invokes
 // WAR_CREATE_CORE on the game thread. Sets intent->executed/rejected and
 // stores war_id + a small JSON blob in intent->console_output.
 bool execute_war_create_core_intent(Intent* intent);
+// Faction management, both seats (factions.cpp, re_factions.md): the FACTION
+// intent's executor (create | join | leave | press_demand), the deferred
+// query_joinable_factions slot serviced from drain_and_execute_intents, and the
+// liege's standing answer to a faction demand (AI_PICK_EVENT_OPTION hook).
 bool execute_faction_intent(Intent* intent);
-// A8.2 (re_raise_armies.md): raise the chosen AI's levies via the guarded
-// g_PlayerCharacterID global-swap primitive. Game-thread only (drained from
-// on_tick). NEEDS-LIVE-HARNESS-VALIDATION. Queued by do_raise_armies.
-bool execute_raise_armies_intent(Intent* intent);
-bool do_raise_armies(const char* params_json, std::string* out);
-// #96 (re_raid_system.md): toggle the chosen AI's raised armies into RAIDING
-// mode via the guarded g_PlayerCharacterID global-swap primitive. Game-thread
-// only (drained from on_tick). Queued by do_raise_raiders.
-bool execute_raise_raiders_intent(Intent* intent);
-bool do_raise_raiders(const char* params_json, std::string* out);
+void process_faction_query();
+bool faction_query_pending();
+bool do_set_faction_demand_response(const char* params_json, std::string* out);
+void emit_demand_response_state(ResponseBuilder& r, uint32_t liege_id);
+// A faction's war, the ONE reading every faction reply gives (factions.cpp demand
+// rows, query_factions, query_faction_threat): faction_war.h's rule, the game's own
+// "faction is in war" check. emit_faction_war writes `at_war` and, while at war,
+// `war_id`, the war's full handle as every war read gives it.
+FactionWar faction_war(uintptr_t faction);
+void emit_faction_war(ResponseBuilder& r, uintptr_t faction);
+// A faction's date field (faction_v2::ULTIMATUM_FIRE_DATE, COOLDOWN_DATE): the
+// raw int32 date, or 0 when it holds the engine's "never" date. The one reading
+// for every faction reply (factions.cpp, query_factions, query_faction_threat).
+int32_t faction_date(uintptr_t faction, size_t field);
+// A faction's demand state: the ONE classification every faction reply gives
+// (factions.cpp query_joinable_factions demand rows and press_demand's
+// state_after; query_handlers.cpp query_faction_threat; the MCP server's
+// inspect(factions) relays it). From the faction's own fields, so every reader,
+// game thread or IPC thread, classifies alike (re_factions.md section 7):
+//   ai_may_press  the engine's last faction tick armed the demand
+//                 (ULTIMATUM_FIRE_DATE holds a date: discontent full and
+//                 CAN_FIRE_ULTIMATUM held then), no cooldown runs now (a press
+//                 since that tick starts one), and the AI leader's chance to press
+//                 at the next tick (ULTIMATUM_PROGRESS) is above 0;
+//   none          otherwise.
+// It is not a fresh CAN_FIRE_ULTIMATUM call; the vassal's row gives that verdict
+// beside it as can_press_now.
+struct FactionDemandState {
+    bool ai_may_press = false;
+    double chance_pct = 0.0;      // the AI leader's chance per faction tick; 0 when none
+    int32_t cooldown_until = 0;   // raw date while a cooldown runs, else 0
+};
+FactionDemandState classify_faction_demand(uintptr_t faction);
+// Writes `ultimatum` ("ai_may_press" | "none"), `ai_press_chance_pct` (only with
+// ai_may_press) and `demand_cooldown_until` (only while a cooldown runs).
+void emit_faction_demand(ResponseBuilder& r, const FactionDemandState& s);
 // #111 (re_create_title_action.md): LEGITIMATE de-jure create-title. Builds a
-// CCreateTitleCommand for the AI ruler, runs its CanExecute gate, and on PASS
-// dispatches it via GAME_COMMAND_DISPATCH(0xe). Game-thread only (drained from
-// on_tick). Queued by do_create_title.
+// CCreateTitleCommand for the AI ruler, asks its IsValid, checks the price
+// (create_title_price) and the #131 de-jure majority, and on a pass runs its Execute
+// synchronously. Game-thread only (drained from on_tick). Queued by do_create_title.
 bool execute_create_title_intent(Intent* intent);
 bool do_create_title(const char* params_json, std::string* out);
+// L14 S3 (re_create_title_action.md "L14 S3"): what creating `title_obj` costs
+// `ruler`, in the currency the engine charges, and what the ruler holds of it — both
+// from the engine's own functions (CREATE_TITLE_GOLD_COST / _PIETY_COST, GOLD_GET /
+// PIETY_GET). `known` is false (with `why`) when a function is unmapped (the Windows
+// build) or the tier is unreadable. Game thread, inside a protected region.
+struct CreateTitlePrice {
+    bool known = false;
+    const char* currency = "";   // "gold" | "treasury" | "piety"
+    int64_t cost = 0;            // fixed-point, /100000
+    int64_t have = 0;            // fixed-point, /100000
+    const char* why = "";
+};
+CreateTitlePrice create_title_price(void* ruler, uintptr_t title_obj);
+// The CCreateTitleCommand POD (0x28 bytes) for ruler_handle (char+0x18, the full
+// id) and title_id, built as the engine's ctor FUN_067cabb0 builds it. The caller
+// runs base_dtor on it.
+void fill_create_title_cmd(uint8_t* cmd, uint32_t ruler_handle, uint32_t title_id);
+// Read-only: the engine's verdict on creating one title (IsValid with its reasons)
+// and its price. A game-thread read (snapshot.cpp is_game_thread_read).
+bool do_query_create_title_cost(const char* params_json, std::string* out);
 bool do_dispatch_faction_intent(const char* params_json, std::string* out);
 // #132 (docs/notes/hostile-intrigue-research.md): LEGITIMATE start-a-scheme
 // (murder / fabricate_hook / claim_throne) via CreateActiveScheme forward, which
@@ -599,31 +784,6 @@ bool do_dispatch_faction_intent(const char* params_json, std::string* out);
 // CREATE_ACTIVE_SCHEME observer hook (scheme_get_arg_template, scheme_init_hook.cpp).
 bool execute_scheme_intent(Intent* intent);
 bool execute_scheme_cancel_intent(Intent* intent);  // #scheme_cancel
-// break-alliance (re_break_alliance_FINAL.md, Path B). Game-thread executor for
-// IntentType::BREAK_ALLIANCE: resolves actor+ally CCharacter* via lookup_character,
-// pre-gates on IsAlliedTo, and calls the gated break_alliance_cmd(actor, ally, 0)
-// under fake-RNG + watchdog + sigsetjmp, then reads back IsAlliedTo to confirm.
-// Drained from on_tick. Default-OFF behind g_enable_break_alliance (do_break_alliance).
-bool execute_break_alliance_intent(Intent* intent);
-// Runtime flag (default false) gating the real break-alliance write. While false,
-// do_break_alliance returns the honest observer-save-gated refusal + the safe-now
-// `conqueror`-variable alternative; only when armed does it queue the BREAK_ALLIANCE
-// intent. Settable via set_break_alliance_enabled {enabled:bool}.
-extern std::atomic<bool> g_enable_break_alliance;
-bool do_set_break_alliance_enabled(const char* params_json, std::string* out);
-
-// CAIWarCoordinator offensive-stance drive — Fix B1a (re_caiwarcoordinator_FINAL.md,
-// re_steered_war_offensive_root.md). Makes a FORCE-DECLARED steered war get
-// prosecuted OFFENSIVELY by driving the engine's OWN per-coordinator stance tick
-// (COORD_STANCE_TICK) on our war's record — a LEGITIMATE engine re-eval, NOT a
-// memory poke (the engine re-selects + writes rec+0x70 via its real selector +
-// strength condition). Game-thread executor, drained from WAR_FORCE_OFFENSIVE_STANCE
-// under fake-RNG + watchdog + sigsetjmp. DEFAULT-OFF behind g_force_offensive_stance;
-// NEEDS-LIVE-VALIDATION (attempt-25). actor_id = AI attacker; title_id = war_id.
-extern std::atomic<bool> g_force_offensive_stance;
-bool execute_war_force_offensive_stance_intent(Intent* intent);
-bool do_force_offensive_stance(const char* params_json, std::string* response_out);
-bool do_set_force_offensive_stance(const char* params_json, std::string* out);
 
 // REMOVED: move_army/order_siege mechanism deleted per design (agent does not drive
 // army micro) — do_move_army / do_set_move_army_enabled / execute_move_army_intent /
@@ -633,12 +793,6 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* out);
 bool do_move_capital(const char* params_json, std::string* out);
 bool do_set_obligation_level(const char* params_json, std::string* out);
 bool do_appoint_councillor(const char* params_json, std::string* out);
-// #79: default-OFF flag gating the vacant-seat fill path in do_appoint_councillor.
-// While false, a vacant seat returns vacant_fill_disabled; when armed, the fill calls
-// COUNCIL_SEAT_ASSIGN with the candidate's FULL 32-bit handle. Settable via
-// set_vacant_fill_enabled {enabled:bool}.
-extern std::atomic<bool> g_enable_vacant_fill;
-bool do_set_vacant_fill_enabled(const char* params_json, std::string* out);
 bool do_maa_recruit(const char* params_json, std::string* out);
 bool do_maa_station(const char* params_json, std::string* out);
 bool do_maa_unstation(const char* params_json, std::string* out);
@@ -774,6 +928,18 @@ extern std::atomic<uint64_t> g_cb_query_busy_count;
 // Called from drain_and_execute_intents().
 void process_cb_query();
 
+// L13 D1: the game-thread query slots (cb / acceptance / trigger / decision eval
+// / faction / cascade). service_query_slots evaluates every pending slot (the
+// drain calls it each pass). A handler that submits a slot calls
+// service_slots_if_game_thread() right after the submit: on the game thread —
+// where the slot submitters run now — it services the slot at once, since that
+// thread is the only one that ever could. slot_poll_wait() is the poll loops'
+// 50 ms wait off the game thread and no wait on it.
+void service_query_slots();
+void service_slots_if_game_thread();
+void slot_poll_wait();
+
+
 // Synchronous CB validity probe for IPC-thread callers (e.g. do_pre_validate_war).
 // Reuses the deferred g_cb_query slot: waits briefly for any in-flight query to
 // drain, submits a new one for (actor, target), and polls until the game thread
@@ -800,7 +966,8 @@ int cb_query_count_valid_sync(uint32_t actor_id,
 // on the IPC thread, then submits the deferred query in strict mode so the
 // game thread additionally applies the Stage 2 group-level outer-trigger
 // flag filter (cb_group::DISABLED_FLAG + STAGE2_FLAG) before each
-// CB_VALIDITY_CHECK call. Mirrors ck-39e1 Stage 1+2 (Stage 4 deferred).
+// CB_VALIDITY_CHECK call. Mirrors ck-39e1 Stages 1 and 2; Stage 4 (the score
+// evaluator) is not mirrored.
 //
 // Returns:
 //   >= 0 — count of CBs valid under both bridge and engine outer filters
@@ -844,8 +1011,8 @@ struct CBStrictSummary {
 // pre-filter as cb_query_count_valid_strict; same Stage-2 game-thread
 // filter inside process_cb_query. Per-CB outer triggers
 // (allowed_for_character / allowed_against_character / valid_to_start) are
-// not yet evaluated here — they are deferred to ck-39e1 and will populate
-// additional outer_reason values when shipped.
+// not evaluated here (ck-39e1); only the outer_reason values listed above
+// are produced.
 //
 // Returns: same return-code shape as cb_query_count_valid_strict.
 //          >= 0 — inner_valid count; *out_summary populated; *out_results
@@ -947,12 +1114,31 @@ bool do_query_trigger_slots(const char* params_json, std::string* out);
 bool do_query_debug_flags(const char* params_json, std::string* out);
 
 // =============================================================================
-// Named Trigger Evaluation (named_trigger_eval.cpp, ck-fo7x.4)
+// An actor that cannot act (ff3 N7): ONE reason per cause
 // =============================================================================
-// Evaluates a named trigger class against a scope dict. Resolves the class
-// via the catalogue at re/rtti/trigger_subclasses.csv, builds a stub trigger
-// node, constructs scope via the existing TLS pipeline, and dispatches via
-// FUN_07628500. Used by discover(what="evaluate_trigger") in the agent.
-bool do_evaluate_named_trigger(const char* params_json, std::string* out);
+// "actor_not_found": the id did not resolve to a character (null: an
+// out-of-range id, or no controlled character when actor_id is omitted; or the
+// database sentinel a miss resolves to). "actor_not_alive": it resolved to a
+// character that is not alive (the spelling factions.cpp and intent_dispatch.cpp
+// already answer). nullptr: a living character. The MCP maps them to
+// character_not_found and character_dead (redesign.py RAW_REASON_TO_GATE); the
+// one word no_living_actor said both and was read as "dead".
+inline const char* actor_refusal(void* actor) {
+    if (!actor || is_sentinel(actor)) return "actor_not_found";
+    // g_char_is_alive is the engine's CHAR_IS_ALIVE, resolved at init (before
+    // any request is served); tested as factions.cpp and intent_dispatch.cpp do.
+    if (g_char_is_alive && !g_char_is_alive(actor)) return "actor_not_alive";
+    return nullptr;
+}
+
+// The refusal reply for actor_refusal(): {"success":false,"action":..,"reason":..}.
+inline std::string actor_refusal_reply(const char* action, const char* reason) {
+    ResponseBuilder r; r.begin_object();
+    r.key("success"); r.value_bool(false);
+    r.key("action");  r.value_string(action);
+    r.key("reason");  r.value_string(reason);
+    r.end_object();
+    return r.take();
+}
 
 } // namespace bridge

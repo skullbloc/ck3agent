@@ -11,45 +11,21 @@ enum class IntentType : uint8_t {
     INTERACTION = 0,
     WAR_DECLARE = 1,
     DECISION = 2,
-    CONSOLE_EXECUTE = 3,
-    // ck-7ejs: invoke a user-defined `scripted_effect` template by name on a
-    // character scope. effect_name in interaction_name; optional pre-rendered
-    // PDXScript args blob in console_command (currently unused — args parsing
-    // would require the script tokenizer; reserved for future expansion).
-    SCRIPTED_EFFECT = 4,
+    // 3 (console execute) and 4 (scripted effect) were deleted in cleanup
+    // 2026.11 (D5/D6); the values are not reused.
     // ck-eyfb: direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect
     // and the scripted-effect dispatcher. Mirrors WAR_DECLARE_SPECIAL_HANDLER
     // (FUN_065db970): resolves CB by name, builds minimal CB-params struct
     // with a single-title array, and calls WAR_CREATE_CORE. cb_name in
     // interaction_name; title_id, claimant_id, actor_id, target_id reused.
     WAR_CREATE_CORE_DIRECT = 5,
-    // faction write (re_faction_join_create.md): create-or-join a political
-    // faction against a liege via GET_OR_CREATE_AND_JOIN. faction-type key in
-    // interaction_name; target_id = liege; faction_action ("create"/"join"/
-    // "leave") stuffed in console_command; optional title_id/claimant_id for
-    // claimant factions. Drained like WAR_CREATE_CORE_DIRECT (RNG scope +
-    // crash-net).
+    // faction write (factions.cpp, re_factions.md): console_command carries the
+    // action ("create" / "join" / "leave" / "press_demand"); create takes the
+    // faction-type key in interaction_name and the liege in target_id (0: the
+    // actor's own), the others the faction id in title_id. Drained like
+    // WAR_CREATE_CORE_DIRECT (RNG scope + crash-net).
     FACTION = 6,
-    // A8.2 (re_raise_armies.md): raise a CHOSEN AI's levies. RaiseAllArmiesCore
-    // (ARMY_RAISE_ALL) is hard-wired to the g_PlayerCharacterID global with no
-    // character arg, so the executor temporarily swaps that global to the AI's
-    // full 32-bit handle (char+0x18), calls raise_all(nullptr,0), and restores
-    // the global on EVERY path. Game-thread-only (drained here), paused, under
-    // watchdog+sigsetjmp+fake-RNG. actor_id = the AI whose levies to raise.
-    // NEEDS-LIVE-HARNESS-VALIDATION — the global swap + indirect raise cannot be
-    // exercised on a core dump; gated behind this intent/drain path.
-    RAISE_ARMIES = 7,
-    // #96 (re_raid_system.md): Norse/tribal RAIDING. Toggle the chosen AI's
-    // raised armies into RAIDING mode. The dispatch path
-    // (ARMY_TOGGLE_RAIDING_DISPATCH) is hard-wired to g_PlayerCharacterID (it
-    // resolves the player's armies + builds a validator-gated CToggleRaidingCommand
-    // dispatched onto the engine command queue), so the executor uses the SAME
-    // guarded global-swap primitive as RAISE_ARMIES: swap the player global to the
-    // AI's full 32-bit handle (char+0x18), call dispatch(intent=0), restore on
-    // EVERY path. Game-thread-only (drained here), under watchdog+sigsetjmp+
-    // fake-RNG. actor_id = the AI whose armies to set raiding. The engine flips
-    // army+0x1b4 natively on its own command-apply tick (we never write it).
-    RAISE_RAIDERS = 8,
+    // 7 and 8 were RAISE_ARMIES and RAISE_RAIDERS (deleted, cleanup 2026.11).
     // #111 (re_create_title_action.md): LEGITIMATE de-jure create-title. Build a
     // CCreateTitleCommand (ruler@+0x20 = AI ruler full handle, title_id@+0x24 =
     // target de-jure duchy/kingdom title id), run its vt[7] CanExecute pre-gate
@@ -77,47 +53,22 @@ enum class IntentType : uint8_t {
     // interaction_name = scheme key. Game-thread-only (drained here) under
     // watchdog + sigsetjmp + fake-RNG, mirroring execute_faction_intent.
     SCHEME = 10,
-    // break-alliance (re_break_alliance_FINAL.md, Path B). The literal
-    // CBreakAllowAllianceEffect break via the gated break_alliance_cmd(actor*,
-    // ally*, force=0): resolves BOTH characters to live CCharacter* (the same DB
-    // walk FUN_05f72a60 does == lookup_character) and calls the engine's own
-    // alive+relation-gated command, which runs relation_dissolve (clears the
-    // CActiveRelation reasons vector, sets the state byte, fires on-break
-    // notifications). Game-thread-only (drained here) under fake-RNG + watchdog +
-    // sigsetjmp — the dissolve/notification path can draw engine RNG. actor_id =
-    // the ruler breaking the alliance; target_id = the ally to break with.
-    // DEFAULT-OFF behind g_enable_break_alliance; not agent-reachable until the
-    // disposable-save smoke (FINAL §5) passes.
-    BREAK_ALLIANCE = 11,
+    // 11 (break alliance) was deleted in cleanup 2026.11 (D6); not reused.
     // RESERVED: MOVE_ARMY (=12) removed per design (agent does not drive army micro).
     // Value left as a gap so existing intent serialization stays stable; do not reuse.
-    // Fix B1a (re_caiwarcoordinator_FINAL.md / re_steered_war_offensive_root.md):
-    // make a FORCE-DECLARED steered war get prosecuted OFFENSIVELY (so the AI marches
-    // to SIEGE the war goal instead of sitting attacker_DEFENSIVE → occupation flat 0).
-    // LEGITIMATE engine path — NOT a memory poke: walk the attacker realm's AI-manager
-    // coordinator record array (ai_root+0x48 / count +0x54, the exact FUN_04dedd40
-    // walk), find the record whose rec+0x18 war-id matches our war (FUN_04e60920
-    // invariant war+8==rec+0x18), zero its re-eval cooldown (rec+0x94=0) and invoke the
-    // engine's OWN per-coordinator stance tick COORD_STANCE_TICK(rec, &seed)
-    // (FUN_04e66220) once. That tick runs the engine's real selector FUN_04e66550 →
-    // real strength-condition FUN_04e843a0 and writes the engine's own chosen stance
-    // into rec+0x70 — so if the attacker genuinely has the upper hand it lands
-    // attacker_offensive legitimately; if not, defensive is the CORRECT engine verdict
-    // (a useful diagnostic, never a forced fabrication). Game-thread-only (drained
-    // here) under fake-RNG scope + watchdog + sigsetjmp (the tick rebuilds the war plan
-    // / unit-stack assignments and draws engine RNG). DEFAULT-OFF behind
-    // g_force_offensive_stance. actor_id = the AI attacker; title_id reused = war_id.
-    // NEEDS-LIVE-VALIDATION (attempt-25): the engine tick has never been driven on a
-    // live coordinator — gated entirely behind the flag + this intent/drain path.
-    WAR_FORCE_OFFENSIVE_STANCE = 13,
+    // 13 was WAR_FORCE_OFFENSIVE_STANCE (deleted, cleanup 2026.11: the engine's own
+    // coordinator already prosecutes a steered war; re_steered_war_offensive_root.md §9).
 };
 
-// 2026-06-09: request_id of the intent currently being executed by
-// drain_and_execute_intents on the game thread, or empty when idle. Set/cleared
-// around each executor call; read by the outer on_tick recovery handler to
-// attribute a crash to the in-flight intent. Thread-local: only the game thread
-// drains.
-extern thread_local std::string g_inflight_intent_rid;
+// The queue seq of the intent drain_and_execute_intents is executing on this
+// thread, or 0 when idle. Set after claim(), cleared after finish(); read by the
+// drain's crash recovery (recover_drain_crash) to attribute a crash to THAT
+// intent. L13 FF4 (witness m10): by seq, not request_id, which a caller may
+// repeat, so a duplicate queued ahead of the one in flight is never rejected
+// in its place. Thread-local: only the game thread drains.
+extern thread_local uint64_t g_inflight_intent_seq;
+
+struct ClientContext;
 
 struct Intent {
     IntentType type;
@@ -130,24 +81,66 @@ struct Intent {
     int cb_index;                // -1 = auto-select first valid CB
     uint32_t secondary_actor_id;     // marriage: bride/groom from actor's court
     uint32_t secondary_recipient_id; // marriage: bride/groom from target's court
+    // The war an interaction is about, written as the interaction's target scope
+    // (ctx+0x2F0, scope type 0x10 = war): call_ally_interaction and
+    // join_war_interaction take the war there (re/findings/re_war.md). War 0 is a
+    // real war, so presence is its own flag.
+    bool has_target_war = false;
+    uint32_t target_war_id = 0;
     uint64_t queued_tick;
     uint32_t ttl_ticks;          // default 10 (dispatch hooks), 100 (queue_intent)
     bool force_bypass;           // enable debug bypass flag for this dispatch
     bool force_accept;           // enable yesmen (force AI acceptance) for this dispatch
-    bool debug_all_paths;        // try every dispatch path independently, collect logs
-    bool resolve_only;           // SCRIPTED_EFFECT: resolve template by name only, do NOT
-                                 // call Execute (the scope_ctx frame is unpinned — Execute
-                                 // faults). Default true; false is observer-save-only RE.
     bool consumed;
     bool executed;
     bool rejected;
     char rejection_reason[128];
     std::string request_id;
     std::string session_id;      // M1: owning session for game-thread context
-    std::string debug_log;       // JSON array of per-path results (populated when debug_all_paths)
-    std::string console_command; // CONSOLE_EXECUTE: full command string
-    std::string console_output;  // CONSOLE_EXECUTE: result output from handler
+    std::string console_command; // per-type discriminator (faction create/join/leave, scheme start/cancel)
+    std::string console_output;  // per-type result text the executor reports back
+    // Lane l4: the interaction window's send options (flag names, comma-separated, e.g.
+    // "matrilineal,hook") the caller asked for, and the selection the engine held after
+    // they were applied (options that start enabled included).
+    std::string send_options;
+    std::string send_options_applied;
+    // L13 FF3 (witness X3): the queue's own bookkeeping, written under its lock.
+    // seq names the intent inside the queue (request_id may be empty or
+    // repeated); in_flight is true from claim() to finish(): the drain is
+    // executing its own copy and nothing in the queued record is written.
+    uint64_t seq = 0;
+    bool in_flight = false;
 };
+
+// L14 (surface-eval finding 3): a READ the drain runs on the game thread — the
+// interaction check (query_interaction_check) and the scheme check
+// (scheme_action action=check, the schc_ ids discover(scheme_targets) sends).
+// It sends nothing. Its verdict reaches its own asker through the lookups
+// (find_completed_by_request_id, lookup_dispatch) and never the completed ring
+// that query_intents / query_intent_results / inspect(pending) list: a read
+// listed there read as a finished write ("befriend: success" for a scheme never
+// started), and took a slot from a real write's poll_token. The one definition
+// both check handlers' intents are classified by: their console_command starts
+// "check" (bare, "check:<ids>" or "check:<max>:<ids>").
+inline bool intent_is_read(const Intent& i) {
+    return (i.type == IntentType::INTERACTION || i.type == IntentType::SCHEME) &&
+           i.console_command.compare(0, 5, "check") == 0;
+}
+
+// L13 FF2 (witness R3): the status query_dispatch_result answers, decided in
+// one place. The order is the point: the completed ring first, then an intent
+// the drain has consumed but not yet stored — RUNNING, never not_found (the
+// server treats not_found as a refusal, so the gap between consume and store
+// read as "the write was refused" for a write that ran) — then a pending one.
+// `completed` is the completed-ring record when found_completed.
+enum class DispatchLookup { Completed, Running, Pending, NotFound };
+inline DispatchLookup dispatch_lookup(bool found_completed, bool consumed_unstored,
+                                      bool pending) {
+    if (found_completed) return DispatchLookup::Completed;
+    if (consumed_unstored) return DispatchLookup::Running;
+    if (pending) return DispatchLookup::Pending;
+    return DispatchLookup::NotFound;
+}
 
 class IntentQueue {
     std::mutex mutex_;
@@ -161,19 +154,40 @@ public:
     // Enqueue from IPC thread
     void enqueue(Intent intent);
 
-    // Find unconsumed intent for character (called from game thread dispatch hooks)
-    Intent* find_for_character(uint32_t char_id, IntentType type);
-
-    // Find unconsumed intent matching character + interaction hash (for AI eval hook)
-    Intent* find_for_character_interaction(uint32_t char_id, uint32_t interaction_hash);
+    // L13 FF3 (witness X3): the drain's two calls. No pointer into the queue
+    // ever leaves it, so an enqueue that grows the vector, a cancel or a clear
+    // cannot pull an intent out from under the drain, and no reader copies a
+    // record the drain is writing.
+    //   claim(seq, out): under the lock, an unconsumed intent with that seq is
+    //     marked consumed + in_flight and copied into *out (the drain executes
+    //     on that copy). False if it is gone or already consumed (retired,
+    //     cancelled, expired, or claimed).
+    //   finish(done): under the lock, the queued record becomes the drain's
+    //     copy, consumed, in_flight cleared. A copy with neither executed nor
+    //     rejected (an executor that returned without a verdict) is recorded as
+    //     rejected "executor_returned_no_verdict", never as a silent nothing
+    //     (witness r4 m9). If the record was cleared meanwhile, the verdict goes
+    //     straight to the completed ring.
+    bool claim(uint64_t seq, Intent* out);
+    void finish(const Intent& done);
 
     // Return a snapshot of all unconsumed intents (for query_intents IPC)
     std::vector<Intent> snapshot();
 
-    // Return count of unconsumed intents
+    // The count of unconsumed WRITES: pending_writes().size(). L14 FB2 (witness
+    // N-10): one meaning wherever a pending count is reported (query_intents'
+    // pending_count, send_interaction's pending_count, status' pending_intents,
+    // clear_intents); it had counted queued checks too, which no list shows.
+    // The drain's own gate is pending_count_fast (every unconsumed intent).
     size_t pending_count();
 
-    // Expire old intents, return completed ones (called from on_tick)
+    // L14 FB m-6: the unconsumed WRITES (snapshot without intent_is_read). A
+    // queued check is a game-thread read, delivered to its asker and never
+    // listed: query_intents' pending[] and pending_count are this.
+    std::vector<Intent> pending_writes();
+
+    // Expire old intents; move consumed + expired ones into the completed ring
+    // (under the queue's lock) and also return them. Called by the drain.
     void tick_maintenance(uint64_t current_tick,
                           std::vector<Intent>& completed_out);
 
@@ -181,23 +195,23 @@ public:
     bool cancel_by_request_id(const std::string& request_id);
 
     // lane-scheme 2026-10-18: retire a still-pending intent IN PLACE (consumed +
-    // rejected with `reason`) instead of erasing it. The game-thread drain holds a
-    // raw Intent* into intents_ while it executes (find_for_character), so an
-    // erase from the IPC thread could pull the element out from under it; a mark
-    // under the lock cannot. A drain that has not reached it yet skips it (it is
-    // consumed); one already executing overwrites the verdict, so the completed
-    // record still tells the truth. tick_maintenance moves it to completed.
+    // rejected with `reason`) instead of erasing it, so its verdict reaches the
+    // completed ring. Only an UNCLAIMED intent is retired: one the drain has
+    // claimed (L13 FF3) is consumed, so this returns false and the caller reads
+    // the drain's verdict instead (never "cancelled" for a send that ran).
+    // tick_maintenance moves it to completed.
     // Returns true if a pending intent with that id was found and marked.
     bool retire_pending_by_request_id(const std::string& request_id,
                                       const char* reason);
 
     void clear();
 
-    // Store a completed intent result for diagnostic queries.
-    // Called from tick_maintenance when an intent is consumed.
+    // Store a completed record directly (the drain's Mechanism-B write verdicts;
+    // consumed intents reach the ring through tick_maintenance). A read
+    // (intent_is_read) goes to the reads ring instead.
     void store_completed(const Intent& intent);
 
-    // Return the last N completed intent results (for diagnostics)
+    // Return the last N completed WRITES (the completed ring; reads never enter it)
     std::vector<Intent> completed_snapshot(size_t max_count = 10);
 
     // ck-jsis0: O(n) lookup of a completed intent by request_id. Returns true
@@ -206,24 +220,58 @@ public:
     // "still pending" without forcing callers to walk the whole snapshot.
     bool find_completed_by_request_id(const std::string& request_id, Intent* out);
 
-    // ck-jsis0: O(n) lookup of a pending (unconsumed) intent by request_id.
-    // Returns true and copies the intent into *out if found.
-    bool find_pending_by_request_id(const std::string& request_id, Intent* out);
 
-    // 2026-06-09: mark a still-pending intent rejected+consumed by request_id.
-    // Used by the outer on_tick recovery handler so a game-thread crash during
-    // drain converts the in-flight intent into a structured rejection instead
-    // of leaving it unconsumed (which the IPC poll sees as a 5s timeout).
-    bool mark_rejected_by_request_id(const std::string& request_id, const char* reason);
-private:
-    std::vector<Intent> completed_;   // ring buffer of last N completed intents
+    // L13 FF2 (witness R3): where an intent stands, under ONE lock over both the
+    // live queue and the completed ring (tick_maintenance moves consumed intents
+    // into the ring under the same lock), so a reader can never fall between
+    // them. An intent the drain has claimed and not finished is Running (nothing
+    // is copied); otherwise *out receives the pending or completed record, whose
+    // every field is written under this lock (L13 FF3).
+    DispatchLookup lookup_dispatch(const std::string& request_id, Intent* out);
+
+    // The drain's crash recovery: the in-flight intent with this seq (and only
+    // an in-flight one) becomes a structured rejection; the drain's copy and
+    // its finish() were jumped past. True if it was found.
+    bool mark_rejected_in_flight(uint64_t seq, const char* reason);
     // ck-jsis0: bumped from 16 → 128. The destructive harness fires ~15 intents
     // back-to-back before each per-intent verdict check; a 16-slot buffer let
     // late intents push earlier ones out of view before the harness queried,
     // producing ambiguous "intent not in query_intent_results" verdicts. 128
     // covers a full --deep destructive suite without forcing harness writers
     // to interleave queries between every send_interaction.
+    // Public so a test can tell an eviction from a lookup gap.
     static constexpr size_t MAX_COMPLETED = 128;
+    // L14: the verdicts of the last MAX_READS game-thread reads (intent_is_read),
+    // kept only so the asker's poll finds its own verdict; never listed.
+    static constexpr size_t MAX_READS = 32;
+private:
+    std::vector<Intent> completed_;   // ring buffer of last N completed writes
+    std::vector<Intent> reads_;       // ring buffer of last N completed reads
+    uint64_t next_seq_ = 1;           // under mutex_
+    void store_completed_locked(const Intent& intent);
 };
+
+// The game thread drains g_intent_queue in drain_game_thread_work
+// (drain_and_execute_intents), AFTER it has dispatched the IPC actions queued for
+// it. A handler served on the game thread (is_game_thread_action: create_title,
+// call_war_create_core) that enqueues an intent and then polls for its
+// completion waits for a drain that cannot run until it returns: it stalls the
+// game for its whole poll window and answers after the client's own 8 s deadline
+// (live867 l5fx3-live-1, the deleted raise_armies: reason_code no_ack). These two
+// calls let such a handler see that and answer at once; the intent then drains
+// later in the same drain and the caller confirms by readback. L13: the game
+// thread is the session thread when the session-pass hook is live
+// (bridge_init.cpp claim_drain_thread), else the AI-tick worker running on_tick.
+// The drain's crash recovery, after the outer siglongjmp out of
+// drain_and_execute_intents (bridge_init.cpp). The jump skipped the
+// per-intent ClientContextGuard's destructor, so g_current_client_context
+// still points at that iteration's dead stack object: it is put back to
+// `saved_ctx`, the value it had when the drain was entered (witness m11). The
+// in-flight intent (g_inflight_intent_seq) is rejected with `reason`. Returns
+// its seq, or 0 when nothing was in flight. Engine-free: a host test drives it.
+uint64_t recover_drain_crash(IntentQueue& q, ClientContext* saved_ctx, const char* reason);
+
+void note_game_thread();      // claim_drain_thread: this thread runs the drain
+bool on_game_thread();        // true only on the thread that runs the drain
 
 } // namespace bridge

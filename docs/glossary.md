@@ -13,9 +13,9 @@ The terms the docs, tools and logs use.
 | **Primary** | with several rulers, the one a call without `character_id` acts as: the first bound. `control` switches it; `add` keeps it. |
 | **Several rulers** | one session holding more than one ruler (`session(action="add")` or a `CK3_AGENT_CHARACTER_ID` list): one posture each, one game clock. Two sessions in one game is a different, unsupported shape. |
 | **Observer save** | a save started in CK3's Observe mode, with no player character. The cleanest start for Claude. |
-| **Steering** | changing how the game's AI behaves, through personality and toggles, instead of issuing each action. |
+| **Steering** | changing how the game's AI behaves by setting its 9 personality axes, instead of issuing each action. |
 | **Posture / phase** | a named preset, such as `expansion` or `consolidate`, that `set_phase` turns into personality values. |
-| **Personality axes** | the 10 values, -100 to 100, the AI reads: honor, greed, rationality, energy, boldness, zeal, vengefulness, compassion, sociability, dominance. |
+| **Personality axes** | the 9 values, -100 to 100, `steer` and `set_phase` write and the AI reads: honor, greed, rationality, energy, boldness, zeal, vengefulness, compassion and sociability. |
 | **Envelope** | the JSON wrapper every tool returns. Read `ok` first. See [architecture](architecture.md#response-envelopes). |
 | **Verdict** | a write's outcome: `applied`, or a typed rejection naming the gate that refused it. |
 | **Dormant / active** | bridge states. Dormant: loaded, no game running. Active: a game is running and tools work. |

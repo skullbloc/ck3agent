@@ -36,6 +36,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "bridge"
 
+# L13 FF3 (witness X4): the one C++ tokenizer (bridge/scripts/cpp_strip.py).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "scripts"))
+import cpp_strip  # noqa: E402
+
 
 def _doc() -> str:
     for rel in ("release/overlay/docs/research.md", "docs/research.md"):
@@ -46,25 +50,8 @@ def _doc() -> str:
 
 
 def _strip_c_comments(src: str) -> str:
-    out, i, n = [], 0, len(src)
-    while i < n:
-        c = src[i]
-        if c in "\"'":
-            j = i + 1
-            while j < n and src[j] != c:
-                j += 2 if src[j] == "\\" else 1
-            out.append(src[i:j + 1])
-            i = j + 1
-        elif src.startswith("//", i):
-            j = src.find("\n", i)
-            i = n if j < 0 else j
-        elif src.startswith("/*", i):
-            j = src.find("*/", i + 2)
-            i = n if j < 0 else j + 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
+    """Comments blanked, literals kept (cpp_strip)."""
+    return cpp_strip.strip(src, keep_strings=True)
 
 
 def _bridge_sources():
@@ -78,24 +65,13 @@ def _bridge_sources():
 def _function(src: str, head_re: str) -> str:
     m = re.search(head_re, src)
     assert m, f"function not found: {head_re}"
-    j, depth, n = src.index("{", m.end() - 1), 0, len(src)
-    while j < n:
-        c = src[j]
-        if c in "\"'":                       # braces inside literals do not count
-            k = j + 1
-            while k < n and src[k] != c:
-                k += 2 if src[k] == "\\" else 1
-            j = k + 1
-            continue
-        depth += {"{": 1, "}": -1}.get(c, 0)
-        if depth == 0:
-            return src[m.start():j + 1]
-        j += 1
-    raise AssertionError(f"unbalanced body: {head_re}")
+    j = cpp_strip.match_close(src, src.index("{", m.end() - 1))   # literals do not count
+    assert j >= 0, f"unbalanced body: {head_re}"
+    return src[m.start():j + 1]
 
 
 def _literals(text: str) -> list:
-    return re.findall(r'"([^"\\]*)"', text)
+    return [body for kind, _s, _e, body in cpp_strip.literals(text) if kind == "string"]
 
 
 def _router() -> str:
@@ -185,8 +161,8 @@ def test_boot_log_row_matches_instance_open_boot_log():
 # changes state and must be in research.md's logged or not-logged list.
 READ_ONLY_MGMT = {
     "who_holds_the_lock", "get_bridge_state", "get_offset_validation", "get_tick_info",
-    "evaluate_named_trigger", "tick_diff", "pending_events", "notifications",
-    "query_pending_events", "event_probabilities", "memory_probe", "resolve_global",
+    "tick_diff",
+    "memory_probe", "resolve_global",
     "pre_validate_war", "construction_check", "get_budget_state",
 }
 
@@ -262,8 +238,8 @@ def test_emit_action_log_writes_session_id_and_kind_on_every_dispatch():
 
 # ── set_phase table ──────────────────────────────────────────────────────────
 
-AXES = ["honor", "greed", "rationality", "energy", "boldness", "zeal",
-        "vengefulness", "compassion", "sociability", "dominance"]
+# The doc table's columns are the axes in bridge order: the one axis table.
+from personality_axes import AXES  # noqa: E402
 
 
 def test_phase_table_matches_PHASE_GENOME():

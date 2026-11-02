@@ -107,14 +107,15 @@ Windows:
 machine and the Linux game on a Linux host or VM over the network
 (`docs/claude-desktop.md`). It needs no port and stays supported.
 
-**macOS: deferred, not dropped.** The macOS build is Intel-only and runs under
+**macOS: not ported, not dropped.** The macOS build is Intel-only and runs under
 Rosetta on Apple Silicon. Apple ends general Rosetta support after macOS 27;
 whether a games carve-out follows is undefined. macOS is about 2% of Steam.
 Shipping needs a paid Developer ID, notarization and rented Mac hardware.
 Steam launches CK3 with `DYLD_INSERT_LIBRARIES` (`steamloader.dylib`), so dyld
-insertion works at least from Steam's loader: evidence, not proof. Do M0 (one
-day, static, `inspect_binary` on the Mach-O) now. Revisit when Windows has
-shipped, a Mac contributor exists, and the macOS 28 games carve-out is known.
+insertion works at least from Steam's loader: evidence, not proof. M0 (one day,
+static, `inspect_binary` on the Mach-O) is the first step. The port starts
+when Windows has shipped, a Mac contributor exists, and the macOS 28 games
+carve-out is known.
 
 **Phased plan** (one experienced contributor; ranges widen with RE uncertainty)
 
@@ -125,14 +126,14 @@ shipped, a Mac contributor exists, and the macOS 28 games carve-out is known.
 | P2 | `bridge/src/os/` layer; stub CI on `windows-latest` and `macos-14` | 2-3 wks (parallel with P1) | Linux acceptance unchanged; engine-free tests pass on 3 OSes | Linux behaviour changes |
 | P3 | Proton bring-up; layout probe over the 1,757 field offsets, per-ABI readers | 2-3 wks | Probe report: `agreed`/`disagreed`/`unwitnessed` per field | Under ~40% field agreement |
 | P4 | Proxy DLL loads and refuses under Proton | 1-2 wks | `match` on 1.18.3.1, `REFUSED` and no listener on any other build (**met under Proton 2026-10-19**) | No 1.18.3.1 rollback branch on Windows |
-| P5 | Observe parity | 3-5 wks | Every `query_*` equals the Linux bridge on the reference save (scripted diff) (**not yet met** 2026-10-19, P6 round full7: 70 of 82 agree (58 with data, 5 across dates, 7 as refusals; full5: 66, P5 ended at 60); 5 unstable on Linux itself; of the 8 deferred-drain actions 6 now agree (the trigger query and interaction acceptance through the game's own interaction context), CBs-for-target differs only in the bridge's tick counter at the same game date, conquest targets by world drift; 6 open; trigger not indicated) | Parity below half the tools at 2x estimate |
-| P6 | Hooks and steering | 3-5 wks | Live scenarios give Linux outcomes (research-tree harness; to be published) (**not yet met** 2026-10-19: the AI-tick hook, the watchdog, the steering writes and 7 of the inline hooks run under Proton; the steering plan gives the Linux replies; the scenario harness gives Linux's status in 80 of 82 scenarios; the trigger query and interaction acceptance run through the game's own thread-local interaction context (full7), the CB query's stage-2 gates give Linux's drop counts; the direct interaction dispatch (the `do` tool's interaction, scheme and marriage writes) gives Linux's outcomes, the engine applying them (lane-p6d); the council-AI suppressor has no unique anchor; trigger not indicated: every hook class installed so far is unwind- and CFG-safe) | A hook class cannot be made unwind- and CFG-safe |
+| P5 | Observe parity | 3-5 wks | Every `query_*` equals the Linux bridge on the reference save (scripted diff) (**unmet** 2026-10-19, P6 round full7: 70 of 82 agree (58 with data, 5 across dates, 7 as refusals; full5: 66, P5 ended at 60); 5 unstable on Linux itself; of the 8 deferred-drain actions 6 now agree (the trigger query and interaction acceptance through the game's own interaction context), CBs-for-target differs only in the bridge's tick counter at the same game date, conquest targets by world drift; 6 open; trigger not indicated) | Parity below half the tools at 2x estimate |
+| P6 | Hooks and steering | 3-5 wks | Live scenarios give Linux outcomes (the research-tree live suite, `scripts/live867`) (**unmet** 2026-10-19: `scripts/live867` has not been run against the Windows bridge; the AI-tick hook, the watchdog, the steering writes and 7 of the inline hooks run under Proton; the steering plan gives the Linux replies; the scenario harness that `scripts/live867` replaced (deleted in 2026.11) gave Linux's status in 80 of 82 of its scenarios; the trigger query and interaction acceptance run through the game's own thread-local interaction context (full7), the CB query's stage-2 gates give Linux's drop counts; the direct interaction dispatch (the `do` tool's interaction, scheme and marriage writes) gives Linux's outcomes, the engine applying them (lane-p6d); the council-AI suppressor has no unique anchor; trigger not indicated: every hook class installed so far is unwind- and CFG-safe) | A hook class cannot be made unwind- and CFG-safe |
 | P7 | Real-Windows validation on a rented GPU VM; signed zip + `install.ps1` | 2-3 wks | P4-P6 repeated on Windows; installer tested | Proton result does not reproduce on Windows |
 
 Windows preview: 15-20 weeks from start (about 2027.03 for a November 2026
 start); parity: 24-30. macOS is not scheduled.
 
-`re/findings/<platform>/` and `bridge/harness/` (cited below) exist in the
+`re/findings/<platform>/` and `scripts/live867/` (cited below) exist in the
 research checkout only. The `re/scripts` and `re/findings` subset behind the
 string-anchor/RTTI method ships under `re/`: the tools, the two anchor
 procedures and how to run them on a new binary are in
@@ -306,6 +307,7 @@ cannot be mistaken for working code.
 | `alloc_exec_near` / `free_exec` / `register_unwind` | `exec_alloc.cpp` | done | `test_os_win_exec_alloc` | |
 | `guarded_call` / `guard_rearm` | `guarded.cpp` | done | `test_os_win_guarded` (faults deliberately) | |
 | `watchdog_arm` / `watchdog_disarm` | `watchdog.cpp` | done | `test_os_win_watchdog` | |
+| `session_pass_install` / `session_pass_remove` / `session_pass_live` | `session_pass.cpp` | done (L14): the session thread's loop-pointer swap, drain under the game's SRWLOCK | `test_os_win_session_pass` | |
 | `input_click` | `stubs.cpp` | stub | `test_os_stubs` | `SendInput`; steering is phase P6 |
 | `rtti_find_vtable` | `stubs.cpp` | stub | `test_os_stubs` | needs `ck3.exe` (MSVC RTTI, P1/P5) |
 | `hook_plan` | `stubs.cpp` | stub | `test_os_stubs` | needs `ck3.exe` (per-hook CFG/CET, P6) |
@@ -345,7 +347,7 @@ in `offset_version.h`.
 P1's kill trigger (transfer below ~40% with no new method) is not indicated
 at the first tier (100% closed on the pin) nor by the second tier's yield (63 of 66
 named targets HIGH, by three mechanical methods); over the whole header (5.4% so far) it
-is not yet a measurement.
+is not a measurement.
 
 **Status under Proton (2026-10-19).** One Linux host, Proton
 experimental-11.0, no Steam client installed. Proton evidence is MEDIUM (limits
@@ -359,7 +361,7 @@ above). Commands and log lines are in `docs/porting/proton-runbook.md` §3-§5.
 | Proxy `version.dll` loads `native` and forwards | P4 (load half) | verified | `Loaded ...\binaries\VERSION.dll ... : native`; first the P3 stub (16 of 16 exports), then the bridge DLL (16 of 17: Wine's builtin lacks `GetFileVersionInfoByHandle`); the game called 3 of them through it and reached the menu |
 | `match` / `REFUSED` on build identity, no listener otherwise | P4 | **verified (Proton)** 2026-10-19 | `ck3_bridge_win` as `version.dll`: on the pinned 1.18.3.1 depot `identity match key=codeview+size_of_image` (GUID `3E26A827-...` age 1, SizeOfImage 94806016, sha256 agreed), game at the menu; on 1.20.1.1 `identity REFUSED ... CodeView GUID+age and SizeOfImage both differ`, forwarding only, game at the menu; no TCP/UDP listener in either; without the DLL the 1.18.3.1 menu came at the same time (`docs/porting/proton-runbook.md` §4). Nothing is started on `match` yet: hooks and IPC are P5+ |
 | Bridge inside `ck3.exe`, observe parity with Linux | P5 | **in progress** (2026-10-19, MEDIUM) | `version.dll` with the bridge core: on `match` the bridge starts observe-only (no hooks) with a TCP-loopback listener admitted by a token in `endpoint.json` (runbook §7). A 526-step plan over all 82 `query_*` actions, run against it and against the Linux bridge on the same save (867.01.01), diffed step by step (`parity_diff.py`; a second Linux run grades `linux_unstable` what Linux itself does not repeat). Final round: **54 actions agree on every step with data, 6 agree as refusals** (60 of 82); **9** differ only where two Linux runs disagree with each other (Linux defects: uninitialised bytes, pointer bits); **8** are the deferred-drain actions, which need the game-thread hook (P6); **5** differ for a Windows reason (two game defines not located, `query_cb_options` calls unanchored game functions, the debug-flag block, one diagnostic field). Seven Linux defects the diff exposed are fixed in the shared code (succession rules read from pointer bytes in seven handlers, string reads, sort ties, `%.2f` rounding, ...). The Windows offsets: 304 measured, 183 agreed, 138 image globals by RTTI class (34 null objects among them), 1,067 still unmapped (mostly P6 functions). `re/findings/windows/re_p5_observe_parity.md` (research checkout) |
-| AI-tick hook and steering inside `ck3.exe` | P6 | **in progress** (2026-10-19, MEDIUM) | On `match` the Windows bridge now takes the Linux start-up path: on game-ready it swaps CAIManager's +8 vtable slot 1 (MSVC's MainTick, `this` = object+8; refused if the slot is not MainTick), so `on_tick` runs and the per-tick drains, personality locks and deferred queries work; the dispatch watchdog interrupts a stuck game-thread call by suspend-and-redirect (never inside a system DLL). Steering writes: personality axes, the 38 AI subsystem toggles (five runs on MSVC, not one block), `toggle_all_ai`, `set_character_ai`, pause/speed. Two full rounds (full1, full2: 526-step parity plan plus a 24-step steering plan, each on both builds): every steering reply equal to Linux's apart from the game date, the personality lock held across ticked days. Second increment (lane-p6b, full3..full5): 7 inline hooks installed after an MSVC signature review each (the off-goal veto, the CB selector, war end, scheme creation, interaction send, war score, LobbyView; the score call site installed, armed only by the TLS pipeline); CB validity, the war-score components, character names and the lock read-back on Windows; the scenario harness agrees with Linux in 80 of 82 scenarios. Third increment (lane-p6c, full6..full7): the trigger query through the game's thread-local interaction context (the TLS block, its guard bit and constructor, the CRT destructor list; the context steps MSVC inlined composed from anchored engine functions), the CB type's trigger blocks placed (+8 on Windows); observe parity 70 of 82; builds and gates moved to a build image on the node. Fourth increment (lane-p6d): the direct interaction dispatch: validity, the send command's constructor (a recipe), its MSVC clone and destructor slots; live, the same executed and declined interactions as Linux and the same gold afterwards. Not yet: the named-trigger evaluator, the council-AI suppressor (no unique anchor). Under Proton on the node only with `PROTON_USE_WINED3D=1`: under DXVK the game died in `vkAllocateMemory` (GPU short of memory, bridge not involved). `re/findings/windows/re_p6_hooks_steering.md` (research checkout) |
+| AI-tick hook and steering inside `ck3.exe` | P6 | **in progress** (2026-10-19, MEDIUM) | On `match` the Windows bridge now takes the Linux start-up path: on game-ready it swaps CAIManager's +8 vtable slot 1 (MSVC's MainTick, `this` = object+8; refused if the slot is not MainTick), so `on_tick` runs and the per-tick drains, personality locks and deferred queries work; the dispatch watchdog interrupts a stuck game-thread call by suspend-and-redirect (never inside a system DLL). Steering writes: personality axes, the 38 AI subsystem toggles (five runs on MSVC, not one block), `toggle_all_ai`, `set_character_ai`, pause/speed. Two full rounds (full1, full2: 526-step parity plan plus a 24-step steering plan, each on both builds): every steering reply equal to Linux's apart from the game date, the personality lock held across ticked days. Second increment (lane-p6b, full3..full5): 7 inline hooks installed after an MSVC signature review each (the off-goal veto, the CB selector, war end, scheme creation, interaction send, war score, LobbyView; the score call site installed, armed only by the TLS pipeline); CB validity, the war-score components, character names and the lock read-back on Windows; the scenario harness (deleted in 2026.11, replaced by `scripts/live867`) agreed with Linux in 80 of 82 scenarios. Third increment (lane-p6c, full6..full7): the trigger query through the game's thread-local interaction context (the TLS block, its guard bit and constructor, the CRT destructor list; the context steps MSVC inlined composed from anchored engine functions), the CB type's trigger blocks placed (+8 on Windows); observe parity 70 of 82; builds and gates moved to a build image on the node. Fourth increment (lane-p6d): the direct interaction dispatch: validity, the send command's constructor (a recipe), its MSVC clone and destructor slots; live, the same executed and declined interactions as Linux and the same gold afterwards. Cleanup L14 (2026-10-30): the session-pass hook, the L13 Linux method on `ck3.exe` (the session thread's loop pointer at +0xB8 swapped through `os::session_pass_install`, the work run under the game's own SRWLOCK at +0x2A0), so a paused save goes ACTIVE at tick 0 and reads and writes answer paused; live under Proton, `l14-win-live2`. Not working on Windows: the council-AI suppressor (no unique anchor). Under Proton on the node only with `PROTON_USE_WINED3D=1`: under DXVK the game died in `vkAllocateMemory` (GPU short of memory, bridge not involved). `re/findings/windows/re_p6_hooks_steering.md` (research checkout) |
 | Windows installer, zip and the P7 plan | P7 prep | **drafted** (2026-10-19, MEDIUM) | `installer/windows/`: `install.ps1` (checks the zip's SHA256SUMS, finds CK3 through Steam, a private venv from bundled wheels, refuses a `ck3.exe` other than `pin.json`'s build before touching the game directory, never overwrites a `version.dll` it did not place, writes the play directory's `.mcp.json`), `uninstall.ps1`, `package_windows.py` (`pin.json` read from the same `pinned_identity.h` as the DLL's gate; `--require-signed`). Tested only under PowerShell 7 for Linux (`test_install_ps1.sh`, 14 checks, with a mutant control); CI parses both scripts under PowerShell 7 and 5.1. The client finds the Windows bridge's `endpoint.json` by the bridge's own path rule. The public export does not carry the Windows offset inputs: its Windows build is the P4 identity gate only (an owner decision). The real-Windows run: `docs/porting/p7-windows-vm-runbook.md` (the owner's AWS GPU VM, Steam login, signing certificate) |
 | ELF core of the Wine process readable by the core reader | P3 | verified | `gcore` in 18 s; `MZ` at base `0x140000000` (the PE `ImageBase`; Wine kept it); `resolve(rva)` returns bytes equal to the file |
 | MSVC container layouts in memory | P3 probe | `std::string` **measured** (2026-10-19); others not | In the core, 54,753 records of the MSVC string shape (length at +16, capacity 15 at +24) against 921 of the libstdc++ shape in the same 256 MiB of heap. Then, on the pinned build, 40,138 CCharacter name strings read with the MSVC layout equal the Linux text, one for one, and the slot map shows the libstdc++ length word (+8) at +0x10. One Linux "flag" (`character::OVERRIDE_FLAG` 0x48) turns out to be that length word. `std::map` still needs an anchored object |
@@ -458,8 +460,7 @@ mirroring the Linux `g_prev_sigsegv_action` chain.
   <identity>` note; the rest are re-derived. An `agreed` row is one source,
   never HIGH on its own.
 - **Signatures and RTTI** are never shared: the 34 Linux patterns are the
-  list of what to re-derive, not reusable bytes. `re/rtti/trigger_subclasses.csv`
-  (read at runtime by the named-trigger evaluator) is likewise per platform.
+  list of what to re-derive, not reusable bytes.
 
 ## IPC and the Python side
 
@@ -498,15 +499,15 @@ mirroring the Linux `g_prev_sigsegv_action` chain.
   `windows-latest` (MSVC, `-DCK3_PLATFORM=windows`), `macos-14` (Clang,
   `-DCK3_PLATFORM=macos`, `-DCMAKE_OSX_ARCHITECTURES=x86_64`), all with
   `-DCK3_STRICT_BUILD_ID=ON -DBUILD_BRIDGE_TESTS=ON`. No game in CI anywhere.
-  The engine-free native tests (`test_json_helpers`, `test_script_block_parser`,
+  The engine-free native tests (`test_json_helpers`,
   `test_instance_paths`, `test_game_date`, `test_war_history`) must build and
   pass on all three, so they cannot include `os/linux` headers — a forcing
   function for the layer. Add `test_binary_identity` over checked-in minimal
   ELF / PE / Mach-O fixtures asserting the three outcomes.
 - **Python:** the `python` and `wheel + sdist` jobs run on all three OSes;
   `_pe.py` / `_macho.py` get fixture tests beside `_elf.py`'s.
-- **Windows packaging:** a zip (the DLL under its proxy name, `VERSION`, the
-  trigger CSV, `install.ps1`); Inno Setup later if wanted. **Prerequisite, not
+- **Windows packaging:** a zip (the DLL under its proxy name, `VERSION`,
+  `install.ps1`). **Prerequisite, not
   assumption:** an Authenticode certificate. An unsigned DLL beside a Steam
   game is what SmartScreen and AV engines flag. Decide OV/EV purchase versus
   documented-unsigned before W5 closes and say which in the release notes.
@@ -532,7 +533,7 @@ and Ghidra familiarity; ranges are wide because the RE is the uncertain part.
 | W1 | Platform layer + Windows build | `bridge/src/os/` exists, Linux build is behaviourally unchanged (the 2026.10 Linux acceptance suite is green), `windows-latest` builds the DLL and the engine-free tests pass | 2–3 wks |
 | W2 | Loads and refuses | The proxy DLL loads in `ck3.exe`, `is_ck3_process()` is true only there, identity is read, the bridge log shows `REFUSED` on a wrong build and `match` on the target, and a wrong build leaves no listener. `ck3agent doctor` reports the chain on Windows | 1–2 wks |
 | W3 | Read-only observe | Globals (`GAME_STATE_ROOT`, `AI_ENABLED_FLAG`, the manager singletons) and enough struct offsets for the `query_*` handlers; the layout-probe report exists; on the reference save every `query_*` tool returns values equal to the Linux bridge's (a scripted diff, not a glance) | 3–5 wks |
-| W4 | Hooks and steering | `install_main_tick_hooks()` on the MSVC vtable, the inline hooks, the personality writes; the live scenarios (research checkout `bridge/harness/`, not published) pass on Windows with the same outcomes as Linux | 3–5 wks |
+| W4 | Hooks and steering | `install_main_tick_hooks()` on the MSVC vtable, the inline hooks, the personality writes; the live scenarios (research checkout `scripts/live867/`, not published) pass on Windows with the same outcomes as Linux | 3–5 wks |
 | W5 | Full tool surface, installer, CI | Every registered MCP tool behaves as on Linux; signed (or documented-unsigned) zip installer; `release.yml` publishes the Windows archive; `ck3agent launch/doctor` work for a Steam install | 2–4 wks |
 | M0 | macOS verification spike | Hardened-runtime and entitlement answer, `lipo -archs`, launcher chain, crash-reporter/mach-port behaviour, Ghidra import | 1 wk |
 | M1 | Injection path | Either `DYLD_INSERT_LIBRARIES` or the relauncher copies, re-signs and starts the game with the dylib loaded; `LC_UUID` identity read; refusal path works | 1–3 wks |

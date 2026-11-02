@@ -88,21 +88,55 @@ def test_the_exact_name_is_sent_on_the_wire():
         "title_id is back on the wire; the handler does not read it")
 
 
-def test_the_ENUMERATORS_OWN_KEY_also_reaches_the_wire():
-    """`do(action_class="council_tasks")` prints `target_id` in its do_call rows.
+def _enumerated_do_calls():
+    """The do_call rows do(action_class="council_tasks") prints, from the code."""
+    import asyncio
 
-    A printed call whose key the executor ignores is the defect the board spent a
-    year on, so the row the tool hands back must work verbatim.
-    """
-    p = _build({"seat": "chancellor", "task": "task_fabricate_claim",
-                "target_id": 227})
-    assert p["target_title_id"] == 227
+    class Gw:
+        health = "ok"
+
+        async def actor_gate(self):
+            return None
+
+        async def read(self, action, params=None):
+            if action == "query_character":
+                return {"id": 35395, "name": "X", "alive": True}
+            if action == "query_fabricate_targets":
+                return {"targets": [{"title_id": 227, "title": "c_x", "assignable": True}]}
+            return {}
+
+        def game(self):
+            return {"tick": 1, "date": "867.1.1", "paused": True, "speed": 1}
+
+    env = asyncio.run(redesign.do_impl(Gw(), action_class="council_tasks", character_id=35395))
+    rows = (env.get("result") or {}).get("available") or []
+    calls = [r["do_call"] for r in rows if isinstance(r, dict) and r.get("do_call")]
+    assert calls, env
+    return calls
 
 
-def test_the_exact_name_wins_when_both_are_given():
-    p = _build({"task": "task_fabricate_claim",
-                "target_title_id": 231, "target_id": 227})
-    assert p["target_title_id"] == 231
+def test_ONE_NAME_the_printed_call_the_executor_and_the_bridge_agree():
+    """L14 (surface-eval finding 8): discover and the docs said target_title_id while
+    the enumerator printed target_id and the executor took both. One name now: the
+    key the bridge reads (read out of action_handlers.cpp above), the key the
+    executor reads (do_intent_args, from _intent_to_act_params' own AST) and the key
+    every printed do_call carries are the same, and no other spelling is read."""
+    import do_intent_args
+    seg = _handler_segment()
+    assert 'json_get_int(params_json, "target_title_id")' in seg
+    read = set(do_intent_args.extract(open(redesign.__file__, encoding="utf-8").read())["council_task"])
+    assert "target_title_id" in read and "target_id" not in read, sorted(read)
+    for call in _enumerated_do_calls():
+        assert call["intent"] == "council_task"
+        assert set(call["args"]) <= read, (call, sorted(read))
+        assert "target_title_id" in call["args"], call
+        p = redesign._intent_to_act_params("council_task", call["args"], 35395)
+        assert p["target_title_id"] == 227
+
+
+def test_the_old_alias_no_longer_carries_a_target():
+    p = _build({"task": "task_fabricate_claim", "target_id": 227})
+    assert p["target_title_id"] == 0
 
 
 def test_target_character_id_is_forwarded_not_dropped():

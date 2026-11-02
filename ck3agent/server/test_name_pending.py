@@ -1,7 +1,7 @@
 """lane-namekey: a name the bridge has not localized yet is PENDING, never a key.
 
 The bridge's reader thread cannot call the game's localizer; on a name-cache
-miss it queues the id for the game thread, which resolves it on its next tick
+miss it queues the id for the game thread, which resolves it in its next drain
 (bridge/src/name_tables.cpp). Before this lane, ad_read_char_name answered the
 miss with the localization KEY stored on CCharacter (`E_thelred` for Æthelred),
 so the first reads of a session — the game paused before any tick — handed
@@ -22,9 +22,9 @@ redesign = pytest.importorskip("redesign")
 from test_no_ruler_bound import Gw, run  # noqa: E402  (the whoami fake gateway)
 
 
-PENDING = {"request_id": "r3", "character": {"id": 13902, "alive": True,
-                                              "name_key": "E_thelred", "name_pending": True}}
-LOCALIZED = {"request_id": "r4", "character": {"id": 13902, "alive": True, "name": "Æthelred"}}
+PENDING = {"request_id": "r3", "id": 13902, "alive": True,
+                                              "name_key": "E_thelred", "name_pending": True}
+LOCALIZED = {"request_id": "r4", "id": 13902, "alive": True, "name": "Æthelred"}
 
 
 def test_actor_echo_carries_the_pending_state_and_never_the_key():

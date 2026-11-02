@@ -3,7 +3,7 @@
 Files (XDG; an empty variable counts as unset):
 
 * config: ``$XDG_CONFIG_HOME/ck3agent/config.toml`` (``CK3AGENT_CONFIG`` overrides)
-* data:   ``$XDG_DATA_HOME/ck3agent/`` (``lib/libck3_bridge.so``, ``share/trigger_subclasses.csv``)
+* data:   ``$XDG_DATA_HOME/ck3agent/`` (``lib/libck3_bridge.so``)
 
 Each setting resolves in one order: flag, environment, config file, discovery.
 :func:`resolve` is the only place that order lives.
@@ -52,7 +52,6 @@ def game_debug_log() -> Path:
 class Config:
     ck3_binary: str = ""
     bridge_so: str = ""
-    trigger_csv: str = ""
     play_dir: str = ""
     extra: dict = field(default_factory=dict)
 
@@ -176,26 +175,6 @@ def find_bridge_so() -> Path | None:
     return p if p.is_file() else None
 
 
-def _package_csv() -> Path | None:
-    try:
-        from importlib.resources import files
-        p = files("ck3agent") / "data" / "trigger_subclasses.csv"
-        return Path(str(p)) if p.is_file() else None
-    except Exception:  # noqa: BLE001  (zip imports, namespace packages)
-        return None
-
-
-def _discover_csv() -> Path | None:
-    p = data_dir() / "share/trigger_subclasses.csv"
-    return p if p.is_file() else _package_csv()
-
-
-def find_trigger_csv(c: "Config | None" = None) -> Path | None:
-    """The trigger catalogue: env, config, data dir, then the package copy."""
-    r = resolve("trigger_csv", c)
-    return r.path if r.path and r.path.is_file() else None
-
-
 # ── one precedence for every setting ─────────────────────────────────────────
 
 class Resolved(NamedTuple):
@@ -209,7 +188,6 @@ DEFAULT_PLAY_DIR_NAME = "ck3agent-play"
 SETTINGS = {
     "ck3_binary": ("CK3_BINARY", find_ck3_binary),
     "bridge_so": ("CK3AGENT_BRIDGE", find_bridge_so),
-    "trigger_csv": ("CK3_TRIGGER_CATALOGUE_CSV", _discover_csv),
     "play_dir": (None, None),
 }
 

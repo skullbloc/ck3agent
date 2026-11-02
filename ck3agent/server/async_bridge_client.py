@@ -103,8 +103,3 @@ class AsyncBridgeClient:
     async def send_actions(self, tick_id: int, actions: list[dict]):
         await asyncio.to_thread(self._sync.send_actions, tick_id, actions)
 
-    async def send_pause(self, paused: bool):
-        await asyncio.to_thread(self._sync.send_pause, paused)
-
-    async def send_speed(self, speed: int):
-        await asyncio.to_thread(self._sync.send_speed, speed)

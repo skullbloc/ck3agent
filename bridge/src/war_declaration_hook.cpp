@@ -12,7 +12,9 @@
 #include "action_dispatch_internal.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
 #include "name_tables.h"
+#include "engine_text.h"               // war names are rendered text: one cleaner
 #include "world_epoch.h"   // ck-hxh7
+#include "war_side.h"      // a war's participant ids: the one reader of that layout
 
 #include <shared_mutex>
 #include <deque>
@@ -77,50 +79,6 @@ static void reset_war_monitor_state() {
 });
 
 // =============================================================================
-// Strip CK3 loc markup from a war name.
-//   - "#tag text#!"  → "text"  (formatting scopes; opener is '#' + token + ' ',
-//                                closer is "#!")
-//   - control byte 0x15 ... 0x15 → dropped (inline format token wrappers)
-// Leaves already-resolved text and plain spaces intact. Pure byte-level pass,
-// no allocation beyond the output string — crash-safe on the game thread.
-// =============================================================================
-
-static std::string strip_loc_markup(const std::string& in) {
-    std::string out;
-    out.reserve(in.size());
-    for (size_t i = 0; i < in.size(); ++i) {
-        unsigned char ch = static_cast<unsigned char>(in[i]);
-        if (ch == 0x15) {
-            // Skip to the matching 0x15 terminator (or end of string).
-            size_t j = i + 1;
-            while (j < in.size() && static_cast<unsigned char>(in[j]) != 0x15) ++j;
-            i = (j < in.size()) ? j : in.size() - 1;
-            continue;
-        }
-        if (ch == '#') {
-            // "#!" is a reset/closer — drop the two bytes.
-            if (i + 1 < in.size() && in[i + 1] == '!') {
-                ++i;
-                continue;
-            }
-            // "#tag " is a scope opener — drop "#tag" and the single trailing
-            // space delimiter, keeping the enclosed text.
-            size_t j = i + 1;
-            while (j < in.size() && in[j] != ' ' && in[j] != '#') ++j;
-            if (j < in.size() && in[j] == ' ') {
-                i = j;  // skip the delimiter space too
-                continue;
-            }
-            // Bare '#' with no token delimiter — keep it literally.
-            out.push_back('#');
-            continue;
-        }
-        out.push_back(static_cast<char>(ch));
-    }
-    return out;
-}
-
-// =============================================================================
 // Read war fields from a CWar pointer into a WarDeclarationRecord
 // =============================================================================
 
@@ -132,14 +90,16 @@ static void read_war_fields(uintptr_t war_ptr, WarDeclarationRecord& rec) {
     rec.attacker_id = safe_read<uint32_t>(war_ptr + ck3::war_obj::PRIMARY_ATK_REF) & 0xFFFFFF;
     rec.defender_id = safe_read<uint32_t>(war_ptr + ck3::war_obj::PRIMARY_DEF_REF) & 0xFFFFFF;
 
-    // CB type name and index
-    uintptr_t cb_type_ref = safe_read<uintptr_t>(war_ptr + ck3::war_obj::CB_TYPE_REF);
-    rec.cb_type_index = 0;
-    if (cb_type_ref > 0x10000 && is_mapped(cb_type_ref)) {
-        std::string cb_name = ad_read_std_string(cb_type_ref + ck3::db_object::NAME_KEY);
+    // CB type name (war_cb_type_name, the one read) and the CB type's db index
+    {
+        std::string cb_name = war_cb_type_name(war_ptr);
         if (!cb_name.empty()) {
             strncpy(rec.cb_type_name, cb_name.c_str(), sizeof(rec.cb_type_name) - 1);
         }
+    }
+    uintptr_t cb_type_ref = safe_read<uintptr_t>(war_ptr + ck3::war_obj::CB_TYPE_REF);
+    rec.cb_type_index = 0;
+    if (cb_type_ref > 0x10000 && is_mapped(cb_type_ref)) {
         rec.cb_type_index = safe_read<uint32_t>(cb_type_ref + ck3::cb_type::DB_INDEX);
     }
 
@@ -150,19 +110,10 @@ static void read_war_fields(uintptr_t war_ptr, WarDeclarationRecord& rec) {
     }
 
     // Target titles
-    uintptr_t cb_titles_ptr = safe_read<uintptr_t>(war_ptr + ck3::war_obj::CB_TITLE_ARRAY);
-    int32_t cb_title_count = safe_read<int32_t>(war_ptr + ck3::war_obj::CB_TITLE_COUNT);
-    if (cb_title_count < 0 || cb_title_count > 8) cb_title_count = std::min(cb_title_count, 8);
-    rec.target_title_count = cb_title_count;
-    if (cb_titles_ptr && cb_title_count > 0) {
-        for (int t = 0; t < cb_title_count; t++) {
-            uint64_t title_ref = safe_read<uint64_t>(cb_titles_ptr + t * 8);
-            rec.target_titles[t] = static_cast<uint32_t>(title_ref & 0xFFFFFF);
-        }
-    }
+    rec.target_title_count = read_war_target_titles(war_ptr, rec.target_titles, 8);
 
-    // War name — engine string carries loc markup ("#high …#!"); strip it.
-    std::string war_name = strip_loc_markup(
+    // War name: rendered tooltip text; the one cleaner makes it words.
+    std::string war_name = clean_engine_text(
         ad_read_std_string(war_ptr + ck3::war_obj::NAME_DATA_PTR));
     if (!war_name.empty()) {
         strncpy(rec.war_name, war_name.c_str(), sizeof(rec.war_name) - 1);
@@ -198,33 +149,11 @@ static void read_war_fields(uintptr_t war_ptr, WarDeclarationRecord& rec) {
         strncpy(rec.defender_name, name.c_str(), sizeof(rec.defender_name) - 1);
     }
 
-    // Attacker-side participants
-    uintptr_t atk_part_arr = safe_read<uintptr_t>(war_ptr + ck3::war_obj::ATK_PARTICIPANT);
-    int32_t atk_part_count = safe_read<int32_t>(war_ptr + ck3::war_obj::ATK_PART_COUNT);
-    if (atk_part_count < 0 || atk_part_count > 16) atk_part_count = std::min(atk_part_count, 16);
-    rec.atk_participant_count = atk_part_count;
-    if (atk_part_arr && atk_part_count > 0) {
-        for (int i = 0; i < atk_part_count; i++) {
-            uintptr_t part_ptr = safe_read<uintptr_t>(atk_part_arr + i * 8);
-            if (part_ptr && safe_ptr(part_ptr)) {
-                rec.atk_participants[i] = safe_read<uint32_t>(part_ptr + ck3::war_participant::CHAR_ID) & 0xFFFFFF;
-            }
-        }
-    }
-
-    // Defender-side participants
-    uintptr_t def_part_arr = safe_read<uintptr_t>(war_ptr + ck3::war_obj::DEF_PARTICIPANT);
-    int32_t def_part_count = safe_read<int32_t>(war_ptr + ck3::war_obj::DEF_PART_COUNT);
-    if (def_part_count < 0 || def_part_count > 16) def_part_count = std::min(def_part_count, 16);
-    rec.def_participant_count = def_part_count;
-    if (def_part_arr && def_part_count > 0) {
-        for (int i = 0; i < def_part_count; i++) {
-            uintptr_t part_ptr = safe_read<uintptr_t>(def_part_arr + i * 8);
-            if (part_ptr && safe_ptr(part_ptr)) {
-                rec.def_participants[i] = safe_read<uint32_t>(part_ptr + ck3::war_participant::CHAR_ID) & 0xFFFFFF;
-            }
-        }
-    }
+    // Each side's participants (the first 16), read by war_side.h. (The
+    // count used to be the array's raw count, which a negative read kept
+    // negative, beside slots left 0 for an unreadable participant.)
+    rec.atk_participant_count = war_side::ids(war_ptr, ck3::war_obj::ATK_PARTICIPANT, rec.atk_participants, 16);
+    rec.def_participant_count = war_side::ids(war_ptr, ck3::war_obj::DEF_PARTICIPANT, rec.def_participants, 16);
 }
 
 // =============================================================================
@@ -417,8 +346,10 @@ bool do_query_war_declarations(const char* params_json, std::string* out) {
             r.end_array();
 
             r.key("war_name"); r.value_string(it->war_name);
-            r.key("attacker_name"); r.value_string(it->attacker_name);
-            r.key("defender_name"); r.value_string(it->defender_name);
+            r.key("attacker_name");
+            r.value_string(recorded_or_cached_name(it->attacker_name, it->attacker_id).c_str());
+            r.key("defender_name");
+            r.value_string(recorded_or_cached_name(it->defender_name, it->defender_id).c_str());
 
             // Participant arrays
             r.key("atk_participants"); r.begin_array();

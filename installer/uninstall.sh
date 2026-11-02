@@ -31,6 +31,10 @@ remove_pipx_copy() {
     rm -rf "$d/venvs/ck3agent"
     echo "removed $d/venvs/ck3agent"
   done
+  # pipx 1.8 keeps a lock file beside the venv and leaves it behind on uninstall
+  for d in "${PIPX_HOME:-$HOME/.local/share/pipx}" "${XDG_DATA_HOME:-$HOME/.local/share}/pipx" "$HOME/.local/pipx"; do
+    rm -f "$d/venvs/.ck3agent.lock"
+  done
 }
 remove_venv_copy() {
   local l="$bin/ck3agent" v

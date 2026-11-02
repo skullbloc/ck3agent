@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <fcntl.h>
+#include <chrono>
 #include <functional>
 #include <mutex>
 #include <shared_mutex>
@@ -145,10 +146,52 @@ inline int safe_read_fault_count() {
 inline uintptr_t safe_read_last_fault() {
     return g_safe_read_last_fault_addr;
 }
+// The fault record a nested bracket found on entry, added back on its exit
+// (FaultScope; L14 S4, audit 3(iii)): a handler reached from another handler
+// clears the flag for its own reads, and without this its exit left the
+// caller's record wiped. Added, not replaced: the caller (and the dispatch
+// wrapper, which says degraded for a handler that left no reply) still sees the
+// nested handler's faults on top of its own.
+struct SafeReadRecord { int count; uintptr_t last; };
+inline SafeReadRecord safe_read_save() {
+    return {g_safe_read_fault_count, g_safe_read_last_fault_addr};
+}
+inline void safe_read_restore(const SafeReadRecord& outer) {
+    if (g_safe_read_fault_count == 0) g_safe_read_last_fault_addr = outer.last;
+    g_safe_read_fault_count += outer.count;
+}
 // The bridge log (never a reply: a process VA defeats ASLR) names the last
 // unreadable address behind a degraded reply. On Windows a poisoned RVA
 // (CK3_WIN_UNMAPPED_N(i), top bits 0x7FF) carries i, report.json poison_index.
-void log_degraded_read(const char* action);
+// (Inline here, not in an engine-bound TU: every handler that answers a fault
+// calls it, and host tests link those handlers.)
+extern FILE* g_logfile;   // the bridge log (declared again below, with its peers)
+inline void log_degraded_read(const char* action) {
+    if (!g_logfile) return;
+    const unsigned long long a = safe_read_last_fault();
+    fprintf(g_logfile, "[CK3-Bridge] %s degraded: %d unreadable read(s), last addr=0x%llx", action,
+            safe_read_fault_count(), a);
+    if ((a >> 52) == 0x7FF)
+        fprintf(g_logfile, " (poisoned RVA: poison_index=%llu field_offset=0x%llx)", (a >> 40) & 0xFFF,
+                (a - g_base_addr) & 0xFFFFFFFFFFull);
+    fprintf(g_logfile, "\n");
+}
+
+// The reply for a read that faulted (ff3 N1): ONE string, answered by the
+// reader's sigsetjmp recovery (ipc_server.cpp) when a raw access faults and by
+// a handler whose safe_read faulted on a value it cannot answer without (an
+// actor id, a personality pointer, a war count, the idler's player id). A
+// fault is memory_access_fault whichever layer caught it, never a silent 0.
+inline constexpr const char MEMORY_ACCESS_FAULT_REPLY[] = "{\"error\":\"memory_access_fault\"}";
+
+// A handler's answer to safe_read_had_fault(): log it (log_degraded_read names
+// the last unreadable address in the bridge log) and answer
+// MEMORY_ACCESS_FAULT_REPLY. Returns false, the handler's result.
+inline bool answer_memory_access_fault(const char* action, std::string* out) {
+    log_degraded_read(action);
+    if (out) *out = MEMORY_ACCESS_FAULT_REPLY;
+    return false;
+}
 
 // Safe read using process_vm_readv — returns default T{} on unmapped memory.
 // Never crashes, even on completely invalid addresses.
@@ -321,7 +364,7 @@ inline bool game_rtti_name(uintptr_t vptr, char* out, size_t out_size) {
 #ifdef _WIN32
     uintptr_t col = safe_read<uintptr_t>(vptr - sizeof(uintptr_t));
     if (!col || !is_mapped(col) || safe_read<uint32_t>(col) != 1) return false;
-    uint32_t td_rva = safe_read<uint32_t>(col + 0x0C);
+    uint32_t td_rva = safe_read<uint32_t>(col + 0x0C);  // MSVC RTTI CompleteObjectLocator field, not a CPdxArray
     if (!td_rva) return false;
     char dec[128] = {};
     uintptr_t name = g_base_addr + td_rva + 0x10;
@@ -695,6 +738,41 @@ bool send_to_session_id(const char* session_id, const char* json_data, size_t le
 // Returns allocated buffer (caller frees) or nullptr if empty/timeout.
 char* dequeue_action(int timeout_ms = 0);
 
+// L13 D1: a game-state read runs on the GAME thread (the session-pass drain),
+// never on the IPC thread: the IPC thread hands it over with run_on_game_thread
+// and blocks on a condition variable (no spin) until the drain has run it, at
+// most kGameThreadReadWaitMs. The bound: an idle drain pass comes every ~5 ms
+// and a running one after each engine command (one daily tick), so a read that
+// has not run in 5 s means the drain is not running (a load holds the session
+// mutex, execute_commands is off, or there is no session-pass hook and the clock
+// is stopped). It stays under the clients' 8 s read deadline so that case
+// answers with a typed refusal instead of a socket timeout. On false nothing is
+// written to `out`, and a job still queued is abandoned (never run).
+inline constexpr int kGameThreadReadWaitMs = 5000;
+// L13 FF2 (witness R6): a game-thread job holds the session's command mutex for
+// its whole duration, so every engine command (the player's UI, the daily tick)
+// waits behind it. A long engine evaluation checks this budget BETWEEN engine
+// calls and, past it, stops and returns what it did plus what it did not reach
+// (partial results, named). 3 s stays well under kGameThreadReadWaitMs (5 s), so
+// the IPC thread gets the job's own answer, not a game_thread_timeout.
+inline constexpr int kGameThreadEvalBudgetMs = 3000;
+// True once `start` is kGameThreadEvalBudgetMs in the past.
+inline bool game_thread_budget_spent(std::chrono::steady_clock::time_point start) {
+    return std::chrono::steady_clock::now() - start >=
+           std::chrono::milliseconds(kGameThreadEvalBudgetMs);
+}
+
+// The one hint a slot query answers when the drain did not evaluate it in time.
+// It never tells the caller to run the clock (L13 W9): the drain runs paused.
+inline constexpr const char kDrainTimeoutHint[] =
+    "The game-thread drain did not evaluate the query in time (a load in progress, "
+    "or no session-pass hook and the clock stopped). Retry.";
+using GameThreadWork = std::function<void(std::string* out)>;
+bool run_on_game_thread(GameThreadWork work, int wait_ms, std::string* out);
+// The drain's side: run queued jobs, at most max_jobs and while budget_left().
+int run_game_thread_jobs(int max_jobs, const std::function<bool()>& budget_left);
+size_t game_thread_jobs_pending();
+
 // ck-6kvq.9: push a pre-built {"session_id":..,"actions":[..]} envelope onto the
 // SAME game-thread queue the reader thread uses, so the pipeline conductor's
 // DrainTick step hands its batch to the EXISTING drain
@@ -711,108 +789,84 @@ bool send_ipc_message(const std::string& json_msg);
 // Event Interception
 // =============================================================================
 
-// Event data sent to the agent when an event fires for the controlled character
-struct EventInfo {
-    char event_id[128];        // event type key (e.g. "feast_event.0001")
-    uint32_t target_char_id;   // character this event targets
-    int option_count;          // number of available options
-    char title[256];           // event title (loc key or extracted text)
-    char description[512];     // event description (truncated)
-    char option_texts[8][256]; // up to 8 option descriptions
-};
-
 // Initialize the event interception system (called from bridge_init)
 void init_event_handler();
 
 // Shutdown the event handler
 void shutdown_event_handler();
 
-// Send an event to the agent over IPC and wait for the agent's option choice.
-// Pauses the game while waiting. Returns chosen option index (0 on timeout).
-int send_event_and_wait(const EventInfo& event, int timeout_ms = 30000);
+// L13 D4: THE ONE CLOCK WRITE (event_handler.cpp). Every bridge write to the
+// pause flag, PAUSE_SET or the game speed goes through clock_write, which names
+// who asked; nothing else in the bridge reaches those primitives
+// (bridge/scripts/inline_safety_static.py fails a row on any other site).
+//   kind:   Pause, Unpause, or Speed (`speed` is the display speed 1-5; the
+//           primitive caps it at 3).
+//   origin: Session (the player's clock verbs), AutoRespond (the no-agent auto-respond fallback
+//           clearing the game's own event pause), ObserveMode (the operator's
+//           observer bring-up), Pipeline (the pre-registered pipeline's clock).
+// One count per call per origin, whether or not the state changed; get_tick_info
+// publishes them as clock_writes. A faulted read inside the primitive writes
+// nothing and leaves the fault counted for the caller to answer.
+enum class ClockWrite { Pause, Unpause, Speed };
+enum class ClockOrigin { Session = 0, AutoRespond = 1, ObserveMode = 2, Pipeline = 3 };
+void clock_write(ClockWrite kind, ClockOrigin origin, int speed = 0);
+struct ClockWriteCounts { uint64_t session = 0, auto_respond = 0, observe_mode = 0, pipeline = 0; };
+ClockWriteCounts clock_write_counts();
 
-// Pause/unpause the game (writes to CJominiIdler singleton)
-void game_pause();
-void game_unpause();
-void game_unpause_delayed(int delay_ms);  // Unpause after delay (via on_tick countdown)
-void check_delayed_unpause();             // Called from on_tick
+// The deferred PAUSE_SET(0) repeat an unpause queued (part of that one write);
+// called from the game-thread drain every pass.
+void check_delayed_unpause();
 
 // Check if the game is paused
 bool is_paused();
 
-// Auto-respond to pending player events (selects option 0, clears event-pause).
-// Called from on_tick in passthrough mode when g_auto_respond_events is true.
-// Returns the number of events dismissed.
+// Auto-respond to pending player events (clears the event pause; unpauses only
+// when that pause was holding the game). Called from the game-thread drain once
+// per daily tick when no agent is connected (L16: always on; its switch,
+// set_auto_respond_events, is deleted). Returns the number of events seen.
 int auto_respond_pending_events();
 
 // Poll pending events and send non-blocking notifications to the connected agent.
-// Called from on_tick when an agent is connected. Returns number of new events sent.
+// Called from the game-thread drain once per daily tick when an agent is
+// connected. Returns number of new events sent. Never touches the clock.
 int poll_and_notify_events();
-
-// Select an option for a pending event by instance_id.
-// Clears event-pause and unpauses the game. Returns true on success.
-bool select_event_option(uint32_t instance_id, int option_index);
-
-// Clear a sent event from the tracking set (called after agent responds).
-void clear_sent_event(uint32_t instance_id);
 
 // Clear all sent events (e.g., on agent disconnect).
 void clear_all_sent_events();
 
-// Set/get game speed (1-5, via game state root)
-void game_set_speed(int speed);
+// Read the game speed (internal 0-4); writes go through clock_write.
 int game_get_speed();
 
 // =============================================================================
-// Deferred-drain pause-transparency coordinator (deferred_drain.cpp)
+// The deferred-slot single-flight lock (deferred_drain.cpp)
 // =============================================================================
 //
-// A DEFERRED call (CB validity, acceptance, trigger/named-trigger eval, decision
-// eval, conquest-targets) is serviced on the GAME thread inside
-// drain_and_execute_intents(), which only runs while the sim ticks. Called while
-// the game is PAUSED, the call's bounded poll never sees a drain and either
-// returns a graceful timeout or (for the unclassified handlers) sat in the
-// g_msg_queue forever → client HANG.
-//
-// run_deferred_pause_transparent() makes every deferred call work from EITHER
-// pause state, transparently for all callers (agent, raw IPC, harness, suite):
-// it records the live {paused,speed}, and — only if paused — pulses the game
-// unpaused just long enough for on_tick → drain_and_execute_intents() to service
-// the request, then restores {paused,speed} EXACTLY on every exit path. Bounded
-// throughout (the I15 frozen-thread guard): a never-draining call returns a typed
-// status instead of hanging. No-op (just runs `service`) when already unpaused —
-// the common agent-loop hot path is untouched.
-//
-// `service` is the existing submit+poll closure; its return string is passed
-// through verbatim on success. On the pulse-failure paths the coordinator
-// synthesizes a typed JSON status into `out` (see DeferredDrainStatus).
+// A DEFERRED call (CB validity, acceptance, trigger eval, decision eval, faction
+// verdicts, interaction cascade) submits a game-thread query slot and polls for
+// the verdict. L13 D1: the handler runs on the game thread and services its own
+// slot there; query_interaction_check polls from the IPC thread while the drain
+// services its check intent. run_deferred_single_flight() runs the
+// call's submit+poll closure under ONE single-flight lock so two callers cannot
+// interleave on a slot. It never touches the clock.
 enum class DeferredDrainStatus {
-    Ok,                // pulse (if any) started a tick; service() ran — `out` is service()'s result
-    DrainUnavailable,  // pulse-start budget elapsed with NO tick (idler null / load/menu) — sim not live
-    BusyDeferred,      // the single-flight lock was held past the lock budget
+    Ok = 0,            // service() ran — `out` is service()'s result
+    // 1 was DrainUnavailable (the pause pulse found no tick), retired with the
+    // pulse in L13; the value of BusyDeferred is kept so the pinned pre-fix
+    // control in scripts/acceptance_deferred_refusal.py compares equal.
+    BusyDeferred = 2,  // the single-flight lock was held past the lock budget
 };
 
-// Run `service` under the record→pulse→drain→restore critical section.
-// On return:
-//   - Ok               : *out holds whatever `service` wrote (its own typed result,
-//                        including its own graceful drain_timeout if it timed out).
-//   - DrainUnavailable : *out holds a synthesized {status:"drain_unavailable",...}
-//                        and `service` was NOT run (the world isn't ticking).
-//   - BusyDeferred     : *out holds a synthesized {status:"busy_deferred",...}
-//                        and `service` was NOT run.
-// The function NEVER blocks longer than (lock budget + pulse-start budget +
-// service's own bounded poll). Crash-proof: pulse/restore engine calls are the
-// fault-guarded event_handler.cpp primitives; the lock/refcount are pure C++.
-DeferredDrainStatus run_deferred_pause_transparent(
+// Run `service` under the single-flight lock. On return:
+//   - Ok           : *out holds whatever `service` wrote (its own typed result,
+//                    including its own graceful timeout if it timed out).
+//   - BusyDeferred : *out holds a synthesized {status:"busy_deferred",...}
+//                    and `service` was NOT run.
+// Never blocks longer than the lock budget plus service's own bounded poll.
+DeferredDrainStatus run_deferred_single_flight(
     const std::function<void(std::string*)>& service,
     std::string* out);
 
-// Spin-read g_tick_id against a captured baseline; return true once it advances
-// past `baseline_tick` within `budget_ms`, false otherwise. Used by the
-// coordinator's pulse-start budget (mirror of the gateway's _await_tick_advance).
-bool await_tick_advance(uint64_t baseline_tick, int budget_ms);
-
-// ck-p2sb. HOW MANY TIMES EACH TYPED REFUSAL FIRED, so that its ABSENCE can be
+// ck-p2sb. HOW MANY TIMES THE TYPED REFUSAL FIRED, so that its ABSENCE can be
 // read as evidence. Before this, `busy_deferred` existed ONLY in the reply frame
 // it was written into — and on this socket every queued response is broadcast
 // with request_id as the only discriminator (ipc_server.cpp:1507), so a wedged
@@ -820,14 +874,13 @@ bool await_tick_advance(uint64_t baseline_tick, int budget_ms);
 // episode" was a sentence nobody could say.
 //
 // THREE STATES, as everywhere else: a bridge too old to report these keys says
-// NOTHING (the keys are absent); 0 means the bridge looked and neither refusal
-// fired; N is N refusals. Reported by get_bridge_state. Instrumentation only —
+// NOTHING (the key is absent); 0 means the bridge looked and it never fired;
+// N is N refusals. Reported by get_bridge_state. Instrumentation only —
 // reading them has no behavioural effect, and they are never reset.
 extern std::atomic<uint64_t> g_busy_deferred_count;
-extern std::atomic<uint64_t> g_drain_unavailable_count;
 
-// True for actions whose real work is serviced on the game thread post-tick and
-// therefore need the deferred-drain coordinator's pulse when called paused.
+// True for the deferred-slot submitters (see above); ipc_server.cpp dispatches
+// each under run_deferred_single_flight.
 // Defined in deferred_drain.cpp.
 bool is_deferred_drain_action(const char* action_type);
 
@@ -872,33 +925,57 @@ void bridge_init();
 void bridge_shutdown();
 
 // Main tick hook — called each game tick instead of the original AI tick
+// (CAIManager::MainTick, one job of the daily tick's parallel-for). It keeps
+// only what must bracket the engine's AI tick; the rest runs in
+// drain_game_thread_work().
 void on_tick(void* ai_manager);
+
+// L13 D1: the bridge's serial game-thread work (bridge_init.cpp): the queued
+// IPC actions, the game-thread reads, the intent/slot drain, the delayed
+// PAUSE_SET repeat, name resolution, intent maintenance and the pulse-ledger
+// sweep. Called from the session-pass hook after every CSession_ThreadLoop
+// pass, under the session's command mutex, paused or running; without the hook
+// (refused, or Windows) from on_tick after the AI tick. Refuses (logged once)
+// on any thread but the one it first ran on while the hook is live.
+void drain_game_thread_work();
+// True once the session-pass hook is installed and has not been removed.
+bool session_pass_hook_live();
 
 // Initialize action dispatch function pointers (called during bridge_init)
 void init_action_dispatch();
-
-// Per-character subsystem mask API
-bool set_character_subsystems(uint32_t char_id, const char* params_json);
-bool get_character_subsystems(uint32_t char_id, std::string* response_out);
 
 // =============================================================================
 // War Score Breakdown Cache (war_score_hook.cpp)
 // =============================================================================
 
+// Every field is in war-score percentage points, the unit the engine sums in
+// ComputeTotalWarScore (FUN_066ba0d0, re/findings/re_war.md §8):
+//   total = clamp(imp(atk) - imp(def) + battle + occ(atk) - occ(def) + ticking
+//                 + landless, -100, +100)
+// battle, ticking and landless are already net (attacker minus defender) and
+// live in the *_atk field; their *_def field is 0.
 struct WarScoreBreakdown {
-    int imprisonment_atk;   // ImprisonmentScore(war, 0, 0) — fixed-point /1000
+    int imprisonment_atk;   // ImprisonmentScore(war, 0, 0)
     int imprisonment_def;   // ImprisonmentScore(war, 1, 0)
-    int battle_atk;         // BattleScore(war, 0, 0)
-    int battle_def;         // BattleScore(war, 1, 0)
+    int battle_atk;         // BattleScore(war, 0): net
+    int battle_def;         // 0
     int occupation_atk;     // OccupationScore(war, 0, 0)
     int occupation_def;     // OccupationScore(war, 1, 0)
-    int ticking_atk;        // TickingWarScore(war, 0, 0)
-    int ticking_def;        // TickingWarScore(war, 1, 0)
-    int landless_atk;       // LandlessArmiesLost(war, 0, 0)
-    int landless_def;       // LandlessArmiesLost(war, 1, 0)
-    int total;              // clamped sum as percentage [-100, +100]
+    int ticking_atk;        // ticking accumulators read raw: net
+    int ticking_def;        // 0
+    int landless_atk;       // LandlessArmiesLost(war, 0): net
+    int landless_def;       // 0
+    int total;              // the engine's clamped sum [-100, +100]
     uint64_t cached_tick;
 };
+
+// The net components, attacker minus defender, in war-score points: the one
+// definition every reply that shows the breakdown uses.
+inline int war_score_imprisonment_net(const WarScoreBreakdown& b) { return b.imprisonment_atk - b.imprisonment_def; }
+inline int war_score_battle_net(const WarScoreBreakdown& b)       { return b.battle_atk + b.battle_def; }
+inline int war_score_occupation_net(const WarScoreBreakdown& b)   { return b.occupation_atk - b.occupation_def; }
+inline int war_score_ticking_net(const WarScoreBreakdown& b)      { return b.ticking_atk + b.ticking_def; }
+inline int war_score_landless_net(const WarScoreBreakdown& b)     { return b.landless_atk + b.landless_def; }
 
 // Why on_war_score_update last declined to refresh a war's breakdown (ck-xwlg).
 enum class WarScoreRejectReason : uint8_t {
@@ -949,6 +1026,10 @@ void init_council_suppress_hook();
 // Initialize per-character off-goal routine-war veto hook (re_offgoal_veto_FINAL.md;
 // first-tick deferred init). Ships INERT behind g_offgoal_veto_enabled (default false).
 void init_offgoal_war_veto_hook();
+
+// Install the liege's demand-response hook on AI_PICK_EVENT_OPTION (factions.cpp;
+// first-tick deferred init). Inert until set_faction_demand_response names a liege.
+void init_faction_demand_hook();
 
 // Per-ruler council-lock release (council_suppress_hook.cpp). Declared here too so
 // the on_tick dead-ruler handoff path (bridge_init.cpp) can clear a stale lock when
@@ -1027,7 +1108,6 @@ bool queue_intent(uint32_t actor_id, uint32_t target_id,
                   uint32_t claimant_id = 0, int cb_index = -1,
                   uint32_t secondary_actor_id = 0, uint32_t secondary_recipient_id = 0,
                   int title_id = -1,
-                  bool debug_all_paths = false,
                   IntentType intent_type = IntentType::INTERACTION);
 
 // Get count of pending intents
@@ -1069,7 +1149,6 @@ const char* session_state_string();
 
 extern std::atomic<bool> g_initialized;
 extern std::atomic<bool> g_agent_mode;   // true = agent controls AI, false = passthrough
-extern std::atomic<bool> g_auto_respond_events;  // true = auto-dismiss pending events in passthrough mode
 extern std::atomic<uint64_t> g_tick_id;
 
 // #123: live "tick":N,"game_date":"YYYY.MM.DD" JSON fragment (no surrounding

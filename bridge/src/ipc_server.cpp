@@ -8,6 +8,7 @@
 #include "observation_route.h"   //: ck-h4pn
 #include "inflight.h"
 #include "reply_record.h"
+#include "host_pressure.h"
 #include "refusal_code.h"
 #include "refusal_record.h"
 #include "skip_held_heir.h"
@@ -57,6 +58,9 @@
 #include <time.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <functional>
+#include <memory>
 
 #ifdef _WIN32
 // ── ADR 0001 P5: the Windows transport ─────────────────────────────────────
@@ -159,12 +163,12 @@ thread_local bridge::SendOutcome* g_last_send_outcome = nullptr;
 
 // #123: live tick + game_date stamping for EVERY response.
 //
-// The MCP-side envelope {ok,data,error,tick,game_date} reads its tick/game_date
-// from cached tick_start/observation pushes — but while the game is PAUSED (the
-// required state for reads) the bridge pushes no tick_start, so the cache stays
-// 0/"unknown" and EVERY non-get_tick_info response carries stale values.
+// The MCP-side envelope {ok,data,error,tick,game_date} carries the tick and date
+// of the reply itself. A cache of tick_start / observation pushes cannot supply
+// them: no tick runs while the game is paused, so such a cache keeps the last
+// running tick's values (or 0/"unknown").
 //
-// Fix: stamp the LIVE tick + date into the common response-emit path (right where
+// So the LIVE tick + date are stamped into the common response-emit path (right where
 // request_id is injected), so every handler's reply carries them uniformly. This
 // reads the same global game-clock do_get_tick_info reads. Returns a JSON fragment
 // like  "tick":1234,"game_date":"1097.03.21",  (no leading/trailing comma) so the
@@ -516,11 +520,11 @@ static std::string handshake_provenance_fields() {
         "CK3_BOARD_ENABLED", "CK3_BOARD_CARRIER_PATH", "CK3_BOARD_MAX_POST_BYTES",
         "CK3_BOARD_MAX_POSTS_PER_EPISODE", "CK3_BOARD_MAX_POSTS_PER_FLUSH",
         "CK3_BOARD_ADMIN_TOKEN",
-        "CK3_STRICT_BUILD_ID", "CK3_BRIDGE_STRICT", "CK3_SUPPRESS_AUTO_UNPAUSE",
+        "CK3_STRICT_BUILD_ID", "CK3_BRIDGE_STRICT",
         "CK3_INSTANCE_LAYOUT", "CK3_INSTANCE_ID", "CK3_INSTANCE_ROOT", "CK3_INSTANCE_DIR",
         "CK3_BRIDGE_SOCKET", "CK3_BRIDGE_PORT", "CK3_TELE", "CK3_BRIDGE_LOG", "CK3_BRIDGE_LOG_ARCHIVE_DIR",
         "CK3_BRIDGE_SEND_TIMEOUT_MS", "CK3_BRIDGE_TRACE", "CK3_AI_WATCH",
-        "CK3_LAW_TRIGGER_HARVEST", "CK3_TRIGGER_CATALOGUE_CSV",
+        "CK3_LAW_TRIGGER_HARVEST",
         "CK3_UNAVAIL_ANOMALY_WALL_S", "CK3_UNAVAIL_EXCLUSION_FRACTION", "CK3_UNAVAIL_X_DAYS",
         "BRIDGE_DISTRUST_INNER_CB_VALIDITY", "BRIDGE_NO_PER_CB_OUTER_TRIGGER",
         "BRIDGE_NO_STAGE2_GROUP_TRIGGER", "BRIDGE_NO_STAGE3_KIND_RELATION_MODE",
@@ -1051,18 +1055,17 @@ static bool send_to_slot(int idx, uint32_t gen, const char* json_data, size_t le
     return true;
 }
 
-// Try to process a message inline if it contains only safe read-only queries.
-// Returns true if processed (response sent), false if it should be queued.
-// This allows queries to be answered even when the game is paused (no on_tick).
+// Try to serve an envelope from the IPC thread. Returns true if processed
+// (every reply sent), false if it should be queued for the game thread.
 //
-// SNAPSHOT INTEGRATION (data race fix):
-// When the game is UNPAUSED, parallel AI workers are mutating game objects.
-// Reading those objects from this IPC thread is a data race -> crash.
-//
-// Query classification:
-//   TIER 1 (bridge-internal): Always safe, serve directly.
-//   TIER 2 (game-state): Try snapshot first. If miss, serve live ONLY if paused.
-//   TIER 3 (mutating actions): Must queue for game thread. Not handled here.
+// L13 D1 — one execution thread for game objects. Classification:
+//   TIER 0/1 (is_bridge_internal_query): bridge state, intent enqueuers that poll,
+//     and the deferred-slot submitters; served HERE, on the IPC thread, in any
+//     clock state. A handler that polls must never run on the thread it waits for.
+//   TIER 2 (is_game_state_query): object-graph reads; handed to the game thread
+//     (run_on_game_thread -> the session-pass drain) and waited for, paused or
+//     running. The reply is built and sent here, byte for byte as before.
+//   Everything else (is_game_thread_action and the unclassified) is queued.
 // ck-324r: LEDGER THE MANAGEMENT VERBS.
 //
 // session(control) and session(release) leave NO ROW in actions.jsonl, and the
@@ -1157,6 +1160,47 @@ static void emit_management_ledger_record(const char* verb,
     broadcast_observation(frame.c_str(), frame.size());
 }
 
+// L13 D1: run one handler on the game thread (the session-pass drain) and wait
+// for it, at most kGameThreadReadWaitMs; a drain that did not run it answers a
+// typed game_thread_timeout (and the job, still queued, is abandoned). The
+// originating session is reinstalled there by id; the dispatch is
+// sigsetjmp-guarded on the thread that runs it.
+static void serve_on_game_thread(const char* action, const std::string& inner_json,
+                                 const std::string& sid, std::string* out) {
+    const std::string atype(action);
+    const bool ran = run_on_game_thread(
+        [atype, inner_json, sid](std::string* o) {
+            bridge::ClientContext c;
+            c.session = sid.empty() ? nullptr : bridge::g_session_registry.find(sid.c_str());
+            bridge::ClientContextGuard ctx_guard(&c);
+            g_in_protected_region = true;
+            // savesigs=1: restore the signal mask on siglongjmp so SIGSEGV
+            // is not left blocked on the game thread after a recovery.
+            if (sigsetjmp(g_recovery_point, 1) == 0) {
+                dispatch_action_with_response(atype.c_str(), inner_json.c_str(), o);
+            } else {
+                *o = MEMORY_ACCESS_FAULT_REPLY;
+                if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                    "[CK3-Bridge] SIGSEGV in game-thread read: %s\n", atype.c_str());
+            }
+            g_in_protected_region = false;
+        },
+        kGameThreadReadWaitMs, out);
+    if (!ran) {
+        char err[512];
+        snprintf(err, sizeof(err),
+            "{\"error\":\"game_thread_timeout\",\"action\":\"%s\",\"waited_ms\":%d,"
+            "\"hint\":\"The game-thread drain did not run this read in time "
+            "(a load in progress, or no session-pass hook and the clock stopped). "
+            "Nothing was read.\"}",
+            action, kGameThreadReadWaitMs);
+        *out = err;
+        if (bridge::g_logfile) fprintf(bridge::g_logfile,
+            "[CK3-Bridge] game-thread read NOT RUN within %d ms: %s (jobs pending=%zu)\n",
+            kGameThreadReadWaitMs, action, game_thread_jobs_pending());
+    }
+}
+
 static bool try_inline_safe_query(const std::string& msg,
                                   bridge::Session* session) {
     // Parse the envelope with rapidjson
@@ -1170,27 +1214,15 @@ static bool try_inline_safe_query(const std::string& msg,
     const rapidjson::Value& actions = envelope["actions"];
     if (actions.Empty()) return false;
 
-    bool game_paused = is_paused();
-
-    // First pass: verify ALL actions are servable inline. Reject (→ game-thread
-    // queue) if any action is a mutating game-thread action OR an UNPAUSED
-    // game-graph-walking deferred read (query_dejure_progress /
-    // query_conquest_targets — race-free only on the game-thread drain when the
-    // sim is live). A deferred-drain action is admitted inline when it is either
-    // IPC-thread-safe (is_bridge_internal_query — any state) or the game is
-    // currently paused (graph-walker, paused-safe → coordinator pulses & drains).
+    // First pass: serve inline only when EVERY action is an IPC-thread call or a
+    // game-thread read; anything else sends the whole envelope to the queue.
     for (rapidjson::SizeType i = 0; i < actions.Size(); i++) {
         const rapidjson::Value& inner = actions[i];
         if (!inner.IsObject() || !inner.HasMember("action") || !inner["action"].IsString()) {
             return false;
         }
         const char* atype = inner["action"].GetString();
-        bool deferred_inline_ok =
-            is_deferred_drain_action(atype) &&
-            (is_bridge_internal_query(atype) || game_paused);
-        if (!is_bridge_internal_query(atype) &&
-            !is_game_state_query(atype) &&
-            !deferred_inline_ok) {
+        if (!is_bridge_internal_query(atype) && !is_game_state_query(atype)) {
             return false;  // Not a query we can serve inline (falls through to queue)
         }
     }
@@ -1227,29 +1259,6 @@ static bool try_inline_safe_query(const std::string& msg,
 
         std::string response_out;
 
-        // --- TIER 0: Deferred game-thread calls — pause-transparent drain ---
-        // CB validity / acceptance / trigger / decision-eval / conquest-targets
-        // do their real work on the game thread inside drain_and_execute_intents,
-        // which only runs while the sim ticks. run_deferred_pause_transparent()
-        // records {paused,speed}, pulses unpaused so on_tick drains the request,
-        // then restores {paused,speed} exactly — so these work identically from
-        // either pause state, for every caller. Bounded (never hangs): a sim that
-        // is not live returns a typed drain_unavailable; a wedged lock returns
-        // busy_deferred. This MUST run before the Tier-1 check because the
-        // bounded-poll deferred queries are also is_bridge_internal_query and would
-        // otherwise be served WITHOUT the pulse (and time out while paused).
-        //
-        // UNPAUSED carve-out: the two game-GRAPH-walking read handlers
-        // (query_dejure_progress, query_conquest_targets) traverse live game
-        // objects in their own handler body. While UNPAUSED, that body racing the
-        // parallel AI workers must NOT run on the IPC thread — their proven
-        // race-free path is the game-thread g_msg_queue drain (which already works
-        // unpaused). So when the game is unpaused we let those fall through to the
-        // queue (return false → queued); only the PAUSED case (where the game
-        // thread is parked) takes the pulse-and-drain path here. The bounded-poll
-        // deferred queries are IPC-thread-safe (their handler only touches the
-        // g_cb_query/etc. slot; the graph work is on the game thread), so they take
-        // the coordinator inline in EITHER state.
         // ck-qnft: record the in-flight request for the WHOLE dispatch below,
         // before any branch is chosen. It has to cover every tier: the timeout
         // we are chasing named get_tick_info (Tier 1) while the thread was
@@ -1257,25 +1266,41 @@ static bool try_inline_safe_query(const std::string& msg,
         // slow-looking paths would miss precisely the case it exists for.
         bridge::InflightScope inflight_scope(action_type_buf, request_id);
 
-        const bool ipc_safe_deferred = is_bridge_internal_query(action_type_buf);
-        if (is_deferred_drain_action(action_type_buf) &&
-            (game_paused || ipc_safe_deferred)) {
+        std::string sid;
+        if (session) {
+            std::lock_guard<std::mutex> lk(session->mutex);
+            sid = session->session_id;
+        }
+
+        // --- TIER 0: the deferred calls, under the single-flight lock ---
+        // CB validity / acceptance / trigger / decision-eval / faction / cascade
+        // submit a game-thread query slot and poll for its verdict. L13 D1: they
+        // are game-thread reads now (is_game_state_query), so the whole handler
+        // runs in the drain and services its own slot there
+        // (service_slots_if_game_thread); query_interaction_check, which enqueues
+        // a check INTERACTION intent and polls for it, stays on this thread (it
+        // could not poll from the thread that drains). Both keep the deferred
+        // single-flight lock, taken here. This runs before Tier 1/2 because the
+        // deferred set overlaps both.
+        if (is_deferred_drain_action(action_type_buf)) {
             if (bridge::g_trace && bridge::g_logfile) fprintf(bridge::g_logfile,
-                "[CK3-Bridge] Inline query (deferred-drain, paused=%d): %s (request_id=%s)\n",
-                game_paused ? 1 : 0, action_type_buf, request_id);
-            // The dispatch closure is sigsetjmp-guarded the same way the Tier-1/2
-            // paths are; the coordinator adds only the fault-guarded pause/unpause/
-            // speed primitives around it.
+                "[CK3-Bridge] Inline query (deferred-drain): %s (request_id=%s)\n",
+                action_type_buf, request_id);
+            const bool on_game_thread_class = is_game_state_query(action_type_buf);
             const char* atype_local = action_type_buf;
             const std::string& inner_json_local = inner_json;
-            bridge::run_deferred_pause_transparent(
+            bridge::run_deferred_single_flight(
                 [&](std::string* o) {
+                    if (on_game_thread_class) {
+                        serve_on_game_thread(atype_local, inner_json_local, sid, o);
+                        return;
+                    }
                     g_in_protected_region = true;
                     if (sigsetjmp(g_recovery_point, 1) == 0) {
                         dispatch_action_with_response(atype_local,
                                                       inner_json_local.c_str(), o);
                     } else {
-                        *o = "{\"error\":\"memory_access_fault\"}";
+                        *o = MEMORY_ACCESS_FAULT_REPLY;
                     }
                     g_in_protected_region = false;
                 },
@@ -1289,7 +1314,7 @@ static bool try_inline_safe_query(const std::string& msg,
             if (sigsetjmp(g_recovery_point, 1) == 0) {
                 dispatch_action_with_response(action_type_buf, inner_json.c_str(), &response_out);
             } else {
-                response_out = "{\"error\":\"memory_access_fault\"}";
+                response_out = MEMORY_ACCESS_FAULT_REPLY;
             }
             g_in_protected_region = false;
             // ck-324r: the two management verbs get a ledger row here, because
@@ -1297,91 +1322,18 @@ static bool try_inline_safe_query(const std::string& msg,
             emit_management_ledger_record(action_type_buf, request_id,
                                           response_out, session);
 
-        // --- TIER 2: Game-state queries (live reads only, no snapshot) ---
+        // --- TIER 2: Game-state reads — on the game thread, in either clock state ---
+        // The read runs inside the session-pass drain: serial with every engine
+        // command and the whole daily tick, so it can neither race the AI
+        // workers nor see a half-applied tick (which is why the #93 torn-read
+        // re-read and the paused-only gate are gone). The originating session
+        // is reinstalled there by id. The drain refreshes the readable-range
+        // table before reads (bridge_init.cpp refresh_ranges_for_reads).
         } else if (is_game_state_query(action_type_buf)) {
-            if (game_paused) {
-                // Game paused: no parallel workers, safe to read live memory
-                if (bridge::g_trace && bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Inline query (paused, live): %s (request_id=%s)\n",
-                        action_type_buf, request_id);
-                // #93: transient-read guard. is_paused() flips the instant a pause is
-                // REQUESTED, before the engine's in-flight on_tick (which launched
-                // parallel AI workers) has joined. During that unpause->pause settling
-                // window the live read can catch half-updated volatile fields (liege_id,
-                // realm_size, domain/vassal counts) — the spurious "vassalized" /
-                // transient-realm-size values the journals record then retract.
-                // g_tick_id increments only at the top of on_tick and is frozen when
-                // truly paused, so a change across the read means an in-flight tick
-                // fired DURING it => the result may be torn. We snapshot it, read once,
-                // and if the tick moved we re-read into a second buffer and only trust a
-                // byte-identical pair; otherwise we flag settled=false so the agent does
-                // not record the volatile values. Pure reads, bounded to one extra
-                // dispatch on the rare racing case, no new engine calls.
-                uint64_t t0 = bridge::g_tick_id.load(std::memory_order_acquire);
-                g_in_protected_region = true;
-                // savesigs=1: restore signal mask on siglongjmp so SIGSEGV isn't
-                // left blocked on this thread after the recovery (matches the
-                // other callsites in bridge_init.cpp / this file).
-                if (sigsetjmp(g_recovery_point, 1) == 0) {
-                    dispatch_action_with_response(action_type_buf, inner_json.c_str(), &response_out);
-                } else {
-                    response_out = "{\"error\":\"memory_access_fault\"}";
-                    if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] SIGSEGV in inline query: %s\n", action_type_buf);
-                }
-                g_in_protected_region = false;
-
-                uint64_t t1 = bridge::g_tick_id.load(std::memory_order_acquire);
-                if (t1 != t0 && !response_out.empty() &&
-                    response_out.compare(0, 8, "{\"error\"") != 0) {
-                    // A tick fired during the read — the snapshot may be torn. Re-read
-                    // once and confirm: trust only a byte-identical pair (mutation
-                    // quiesced); otherwise mark the response unsettled.
-                    std::string confirm_out;
-                    uint64_t t2 = bridge::g_tick_id.load(std::memory_order_acquire);
-                    g_in_protected_region = true;
-                    if (sigsetjmp(g_recovery_point, 1) == 0) {
-                        dispatch_action_with_response(action_type_buf, inner_json.c_str(), &confirm_out);
-                    } else {
-                        confirm_out.clear();
-                    }
-                    g_in_protected_region = false;
-                    uint64_t t3 = bridge::g_tick_id.load(std::memory_order_acquire);
-
-                    bool stable = (t3 == t2) && !confirm_out.empty() &&
-                                  (confirm_out == response_out);
-                    if (stable) {
-                        // Second read agrees and no tick crossed it — trust it.
-                        response_out = confirm_out;
-                    } else {
-                        // Still racing: surface the latest read but flag it unsettled so
-                        // the agent does not record volatile fields from it.
-                        if (!confirm_out.empty() &&
-                            confirm_out.compare(0, 8, "{\"error\"") != 0) {
-                            response_out = confirm_out;
-                        }
-                        if (!response_out.empty() && response_out[0] == '{') {
-                            // Inject top-level "settled":false right after the opening brace.
-                            std::string flagged = "{\"settled\":false,";
-                            flagged.append(response_out, 1, std::string::npos);
-                            response_out.swap(flagged);
-                        }
-                        if (bridge::g_trace && bridge::g_logfile)
-                            fprintf(bridge::g_logfile,
-                                "[CK3-Bridge] transient-read guard: %s racing (t0=%llu t1=%llu t3=%llu) -> settled=false\n",
-                                action_type_buf,
-                                (unsigned long long)t0, (unsigned long long)t1,
-                                (unsigned long long)t3);
-                    }
-                }
-            } else {
-                // Game unpaused: refuse query, tell agent to pause first
-                char err[512];
-                snprintf(err, sizeof(err),
-                    "{\"error\":\"game_unpaused\","
-                    "\"action\":\"%s\","
-                    "\"hint\":\"Game is unpaused. Pause before querying game state.\"}",
-                    action_type_buf);
-                response_out = err;
-            }
+            if (bridge::g_trace && bridge::g_logfile) fprintf(bridge::g_logfile,
+                "[CK3-Bridge] Inline query (game thread): %s (request_id=%s)\n",
+                action_type_buf, request_id);
+            serve_on_game_thread(action_type_buf, inner_json, sid, &response_out);
         }
 
         // ck-xm08: trace dispatch → inject → send_observation for bridge_timeout triage.
@@ -1437,137 +1389,29 @@ static bool try_inline_safe_query(const std::string& msg,
     return true;
 }
 
-// ck-09q4u.9: Tier-3 paused-precondition rejection.
-//
-// Tier-3 game-thread actions (currently change_realm_law — see
-// is_game_thread_action in snapshot.cpp) are not safe to execute inline from
-// the reader thread; they call engine functions that must run on the game
-// thread. The reader queues them to g_msg_queue and on_tick drains the queue.
-//
-// But on_tick only fires while the game is unpaused. If the agent dispatches
-// a Tier-3 action while the game is paused, the message sits in g_msg_queue
-// forever and the agent times out — with no signal from the bridge about why.
-//
-// Worse: do_unpause_game returns success even when the underlying
-// game_unpause() silently no-ops (CJominiIdler singleton null in
-// load/menu/transition states). So an agent that "unpaused" right before the
-// Tier-3 action can be paused without knowing it.
-//
-// This helper catches both cases: it inspects the envelope and, if any action
-// is classified is_game_thread_action AND the game is currently paused,
-// rejects the entire envelope inline with a structured `game_paused` error.
-// The agent gets fast, actionable feedback ("unpause first, then retry")
-// instead of a 10s timeout.
-//
-// Returns true if the envelope was handled (rejection sent), false if the
-// caller should fall through to its normal queue path.
-static bool try_game_thread_paused_rejection(const std::string& msg) {
-    rapidjson::Document envelope;
-    envelope.Parse<rapidjson::kParseIterativeFlag>(msg.c_str());
-    if (envelope.HasParseError() || !envelope.IsObject()) return false;
-    if (!envelope.HasMember("actions") || !envelope["actions"].IsArray()) return false;
-
-    const rapidjson::Value& actions = envelope["actions"];
-    if (actions.Empty()) return false;
-
-    // Require ALL inner actions to be game-thread actions. Mixed envelopes are
-    // exotic in practice (the BridgeSession + LLM agent both send single-action
-    // envelopes) and we don't want to partially-reject a multi-action batch.
-    for (rapidjson::SizeType i = 0; i < actions.Size(); i++) {
-        const rapidjson::Value& inner = actions[i];
-        if (!inner.IsObject() || !inner.HasMember("action") || !inner["action"].IsString()) {
-            return false;
-        }
-        if (!is_game_thread_action(inner["action"].GetString())) {
-            return false;
-        }
-    }
-
-    // All actions are game-thread. If the game is unpaused, on_tick will
-    // drain normally — fall through to the queue.
-    if (!is_paused()) return false;
-
-    // Game is paused: emit one rejection per inner action, preserving
-    // request_id when supplied (matches the inline path in
-    // try_inline_safe_query).
-    for (rapidjson::SizeType i = 0; i < actions.Size(); i++) {
-        const rapidjson::Value& inner = actions[i];
-        const char* action_type = inner["action"].GetString();
-
-        char request_id[128] = {};
-        if (inner.HasMember("request_id") && inner["request_id"].IsString()) {
-            const char* rid_str = inner["request_id"].GetString();
-            size_t rid_len = inner["request_id"].GetStringLength();
-            if (rid_len >= sizeof(request_id)) rid_len = sizeof(request_id) - 1;
-            memcpy(request_id, rid_str, rid_len);
-            request_id[rid_len] = '\0';
-        }
-
-        std::string resp;
-        resp.reserve(256);
-        resp += '{';
-        if (request_id[0]) {
-            resp += "\"request_id\":\"";
-            resp += request_id;
-            resp += "\",";
-        }
-        resp += build_envelope_clock_fragment();  // #123: "tick":N,"game_date":"..."
-        resp += ',';
-        resp += "\"success\":false,\"action\":\"";
-        resp += action_type;
-        resp += "\",\"reason\":\"game_paused\","
-                "\"hint\":\"Tier-3 action requires unpaused game; "
-                "on_tick drains the queue while ticking. "
-                "Call unpause_game (and verify is_paused() flipped) before retrying.\"}";
-
-        send_observation(resp.c_str(), resp.size());
-
-        if (bridge::g_logfile) {
-            fprintf(bridge::g_logfile,
-                "[CK3-Bridge] Tier-3 paused-precondition reject: action=%s rid=%s "
-                "(on_tick won't drain while paused)\n",
-                action_type, request_id[0] ? request_id : "(none)");
-            fflush(bridge::g_logfile);
-        }
-    }
-
-    return true;
-}
-
 // D1-C + N1 + N2 (bridge-investigation-20260801): last-line guard on the
 // g_msg_queue fall-through.
 //
-// Anything that reaches this point would be pushed to g_msg_queue, which
-// on_tick drains ONLY while the game is unpaused. Two hang classes lived here:
+// Anything that reaches this point would be pushed to g_msg_queue, which the
+// game-thread drain empties every session pass, paused or running (L13).
 //
 //   D1-C: an UNREGISTERED action name (query_titles, overlay's query_title,
-//   any typo) has no handler at all — queued while paused it never drains and
-//   the caller times out with no reply; even unpaused it wastes a tick just to
-//   learn "unknown_action". We fast-fail these inline in ANY pause state via
+//   any typo) has no handler at all — queued it would only learn
+//   "unknown_action" from the drain. We fast-fail these inline via
 //   is_registered_action() (dispatch_router.cpp — generated from the same
 //   table as the dispatch chain, so it cannot drift). Deliberately NOT gated
 //   on the snapshot.cpp classifier lists: legit Tier-3/unclassified actions
 //   must still queue.
 //
-//   N1: a REGISTERED action in no classifier (the 22-name audit batch, now
-//   classified — this guard is the belt-and-braces for the NEXT unclassified
-//   one) queued while paused also never drains. While paused we reject it
-//   inline with the same typed `game_paused` shape the Tier-3 rejection uses,
-//   so the CLASS of silent paused hangs is dead even for future omissions.
-//   While UNPAUSED, registered actions fall through untouched — queueing
-//   behavior is byte-identical to before.
-//
 //   N2 rider: "handshake" sent as an ACTION lands here too (it is not a
 //   registered action) and gets a typed redirect instead of the historical
 //   silent stall.
 //
-// Envelopes are consumed whole or not at all (mirrors
-// try_game_thread_paused_rejection): a partially-rejected envelope would
-// still queue and the drain would then emit duplicate replies for the
-// rejected members. Concretely: while paused every member gets a typed reply
-// (unknown_action or game_paused); while unpaused the envelope is consumed
-// only when ALL members are unregistered (pure unknown_action batch), else it
-// falls through to the queue exactly as before.
+// Envelopes are consumed whole or not at all: a partially-rejected envelope
+// would still queue and the drain would then emit duplicate replies for the
+// rejected members. So the envelope is consumed only when ALL members are
+// unregistered (a pure unknown_action batch); a mixed one queues, and the
+// drain answers its unknown members with unknown_action.
 //
 // Returns true if the envelope was handled (replies sent), false if the
 // caller should fall through to its normal queue path.
@@ -1580,8 +1424,6 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
     const rapidjson::Value& actions = envelope["actions"];
     if (actions.Empty()) return false;
 
-    const bool game_paused = is_paused();
-
     bool all_unregistered = true;
     for (rapidjson::SizeType i = 0; i < actions.Size(); i++) {
         const rapidjson::Value& inner = actions[i];
@@ -1593,17 +1435,14 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
         }
     }
 
-    // Unpaused + at least one registered member: the queue drains normally on
-    // the next tick — keep today's behavior exactly (a mixed envelope's
-    // unknown members still get their unknown_action from the drain).
-    if (!game_paused && !all_unregistered) return false;
+    if (!all_unregistered) return false;
 
     // Consume the envelope: one typed reply per inner action, preserving
-    // request_id when supplied (matches try_game_thread_paused_rejection).
+    // request_id when supplied (as every typed refusal on this thread does).
     for (rapidjson::SizeType i = 0; i < actions.Size(); i++) {
         const rapidjson::Value& inner = actions[i];
         const char* action_type = inner["action"].GetString();
-        const bool registered = is_registered_action(action_type);
+        const bool compiled_out = bridge::debug_verb_compiled_out(action_type);
 
         char request_id[128] = {};
         if (inner.HasMember("request_id") && inner["request_id"].IsString()) {
@@ -1624,12 +1463,12 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
         }
         resp += build_envelope_clock_fragment();  // #123: "tick":N,"game_date":"..."
         resp += ',';
-        if (!registered && bridge::debug_verb_compiled_out(action_type)) {
+        if (compiled_out) {
             // rc2 B2: same shape as dispatch_router.cpp:refuse_debug_verb.
             resp += "\"success\":false,\"error\":\"unavailable_in_release\",\"action\":\"";
             resp += action_type;
             resp += "\"}";
-        } else if (!registered) {
+        } else {
             // D1-C fast-fail: same shape as dispatch_action's unknown tail.
             resp += "\"success\":false,\"error\":\"unknown_action\",\"action\":\"";
             resp += action_type;
@@ -1640,26 +1479,15 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
                         "send {\\\"type\\\":\\\"handshake\\\"} as its own NDJSON line.\"";
             }
             resp += '}';
-        } else {
-            // N1 belt-and-braces: registered but headed for g_msg_queue while
-            // paused — on_tick will not drain it, so refuse loudly now.
-            resp += "\"success\":false,\"action\":\"";
-            resp += action_type;
-            resp += "\",\"reason\":\"game_paused\","
-                    "\"hint\":\"This action drains on the game thread via the "
-                    "message queue, which does not run while the game is paused. "
-                    "Call unpause_game (and verify paused=false via get_tick_info) "
-                    "before retrying.\"}";
         }
 
         send_observation(resp.c_str(), resp.size());
 
         if (bridge::g_logfile) {
             fprintf(bridge::g_logfile,
-                "[CK3-Bridge] Queue fall-through reject: action=%s rid=%s %s (paused=%d)\n",
+                "[CK3-Bridge] Queue fall-through reject: action=%s rid=%s %s\n",
                 action_type, request_id[0] ? request_id : "(none)",
-                registered ? "game_paused" : "unknown_action",
-                game_paused ? 1 : 0);
+                compiled_out ? "unavailable_in_release" : "unknown_action");
             fflush(bridge::g_logfile);
         }
     }
@@ -2092,8 +1920,6 @@ static void reader_loop() {
                         // Buffered + acknowledged (or answered, for `check`).
                     } else if (try_inline_safe_query(line_buf, slot_session)) {
                         // Processed inline — reply already routed to this slot.
-                    } else if (try_game_thread_paused_rejection(line_buf)) {
-                        // Tier-3 action while paused — rejected inline.
                     } else {
                         SessionState state = get_session_state();
                         if (state != SessionState::ACTIVE) {
@@ -2105,13 +1931,10 @@ static void reader_loop() {
                             if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Rejected action (slot=%d state=%s)\n",
                                     idx, session_state_string());
                         } else if (try_queue_fallthrough_rejection(line_buf)) {
-                            // D1-C/N1/N2: unregistered names answered inline
-                            // with unknown_action (any pause state); registered
-                            // queue-bound actions while paused answered with a
-                            // typed game_paused instead of parking silently in
-                            // g_msg_queue until unpause.
+                            // D1-C/N2: an envelope of unregistered names
+                            // answered inline with unknown_action.
                         } else {
-                            // Queue for on_tick. The drained response is broadcast
+                            // Queue for the game-thread drain. The drained response is broadcast
                             // (game thread has no send target); the originating
                             // client matches it by request_id.
                             std::string session_id;
@@ -2254,13 +2077,18 @@ static void server_loop() {
                                     : (v.age_ms >=  5000) ?  5000 : 0;
                 if (tier != 0 && tier > s_warned_at_ms) {
                     char ib[512];
+                    char pb[192];
                     if (bridge::g_logfile) {
+                        // L13 (l13f-gl10l-r): the host's PSI beside the drain
+                        // lock, so a host thrash and a bridge lock stall read
+                        // differently (bridge/include/host_pressure.h).
                         fprintf(bridge::g_logfile,
                             "[CK3-Bridge] SLOW REQUEST (>=%llus on the serving "
-                            "thread; the client deadline is 15s): %s\n",
+                            "thread; the client deadline is 15s): %s %s\n",
                             (unsigned long long)(tier / 1000),
                             bridge::format_inflight(ib, sizeof ib, v,
-                                                    bridge::drain_lock_state(), now));
+                                                    bridge::drain_lock_state(), now),
+                            bridge::format_host_pressure(pb, sizeof pb));
                         fflush(bridge::g_logfile);
                     }
                     s_warned_at_ms = tier;
@@ -2688,12 +2516,13 @@ bool get_client_lock_info(ClientLockInfo* out) {
 // The game thread has no send target, so its replies BROADCAST to every live
 // slot and clients are expected to filter by request_id. Measured: 26 of the
 // bridge's 180 registered actions are queue-bound and therefore broadcast, and
-// they are the WRITES — create_title, raise_armies, raid, set_character_faith,
-// change_realm_law, the campaign's whole lever set. Measured also:
+// they are the WRITES — create_title, set_character_faith, change_realm_law,
+// the campaign's whole lever set (raise_armies and raid were among them when
+// this was measured; both are deleted). Measured also:
 // ck3agent's bridge_client.recv() does NOT filter. It returns the first
 // non-ping line, and only one call site (the declare path) filters. So with six
-// agents on one socket, an agent's create_title can be answered, as far as it
-// can tell, by another agent's raise_armies confirmation.
+// agents on one socket, an agent's create_title could be answered, as far as it
+// could tell, by another agent's write confirmation.
 //
 // That does not corrupt game state — the engine did what it did — but it
 // corrupts the RECORD of which steering action succeeded, which is the arms'
@@ -2796,6 +2625,78 @@ bool enqueue_action_envelope(const std::string& envelope) {
     }
     g_queue_cv.notify_one();
     return true;
+}
+
+// =============================================================================
+// L13 D1: game-thread reads. The IPC thread hands a game-state read to the
+// drain (drain_game_thread_work -> run_game_thread_jobs) and waits for it.
+// =============================================================================
+//
+// A job owns everything it touches (shared_ptr): when the IPC thread stops
+// waiting, a job that is still queued is marked abandoned and skipped, and one
+// that is already running finishes into state nobody reads. So the wait can be
+// bounded without the drain ever writing into a dead stack frame.
+namespace {
+struct GameThreadJob {
+    GameThreadWork work;
+    std::string out;
+    std::mutex m;
+    std::condition_variable cv;
+    enum State { Queued, Running, Done, Abandoned } state = Queued;
+};
+std::mutex g_job_mutex;
+std::deque<std::shared_ptr<GameThreadJob>> g_jobs;
+}  // namespace
+
+bool run_on_game_thread(GameThreadWork work, int wait_ms, std::string* out) {
+    auto job = std::make_shared<GameThreadJob>();
+    job->work = std::move(work);
+    {
+        std::lock_guard<std::mutex> lk(g_job_mutex);
+        g_jobs.push_back(job);
+    }
+    std::unique_lock<std::mutex> lk(job->m);
+    const bool done = job->cv.wait_for(lk, std::chrono::milliseconds(wait_ms < 0 ? 0 : wait_ms),
+                                       [&] { return job->state == GameThreadJob::Done; });
+    if (!done) {
+        if (job->state == GameThreadJob::Queued) job->state = GameThreadJob::Abandoned;
+        return false;
+    }
+    if (out) *out = std::move(job->out);
+    return true;
+}
+
+int run_game_thread_jobs(int max_jobs, const std::function<bool()>& budget_left) {
+    int ran = 0;
+    while (ran < max_jobs && budget_left()) {
+        std::shared_ptr<GameThreadJob> job;
+        {
+            std::lock_guard<std::mutex> lk(g_job_mutex);
+            if (g_jobs.empty()) break;
+            job = std::move(g_jobs.front());
+            g_jobs.pop_front();
+        }
+        {
+            std::lock_guard<std::mutex> lk(job->m);
+            if (job->state == GameThreadJob::Abandoned) continue;
+            job->state = GameThreadJob::Running;
+        }
+        std::string result;
+        job->work(&result);
+        {
+            std::lock_guard<std::mutex> lk(job->m);
+            job->out = std::move(result);
+            job->state = GameThreadJob::Done;
+        }
+        job->cv.notify_all();
+        ++ran;
+    }
+    return ran;
+}
+
+size_t game_thread_jobs_pending() {
+    std::lock_guard<std::mutex> lk(g_job_mutex);
+    return g_jobs.size();
 }
 
 // Dequeue a message from the background reader's queue.

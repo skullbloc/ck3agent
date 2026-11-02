@@ -204,8 +204,8 @@ void recipe_INTERACTION_CTX_SET_TARGET(uintptr_t* ctx, uint32_t target, char set
     using fn_eval = uint8_t (*)(uintptr_t*);
     const uintptr_t c = reinterpret_cast<uintptr_t>(ctx);
     *reinterpret_cast<uint32_t*>(c + ck3::interaction_ctx::TARGET_CHAR_REF) = target;
-    *reinterpret_cast<uint32_t*>(c + ck3::interaction_ctx::EVAL_FLAGS_PTR) = 0;       // as the helper: a
-    *reinterpret_cast<uint64_t*>(c + ck3::interaction_ctx::EVAL_FLAGS_PTR + 8) = 0;   // count, then the data
+    *reinterpret_cast<uint32_t*>(c + ck3::interaction_ctx::TARGET_SCOPE_TYPE) = 0;    // as the helper: clear the
+    *reinterpret_cast<uint64_t*>(c + ck3::interaction_ctx::TARGET_SCOPE_VALUE) = 0;   // target scope (type, value)
     namespace ic = ck3::interaction_ctx;
     reinterpret_cast<fn_resolve>(g_base_addr + ck3_win::funcs::INTERACTION_RESOLVE_SCOPES)(
         *ctx, c + ic::ACTOR_CHAR_REF, c + ic::TARGET_CHAR_REF, c + ic::SECONDARY_ACTOR_REF,

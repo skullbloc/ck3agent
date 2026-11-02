@@ -2,7 +2,7 @@
 
 What the bridge guarantees an agent that controls a CK3 ruler, what it does
 not, and how to hand control back. Read this before writing an agent or a
-bridge handler. Tool names are the 15 MCP tools in [tools.md](tools.md).
+bridge handler. Tool names are the 13 MCP tools in [tools.md](tools.md).
 Bridge handler names, such as `query_*` and `set_controlled_character`, are
 the verbs those tools call, listed in [bridge-actions.md](bridge-actions.md).
 
@@ -31,12 +31,12 @@ mode 0600. `ck3agent config` prints the path. Nothing on the agent side is privi
 `set_controlled_character`). The human player's own character is refused.
 
 **Mode A, steering (default).** The ruler joins your roster and the native AI
-keeps running. Personality and toggle writes change its disposition; the
-engine still picks the marriages, wars and schemes.
+keeps running. Personality writes change its disposition; the engine still
+picks the marriages, wars and schemes.
 
 **Mode B, full takeover**, with `disable_native_ai=true`. The bridge also
-turns off the ruler's AI tick, so every move must be explicit through `do`,
-`declare_war` or `intent`. For test scenarios only. `set_phase` re-enables
+turns off the ruler's AI tick, so every move must be explicit through `do`
+or `declare_war`. For test scenarios only. `set_phase` re-enables
 the AI tick on every call, so do not mix it with Mode B.
 
 **Roster.** The bridge holds up to 10 controlled characters. The primary is
@@ -46,13 +46,12 @@ go); with `add: true` it claims the character as one more of the session's
 rulers and keeps the primary, and its reply carries `added: true`,
 `controlled_primary` and `claimed_character_ids`. The bridge binds the heir
 of a session's primary only. With none bound, `whoami`,
-`observe_v2`, `inspect`, `plan_war`, `declare_war`, `cbs`, `succession_plan`,
-`set_phase` and `do` return `no_ruler_bound`; `whoami` adds
+`observe`, `inspect`, `plan_war`, `declare_war`, `cbs`, `succession_plan`,
+`set_phase`, `do`, `steer`, and `query` and `discover` for anything about the
+ruler, return `no_ruler_bound`; `whoami` adds
 `blocked.measured.unbound_reason` (`heir_is_player`, or `""` when the bridge
-recorded none). `observe`, `query`, `discover`, `steer` and `intent` return
-`ok: true` with the bridge's empty or declined reply, and
-`discover(what="evaluate_trigger")` falls back to the bridge's primary, then to
-the engine's player character. `control` without an id is refused (`missing_character_id`).
+recorded none). A read that names no character still answers. `control`
+without an id is refused (`missing_character_id`).
 
 **Control refusals** (`blocked.gate`):
 
@@ -85,7 +84,7 @@ not find the ruler's AI controller, it stays in Mode A.
 |----------|----------|---------------|
 | Direct | pause, speed, personality, toggles, control, release | done on the game thread before the reply |
 | Pipeline | declare war, interactions, decisions, laws | handed to the engine, which may still reject it |
-| Queued | `intent(action="queue")` | enqueued; confirm with `intent(action="results")` |
+| Queued | an interaction `do` sends through the intent queue | enqueued: `verdict: "pending"`; confirm with `inspect(subject="pending")` |
 
 A pipeline success does not prove the game state changed. Validate first
 (`discover(what="interaction_validity")`, `discover(what="valid_cbs_strict")`,
@@ -98,26 +97,37 @@ Classified in `bridge/src/snapshot.cpp` and served in `bridge/src/ipc_server.cpp
 - **Tier 1, always safe:** bridge-internal reads such as bridge state, tick
   and roster. Immediate, paused or not.
 - **Tier 2, live reads:** object-graph reads such as character, realm, wars,
-  council, factions and succession. Served only while the game is paused,
-  when no AI workers run. While time runs they return `game_unpaused`.
-- **Tier 3, game thread:** engine calls, run at the next tick boundary.
-  Latency depends on game speed.
+  council, factions and succession. Served on the game's command thread, in
+  the bridge's drain after each pass of that thread, paused or running.
+- **Tier 3, game thread:** engine calls and writes, run in the same drain:
+  within one pass (a few milliseconds) whether the game is paused or running.
 
 ### 3.4 Snapshot freshness
 
 There is no per-tick snapshot; `bridge/include/snapshot.h` describes a
-retired design. A Tier-2 read sees the paused game as it is. Opinion,
-acceptance and trigger queries call game code through deferred slots and
-take one or two ticks.
+retired design. A Tier-2 read sees the game as it is between two passes of
+the command thread, paused or running. Opinion, acceptance and trigger queries
+call game code through deferred slots, drained the same way.
 
-### 3.5 Reads that need the game running
+### 3.5 Reads on the game thread, and outcomes that need game days
 
-These run on the game thread: `discover(what=...)` with `acceptance`,
-`valid_cbs`, `valid_cbs_strict`, `trigger_result`, `evaluate_trigger`,
-`interaction_validity`, `valid_decisions` and `decisions_annotated`. Called
-while paused, the bridge unpauses for one drain and restores the pause flag;
-it never changes the speed. A drain that does not finish in time returns
+These run on the game's command thread: `discover(what=...)` with `acceptance`,
+`valid_cbs`, `valid_cbs_strict`, `trigger_result`,
+`interaction_validity`, `valid_decisions` and `decisions_annotated`. They are
+served paused or running; neither the bridge nor the MCP server changes the
+clock for them. A drain that does not finish in time returns
 `cb_query_timeout` or `timeout_waiting_for_game_thread`.
+
+A queued write runs on the session thread's next pass, paused or running,
+and the MCP server reads its verdict back (`query_dispatch_result`, then the
+tool's own readback) for about three seconds; a verdict not read in that time
+answers `verdict: "pending"` with `drains_when: "next_pass"` and the
+`intent_id`. What a write starts may take game days to show: an AI's later
+reply, construction, faction pressure, scheme and council-task progress, war
+score. Paused, no day passes, so such a readback answers
+`verdict: "pending"` with `drains_when: "clock_advances"` and
+`game_date_at_submit`; read it back after `session(action="wait")` or with the
+game running.
 
 `valid_cbs_strict` and `interaction_validity` are single-flight: allow 6 s,
 and never call them in parallel. A second call gets `cb_query_busy`.
@@ -128,10 +138,9 @@ The game stores a localization key on each character (`E_thelred` for
 Æthelred); only the game thread can turn it into a name. A read served from
 the bridge's name cache carries `name`. A read that misses the cache carries
 no `name`: it carries `name_key` (the key, for diagnosis — it is not a name)
-and `name_pending: true`, and the id is queued for the game thread, which
-resolves it on its next tick. A paused game runs no tick, so the first reads
-of a session stay pending until time moves; the bridge never unpauses for a
-name read. A character-bearing reply with neither `name` nor `name_pending`
+and `name_pending: true`, and the id is queued for the game's command thread,
+which resolves it in the bridge's next drain, paused or running, so the
+pending state clears within a pass. A character-bearing reply with neither `name` nor `name_pending`
 had no readable name at all. The MCP server's actor echo (`controlled`,
 `added`, the `actor` of every actor-bearing tool) carries the same two keys
 when the name is pending. Show the note, never the key.
@@ -153,18 +162,19 @@ Post-hooks write to ring buffers of 64 entries. Poll them with
 | council task assignments | tick, councillor, ruler, position, task |
 
 Hooks fire only when the engine acts. A queued intent the engine never sends
-shows up only in `intent(action="results")`.
+shows up only in `inspect(subject="pending")`.
 
 ### 4.2 Event popups
 
 Only the engine player's (`PLAYER_CHAR_ID`) events are handled. With any
-client socket open, observe or not yet handshaken included, a new one pauses
-the game and appears in the pending-events read; it stays paused until a
-control session answers with `do(intent="respond_event", ...)`. With none open
-and `auto_events` on (the default), the bridge clears the event pause and
-unpauses the game while an event is pending, even if you paused it. It picks
-no option; the events stay queued. `auto_events` therefore does nothing while
-you are connected.
+client socket open, observe or still to handshake included, a new one
+appears in the pending-events read and waits for the game's player to answer
+it in the game; no tool answers an event. The bridge does not pause the game
+for it (the game's own event pause, where the game applies one, still stops
+the clock). With none open and its auto-respond setting on (the default), the
+bridge clears the event pause and unpauses the game only when that event
+pause is what stopped it; a pause you set stays. It picks no option; the
+events stay queued.
 
 ### 4.3 Not observed
 
@@ -200,7 +210,7 @@ wedged:
 
 | Symptom | Fix |
 |---------|-----|
-| game paused on an event | answer it: `do(intent="respond_event", ...)` |
+| game paused on an event | answer it in the game |
 | agent stuck | kill the agent; the bridge survives; a new session resumes from current state |
 | full hand-back | `session(action="whoami")` lists your claims; release each |
 | stop the world | `session(action="pause")` |
@@ -212,8 +222,7 @@ last write wins.
 
 The ruler's AI tick is back on. Personality values you wrote stay in memory
 until the engine rewrites them, for example on a trait change or a lifestyle
-perk. Subsystem toggles stay in bridge memory but have no effect once the
-ruler is released.
+perk.
 
 ## 6. Not guaranteed
 
@@ -223,7 +232,9 @@ ruler is released.
 - **Replay across save and load.** A reload drops in-flight intents, clears
   observation buffers and resets the roster. Bind again after every reload.
 - **Stable ids.** Character ids can change across saves; re-resolve by name.
-- **Latency.** Tier-3 actions wait for a tick; a paused game holds them.
+- **Latency.** A queued (Tier-3) action runs on the session thread's next
+  pass, paused or running: a few milliseconds. What it starts may still need
+  game days (§3.5).
 - **Determinism.** Steering changes the distribution of engine choices, not
   the outcome.
 - **Crash recovery.** If the game crashes, treat the closed socket as final.

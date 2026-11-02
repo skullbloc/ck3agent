@@ -328,7 +328,8 @@ def test_format_action_menu_smoke() -> None:
     check("render includes target name",
           "Duke X" in rendered, "Duke X missing")
     check("render mentions war pre-validation guidance",
-          "war_validity" in rendered, "war_validity hint missing")
+          "cbs(target_id=N)" in rendered and "declare_war" in rendered,
+          "cbs/declare_war hint missing")
 
 
 # ---------------------------------------------------------------------------

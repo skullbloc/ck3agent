@@ -52,8 +52,9 @@ the game machine through `mcp-remote`.
 Desktop play is one cycle per message; each message resends the
 conversation, so a long session costs more per cycle than Claude Code. Run one
 Desktop conversation per game, and if you play your own character in the same
-game, leave the pause key alone while Claude is mid-cycle: it pauses to read
-and lets time pass with `session(action="wait")`.
+game, Claude's tools work whether you have paused or not; only its
+`session(action="wait")` (and an explicit pause, unpause or speed) changes the
+clock.
 
 ## Check it worked
 

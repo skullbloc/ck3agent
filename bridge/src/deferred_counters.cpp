@@ -1,4 +1,4 @@
-// deferred_counters.cpp — the deferred coordinator's refusal counts, as a LEAF
+// deferred_counters.cpp — the deferred single-flight lock's refusal count, as a LEAF
 // TU (ck-p2sb, shape required by ck-t5bc's gate).
 //
 // WHY THESE TWO DEFINITIONS LIVE ALONE RATHER THAN IN deferred_drain.cpp.
@@ -29,7 +29,7 @@
 // announcing it, which is the vacuous-green family arriving through the build
 // system rather than through a check.
 //
-// Declared in bridge.h beside run_deferred_pause_transparent; incremented in
+// Declared in bridge.h beside run_deferred_single_flight; incremented in
 // src/deferred_drain.cpp; reported by do_get_bridge_state.
 
 #include <atomic>
@@ -38,6 +38,5 @@
 namespace bridge {
 
 std::atomic<uint64_t> g_busy_deferred_count{0};
-std::atomic<uint64_t> g_drain_unavailable_count{0};
 
 }  // namespace bridge

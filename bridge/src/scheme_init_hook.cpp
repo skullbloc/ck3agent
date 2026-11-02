@@ -12,6 +12,7 @@
 
 #include "action_dispatch_internal.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "name_tables.h"   // L14: recorded_or_cached_name
 
 #include <shared_mutex>
 #include <deque>
@@ -35,7 +36,7 @@ struct SchemeInitRecord {
     char     scheme_type_name[128]; // scheme type name (e.g. "murder", "fabricate_hook")
     int32_t  progress;           // initial progress value
     int32_t  max_progress;       // max progress needed for success
-    int32_t  success_chance;     // computed success chance %
+    int32_t  secrecy;            // scheme secrecy 0..100 (active_scheme::SECRECY)
     int64_t  success_base;       // base success value (fixed-point)
     int64_t  success_growth;     // growth rate (fixed-point)
     int64_t  success_max;        // success maximum (fixed-point)
@@ -256,7 +257,7 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
         // Progress values
         rec.progress = safe_read<int32_t>(scheme_ptr + ck3::active_scheme::PROGRESS);
         rec.max_progress = safe_read<int32_t>(scheme_ptr + ck3::active_scheme::MAX_PROGRESS);
-        rec.success_chance = safe_read<int32_t>(scheme_ptr + ck3::active_scheme::SUCCESS_CHANCE);
+        rec.secrecy = safe_read<int32_t>(scheme_ptr + ck3::active_scheme::SECRECY);
 
         // Success modifiers (fixed-point)
         rec.success_base = safe_read<int64_t>(scheme_ptr + ck3::active_scheme::SUCCESS_BASE);
@@ -294,11 +295,11 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
 
         // Log to bridge log
         if (g_trace) ADLOG("SCHEME INITIATED: id=%u type=%s owner=%u(%s) target_type=%d "
-              "target=%u(%s) progress=%d/%d chance=%d agents=%d tick=%lu\n",
+              "target=%u(%s) progress=%d/%d secrecy=%d agents=%d tick=%lu\n",
               rec.scheme_id, rec.scheme_type_name,
               rec.owner_id, rec.owner_name,
               rec.target_type, rec.target_ref, rec.target_name,
-              rec.progress, rec.max_progress, rec.success_chance,
+              rec.progress, rec.max_progress, rec.secrecy,
               rec.agent_count, rec.tick);
     } else {
         // SIGSEGV recovery
@@ -373,14 +374,18 @@ bool do_query_scheme_inits(const char* params_json, std::string* out) {
             r.key("timestamp_ms"); r.value_uint(it->timestamp_ms);
             r.key("scheme_id"); r.value_uint(it->scheme_id);
             r.key("owner_id"); r.value_uint(it->owner_id);
-            r.key("owner_name"); r.value_string(it->owner_name);
+            r.key("owner_name");
+            r.value_string(recorded_or_cached_name(it->owner_name, it->owner_id).c_str());
             r.key("scheme_type"); r.value_string(it->scheme_type_name);
             r.key("target_type"); r.value_int(it->target_type);
             r.key("target_ref"); r.value_uint(it->target_ref);
-            r.key("target_name"); r.value_string(it->target_name);
+            r.key("target_name");
+            r.value_string((it->target_type == 0 && it->target_ref != 0xFFFFFFFF
+                                ? recorded_or_cached_name(it->target_name, it->target_ref)
+                                : std::string(it->target_name)).c_str());
             r.key("progress"); r.value_int(it->progress);
             r.key("max_progress"); r.value_int(it->max_progress);
-            r.key("success_chance"); r.value_int(it->success_chance);
+            r.key("secrecy"); r.value_int(it->secrecy);
             r.key("success_base"); r.value_int(it->success_base);
             r.key("success_growth"); r.value_int(it->success_growth);
             r.key("success_max"); r.value_int(it->success_max);

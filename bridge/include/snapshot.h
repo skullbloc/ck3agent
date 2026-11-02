@@ -44,7 +44,6 @@
 //   - query_relations       (char -> relation array -> char lookups)
 //   - query_opinion         (CALLS game function get_opinion — must be game thread)
 //   - query_lifestyle       (char -> lifestyle data)
-//   - query_borders         (county DB iteration)
 //   - query_county_details  (county/barony DB traversal)
 //   - query_de_jure         (title DB traversal)
 //   - query_title_hierarchy (title DB traversal)
@@ -54,17 +53,15 @@
 //   - list_decisions        (iterates decision DB)
 //   - get_ai_personality    (CALLS game getter functions)
 //   - get_ai_evaluations    (reads AI controller state)
-//   - get_character_subsystems (reads AI controller subsystem masks)
 //
 // TIER 3 — Must execute on game thread (mutating actions):
 //   These call game engine functions that modify state. They MUST run on the
 //   game thread during the serial section (drain_and_execute_intents).
 //   Already correctly queued via the message queue -> on_tick drain loop.
 //   - send_interaction, declare_war, send_decision
-//   - set_ai_personality, set_character_subsystems
+//   - set_ai_personality
 //   - toggle_ai_subsystem, set_character_ai
 //   - queue_intent (bridge-internal, but execution is game-thread)
-//   - respond_event
 //   (fire_event was listed here + in is_bridge_internal_query from the initial
 //    import but NEVER had a dispatch case in any revision — dead classifier
 //    entry removed per N7, surface audit 2026-08-01.)
@@ -220,7 +217,6 @@ extern SnapshotStore g_snapshot;
 //   - list_decisions (global, not per-character)
 //
 // NOT captured (too expensive or not needed every tick):
-//   - query_borders (full map scan, expensive, rarely queried)
 //   - query_county_details (per-county, query on demand)
 //   - query_armies (changes rapidly, query on demand)
 //   - query_opinion (per-pair, too many combinations)
@@ -238,12 +234,23 @@ void capture_snapshot();
 // These read only bridge-internal state (atomics, mutexed containers).
 bool is_bridge_internal_query(const char* action_type);
 
-// Returns true if a query traverses the game object graph and therefore
-// needs either a snapshot or game-thread execution.
+// Returns true if a query traverses the game object graph and therefore runs on
+// the game thread (the IPC thread hands it to the session-pass drain and waits).
 bool is_game_state_query(const char* action_type);
 
-// Returns true if this is a mutating action that must execute on the game thread.
+// Returns true if this action must execute on the game thread: the reader queues it
+// to g_msg_queue and the game-thread drain runs it, paused or running.
 bool is_game_thread_action(const char* action_type);
+
+// The READS among is_game_thread_action: they run on the game thread (the game's
+// triggers under the fake random scope) and change nothing. The pipeline calls
+// them tick_read, and the drain stores no write verdict for them.
+bool is_game_thread_read(const char* action_type);
+
+// True when the g_msg_queue drain stores this call's verdict in the completed
+// ring (query_intents / query_intent_results / inspect(pending)): the game-thread
+// writes; never a game-thread read.
+bool drain_records_write_verdict(const char* action_type);
 
 // =============================================================================
 // Snapshot Key Construction

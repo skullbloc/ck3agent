@@ -13,3 +13,7 @@ mkdir -p "$dest"
 for pv in 3.11 3.12 3.13 3.14; do
   "${PYTHON:-python}" -m pip download -q -d "$dest" --only-binary=:all: --python-version "$pv" "$wheel"
 done
+# pipx (1.8 and later) refreshes the pip in its shared venv with the same
+# --pip-args as the install, so an offline install needs a pip wheel in the
+# bundle too; without one pipx fails and install.sh falls back to the venv.
+"${PYTHON:-python}" -m pip download -q -d "$dest" --only-binary=:all: "pip>=26.1"

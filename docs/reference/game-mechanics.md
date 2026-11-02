@@ -114,8 +114,8 @@ Each has 3 focus tracks with perks that unlock powerful abilities.
 - Intrigue → Truth is Relative: fabricate hooks faster
 - Learning → Whole of Body: health boost (survival)
 
-The AI chooses lifestyle focus. You can influence this through the Lifestyles subsystem
-toggle and energy/rationality weights.
+The AI chooses lifestyle focus, steered by the energy and rationality weights; set it
+yourself with `do(intent="lifestyle", args={"focus": <focus>})`.
 
 ---
 
@@ -136,5 +136,6 @@ not the Chancellor's Diplomacy.
 Council skill directly affects task speed/success. Place your best people here — and yes,
 powerful vassals expect council seats. Denying them tanks their opinion.
 
-The AI manages council assignments. You influence priorities through subsystem toggles
-and personality weights.
+The AI manages council assignments, steered by the personality weights. Set one yourself:
+`do(action_class="council_tasks")` lists each task with its exact call, and
+`do(intent="appoint", args={"seat": <seat>, "councillor_id": <id>})` seats a councillor.

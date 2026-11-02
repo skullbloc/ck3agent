@@ -6,8 +6,7 @@ rest is how to re-derive them on a binary we have not mapped yet (a Windows
 `ck3.exe`, a Mach-O slice, a patched Linux build). It does not include our
 per-system findings (wars, councils and so on), Ghidra projects or decompiler
 dumps. See ADR 0001: the 34 Linux signatures are the list of what to re-derive,
-not bytes to reuse. The trigger catalogue (`re/rtti/trigger_subclasses.csv`
-upstream) ships as `ck3agent/data/trigger_subclasses.csv`; it is per platform too.
+not bytes to reuse.
 
 | Path | What |
 |------|------|

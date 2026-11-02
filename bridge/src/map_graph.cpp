@@ -171,22 +171,17 @@ static const char* mg_cross_sigil(uint8_t c) {
     }
 }
 
-// faith name off a CCountyData (county::FAITH_ID 0x208 -> FAITH_DB -> faith::FAITH_KEY 0x98)
+// faith key off a CCountyData (county::FAITH_ID 0x208 -> faith_names: FAITH_DB
+// keyed at +0x08 -> faith::FAITH_KEY 0x98). The map line carries scripted keys
+// (no spaces), not display names.
 static std::string county_faith_name(uintptr_t cdata) {
-    uint32_t fid = safe_read<uint32_t>(cdata + ck3::county::FAITH_ID);
-    if (fid == 0 || fid == 0xFFFFFFFF) return {};
-    uintptr_t fo = ad_db_lookup(ck3::globals::FAITH_DB, fid);
-    if (!fo) return {};
-    return ad_read_std_string(fo + faith::FAITH_KEY);
+    return faith_names(safe_read<uint32_t>(cdata + ck3::county::FAITH_ID)).key;
 }
 
-// culture name off a CCountyData (county::CULTURE_ID 0x20C -> CULTURE_INDEXED_DB -> NAME_KEY 0x10)
+// culture key off a CCountyData (county::CULTURE_ID 0x20C -> culture_names:
+// CULTURE_INDEXED_DB -> culture::SCRIPT_KEY 0x1C8; +0x10 is the culture's id).
 static std::string county_culture_name(uintptr_t cdata) {
-    uint32_t cid = safe_read<uint32_t>(cdata + ck3::county::CULTURE_ID);
-    if (cid == 0 || cid == 0xFFFFFFFF) return {};
-    uintptr_t co = ad_db_lookup(ck3::globals::CULTURE_INDEXED_DB, cid);
-    if (!co) return {};
-    return ad_read_std_string(co + ck3::db_object::NAME_KEY);
+    return culture_names(safe_read<uint32_t>(cdata + ck3::county::CULTURE_ID)).key;
 }
 
 // ─── seed resolution per scope, returns DENSE COUNTY INDICES into g_map.county[] ──
@@ -369,6 +364,7 @@ void map_graph_init() {
 
 // ───────────────────────────── The handler ───────────────────────────────────
 bool do_query_map_graph(const char* params_json, std::string* out) {
+    FaultScope fault_scope("query_map_graph", out);
     // cycle-3 crash-fix (was: attempt-25 game-thread fault, crash ck3_20260630_115545):
     // do_query_map_graph drains on the GAME THREAD (query_map_graph is in is_game_state_query
     // → served inline when PAUSED on the IPC reader thread; falls through to the on_tick

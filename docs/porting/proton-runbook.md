@@ -284,9 +284,10 @@ Remove both files afterwards.
   quiet, and the lobby showed 1 January 867. The ELF core (§5) taken there was
   16.6 GB apparent and 8.6 GB on disk.
 - For a comparison with the Linux build, load **the same file** in a plain Linux
-  game (no bridge, or `CK3_SUPPRESS_AUTO_UNPAUSE=1`). A bridge-loaded Linux game
-  runs its clock: one reached 869.07.12 while sitting in the lobby, and the
-  Windows game stayed at 867.01.01. Check the date in both cores before comparing
+  game, left paused. (A bridge that predates L13 unpaused a loaded game by
+  itself: one reached 869.07.12 while sitting in the lobby, and the Windows game
+  stayed at 867.01.01. Current bridges never unpause on their own.) Check the
+  date in both cores before comparing
   anything.
 
 ## 7. Talk to the bridge (observe only)  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014: 1.18.3.1, the 867 save, every query_* answered]
@@ -333,18 +334,21 @@ Parity with the Linux bridge on the same save, the method and the results:
 On `match` the bridge installs the AI-tick hook once the save has loaded (a swap of
 one slot in CAIManager's +8 vtable) and from then on works as on Linux: a client
 that handshakes with `"mode":"control"` can claim a character and steer it
-(personality axes, AI subsystem toggles, the character's AI, pause and speed).
+(personality axes, the process-wide `toggle_ai_subsystem` byte, the character's AI, pause and speed).
 Seen in `bridge.log`:
 
 ```
 [CK3-Bridge] Tick hook installed (Windows): +8 vtable[1] (orig=000000014175AB80 -> on_tick_internal)
-[CK3-Bridge] BUILD-B: First tick received — DORMANT -> ACTIVE
-[CK3-Bridge] Watchdog: Windows thread interrupt (tid=...; armed per calling thread)
+[CK3-Bridge] Session-pass hook installed: slot 0x1455bc078 (session 0x1455bbfc0 + 0xb8) 0x1432e63c0 -> session_pass wrapper 0x...; drain under SRWLOCK 0x1455bc260 when execute_commands (+0x3f3) == 1
+[CK3-Bridge] SESSION-PASS: first drain on the game thread (tid=..., hook=session_pass, tick=0) — DORMANT -> ACTIVE
 ```
 
-The first tick comes with the first unpause: the bridge unpauses a loaded game by
-itself unless `CK3_SUPPRESS_AUTO_UNPAUSE=1` is set (the parity runs set it, so the
-clock moves only when a plan step moves it). Not on Windows yet: the observers that
+The bridge never unpauses a loaded game by itself, so the clock moves only when a
+plan step moves it, and it does not need the clock: it runs its game-thread work
+after every pass of the game's command thread (the session-pass hook, as on
+Linux), so it goes ACTIVE at tick 0 on a paused save and reads and writes answer
+while paused [verified 2026-10-30, l14-win-live2]. The AI-tick hook stays for
+the per-tick work (personality locks, the event pass). Not on Windows yet: the observers that
 Linux builds on inline hooks (war score, war and scheme creation, marriages,
 council tasks, the CB selector, the off-goal veto), CB and interaction validity
 (they refuse or report the engine call failed), and localized character names
@@ -356,6 +360,14 @@ the hook died the same way). `PROTON_USE_WINED3D=1` (OpenGL) loaded every time;
 `DXVK_CONFIG="dxgi.maxDeviceMemory = 1024"` did not help. `node/p6-win-v1.sh` in the
 research checkout runs the parity plan and a steering plan; P6 results:
 `re/findings/windows/re_p6_hooks_steering.md`.
+
+**The display.** By 2026-10-30 the node's compositor held 5.6 of the GPU's 6 GiB and
+the game stalled at load on the shared display (`X Error ... BadAlloc` in the Proton
+log). A private X server avoids it: `Xvfb :91` from the build image, run with
+`--network=host` so its abstract socket is visible to the host, and the game started
+with `DISPLAY=:91`; WineD3D then renders through Mesa llvmpipe (slower to load,
+about 4 minutes to the end of history; the simulation is unaffected).
+`node/l14-win-live-v1.sh` takes it as `L14_DISPLAY`.
 
 ## What to report
 

@@ -6,8 +6,9 @@ board call failed inside the seat's MCP server with
     'BridgeGateway' object has no attribute 'call'
 
 `board_post`/`board_read` called `_get_gateway().call(...)`; the gateway's
-public surface is read / read_unpaused / write / read_inline / read_many /
-confirmed_write, with `_call` private. The tools had never been registered in a
+public surface was read / read_unpaused / write / read_inline / read_many /
+confirmed_write, with `_call` private (since L13: read / write / read_many /
+confirmed_write, with `_dispatch` private). The tools had never been registered in a
 live seat before ck-2r46's arm fix, so the line had never executed. Six seats
 called board_read 2-3 times and board_post 1-2 times; board.jsonl has 0
 records.
@@ -38,10 +39,10 @@ class StubBridge:
     async def send(self, action: str, params: dict) -> dict:
         self.sent.append((action, dict(params or {})))
         if action == "board_post":
-            return {"success": True, "data": {"seq": 1, "flush_id": 7}}
+            return {"success": True, "seq": 1, "flush_id": 7}
         if action == "board_read":
-            return {"success": True, "data": {"posts": [], "next_seq": 1}}
-        return {"success": True, "data": {}}
+            return {"success": True, "posts": [], "next_seq": 1}
+        return {"success": True}
 
 
 def _wire(monkeypatch):
@@ -57,11 +58,11 @@ def _wire(monkeypatch):
         # read()/write() — the thing the fix picks — still execute for real.
         return await stub.send(action, params)
 
-    monkeypatch.setattr(ms.BridgeGateway, "_call", _fake_call, raising=True)
+    monkeypatch.setattr(ms.BridgeGateway, "_dispatch", _fake_call, raising=True)
     monkeypatch.setattr(ms, "_get_state", lambda: state, raising=True)
     monkeypatch.setattr(ms, "_get_gateway", lambda: gw, raising=True)
 
-    async def _ok(_state):
+    async def _ok(_state, _tool):
         return None
     monkeypatch.setattr(ms, "_ensure_connected", _ok, raising=True)
     return stub, gw
@@ -86,8 +87,11 @@ def test_board_post_round_trips_through_a_real_gateway(monkeypatch):
     stub, _ = _wire(monkeypatch)
     fn = _registered("board_post")
     out = asyncio.run(fn("my lords, Mercia moves north"))
-    assert stub.sent == [("board_post", {"text": "my lords, Mercia moves north"})], stub.sent
-    assert out.get("success") is True, out
+    # every tool reads the clock first (_gateway_now, witness W1), then posts
+    assert stub.sent == [("get_tick_info", {}),
+                         ("board_post", {"text": "my lords, Mercia moves north"})], stub.sent
+    assert out["ok"] is True and out["tool"] in ("board_post", "board_read"), out
+    assert out["result"].get("success") is True, out
     # THE SHAPE OF THE SHIPPED FAULT, asserted directly: an AttributeError here
     # surfaces as an error envelope or an exception, never a success.
     assert "has no attribute" not in str(out)
@@ -97,8 +101,10 @@ def test_board_read_round_trips_through_a_real_gateway(monkeypatch):
     stub, _ = _wire(monkeypatch)
     fn = _registered("board_read")
     out = asyncio.run(fn(since_seq=3, limit=10))
-    assert stub.sent == [("board_read", {"since_seq": 3, "limit": 10})], stub.sent
-    assert out.get("success") is True, out
+    assert stub.sent == [("get_tick_info", {}),
+                         ("board_read", {"since_seq": 3, "limit": 10})], stub.sent
+    assert out["ok"] is True and out["tool"] in ("board_post", "board_read"), out
+    assert out["result"].get("success") is True, out
     assert "has no attribute" not in str(out)
 
 
@@ -118,6 +124,9 @@ def test_the_tools_use_a_method_the_gateway_ACTUALLY_HAS(monkeypatch):
     defined |= set(re.findall(r"\n        self\.(\w+)\s*=", body))
     defined |= {p for p in re.findall(r"\n    (\w+):", body)}
     used = set(re.findall(r"_get_gateway\(\)\.(\w+)", src))
+    # the tools hold the gateway as `gw` (_gateway_now), so those names count too
+    used |= set(re.findall(r"\bgw\.(\w+)", src))
+    assert "clock" in used, "the census lost the gateway uses (fail OPEN)"
     missing = sorted(u for u in used if u not in defined)
     assert not missing, (
         f"mcp_server calls {missing} on BridgeGateway and the class has no such "
@@ -125,15 +134,13 @@ def test_the_tools_use_a_method_the_gateway_ACTUALLY_HAS(monkeypatch):
 
 
 def test_board_post_takes_the_WRITE_path_and_read_takes_the_READ_path(monkeypatch):
-    """Polarity is the gateway's job, and which wrapper is chosen decides it.
+    """Which wrapper is chosen decides the dispatch path.
 
-    The bridge is the authority and records the reason in snapshot.cpp: board
-    actions are bridge-internal, so they are served INLINE and never handed to
-    the game-thread drain — but `board_post` still classifies as TICK_WRITE,
-    because a post is buffered and executed in a flush like any other write and
-    carries the same flush_id as the actions around it. So a post takes
-    write() and a read takes read(); routing a post through read() would ask
-    the gateway for the wrong polarity.
+    The bridge records the reason in snapshot.cpp: board actions are
+    bridge-internal, so they are served INLINE and never handed to the
+    game-thread drain — but a post is buffered and executed in a flush like any
+    other write and carries the same flush_id as the actions around it. So a
+    post takes write() (the action path, full reply) and a read takes read().
     """
     state = ms.BridgeState()
     state.connected = True
@@ -142,17 +149,18 @@ def test_board_post_takes_the_WRITE_path_and_read_takes_the_READ_path(monkeypatc
 
     async def _rec(self, action, params, *, write=False, **kw):
         seen.append((action, bool(write)))
-        return {"success": True, "data": {}}
+        return {"success": True}
 
-    monkeypatch.setattr(ms.BridgeGateway, "_call", _rec, raising=True)
+    monkeypatch.setattr(ms.BridgeGateway, "_dispatch", _rec, raising=True)
     gw = ms.BridgeGateway(state)
     monkeypatch.setattr(ms, "_get_state", lambda: state, raising=True)
     monkeypatch.setattr(ms, "_get_gateway", lambda: gw, raising=True)
 
-    async def _ok(_state):
+    async def _ok(_state, _tool):
         return None
     monkeypatch.setattr(ms, "_ensure_connected", _ok, raising=True)
 
     asyncio.run(ms.board_post("x"))
     asyncio.run(ms.board_read())
+    seen = [x for x in seen if x[0] != "get_tick_info"]      # the clock read (_gateway_now)
     assert seen == [("board_post", True), ("board_read", False)], seen

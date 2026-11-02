@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-CK3 Bridge MCP Server — 11 consolidated tools.
+CK3 Bridge MCP Server — 13 tools: observe, query, discover, inspect, cbs,
+plan_war, succession_plan, set_phase, steer, declare_war, do, session, pass_turn
+(plus board_post and board_read when the shared board is enabled).
 
-The LLM steers one AI character by reading game state and manipulating
-AI personality weights and subsystem toggles. The native AI handles ALL
-execution (wars, marriages, schemes, etc.). No action injection.
+The model reads game state, steers the native AI (personality weights) and
+sends typed actions; the game's own AI runs everything
+else. Every tool replies in one envelope (redesign.envelope):
+{ok, tool, result, blocked, warnings, errors, bridge_health, [verdict, actor, game, ...]},
+and every refusal names its gate (redesign.GATE_TABLE).
 
 Usage:
     # Run as stdio MCP server (for Claude Code / Claude Desktop):
@@ -18,7 +22,6 @@ Usage:
 """
 
 import asyncio
-import enum
 import json
 import logging
 import os
@@ -37,13 +40,17 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from mcp.server.fastmcp import FastMCP, Context
-from pydantic import Field
+from pydantic import Field, StrictBool
 
-from tools import QUERY_DOMAINS
+from tools import QUERY_DOMAINS, DISCOVER_WHATS
+import redesign
+import do_intent_args
+
+#: The most domains one query(domains=[...]) call reads.
+QUERY_BATCH_MAX = 5
 
 # ck-6kvq.12 (R4 / G5): the arm gate for the shared board. One authority for
-# "is there a board", read by the tool registration below and by
-# tools.get_tool_definitions().
+# "is there a board", read by the tool registration below.
 from arm import board_enabled as _board_enabled
 
 # ck-2r9k. §8.2 — what a pipeline-mode reply actually looks like — lives in ONE
@@ -56,35 +63,101 @@ log = logging.getLogger("ck3-mcp")
 
 
 # ---------------------------------------------------------------------------
-# Redesign (SPEC docs/notes/mcp-redesign/SPEC.md): the gateway that owns the
-# pause-flip (§4), single-flight serialization of deferred queries (§4), and
-# since-tick delta tracking — so the 8 redesign tools stay pure composition.
+# Redesign (SPEC docs/notes/mcp-redesign/SPEC.md): the gateway the goal-shaped
+# tools compose through — dispatch, single-flight serialization of the bridge's
+# deferred-drain reads, and since-tick delta tracking — so the tools stay pure
+# composition. It never touches the clock (L13): only session(pause|unpause|
+# speed|wait) does, on the player's call.
 # ---------------------------------------------------------------------------
 
-class BridgeGateway:
-    """Owns pause-state polarity, single-flight serialization, delta carry, and
-    actor-mode detection for the 8 redesign tools (SPEC §4/§5).
+#: The bridge's deferred-drain reads: a mirror of `is_deferred_drain_action`
+#: (bridge/src/deferred_drain.cpp), checked by
+#: test_polarity_bridge_table.test_the_gateway_deferred_reads_mirror_the_bridge.
+#: The handler submits to a game-thread slot and waits for its verdict, so the
+#: reply comes back on the action path with the longer budget, and the bridge
+#: single-flights the slot (g_deferred_drain_lock). THE one Python copy: the
+#: gateway's dispatch and discover's timeout choice both read it.
+DEFERRED_DRAIN_READS = frozenset({
+    "query_valid_cbs", "query_cb_validity_strict", "query_cbs_for_target",
+    "query_cbs_for_targets", "query_interaction_acceptance", "query_interaction",
+    "query_trigger_result", "list_valid_decisions", "list_decisions_annotated",
+    "query_joinable_factions", "query_interaction_check",
+    "probe_interaction_cascade", "probe_gate_4_slots",
+})
 
-    The redesign tool impls (redesign.py) call read/write/read_unpaused and never
-    touch the socket or the pause state directly — this is the layer that satisfies
-    the per-call pause matrix automatically (kills E1/E2/E3 from the agent's view).
+
+#: The budget a deferred-drain or game-thread read waits for its reply.
+DEFERRED_READ_TIMEOUT_S = 12.0
+
+
+class BridgeGateway:
+    """Dispatch, single-flight, delta carry and actor-mode detection for the
+    goal-shaped tools (SPEC §4/§5).
+
+    The redesign tool impls (redesign.py) call read / write / read_many /
+    confirmed_write and never touch the socket. The gateway never changes the
+    pause state or the speed: every read and write the bridge serves works with
+    the game paused or running (it runs game-object work on the session thread,
+    in a drain that runs after every pass). A write's verdict is read back on the
+    next pass in either clock state; an outcome that needs game DAYS is reported
+    pending until the clock advances (confirmed_write → redesign.confirm_write),
+    never forced.
+
+    The clock is what get_tick_info says NOW (clock(), redesign.read_clock). The
+    bridge pushes no tick_start or observation frame, so a cache fed by those
+    reads "paused" forever (witness W1); game() is the last fresh reading, taken
+    at every tool's entry (_gateway_now) and by every confirmed_write.
     """
+
+    #: Reads the bridge serves on the game thread (snapshot.cpp is_game_thread_read):
+    #: they run the game's triggers under the fake random scope (lane l6, witness #2)
+    #: and leave no record in the completed ring (witness #3). Checked against the
+    #: bridge by test_polarity_bridge_table.
+    _GAME_THREAD_READS = frozenset({"construction_check", "query_fabricate_targets",
+                                    "query_create_title_cost"})
+
+    #: Reads whose reply comes back on the action path with the 12 s budget: the
+    #: deferred-drain reads (slot verdicts), the game-thread reads (queued), and
+    #: scheme_action(action="check"), an intent the drain evaluates while the
+    #: handler polls for its verdict (scheme_targets_impl reads it).
+    _ACTION_PATH_READS = DEFERRED_DRAIN_READS | _GAME_THREAD_READS | {"scheme_action"}
+
+    #: Commands, not reads: dispatched on the action path (full response) even
+    #: when a caller routes one through read(). This set chooses the dispatch and
+    #: nothing else.
+    _COMMANDS = frozenset({
+        "pause_game", "unpause_game", "set_speed",
+        "set_controlled_character", "release_character",
+        # ck-6kvq.13 (R6): the decision-budget governor's write surface.
+        "report_usage", "set_budget_config",
+    })
 
     def __init__(self, state: "BridgeState"):
         self.state = state
-        self._strict_lock = asyncio.Lock()  # §4 single-flight for deferred/strict-CB
+        # §4 single-flight for the deferred-drain reads: the bridge serves one
+        # slot query at a time and refuses a second caller `busy_deferred` past
+        # its lock budget, so the gateway queues its own instead of meeting that.
+        self._strict_lock = asyncio.Lock()
         self._last_delta_tick = 0
+        #: The last fresh clock reading (redesign.clock_of); paused None until one.
+        self._clock = redesign.clock_of({})
 
     # --- clock / health ----------------------------------------------------
+    async def clock(self) -> dict:
+        """A FRESH clock reading from the bridge (redesign.read_clock); game()
+        reports it until the next one."""
+        self._clock = await redesign.read_clock(self.read)
+        return dict(self._clock)
+
     def game(self) -> dict:
-        ts = self.state.latest_tick_start or {}
-        return {"tick": self.state.tick_id, "date": self.state.game_date,
-                "paused": bool(ts.get("paused", True)),
-                # ck-k57a: null means the bridge read no speed. `game_speed_legacy`
-                # is the documented compat integer (0 == no reading).
-                "speed": (ts.get("game_speed")
-                          if ts.get("game_speed") is not None
-                          else ts.get("game_speed_legacy", 3))}
+        """The envelope's game block. paused / speed are the last fresh clock
+        reading (None before one: no guess); tick / date are the live stamps every
+        bridge reply carries (#123), else the reading's."""
+        c = self._clock
+        live_date = self.state.game_date if self.state.game_date != "unknown" else None
+        return {"tick": self.state.tick_id or c["tick"] or 0,
+                "date": live_date or c["date"] or "unknown",
+                "paused": c["paused"], "speed": c["speed"]}
 
     @property
     def health(self) -> str:
@@ -92,352 +165,52 @@ class BridgeGateway:
             return "hung"
         return "ok"
 
-    async def multi_actor(self) -> bool:
-        """Multi-actor mode = >1 controlled char or a campaign overlay (SPEC §5).
-        Best-effort: reads the controlled roster; defaults to single-controlled."""
-        try:
-            roster = await _query_bridge(self.state, "get_controlled_roster", {})
-            if isinstance(roster, dict):
-                chars = roster.get("characters") or roster.get("controlled") or []
-                return isinstance(chars, list) and len(chars) > 1
-        except Exception:
-            pass
-        return False
+    async def actor_gate(self) -> Optional[dict]:
+        """What an id-less call answers (SPEC §5): the one definition, redesign.actor_gate_of."""
+        return await redesign.actor_gate_of(self)
 
-    # ──────────────────────────────────────────────────────────────────────
-    # ★ UNIFIED SCOPED PAUSE-STATE (_HARDENING_PLAN.md FIX 3, supersedes #95)
-    #
-    # One mechanism owns pause polarity for EVERY bridge call the 8 tools compose:
-    # RECORD the live {paused, speed}, FLIP to the polarity the action needs,
-    # EXECUTE, then in a `finally` RESTORE the recorded {paused, speed}. Callers
-    # (redesign.py) never specify pause-state and the game tempo is never left
-    # changed (the lingering-unpause / speed-drift bug). The polarity table below
-    # is the SINGLE place pause logic is encoded; drive it off the per-action
-    # classification + the bridge `needs_unpaused` typed-reason signal.
-    # ──────────────────────────────────────────────────────────────────────
-
-    class Polarity(enum.Enum):
-        PAUSED = "paused"            # TIER-2 object-graph read; rejected fast when running
-        UNPAUSED_TICK = "unpaused"   # deferred game-thread query / write; needs a live tick
-        ANY = "any"                  # unpaused-safe; served inline regardless of pause
-
-    # Deferred game-thread reads (strict-CB family + cb-capability + goal-ladder).
-    # These are serviced on the game thread (g_cb_query slot / drain_and_execute_intents)
-    # and BLOCK while paused on a bridge that doesn't self-reject — so the gateway must
-    # FLIP them UNPAUSED. The bridge's `{status:"needs_unpaused"}` self-classification
-    # (emit_needs_unpaused) is the authoritative override, handled in _call() below; this
-    # static set is the fallback classification for OLD bridges that don't emit it.
-    #
-    # query_conquest_targets runs cb_query_strict_full_sync per holder (the same deferred
-    # game-thread slot the strict-CB family uses) — the _HEALTH_MATRIX P0 HANG when paused
-    # was this query routed as a plain PAUSED read. Classify it UNPAUSED so it drains on a
-    # tick instead of blocking the full client timeout.
-    # query_dejure_progress is the goal metric. It is a PURE safe_read meter (no engine
-    # calls, never hangs, PAUSED-safe — it does NOT emit needs_unpaused). Forcing it
-    # UNPAUSED made the de-jure children vector be read MID-TICK while the engine
-    # clears-then-repopulates it (de-jure drift / title create/destroy) → SUB_TITLE_COUNT
-    # (0x264) transiently 0 → total=0 → the agent-blocking "0/0 sub-title unresolved" /
-    # false mint reject (re_dejure_meter_and_mint.md bug #1). Route it PAUSED (the
-    # query_/get_/list_ default below) so the tree is read on a STOPPED clock → stable
-    # held/total. (On any old bridge that would hang it paused, the bridge's authoritative
-    # needs_unpaused self-classification still flips it — see _call().)
-    _UNPAUSED_READS = frozenset({
-        "query_conquest_targets",
-        "query_cbs_for_target", "query_cb_validity_strict",
-        "list_valid_decisions", "list_decisions_annotated",
-    })
-
-    # Writes (tier-3 / B*) — need UNPAUSED + a live tick before dispatch (the E3 fix).
-    _WRITE_ACTIONS = frozenset({
-        "create_title", "send_decision", "send_interaction", "set_character_faith",
-        "set_character_culture", "set_doctrine", "change_realm_law", "set_title_law",
-        "set_council_task", "appoint_councillor", "set_lifestyle_focus",
-        "construct_building", "raise_armies", "raise_raiders", "maa_recruit",
-        "maa_station", "maa_unstation", "hire_mercenary", "move_capital",
-        "set_obligation_level", "respond_event", "scheme_action", "faction_action",
-        "declare_war", "call_war_create_core", "set_cb_selector_override",
-        "set_ai_personality", "set_character_subsystems",
-        # REMOVED: move_army deleted per design (agent does not drive army micro).
-    })
-
-    # Tempo / liveness / identity controls — served inline, NEVER scoped (they ARE
-    # the tempo, or are unpaused-safe readbacks used mid-poll without disturbing a flip).
-    # The COMMAND subset dispatches via _action_bridge (full response); the readback
-    # subset (get_active_wars / get_bridge_state / rosters) via _query_bridge (.data).
-    _ANY_COMMANDS = frozenset({
-        "pause_game", "unpause_game", "set_speed", "set_auto_respond_events",
-        "set_controlled_character", "release_character",
-        # ck-6kvq.13 (R6): the decision-budget governor's write surface. Pure
-        # bridge state (a mutex-protected ledger), so ANY polarity in the
-        # bridge's own table (snapshot.cpp) — listed here so the two tables
-        # AGREE rather than disagreeing loudly on every sync (§2.2).
-        "report_usage", "set_budget_config",
-    })
-    _ANY_READS = frozenset({
-        "get_active_wars", "get_bridge_state", "who_holds_the_lock",
-        "get_offset_validation", "get_tick_info", "get_controlled_roster",
-        "get_budget_state",
-    })
-    _ANY_ACTIONS = _ANY_COMMANDS | _ANY_READS
-
-    _polarity_warned: set = set()
-
-    # ── ck-6kvq.9 / §2.2: THE BRIDGE IS THE POLARITY AUTHORITY ───────────────
-    # The table above is a CACHED HINT used to pick a timeout, not an authority.
-    # The bridge publishes the required clock state of every registered action
-    # (`get_action_polarity`), derived from its own classifiers — the same ones
-    # the flush loop partitions a buffer by. Two tables in two languages is a
-    # defect waiting for a new handler, and they ALREADY disagree in at least
-    # one place (query_conquest_targets is an is_deferred_drain_action in the
-    # bridge and sits in _UNPAUSED_READS here), so a disagreement is reported
-    # LOUDLY rather than silently mis-routed.
-    #
-    # Wire names come from the bridge's polarity_name() (flush_scheduler.cpp).
-    # The bridge splits the tick class into tick_read / tick_write (reads must
-    # drain before the writes of the same flush); the gateway has one
-    # UNPAUSED_TICK for both, which is correct for its purpose — it only picks a
-    # pause flip and a timeout.
-    _WIRE_TO_POLARITY = {
-        "any": Polarity.ANY,
-        "paused": Polarity.PAUSED,
-        "tick_read": Polarity.UNPAUSED_TICK,
-        "tick_write": Polarity.UNPAUSED_TICK,
-        "tick": Polarity.UNPAUSED_TICK,
-        "unknown": Polarity.PAUSED,
-    }
-
-    def _bridge_polarity_table(self) -> dict:
-        return getattr(self, "_bridge_polarity", {}) or {}
-
-    def sync_polarity_table(self, published: dict) -> list:
-        """Adopt the bridge's published polarity table and report disagreements.
-
-        `published` is {action_name: wire_polarity} straight off
-        `get_action_polarity`. Returns a list of
-        {action, client, bridge} disagreement records — EMPTY means the two
-        tables agree. Every disagreement is logged at ERROR: the bridge wins
-        (it is the authority and the thing that actually routes the call), but
-        it is never allowed to be a silent correction, because a silent
-        correction is exactly how a new handler ends up mis-routed for months.
-        """
-        adopted: dict = {}
-        disagreements: list = []
-        for action, wire in (published or {}).items():
-            pol = self._WIRE_TO_POLARITY.get(wire)
-            if pol is None:
-                log.error("BridgeGateway: bridge published unknown polarity %r for %r; "
-                          "keeping the client classification", wire, action)
-                continue
-            adopted[action] = pol
-            client_pol = self._classify_local(action)
-            if client_pol is not pol:
-                disagreements.append({"action": action,
-                                      "client": client_pol.value,
-                                      "bridge": pol.value})
-        self._bridge_polarity = adopted
-        for d in disagreements:
-            log.error("POLARITY DISAGREEMENT: %s — client says %s, bridge says %s. "
-                      "The bridge is the authority (ck-6kvq.9 §2.2); the client table "
-                      "is only a timeout hint and should be corrected.",
-                      d["action"], d["client"], d["bridge"])
-        if disagreements:
-            log.error("POLARITY DISAGREEMENT: %d action(s) disagree between the "
-                      "gateway table and the bridge's published authority.",
-                      len(disagreements))
-        return disagreements
-
-    def _classify_local(self, action: str) -> "BridgeGateway.Polarity":
-        """The gateway's own static classification (the cached hint)."""
-        if action in self._ANY_ACTIONS:
-            return self.Polarity.ANY
-        if action in self._WRITE_ACTIONS:
-            return self.Polarity.UNPAUSED_TICK
-        if action in self._UNPAUSED_READS:
-            return self.Polarity.UNPAUSED_TICK
-        if action.startswith("query_") or action.startswith("get_") or action.startswith("list_"):
-            return self.Polarity.PAUSED
-        if action not in self._polarity_warned:
-            self._polarity_warned.add(action)
-            log.warning("BridgeGateway: unclassified action %r → defaulting to PAUSED", action)
-        return self.Polarity.PAUSED
-
-    def _polarity(self, action: str) -> "BridgeGateway.Polarity":
-        """Classify an action's required pause polarity.
-
-        The bridge's published table wins when we have it (§2.2); otherwise fall
-        back to the local hint. Unknown ⇒ PAUSED (the safe read default) + a
-        one-time warning so a new action is loud, never mis-routed."""
-        published = self._bridge_polarity_table().get(action)
-        if published is not None:
-            return published
-        return self._classify_local(action)
-
-    @asynccontextmanager
-    async def _scoped_pause(self, polarity: "BridgeGateway.Polarity"):
-        """RECORD {paused,speed} → FLIP to `polarity` → (caller executes) → RESTORE in
-        finally. UNPAUSED_TICK holds the single-flight lock for the whole critical
-        section (flip→execute→restore). PAUSED reads only toggle pause (idempotent),
-        never speed; ANY does not flip at all. Restore is idempotent and runs on every
-        exit path (exception, timeout, blocked) so tempo is never leaked."""
-        g0 = self.game()
-        was_paused = bool(g0.get("paused", True))
-        prev_speed = int(g0.get("speed", 3) or 3)
-        i_flipped_pause = False
-        lock_held = False
-
-        if polarity is self.Polarity.ANY:
-            # No flip, no restore — the action operates the tempo directly.
-            yield {"recorded": g0}
-            return
-
-        if polarity is self.Polarity.UNPAUSED_TICK:
-            await self._strict_lock.acquire()
-            lock_held = True
-        try:
-            if polarity is self.Polarity.PAUSED:
-                if not was_paused:
-                    await _action_bridge(self.state, "pause_game", {})
-                    i_flipped_pause = True
-            elif polarity is self.Polarity.UNPAUSED_TICK:
-                if was_paused:
-                    await _action_bridge(self.state, "unpause_game", {})
-                    i_flipped_pause = True
-            yield {"recorded": g0, "flipped": i_flipped_pause}
-        finally:
-            try:
-                # RESTORE the recorded tempo. PAUSED-read restore only re-toggles the
-                # pause IT flipped (never speed); UNPAUSED_TICK holders are authoritative
-                # for tempo and re-apply both pause and speed.
-                if polarity is self.Polarity.PAUSED:
-                    if i_flipped_pause:
-                        await _action_bridge(self.state, "unpause_game", {})
-                elif polarity is self.Polarity.UNPAUSED_TICK:
-                    if was_paused:
-                        await _action_bridge(self.state, "pause_game", {})
-                    else:
-                        if i_flipped_pause:
-                            await _action_bridge(self.state, "unpause_game", {})
-                        if prev_speed and prev_speed != int(self.game().get("speed", prev_speed) or prev_speed):
-                            await _action_bridge(self.state, "set_speed", {"speed": prev_speed})
-            finally:
-                if lock_held:
-                    self._strict_lock.release()
-
-    async def _call(self, action: str, params: dict, *, write: bool = False,
-                    force_unpaused: bool = False):
-        """The single record→flip→execute→restore entry point. read/read_unpaused/write
-        are thin wrappers that pick polarity and delegate here."""
+    # --- bridge calls --------------------------------------------------------
+    async def _dispatch(self, action: str, params: dict, *, write: bool = False):
+        """One bridge call on the path its kind needs. No clock change, no tick wait."""
         if self.health == "hung":
             return {"reason": "bridge_disconnected"}
-        # ANY-polarity actions (tempo/liveness/identity) are served inline even when a
-        # caller routes them through write()/read_unpaused() — pause_game via write()
-        # must NOT pause-then-restore-to-running (it IS the tempo). Otherwise force the
-        # UNPAUSED_TICK polarity for writes / explicit deferred reads.
-        table_pol = self._polarity(action)
-        if table_pol is self.Polarity.ANY:
-            pol = self.Polarity.ANY
-            write = False
-        elif write or force_unpaused:
-            pol = self.Polarity.UNPAUSED_TICK
-        else:
-            pol = table_pol
-
-        async def _do_ipc():
-            # Writes: dispatch via action_bridge (fabricates sent_no_confirmation on
-            # timeout, never raises), preceded by a tick-wait under UNPAUSED_TICK.
-            if write:
-                await self._await_tick_advance()
-                return await _action_bridge(self.state, action, params, timeout=8.0)
-            # ANY-polarity tempo/identity COMMANDS go through action_bridge (full
-            # response); ANY-polarity readbacks fall through to query_bridge (.data).
-            if action in self._ANY_COMMANDS:
-                return await _action_bridge(self.state, action, params, timeout=8.0)
-            # Deferred UNPAUSED reads: action_bridge path (longer timeout, drains on tick).
-            if pol is self.Polarity.UNPAUSED_TICK:
-                try:
-                    return await _action_bridge(self.state, action, params, timeout=12.0)
-                except (TimeoutError, ConnectionError):
-                    return {}
-            # Plain TIER-2 reads (and ANY-polarity get_*/query_* readbacks).
+        # Writes and commands: action path (fabricates sent_no_confirmation on a
+        # timeout, never raises).
+        if write or action in self._COMMANDS:
+            return await _action_bridge(self.state, action, params, timeout=8.0)
+        if action in self._ACTION_PATH_READS:
             try:
-                return await _query_bridge(self.state, action, params, timeout=12.0)
-            except (TimeoutError, ConnectionError):
-                return {}
-
-        needs_unpaused_retry = False
-        async with self._scoped_pause(pol):
-            res = await _do_ipc()
-            # ── Bridge pause-transparency deference (the thin fallback) ──────────
-            # The bridge self-classifies a deferred game-thread read it cannot serve
-            # while paused with {status:"needs_unpaused"} (emit_needs_unpaused). Honor
-            # that as the AUTHORITATIVE polarity signal even if our static _UNPAUSED_READS
-            # table mis-classified the action as PAUSED: re-issue UNPAUSED below (outside
-            # this scope, so tempo restores once and the UNPAUSED single-flight lock isn't
-            # taken under the PAUSED scope). As the bridge takes over pause-transparency
-            # for more handlers, the gateway defers to it automatically; OLD bridges never
-            # emit this, so nothing changes for them.
-            if (isinstance(res, dict) and res.get("status") == "needs_unpaused"
-                    and pol is not self.Polarity.UNPAUSED_TICK):
-                needs_unpaused_retry = True
-            # Flip-miss: the bridge rejected with the opposite-polarity typed reason
-            # (a race where our cached pause state lagged reality). Re-flip once + retry.
-            elif isinstance(res, dict) and res.get("reason") in ("game_unpaused", "game_paused"):
-                if res.get("reason") == "game_unpaused":
-                    await _action_bridge(self.state, "pause_game", {})
-                else:
-                    await _action_bridge(self.state, "unpause_game", {})
-                    if pol is self.Polarity.UNPAUSED_TICK:
-                        await self._await_tick_advance()
-                res = await _do_ipc()
-        if needs_unpaused_retry:
-            async with self._scoped_pause(self.Polarity.UNPAUSED_TICK):
-                await self._await_tick_advance()
-                res = await _do_ipc()
-        return res
-
-    # --- pause-owning bridge calls (thin wrappers over _call) ---------------
-    async def read(self, action: str, params: dict):
-        """TIER-2 read (or a deferred UNPAUSED read) — gw owns the polarity + restore.
-        The agent never sees requires_paused/requires_unpaused."""
-        return await self._call(action, params)
-
-    async def read_unpaused(self, action: str, params: dict):
-        """B* deferred read (strict-CB, decision eval, cb-capability) — UNPAUSED +
-        single-flight. Retained as an explicit entry point for redesign.py call sites."""
-        return await self._call(action, params, force_unpaused=True)
-
-    async def write(self, action: str, params: dict):
-        """TIER-3 / B* write — UNPAUSED ≥1 tick (E3), dispatch, then RESTORE the recorded
-        tempo. Callers that need the game to keep ticking through a post-dispatch readback
-        poll use confirmed_write() instead (one scope spanning dispatch+poll+restore)."""
-        return await self._call(action, params, write=True)
-
-    async def read_inline(self, action: str, params: dict):
-        """An unscoped, unlocked read for use INSIDE a confirmed_write readback poll
-        OR an unpaused_window(): the game is already unpaused and the single-flight lock
-        is already held by the enclosing scope, so re-entering _scoped_pause (which would
-        re-acquire the lock or pause mid-poll) must be avoided. UNPAUSED game-thread reads
-        (strict-CB / cbs / conquest) drain on the live tick, so route them via
-        action_bridge (longer timeout) exactly like _do_ipc's UNPAUSED_TICK branch; plain
-        TIER-2 reads fall through to query_bridge. No flip, no lock — the window owns both."""
-        if action in self._UNPAUSED_READS or action in ("query_cbs_for_targets",):
-            try:
-                return await _action_bridge(self.state, action, params, timeout=12.0)
+                if action in DEFERRED_DRAIN_READS:
+                    async with self._strict_lock:
+                        return await _action_bridge(self.state, action, params,
+                                                    timeout=DEFERRED_READ_TIMEOUT_S)
+                return await _action_bridge(self.state, action, params,
+                                            timeout=DEFERRED_READ_TIMEOUT_S)
             except (TimeoutError, ConnectionError):
                 return {}
         try:
-            return await _query_bridge(self.state, action, params, timeout=8.0)
+            return await _query_bridge(self.state, action, params, timeout=12.0)
         except (TimeoutError, ConnectionError):
             return {}
 
-    async def read_many(self, requests: "list[tuple[str, dict]]") -> list:
-        """Issue INDEPENDENT reads CONCURRENTLY, PAUSED ones under ONE scope.
+    async def read(self, action: str, params: dict):
+        """A read, served by the bridge whether the game is paused or running."""
+        return await self._dispatch(action, params)
 
-        ck-p3vd. The agent paid one flush period PER READ: observe_v2(depth=full)
+    async def write(self, action: str, params: dict):
+        """A write: dispatched on the action path. It lands on the game thread within
+        a frame, paused or running. A readback that needs game days goes through
+        confirmed_write instead."""
+        return await self._dispatch(action, params, write=True)
+
+    async def read_many(self, requests: "list[tuple[str, dict]]") -> list:
+        """Issue INDEPENDENT reads CONCURRENTLY; results in request order.
+
+        ck-p3vd. The agent paid one flush period PER READ: observe(depth=full)
         fans out to ~10 reads awaited in turn, ~10 s each, ~100 s for one
         observation — the whole graded episode. A flush serves its entire buffer
-        in one span (flush_scheduler.cpp:407-415), so reads issued together cost
-        ONE period however many there are.
+        in one span (flush_scheduler.cpp), so reads issued together cost ONE
+        period however many there are.
 
         MEASURED by ck-zgh4 on the live bridge, four independent reads:
             sequential            20.01 s
@@ -449,161 +222,43 @@ class BridgeGateway:
         correlates BY CONSTRUCTION, with none of the misrouting risk that made
         ck-iu11 expensive.
 
-        ONE SCOPE, NOT N, AND THAT IS THE WHOLE POINT. `_scoped_pause` records
-        {paused,speed}, flips, and restores in a finally. N concurrent per-read
-        scopes would each sample `was_paused` independently and race their
-        restores — one could unpause while another still required PAUSED. In
-        PIPELINE mode that race is currently unreachable because the flips are
-        refused outright (ck-tygb), but "correct because a refusal happens to
-        save us" is a coincidence with a timer on it, and in LEGACY mode the
-        verbs are not refused and the race is real. So: one window, like
-        `unpaused_window` already does for the UNPAUSED_TICK side.
-
-        POLARITY IS PRESERVED PER READ, NOT PER BATCH. ck-zgh4 measured that a
-        fast read gathered with slow ones pays the slow one's latency —
-        query_realm cost 0.22 s alone and 9.83 s gathered. So ANY-polarity reads
-        are issued OUTSIDE the paused scope and keep their inline fast path;
-        sweeping them in would buy nothing and cost them a flush.
-
-        UNPAUSED_TICK reads are NOT batched here at all: they hold the
-        single-flight lock and are serial by necessity (`unpaused_window` is
-        their batching story). They fall through to the ordinary per-read path
-        rather than being silently reclassified.
+        Each read keeps its own path (a deferred-drain read still takes the
+        single-flight lock, so those serialize among themselves while the rest
+        run beside them). A read that raised is recorded as an EMPTY result —
+        one read failing must not take the batch down, and the callers'
+        isinstance(x, dict) guards already treat {} as "absent".
         """
         if not requests:
             return []
-        results: list = [None] * len(requests)
-        any_idx, paused_idx, other_idx = [], [], []
-        for i, (action, _) in enumerate(requests):
-            pol = self._polarity(action)
-            if pol is self.Polarity.ANY:
-                any_idx.append(i)
-            elif pol is self.Polarity.PAUSED:
-                paused_idx.append(i)
-            else:
-                other_idx.append(i)
-
-        async def _fill(idx_list, coro_for):
-            if not idx_list:
-                return
-            got = await asyncio.gather(*[coro_for(i) for i in idx_list],
-                                       return_exceptions=True)
-            for i, r in zip(idx_list, got):
-                # A read that raised is recorded as an EMPTY result, exactly as
-                # read_inline does for its own timeouts — one read failing must
-                # not take the batch down, and the caller's existing
-                # isinstance(x, dict) guards already treat {} as "absent".
-                results[i] = {} if isinstance(r, BaseException) else r
-
-        # ANY first and unscoped: they are inline-served, so they keep their
-        # sub-second path instead of waiting on the paused span.
-        await _fill(any_idx, lambda i: self._call(*requests[i]))
-        if paused_idx:
-            async with self._scoped_pause(self.Polarity.PAUSED):
-                await _fill(paused_idx,
-                            lambda i: self.read_inline(*requests[i]))
-        # Not batchable — issued the ordinary way so nothing is reclassified.
-        for i in other_idx:
-            results[i] = await self._call(*requests[i])
-        return results
-
-    @asynccontextmanager
-    async def unpaused_window(self):
-        """Open ONE UNPAUSED_TICK scope (flip→unpause + single-flight lock acquired ONCE),
-        wait for a live tick, and yield. Callers issue every deferred game-thread read
-        inside via read_inline — so the whole plan_war enumeration loop pays a single
-        flip-in/flip-out and ONE lock acquire/release instead of one per call. The scope's
-        finally restores the recorded tempo exactly once. Pause-transparent: when the game
-        was already paused (the agent's observe window) the entry unpauses and the exit
-        re-pauses, identically to the per-call path — just once. Crash-safety is UNCHANGED:
-        reads inside still serialize through the same g_cb_query single-flight slot (it is
-        held for the whole window), so they never overlap each other or the engine's AI CB
-        evals; read_inline does no name-cache drain and honors the same is_mapped/safe_read
-        bridge discipline as the per-call reads it replaces."""
-        async with self._scoped_pause(self.Polarity.UNPAUSED_TICK):
-            await self._await_tick_advance()
-            yield
+        got = await asyncio.gather(*[self.read(a, p) for a, p in requests],
+                                   return_exceptions=True)
+        return [{} if isinstance(r, BaseException) else r for r in got]
 
     async def confirmed_write(self, action: str, params: dict, *, readback,
-                              deadline_s: float = 12.0, max_polls: int = 8):
-        """Deferred-write confirmation (_HARDENING_PLAN.md FIX 1 §1.4): ONE
-        UNPAUSED_TICK scope spanning dispatch → readback poll → restore. The game keeps
-        ticking for the whole poll window (no premature restore mid-poll), then the
-        scope's finally restores tempo exactly once.
-
-        `readback` is an async predicate taking the raw dispatch dict and returning the
-        resolved object (truthy) or None. It uses ANY-polarity reads (get_active_wars /
-        query_realm / query_armies) so it does not perturb the flip.
-
-        Returns {"raw": <dispatch dict>, "resolved": <readback obj or None>,
-                 "polls": <count>}."""
+                              deadline_s: float = 12.0, max_polls: int = 8,
+                              poll_interval_s: Optional[float] = None):
+        """Dispatch a write, then read it back: redesign.confirm_write (the two
+        waits, L13 contract D5 amendment 3)."""
         if self.health == "hung":
-            return {"raw": {"reason": "bridge_disconnected"}, "resolved": None, "polls": 0}
-        async with self._scoped_pause(self.Polarity.UNPAUSED_TICK):
-            await self._await_tick_advance()
+            return {"raw": {"reason": "bridge_disconnected"}, "resolved": None,
+                    "polls": 0, "drain": None, "refused": "bridge_disconnected",
+                    "drains_when": None, "intent_id": "",
+                    "game_date_at_submit": self.game().get("date")}
+
+        async def _send():
             try:
-                raw = await _action_bridge(self.state, action, params, timeout=8.0)
+                return await _action_bridge(self.state, action, params, timeout=8.0)
             except (TimeoutError, ConnectionError):
-                raw = {"status": "sent_no_confirmation", "action": action}
-            raw = raw if isinstance(raw, dict) else {}
-            # Immediate readback, then poll riding the live tick up to deadline.
-            resolved = await readback(raw)
-            polls = 0
-            if resolved is None:
-                deadline = asyncio.get_event_loop().time() + deadline_s
-                while (resolved is None
-                       and asyncio.get_event_loop().time() < deadline
-                       and polls < max_polls):
-                    await self._await_tick_advance(timeout_s=2.5)
-                    resolved = await readback(raw)
-                    polls += 1
-            return {"raw": raw, "resolved": resolved, "polls": polls}
-
-    async def _await_tick_advance(self, timeout_s: float = 6.0) -> bool:
-        """Block until the live tick advances at least once after unpause, or timeout.
-        Returns True if a tick was observed. Bounded so a frozen thread can't hang the
-        write (the layer surfaces drain_timeout/severity:frozen elsewhere)."""
-        start_tick = self.state.tick_id
-        deadline = asyncio.get_running_loop().time() + timeout_s
-        while asyncio.get_running_loop().time() < deadline:
-            if self.state.tick_id > start_tick:
-                return True
-            await asyncio.sleep(0.2)
-        return self.state.tick_id > start_tick
-
-    async def delta_since_last(self) -> list:
-        """Since-tick event aggregation (the API tracks the tick; kills manual carry)."""
-        st = self._last_delta_tick
-        self._last_delta_tick = self.state.tick_id
-        events: list = []
-        for act, key, kind in (("query_war_declarations", "declarations", "war"),
-                               ("query_scheme_inits", "scheme_inits", "scheme"),
-                               ("query_council_tasks", "assignments", "council_task")):
-            try:
-                res = await _query_bridge(self.state, act, {"since_tick": st, "limit": 20})
-            except Exception:
-                continue
-            if isinstance(res, dict):
-                for rec in (res.get(key) or []):
-                    events.append(f"{kind}: {rec.get('summary') or rec.get('name') or rec}")
-        return events[:20]
+                return {"status": "sent_no_confirmation", "action": action}
+        return await redesign.confirm_write(self.clock, self.read, _send, readback,
+                                            deadline_s=deadline_s, max_polls=max_polls,
+                                            poll_interval_s=poll_interval_s)
 
     async def delta_records_since_last(self) -> list:
-        """Since-tick events as RECORDS, not repr strings (ck-s8vr).
-
-        `delta_since_last` formats each record with
-        `f"{kind}: {rec.get('summary') or rec.get('name') or rec}"`, and the
-        bridge's war and scheme records carry neither `summary` nor `name` — so
-        the fallback stringifies the dict and the structure is lost inside an
-        f-string. Measured over d49+d50: 5,640 delta entries, EVERY ONE a
-        Python-repr dict ("war: {'tick': 61, 'attacker_id': 30966, ...}"), and
-        75.5 per cent of observe_v2's bytes. A consumer cannot filter what it
-        cannot parse, which is why the foreign-war firehose reached every seat
-        whole.
-
-        Same reads, same budget, same tick bookkeeping. Only the shape differs.
-        `delta_since_last` is left exactly as it was: it has two gateway
-        implementations and this changes neither of their contracts.
+        """Since-tick events as RECORDS (ck-s8vr): the war, scheme and council-task
+        feeds since the last call, each record tagged with its `kind`. The bridge's
+        war and scheme records carry no `summary` or `name`, so they are passed as
+        dicts for observe's `since` filter to read, never formatted into strings.
         """
         st = self._last_delta_tick
         self._last_delta_tick = self.state.tick_id
@@ -624,12 +279,42 @@ class BridgeGateway:
         return out
 
 
+def is_management_ledger_broadcast(msg: dict) -> bool:
+    """The bridge's management-ledger record (ck-324r, built by
+    management_ledger_frame.h): `type: result`, `ledger_source:
+    inline_management`, the caller's id under `caller_request_id` and NO
+    `request_id` (ck-h4pn; the caller's id rides under `caller_request_id` when
+    the call had one). It is broadcast for the ARM relay on every control call,
+    so this session never waits on it; anything else of type `result` that
+    reaches the terminal else (a request_id nobody waits on, another
+    ledger_source) is still an unmatched frame."""
+    return (msg.get("type") == "result"
+            and msg.get("ledger_source") == "inline_management"
+            and not msg.get("request_id"))
+
+
 def _get_gateway() -> "BridgeGateway":
     state = _get_state()
     gw = getattr(state, "_gateway", None)
     if gw is None:
         gw = BridgeGateway(state)
         state._gateway = gw
+    return gw
+
+
+async def _gateway_now() -> "BridgeGateway":
+    """The gateway with a fresh clock reading. Every tool takes one at entry (the
+    goal-shaped tools, query, discover, steer, pass_turn, the board tools), so its
+    envelope's game block says what get_tick_info said at the call (witness W1:
+    nothing else refreshes it; m-16: no tool shows a stale reading).
+
+    Its cost: one get_tick_info round trip per tool call, served on the bridge's
+    IPC thread (bridge-internal, no game-thread wait), so it queues only behind
+    another client's call on the same reader; confirmed writes add one at submit
+    and one per world poll."""
+    gw = _get_gateway()
+    if gw.health != "hung":
+        await gw.clock()
     return gw
 
 
@@ -643,13 +328,8 @@ class BridgeState:
     connected: bool = False
     tick_id: int = 0
     game_date: str = "unknown"
-    latest_tick_start: dict = field(default_factory=dict)
     latest_observation: dict = field(default_factory=dict)
     handshake_info: dict = field(default_factory=dict)
-    last_action_result: dict = field(default_factory=dict)
-    #: ck-9rto. Broadcast action_results this session refused because they
-    #: correlated to nobody here. Non-zero means the bridge emitted one.
-    uncorrelated_results: int = 0
     #: ck-ey8p. Frames this listener's type dispatch did not handle, counted by
     #: `type`. THE DICT IS EMPTY UNTIL ONE ARRIVES, never pre-seeded with zeroes:
     #: an absent key means none of that type was seen, and a zero would claim a
@@ -659,6 +339,13 @@ class BridgeState:
     #: witness an unmatched record even in principle, and a zero in a bundle
     #: could not be told from "none was ever emitted".
     unhandled_frames: dict = field(default_factory=dict)
+    #: ck-324r's management-ledger records, counted by `action`: the bridge
+    #: broadcasts one on every set_controlled_character / release_character for
+    #: the ARM relay, with the caller's id under `caller_request_id` and,
+    #: deliberately, no `request_id` (ck-h4pn), so no caller is waiting on it.
+    #: EXPECTED traffic, not an unmatched frame: counted here, logged at DEBUG.
+    #: Empty until one arrives, like unhandled_frames.
+    management_ledger_frames: dict = field(default_factory=dict)
     action_log: list = field(default_factory=list)
     pending_queries: dict = field(default_factory=dict)  # request_id -> asyncio.Future
     #: ck-2r9k, THE SECOND CONSUMER. request_id -> the flush ETA IN SECONDS that
@@ -681,11 +368,11 @@ class BridgeState:
     pending_tickets: dict = field(default_factory=dict)  # request_id -> ticket
     _client: Optional[object] = None
     _listener_task: Optional[asyncio.Task] = None
-    _gateway: Optional[object] = None  # BridgeGateway for the 8 redesign tools
+    _gateway: Optional[object] = None  # BridgeGateway for the goal-shaped tools
     mock_mode: bool = False
     #: lane-multi / lane-prebind: the outcome of binding CK3_AGENT_CHARACTER_ID
     #: ({character_id, ok, reason, bound_at?, also: [...], wait: {...}}), None
-    #: until the bind has been attempted. While the game is not yet active the
+    #: until the bind has been attempted. Until the game is active the
     #: attempt waits in `_prebind_task` (see _prebind_when_active).
     prebind: Optional[dict] = None
     _prebind_task: Optional[asyncio.Task] = None
@@ -709,8 +396,8 @@ async def _bridge_listener(state: BridgeState):
             # #123: every bridge response now stamps the LIVE tick + game_date at
             # the top level (ipc_server.cpp build_envelope_clock_fragment). Refresh
             # the cached clock from ANY message that carries it — so the envelope's
-            # tick/game_date are current even while paused (no tick_start is pushed
-            # when the game is paused, which is the required state for reads).
+            # tick/game_date are current in both clock states (the bridge pushes no
+            # tick_start). Whether the game is paused is in get_tick_info only.
             t = msg.get("tick")
             if isinstance(t, int):
                 state.tick_id = t
@@ -772,7 +459,9 @@ async def _bridge_listener(state: BridgeState):
                 continue
 
             if msg_type == "tick_start":
-                state.latest_tick_start = msg
+                # Its stamps only. Whether the game is paused is read from
+                # get_tick_info (BridgeGateway.clock): the bridge pushes no
+                # tick_start, so a cache of this frame said "paused" forever (W1).
                 state.tick_id = msg.get("tick_id", 0)
                 state.game_date = msg.get("game_date", "unknown")
 
@@ -780,32 +469,6 @@ async def _bridge_listener(state: BridgeState):
                 state.latest_observation = msg
                 state.tick_id = msg.get("tick_id", state.tick_id)
                 state.game_date = msg.get("game_date", state.game_date)
-
-            elif msg_type == "action_result":
-                # ck-9rto: UNCORRELATED BY CONSTRUCTION — do not store it.
-                #
-                # The block above routes by `request_id` and `continue`s, so a
-                # frame arriving here carries no request_id or somebody else's.
-                # The bridge BROADCASTS queue-bound replies to every client slot
-                # (ck-st70), and THIS IS THE B PATH — the runtime the arms
-                # actually run (decision G6). Arms A and B are six sessions on
-                # one bridge.
-                #
-                # It could not reach the model TODAY only because
-                # `last_action_result` is WRITE-ONLY: two writes, no readers
-                # anywhere in ck3agent/. That is an accident of the field never
-                # having been consumed, not a guard — the first seat to surface
-                # it would arm the hazard silently. The same branch in
-                # `agent.py` (the A path) had the identical shape and I fixed
-                # it one file over without checking here, which is the whole
-                # reason to run the family rather than the site.
-                state.uncorrelated_results += 1
-                log.warning(
-                    "DROPPED an uncorrelated action_result (request_id=%r): it "
-                    "was not matched to any pending request of this session, "
-                    "and the bridge broadcasts queue-bound replies — so it is "
-                    "most likely ANOTHER session's. Total dropped: %d",
-                    msg.get("request_id"), state.uncorrelated_results)
 
             elif msg_type == "handshake_ack":
                 state.handshake_info = msg
@@ -816,7 +479,6 @@ async def _bridge_listener(state: BridgeState):
                 if event == "character_died":
                     char_id = msg.get("character_id", 0)
                     log.warning("GAME OVER: Controlled character %d has died!", char_id)
-                    state.last_action_result = msg
                 else:
                     log.info("Bridge notification: %s", event)
 
@@ -824,7 +486,7 @@ async def _bridge_listener(state: BridgeState):
                 pass
 
             elif msg_type == "error":
-                log.error("Bridge error: %s", msg.get("message"))
+                log.error("Bridge error: %s", msg.get("error"))   # ipc_server.cpp error frames
 
             else:
                 # ck-ey8p: THE TERMINAL ELSE. Everything above names a type; a
@@ -837,6 +499,13 @@ async def _bridge_listener(state: BridgeState):
                 # meant to, and it is rare; an unknown type is ordinary
                 # forward-compatibility noise and must not drown a log the
                 # operator reads. Same counter, different volume.
+                if is_management_ledger_broadcast(msg):
+                    act = str(msg.get("action") or "")
+                    state.management_ledger_frames[act] = (
+                        state.management_ledger_frames.get(act, 0) + 1)
+                    log.debug("management ledger record (action=%r, caller_request_id=%r): "
+                              "the relay's, not a reply", act, msg.get("caller_request_id"))
+                    continue
                 state.unhandled_frames[msg_type] = (
                     state.unhandled_frames.get(msg_type, 0) + 1)
                 if msg.get("ledger_source"):
@@ -878,13 +547,6 @@ def _make_mock_state() -> BridgeState:
     state = BridgeState(connected=True, mock_mode=True)
     state.tick_id = 42
     state.game_date = "1066.09.15"
-    state.latest_tick_start = {
-        "type": "tick_start",
-        "tick_id": 42,
-        "game_date": "1066.09.15",
-        "game_speed": 3,
-        "paused": False,
-    }
     state.latest_observation = {
         "type": "observation",
         "tick_id": 42,
@@ -969,10 +631,6 @@ async def bridge_lifespan(server: FastMCP):
         if state._listener_task is None or state._listener_task.done():   # a pre-bind starts it
             state._listener_task = asyncio.create_task(_bridge_listener(state))
         log.info("Bridge connected, listener started")
-        # ck-6kvq.9 / §2.2: adopt the bridge's polarity table as the authority
-        # and report any disagreement with the local hint LOUDLY. Best-effort:
-        # an older bridge answers unknown_action and we keep the local table.
-        await _sync_polarity_authority(state)
     else:
         log.warning("Bridge not available — tools will return errors. "
                      "Start CK3 with bridge DLL and reconnect.")
@@ -1009,11 +667,16 @@ mcp = FastMCP(
         # caller what its ROLE was. It describes what the tools do instead.
         "This server connects to a running Crusader Kings 3 game via an "
         "injected bridge library. Its tools read game state and write changes "
-        "to it: personality weights, AI subsystem toggles, and typed actions "
+        "to it: personality weights and typed actions "
         "such as interactions, council tasks, laws and war declarations. The "
         "game's own AI continues to run everything not written through them.\n\n"
-        "Tools with clean phase boundaries: query / discover -> act.\n"
-        "All responses use a standard envelope: {ok, data, error, tick, game_date}."
+        "Each cycle: observe first; read deeper with query, inspect, discover or cbs; "
+        "plan with plan_war, succession_plan or set_phase; act with do, declare_war "
+        "or steer; let time pass with session(action='wait').\n"
+        "Every reply is one envelope: {ok, tool, result, blocked, warnings, errors, "
+        "bridge_health}, plus verdict (applied | rejected | pending) on writes. "
+        "When ok is false, blocked.gate names why and blocked.next, when present, "
+        "says what to call instead."
     ),
     lifespan=bridge_lifespan,
 )
@@ -1036,7 +699,7 @@ def get_formatted_state() -> str:
     status = "connected" if state.connected else "disconnected"
     return (
         f"Bridge is {status}. No cached observation available.\n"
-        "query / discover -> act for game state and actions."
+        "Call observe for the situation report."
     )
 
 
@@ -1080,7 +743,7 @@ def _extract_resolved_id(data: Any) -> int | None:
     if not isinstance(data, dict):
         return None
     # Sections (in priority order) the bridge handlers emit a resolved character_id on.
-    for key in ("character", "personality", "subsystems", "realm", "succession",
+    for key in ("character", "personality", "realm", "succession",
                 "council", "traits", "claims", "relations", "opinion"):
         section = data.get(key)
         if isinstance(section, dict):
@@ -1094,49 +757,83 @@ def _extract_resolved_id(data: Any) -> int | None:
     return None
 
 
-def _envelope(state: BridgeState, data: dict | str | None = None,
-              resolved_id: int | None = None) -> dict[str, Any]:
-    """Wrap a successful result in the standard envelope as a real dict.
+def _state_game(state: BridgeState) -> dict[str, Any]:
+    """The `game` block for a tool that reads the bridge directly (query, discover,
+    steer, pass_turn): the gateway's, so it carries the fresh clock reading those
+    tools take at entry (_gateway_now), the same block every other tool's envelope
+    has. Before any reading paused / speed are None, never a guess."""
+    if state is None:
+        return {"tick": None, "date": None, "paused": None, "speed": None}
+    gw = getattr(state, "_gateway", None)
+    if gw is not None:
+        return gw.game()
+    return {"tick": state.tick_id, "date": state.game_date, "paused": None, "speed": None}
 
-    Returns structured JSON (a dict), NOT a json.dumps string — FastMCP serializes
-    the dict to both unstructured content and structured_content, so the MCP client
-    receives a real blob it never has to re-parse.
 
-    Double-encoding guard: if `data` arrives as a `str` that is actually JSON (some
-    caller handed us a pre-serialized blob), parse it back to a real object so the
-    returned `data` is never a nested JSON string. If it isn't JSON, keep the string.
+def _state_health(state: BridgeState) -> str:
+    if state is None or (not state.connected and not state.mock_mode):
+        return "hung"
+    return "ok"
 
-    #94: when `resolved_id` is provided (or can be lifted from `data`), echo it as a
-    top-level `resolved_character_id` so the agent can assert WHICH character the
-    read/steer actually acted on (default character_id resolves to the bridge primary
-    controlled char — the silent wrong-target trap).
+
+def _ok(tool: str, state: BridgeState, data: Any = None,
+        resolved_id: int | None = None, *, errors: Optional[list] = None,
+        warnings: Optional[list] = None) -> dict[str, Any]:
+    """A successful read in the one envelope (redesign.envelope).
+
+    `result` is always a parsed object: a JSON string is parsed back, any other
+    non-dict is carried as {"value": ...}. #94: the character the bridge actually
+    resolved (character_id=0 means the bound ruler) is echoed as
+    actor.character_id, lifted from the reply when the caller does not pass it.
     """
     if isinstance(data, str):
         try:
             data = json.loads(data)
         except (json.JSONDecodeError, ValueError):
-            pass  # genuine plain string — leave as-is
+            pass
     if resolved_id is None:
         resolved_id = _extract_resolved_id(data)
-    env: dict[str, Any] = {
-        "ok": True,
-        "data": data,
-        "tick": state.tick_id,
-        "game_date": state.game_date,
-    }
-    if isinstance(resolved_id, int) and resolved_id > 0:
-        env["resolved_character_id"] = resolved_id
-    return env
+    result = data if isinstance(data, dict) else ({} if data is None else {"value": data})
+    actor = ({"character_id": resolved_id}
+             if isinstance(resolved_id, int) and resolved_id > 0 else None)
+    return redesign.envelope(tool, result=result, actor=actor, game=_state_game(state),
+                             warnings=warnings, errors=errors,
+                             bridge_health=_state_health(state))
 
 
-def _error(state: BridgeState, code: str, message: str) -> dict[str, Any]:
-    """Wrap an error in the standard envelope as a real dict (not a json.dumps string)."""
-    return {
-        "ok": False,
-        "error": {"code": code, "message": message},
-        "tick": state.tick_id if state else None,
-        "game_date": state.game_date if state else None,
-    }
+def _blocked(tool: str, state: BridgeState, gate: str, summary: str,
+             **why) -> dict[str, Any]:
+    """A refusal in the one envelope, carrying a named gate (redesign.GATE_TABLE)."""
+    return redesign.envelope(tool, ok=False,
+                             blocked=redesign.why_blocked(gate, summary=summary, **why),
+                             game=_state_game(state), bridge_health=_state_health(state))
+
+
+def _refused(tool: str, state: BridgeState, blocked: dict) -> dict[str, Any]:
+    """A refusal in the one envelope from a why_blocked already built."""
+    return redesign.envelope(tool, ok=False, blocked=blocked, game=_state_game(state),
+                             bridge_health=_state_health(state))
+
+
+def _declined(reply: Any, action: str = "") -> dict[str, Any] | None:
+    """The why_blocked for a reply the bridge DECLINED, or None when it answered.
+
+    A handler that returns false comes back as {"success": false, "action": ...},
+    with `reason` (or `error`) when the handler named why; the bridge's own fault
+    and timeout replies carry no `success` at all. Either is a refusal, never a
+    reading: shown as ok=true it reads like data. The rule is redesign.read_refusal,
+    the read twin of the write predicate (L14 FF3 N3-1): a game-thread read that
+    did not run in time is read_timeout, retryable."""
+    name = str((reply.get("action") if isinstance(reply, dict) else "") or action or "the read")
+    return redesign.read_refusal(reply, name)
+
+
+def _read_failure(name: str, exc: BaseException) -> dict[str, Any]:
+    """One `errors[]` row for a read that did not come back: a timeout is
+    `read_timeout`, anything else on the wire is `bridge_disconnected`."""
+    code = "read_timeout" if isinstance(exc, (TimeoutError, asyncio.TimeoutError)) \
+        else "bridge_disconnected"
+    return {"code": code, "detail": f"{name}: {exc}" if str(exc) else name}
 
 
 async def _try_reconnect(state: BridgeState) -> bool:
@@ -1195,52 +892,17 @@ def _reconnect_resume_token(old_client) -> Optional[str]:
     return tok if isinstance(tok, str) and tok else None
 
 
-async def _ensure_connected(state: BridgeState) -> dict[str, Any] | None:
-    """Ensure bridge is connected. Returns error envelope dict if not, None if OK."""
+async def _ensure_connected(state: BridgeState, tool: str) -> dict[str, Any] | None:
+    """None when the bridge is connected (reconnecting once if not); otherwise the
+    `bridge_disconnected` refusal for `tool`."""
     if state.mock_mode:
         return None
     if not state.connected:
         await _try_reconnect(state)
     if not state.connected:
-        return _error(state, "bridge_disconnected",
-                      "Bridge not connected. Is CK3 running with the bridge DLL?")
+        return _blocked(tool, state, "bridge_disconnected",
+                        "the bridge is not connected: is CK3 running with the bridge library loaded?")
     return None
-
-
-async def _sync_polarity_authority(state: BridgeState) -> list:
-    """Fetch the bridge's published polarity table and adopt it (ck-6kvq.9 §2.2).
-
-    The bridge is the single polarity authority: it is the thing that actually
-    partitions a flush buffer, and it cannot invent a polarity it is handed. The
-    gateway's own table is demoted to a cached timeout hint. Any disagreement is
-    logged at ERROR by sync_polarity_table() rather than silently corrected.
-
-    Best-effort and never fatal: an older bridge that does not know
-    `get_action_polarity` answers unknown_action, and the gateway simply keeps
-    using its local classification.
-    """
-    gw = getattr(state, "_gateway", None)
-    if gw is None:
-        gw = BridgeGateway(state)
-        state._gateway = gw
-    if not hasattr(gw, "sync_polarity_table"):
-        return []
-    try:
-        res = await _send_and_wait(state, "get_action_polarity", {}, timeout=8.0)
-    except Exception as e:                       # noqa: BLE001 — never fatal
-        log.warning("Polarity authority: could not fetch the bridge table (%s: %s); "
-                    "using the local classification", type(e).__name__, e)
-        return []
-    table = res.get("polarity") if isinstance(res, dict) else None
-    if not isinstance(table, dict) or not table:
-        log.warning("Polarity authority: bridge published no table "
-                    "(older bridge?); using the local classification")
-        return []
-    disagreements = gw.sync_polarity_table(table)
-    log.info("Polarity authority: adopted %d action classifications from the bridge "
-             "(%d disagreement(s) with the local table)", len(table), len(disagreements))
-    return disagreements
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1948,9 +1610,10 @@ async def _settle_by_check(state: BridgeState, request_id: str,
 
 async def _query_bridge(state: BridgeState, action: str, params: dict,
                          timeout: float = 15.0) -> dict | str:
-    """Send a query to the bridge and return the data portion of the response."""
-    result = await _send_and_wait(state, action, params, timeout)
-    return result.get("data", result.get("message", result))
+    """Send a query to the bridge and return its reply."""
+    # the reply as the bridge wrote it: no bridge reply carries a `data` or
+    # `message` wrapper (L15 A2 deleted the unwrap that looked for one)
+    return await _send_and_wait(state, action, params, timeout)
 
 
 async def _action_bridge(state: BridgeState, action: str, params: dict,
@@ -1997,59 +1660,7 @@ async def _action_bridge(state: BridgeState, action: str, params: dict,
 
 
 # ---------------------------------------------------------------------------
-# Tool 1: observe
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-async def observe(
-    include: Annotated[
-        list[str],
-        Field(
-            description="Sections to include. Default = character + tick + "
-                        "personality + evaluations. Add 'subsystems' to also "
-                        "read the 38 subsystem toggles.",
-            json_schema_extra={"items": {"type": "string",
-                "enum": ["character", "tick", "personality",
-                         "evaluations", "subsystems"]}},
-        ),
-    ] = None,
-    character_id: int = 0) -> dict[str, Any]:
-    """Combined snapshot of the current game state — the once-per-cycle read.
-
-    Returns the controlled character's profile (stats, traits, gold/prestige/
-    piety), the tick/date/speed, the 10 personality axes, and the AI evaluations,
-    in a single call. Add 'subsystems' to include when you plan to toggle any.
-
-    Args:
-        include: Sections to include (default: character, tick, personality,
-            evaluations). Optionally add 'subsystems'.
-        character_id: Character to observe (0 = controlled character).
-    """
-    state = _get_state()
-    err = await _ensure_connected(state)
-    if err:
-        return err
-
-    from tools import resolve_observe_sections
-
-    params = {"character_id": character_id}
-    sections = resolve_observe_sections(include, params)
-    data = {}
-    section_errors = {}
-    for name, action, bridge_params in sections:
-        try:
-            data[name] = await _query_bridge(state, action, bridge_params)
-        except (ConnectionError, TimeoutError) as e:
-            section_errors[name] = str(e)
-        except Exception as e:
-            section_errors[name] = str(e)
-    if section_errors:
-        data["section_errors"] = section_errors
-    return _envelope(state, data)
-
-
-# ---------------------------------------------------------------------------
-# Tool 2: query
+# query
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
@@ -2066,36 +1677,42 @@ async def query(
         Field(
             description="Batch query: up to 5 domains. Mutually exclusive with domain.",
             json_schema_extra={"items": {"type": "string", "enum": QUERY_DOMAINS}},
-            max_length=5,
+            max_length=QUERY_BATCH_MAX,
         ),
     ] = None,
     character_id: int = 0, target_id: int = 0,
     title_id: int = 0, trait_id: int = 0,
-    category: int = 0, include_vassals: bool = False,
+    include_vassals: bool = False,
     war_id: int = 0, culture_id: int = 0,
     dynasty_id: int = 0, filter: str = "", sort: str = "",
-    sort_order: str = "", max_results: int = 0,
+    sort_order: str = "", max_results: int = 0, court_of: int = 0,
+    female: StrictBool | None = None,
     since_tick: int = 0, limit: int = 0,
     require_in_range: bool = True, verbose: bool = False,
     scope: str = "", hops: int = 0, max_nodes: int = 0,
     target_county: int = 0, target_county_key: str = "",
     counties: str = "", detail: str = "") -> dict[str, Any]:
     """Deep-dive query for a specific game domain. Supports batch queries via
-    'domains' (max 5) with partial failure.
+    'domains' (max 5) with partial failure: each domain's reply sits under its own
+    key, and a domain that failed is an errors[] row naming it (ok is then false).
+    A read the bridge declined is refused with the gate its reason names.
 
     Args:
         domain: Which game domain to query (single).
-        domains: Batch query: up to 5 domains. Mutually exclusive with domain.
+        domains: Batch query: up to 5 domains (event_log and relative_power
+            included). Pass domain or domains, not both: both is refused.
         character_id: Character context (0 = controlled).
-        target_id: Secondary character for opinion, valid_cbs, diplomatic_range.
-        title_id: Title context for titles, de_jure, election, neighbors, adjacency, development.
+        target_id: The other character for opinion, opinion_breakdown,
+            diplomatic_range and relative_power.
+        title_id: Title context for titles, de_jure, election, claimants,
+            title_history, title_succession, neighbors, adjacency, development.
             neighbors: title_id is a COUNTY. With title_id=0 the character is used
             (character_id, 0 = the bound ruler): its capital county's neighbours, plus
             bordering_realms[] = every realm whose counties touch that character's realm
             (own + vassal counties), with a border_counties count each. Each neighbour row
-            carries title_id, holder_id and realm_ruler_id (the holder's top liege).
+            carries title_id, holder_id and realm_ruler_id (the holder's top liege), or
+            realm_ruler_unresolved when that liege walk could not be made.
         trait_id: Trait ID for trait_compatibility.
-        category: Building category for buildings domain (1095=constructible, 1825=special, 0=all).
         include_vassals: Include vassal claims in claims domain.
         war_id: Specific war for war_score domain (0 = all).
         culture_id: Culture ID for innovation/fascination/research (0 = character's).
@@ -2111,23 +1728,50 @@ async def query(
               size. is_ai = has an AI controller and is not the human player (the same
               definition as domain="character"; true for every ruler in an observer game).
         sort_order: For domain="characters": desc (default) | asc.
-        max_results: For domain="characters": cap on returned rows (lean default 25,
-            verbose default 50; lean ceiling 500, verbose ceiling 5000).
+        court_of: For domain="characters": keep only characters whose immediate
+            liege is this ruler (its unlanded courtiers and its landed direct
+            vassals); 0 (default) = no court filter. The reply echoes court_of.
+            "Who is at my court": court_of=<your ruler id>, filter="alive".
+            Each row carries is_female and dynasty_name (when the character has one).
+        female: For domain="characters": true keeps women, false keeps men; unset
+            (default) keeps both. The reply echoes it.
+        max_results: Row cap for domain="characters" (default 50; the bridge caps it
+            at 500 lean, 5000 verbose) and domain="marriage_candidates" (default 30).
+            marriage_candidates also takes `sort` (default military).
+        since_tick: For the feed domains (war_declarations, scheme_inits,
+            council_tasks, event_log): only records after this tick. Pass the
+            current_tick of the previous reply.
+        limit: For the feed domains: at most this many records (feeds default 64,
+            event_log 100); for title_history, at most this many holders.
+        require_in_range: For domain="marriage_candidates": true (default) keeps
+            candidates in diplomatic range; false browses globally.
+        scope: For domain="map_graph": realm (default) | target | explicit.
+        hops: For domain="map_graph": breadth of the window in county hops (default 2).
+        max_nodes: For domain="map_graph": cap on counties (default 60).
+        target_county: For domain="map_graph", scope=target: the county title id.
+        target_county_key: For domain="map_graph", scope=target: the county key
+            (e.g. "c_york"), instead of target_county.
+        counties: For domain="map_graph", scope=explicit: comma-separated county keys.
+        detail: For domain="map_graph": "brief" drops distances and the live overlay.
         verbose: Opt-in to full detail for characters/wars/council/armies/realm/claims.
             Default False returns lean payloads (drops per-row skills, government, age,
-            war participant id arrays, score_breakdown, and per-army secondary status
-            fields) — all of which the agent's default formatters do not read. Set True
+            trait names, war participant id arrays, score_breakdown, and per-army
+            secondary status fields) — all of which the agent's default formatters do not read. Set True
             only when you specifically need those extra fields.
     """
     state = _get_state()
-    err = await _ensure_connected(state)
+    err = await _ensure_connected(state, "query")
     if err:
         return err
+    gw = await _gateway_now()             # the envelope's game block: a fresh clock reading
+    if domain and domains:
+        return _blocked("query", state, "invalid_argument",
+                        "pass domain=<one domain> or domains=[...], not both")
 
     params = {
         "character_id": character_id, "target_id": target_id,
         "title_id": title_id, "trait_id": trait_id,
-        "category": category, "include_vassals": include_vassals,
+        "include_vassals": include_vassals,
         "war_id": war_id, "culture_id": culture_id,
         "dynasty_id": dynasty_id,
         # ck-leg: character-browser params (domain="characters" → search_characters).
@@ -2142,6 +1786,13 @@ async def query(
         params["verbose"] = True
     # since_tick/limit thread through to the feed domains (war_declarations,
     # scheme_inits, council_tasks, event_log) only when explicitly set.
+    if court_of:
+        params["court_of"] = court_of
+    # The caller's value, uncoerced (L14 m-10): StrictBool refuses a non-boolean
+    # ("yes", 1) at the MCP boundary, and a value that reaches here another way
+    # still meets the bridge's own female_must_be_boolean refusal.
+    if female is not None:
+        params["female"] = female
     if since_tick:
         params["since_tick"] = since_tick
     if limit:
@@ -2165,145 +1816,167 @@ async def query(
 
     from tools import resolve_query
 
-    # Batch mode
+    async def one(d: str):
+        """(data, errors, refusal): one domain's reply, the rows a composed domain
+        could not read, and the why_blocked when the domain was not answered."""
+        if d == "event_log":
+            data, errs = await _query_event_log(state, since_tick, limit, filter)
+            return data, errs, None
+        if d == "relative_power":
+            unbound = await redesign.unbound_refusal(gw, "query", "relative_power",
+                                                      {"character_id": character_id})
+            if unbound is not None:
+                return None, [], unbound["blocked"]
+            return await _query_relative_power(state, character_id, target_id)
+        resolved = resolve_query(d, params)
+        if resolved is None:
+            return None, [], redesign.why_blocked(
+                "unknown_domain", summary=f"unknown domain '{d}'; valid: {', '.join(QUERY_DOMAINS)}")
+        action, bridge_params = resolved
+        # L14 finding 6: a domain about the bound ruler, with none bound, answers
+        # the refusal every actor-bearing tool answers.
+        unbound = await redesign.unbound_refusal(gw, "query", action, bridge_params)
+        if unbound is not None:
+            return None, [], unbound["blocked"]
+        try:
+            reply = await _query_bridge(state, action, bridge_params)
+        except Exception as e:                           # noqa: BLE001
+            f = _read_failure(d, e)
+            return None, [], redesign.why_blocked(f["code"], summary=f["detail"])
+        declined = _declined(reply, action)
+        if declined is not None:
+            return None, [], declined
+        return reply, [], None
+
+    # Batch mode: every domain's reply under its own key; a domain that failed is
+    # an errors[] row naming it, so a partial batch is ok=false, never a success.
     if domains:
-        if len(domains) > 5:
-            return _error(state, "invalid_param",
-                          "Batch query limited to 5 domains.")
+        if len(domains) > QUERY_BATCH_MAX:
+            return _blocked("query", state, "invalid_argument",
+                            f"a batch is limited to {QUERY_BATCH_MAX} domains; got {len(domains)}")
         data = {}
-        batch_errors = {}
+        errors = []
         for d in domains:
-            resolved = resolve_query(d, params)
-            if resolved is None:
-                batch_errors[d] = f"Unknown domain: {d}"
-                continue
-            action, bridge_params = resolved
-            try:
-                result = await _query_bridge(state, action, bridge_params)
-                data[d] = result
-            except (ConnectionError, TimeoutError) as e:
-                batch_errors[d] = str(e)
-            except Exception as e:
-                batch_errors[d] = str(e)
-        if batch_errors:
-            data["batch_errors"] = batch_errors
-        return _envelope(state, data)
+            got, errs, refused = await one(d)
+            errors.extend({"code": e["code"], "detail": f"{d}: {e['detail']}"} for e in errs)
+            if refused is not None:
+                errors.append({"code": refused["gate"], "detail": f"{d}: {refused['summary']}"})
+            else:
+                data[d] = got
+        return _ok("query", state, data, errors=errors)
 
-    # Single domain mode
     if not domain:
-        return _error(state, "invalid_param",
-                      "Either 'domain' or 'domains' is required.")
+        return _blocked("query", state, "missing_required_argument",
+                        "pass domain=<one domain> or domains=[up to "
+                        f"{QUERY_BATCH_MAX}]; valid: {', '.join(QUERY_DOMAINS)}")
+    got, errs, refused = await one(domain)
+    if refused is not None:
+        return _refused("query", state, refused)
+    return _ok("query", state, got, errors=errs)
 
-    # event_log: synthetic "what happened since I last looked" feed — merges the
-    # bridge's existing since_tick hook buffers (war declarations, scheme inits,
-    # council tasks) into one chronological stream. Pure agent-side aggregation over
-    # existing handlers (no bridge change). Call once per cycle with the prior
-    # current_tick as since_tick; optional `filter` = comma-list of kinds.
-    if domain == "event_log":
-        lim = limit if limit > 0 else 100
-        st = since_tick
-        kinds = {k.strip() for k in filter.split(",")} if filter else None
-        feeds = [
-            ("query_war_declarations", "declarations", "war"),
-            ("query_scheme_inits",     "scheme_inits", "scheme"),
-            ("query_council_tasks",    "assignments",  "council_task"),
-        ]
-        events = []
-        source_errors = {}
-        cur_tick = 0
-        for action, list_key, etype in feeds:
-            if kinds and etype not in kinds:
-                continue
-            try:
-                res = await _query_bridge(state, action,
-                                          {"since_tick": st, "limit": lim})
-            except (ConnectionError, TimeoutError) as e:
-                source_errors[etype] = str(e)
-                continue
-            except Exception as e:
-                source_errors[etype] = str(e)
-                continue
-            if not isinstance(res, dict):
-                continue
-            cur_tick = max(cur_tick, int(res.get("current_tick") or 0))
-            for rec in (res.get(list_key) or []):
-                if isinstance(rec, dict):
-                    e = dict(rec)
-                    e["kind"] = etype
-                    events.append(e)
-        events.sort(key=lambda r: int(r.get("tick") or 0), reverse=True)
-        truncated = len(events) > lim
-        events = events[:lim]
-        out = {
-            "action": "event_log",
-            "current_tick": cur_tick,
-            "since_tick": st,
-            "event_count": len(events),
-            "truncated": truncated,
-            "events": events,
-        }
-        if source_errors:
-            out["source_errors"] = source_errors
-        return _envelope(state, out)
 
-    # relative_power: the playbook's M1 ratio helper — my strength (+allies) vs a
-    # target (+their allies), and vs my largest faction. Agent-side aggregation over
-    # alliances + faction_threat (no bridge change). target_id optional.
-    if domain == "relative_power":
+async def _query_event_log(state, since_tick: int, limit: int, filter: str):
+    """query(domain="event_log"): a synthetic "what happened since I last looked"
+    feed. It merges the bridge's since_tick hook buffers (war declarations, scheme
+    inits, council tasks) into one stream, newest first. Call it once per cycle with
+    the previous reply's current_tick as since_tick; `filter` is a comma list of
+    kinds (war, scheme, council_task). Returns (data, errors): a feed that did not
+    answer is an errors[] row and the others still report."""
+    lim = limit if limit > 0 else 100
+    st = since_tick
+    kinds = {k.strip() for k in filter.split(",")} if filter else None
+    feeds = [
+        ("query_war_declarations", "declarations", "war"),
+        ("query_scheme_inits",     "scheme_inits", "scheme"),
+        ("query_council_tasks",    "assignments",  "council_task"),
+    ]
+    events = []
+    errors = []
+    cur_tick = 0
+    for action, list_key, etype in feeds:
+        if kinds and etype not in kinds:
+            continue
         try:
-            me = await _query_bridge(state, "query_alliances", {"character_id": character_id})
-        except (ConnectionError, TimeoutError) as e:
-            return _error(state, "bridge_disconnected", str(e))
-        me = me if isinstance(me, dict) else {}
-        my_str = float(me.get("own_military_strength") or 0)
-        my_callable = float(me.get("total_callable_strength") or my_str)
-        out = {"action": "relative_power", "character_id": character_id,
-               "my_strength": my_str, "my_callable_strength": my_callable}
-        if target_id:
-            try:
-                t = await _query_bridge(state, "query_alliances", {"character_id": target_id})
-            except (ConnectionError, TimeoutError):
-                t = {}
-            t = t if isinstance(t, dict) else {}
-            t_str = float(t.get("own_military_strength") or 0)
-            t_callable = float(t.get("total_callable_strength") or t_str)
-            ratio = my_callable / t_callable if t_callable > 0 else float("inf")
-            out.update({"target_id": target_id, "target_strength": t_str,
-                        "target_callable_strength": t_callable,
-                        "offensive_ratio": round(ratio, 2),
-                        "offensive_verdict": ("winnable_on_tempo" if ratio >= 1.5
-                                              else "parity_defense_only" if ratio >= 0.9 else "unfavorable")})
-        try:
-            ft = await _query_bridge(state, "query_faction_threat", {"character_id": character_id})
-        except (ConnectionError, TimeoutError):
-            ft = {}
-        ft = ft if isinstance(ft, dict) else {}
-        largest = max([float(f.get("power_pct_of_liege") or 0) for f in (ft.get("factions") or [])], default=0.0)
-        internal = (100.0 / largest) if largest > 0 else float("inf")
-        out.update({"largest_faction_power_pct": largest,
-                    "internal_ratio": (round(internal, 2) if internal != float("inf") else None),
-                    "internal_safe": internal >= 1.25,
-                    "hint": "offensive_ratio>=1.5 ⇒ winnable; internal_ratio<1.25 ⇒ suspend external wars (playbook M1)"})
-        return _envelope(state, out)
+            res = await _query_bridge(state, action, {"since_tick": st, "limit": lim})
+        except Exception as e:                           # noqa: BLE001
+            errors.append(_read_failure(etype, e))
+            continue
+        declined = _declined(res, action)
+        if declined is not None:
+            errors.append({"code": declined["gate"], "detail": f"{etype}: {declined['summary']}"})
+            continue
+        if not isinstance(res, dict):
+            continue
+        cur_tick = max(cur_tick, int(res.get("current_tick") or 0))
+        for rec in (res.get(list_key) or []):
+            if isinstance(rec, dict):
+                e = dict(rec)
+                e["kind"] = etype
+                events.append(e)
+    events.sort(key=lambda r: int(r.get("tick") or 0), reverse=True)
+    truncated = len(events) > lim
+    events = events[:lim]
+    return {
+        "action": "event_log",
+        "current_tick": cur_tick,
+        "since_tick": st,
+        "event_count": len(events),
+        "truncated": truncated,
+        "events": events,
+    }, errors
 
-    resolved = resolve_query(domain, params)
-    if resolved is None:
-        return _error(state, "unknown_domain",
-                      f"Unknown domain: {domain}. Valid: {', '.join(QUERY_DOMAINS)}")
 
-    action, bridge_params = resolved
+async def _query_relative_power(state, character_id: int, target_id: int):
+    """query(domain="relative_power"): my strength (+allies) against a target
+    (+their allies), and against my largest faction, from query_alliances and
+    query_faction_threat. Returns (data, errors, refusal): without my own
+    strength there is no comparison, so that read failing is the refusal."""
     try:
-        result = await _query_bridge(state, action, bridge_params)
-        return _envelope(state, result)
-    except TimeoutError:
-        return _error(state, "timeout",
-                      f"Query timed out for domain '{domain}'.")
-    except ConnectionError as e:
-        return _error(state, "bridge_disconnected", str(e))
+        me = await _query_bridge(state, "query_alliances", {"character_id": character_id})
+    except Exception as e:                               # noqa: BLE001
+        f = _read_failure("query_alliances", e)
+        return None, [], redesign.why_blocked(f["code"], summary=f["detail"])
+    declined = _declined(me, "query_alliances")
+    if declined is not None:
+        return None, [], declined
+    me = me if isinstance(me, dict) else {}
+    my_str = float(me.get("own_military_strength") or 0)
+    my_callable = float(me.get("total_callable_strength") or my_str)
+    out = {"action": "relative_power", "character_id": character_id,
+           "my_strength": my_str, "my_callable_strength": my_callable}
+    errors = []
+    if target_id:
+        try:
+            t = await _query_bridge(state, "query_alliances", {"character_id": target_id})
+        except Exception as e:                           # noqa: BLE001
+            errors.append(_read_failure("query_alliances(target)", e))
+            t = {}
+        t = t if isinstance(t, dict) else {}
+        t_str = float(t.get("own_military_strength") or 0)
+        t_callable = float(t.get("total_callable_strength") or t_str)
+        ratio = my_callable / t_callable if t_callable > 0 else float("inf")
+        out.update({"target_id": target_id, "target_strength": t_str,
+                    "target_callable_strength": t_callable,
+                    "offensive_ratio": round(ratio, 2),
+                    "offensive_verdict": ("winnable_on_tempo" if ratio >= 1.5
+                                          else "parity_defense_only" if ratio >= 0.9 else "unfavorable")})
+    try:
+        ft = await _query_bridge(state, "query_faction_threat", {"character_id": character_id})
+    except Exception as e:                               # noqa: BLE001
+        errors.append(_read_failure("query_faction_threat", e))
+        ft = {}
+    ft = ft if isinstance(ft, dict) else {}
+    largest = max([float(f.get("power_pct_of_liege") or 0) for f in (ft.get("factions") or [])], default=0.0)
+    internal = (100.0 / largest) if largest > 0 else float("inf")
+    out.update({"largest_faction_power_pct": largest,
+                "internal_ratio": (round(internal, 2) if internal != float("inf") else None),
+                "internal_safe": internal >= 1.25,
+                "hint": "offensive_ratio>=1.5 means winnable; internal_ratio<1.25 means suspend external wars"})
+    return out, errors, None
 
 
 # ---------------------------------------------------------------------------
-# Tool 3: discover
+# discover
 # ---------------------------------------------------------------------------
 
 async def _discover_targets(state, action: str, actor_id: int,
@@ -2314,16 +1987,42 @@ async def _discover_targets(state, action: str, actor_id: int,
     plan = resolve_targets_plan(action, {"actor_id": actor_id, "title_id": title_id})
 
     if plan.get("mode") == "error":
-        return _error(state, "invalid_param", plan.get("reason", "unsupported action"))
+        return _blocked("discover", state, plan.get("gate", "unknown_verb"),
+                        plan.get("reason", "unsupported action"))
 
     try:
+        if plan["mode"] == "imprison_targets":
+            # The one imprison judge: the game's send check per target, the rows
+            # do(action_class='imprison_targets') gives (redesign.imprison_target_rows).
+            gw = _get_gateway()
+            cid = actor_id
+            if not cid:
+                # The check is the actor's: resolve "the controlled ruler" first.
+                actor, err = await redesign._resolve_actor(gw, 0, "discover")
+                if err is not None:
+                    return err
+                cid = int((actor or {}).get("id") or 0)
+            available, unavailable, refused = await redesign.imprison_target_rows(gw, cid)
+            if refused is not None:
+                return _refused("discover", state, refused)
+            return _ok("discover", state, {
+                "action": action, "label": plan.get("label"),
+                "target_count": len(available) + len(unavailable),
+                "available": available, "unavailable": unavailable,
+            })
         if plan["mode"] == "single":
             result = await _query_bridge(state, plan["bridge_action"], plan["params"])
-            return _envelope(state, {"action": action, **(result if isinstance(result, dict) else {"result": result})})
+            declined = _declined(result, plan["bridge_action"])
+            if declined is not None:
+                return _refused("discover", state, declined)
+            return _ok("discover", state, {"action": action, **(result if isinstance(result, dict) else {"result": result})})
 
         # pool_annotate: enumerate the candidate pool, then annotate each entry.
         pool = plan["pool"]
         pool_resp = await _query_bridge(state, pool["bridge_action"], pool["params"])
+        declined = _declined(pool_resp, pool["bridge_action"])
+        if declined is not None:
+            return _refused("discover", state, declined)
         items = (pool_resp or {}).get(pool["list_key"], []) if isinstance(pool_resp, dict) else []
         annotate = plan.get("annotate")
         targets = []
@@ -2349,17 +2048,16 @@ async def _discover_targets(state, action: str, actor_id: int,
                 except (ConnectionError, TimeoutError):
                     out["annotate_error"] = True
             targets.append(out)
-        return _envelope(state, {
+        return _ok("discover", state, {
             "action": action,
             "label": plan.get("label"),
             "target_count": len(targets),
             "truncated": len(items) > cap,
             "targets": targets,
         })
-    except TimeoutError:
-        return _error(state, "timeout", f"targets(action='{action}') timed out.")
-    except ConnectionError as e:
-        return _error(state, "bridge_disconnected", str(e))
+    except Exception as e:                               # noqa: BLE001
+        f = _read_failure(f"discover(what='targets', action='{action}')", e)
+        return _blocked("discover", state, f["code"], f["detail"])
 
 
 async def _discover_decision_why_blocked(state, decision: str, actor_id: int,
@@ -2375,15 +2073,16 @@ async def _discover_decision_why_blocked(state, decision: str, actor_id: int,
     if not decision.endswith("_decision"):
         decision = decision + "_decision"
     if decision not in SHIELD_DECISIONS:
-        return _error(state, "invalid_param",
-                      f"decision_why_blocked supports {SHIELD_DECISIONS}; got '{decision}'")
+        return _blocked("discover", state, "unknown_subject",
+                        f"decision_why_blocked supports {', '.join(SHIELD_DECISIONS)}; got '{decision}'")
 
     cid = actor_id or 0
     try:
         realm = await _query_bridge(state, "query_realm", {"character_id": cid})
         character = await _query_bridge(state, "query_character", {"character_id": cid})
-    except (ConnectionError, TimeoutError) as e:
-        return _error(state, "bridge_disconnected", str(e))
+    except Exception as e:                               # noqa: BLE001
+        f = _read_failure("query_realm/query_character", e)
+        return _blocked("discover", state, f["code"], f["detail"])
     realm = realm if isinstance(realm, dict) else {}
     character = character if isinstance(character, dict) else {}
 
@@ -2400,11 +2099,18 @@ async def _discover_decision_why_blocked(state, decision: str, actor_id: int,
                                          {"character_id": cid})
         except (ConnectionError, TimeoutError) as e:
             titles = {"error": f"bridge_unreachable: {e}"}
-        if not isinstance(titles, dict) or titles.get("error") or (
-                "titles" not in titles and "held_titles" not in titles):
+        held = titles.get("held_titles") if isinstance(titles, dict) else None
+        if not redesign.hierarchy_was_read(titles, realm):
             # D1-B: never fabricate a confident empty verdict from a failed
-            # read — report the gate as unmeasured, loudly.
-            reason = (titles.get("error") if isinstance(titles, dict)
+            # read — report the gate as unmeasured, loudly. L16 R9: the bridge
+            # answers a clamp or a skipped lookup as an error (title_count_clamped,
+            # title_lookup_failed); L15 witness n6 stays as the second line: an
+            # empty list while query_realm counts held titles is not "holds none"
+            # (redesign.hierarchy_was_read).
+            reason = (titles.get("error")
+                      or ("no held_titles in the reply" if not isinstance(held, list)
+                          else "held_titles empty while query_realm counts held titles (clamped)")
+                      if isinstance(titles, dict)
                       else f"unexpected_reply:{type(titles).__name__}")
             log.warning("duchy-control read failed (%s) — reporting unmeasured",
                         reason)
@@ -2412,85 +2118,126 @@ async def _discover_decision_why_blocked(state, decision: str, actor_id: int,
             # clause (a hint, not a false fail) instead of a confident empty.
             verdict = shield_decision_why_blocked(
                 decision, realm=realm, character=character, duchy_control=None)
-            return _envelope(state, verdict)
-        held = titles.get("titles") or titles.get("held_titles") or []
-        complete, candidates = [], []
-        for t in (held if isinstance(held, list) else [])[:40]:
+            return _ok("discover", state, verdict)
+        # L15 A2: read by the keys emit_title_info writes (query_handlers.cpp:
+        # `key` :2910, `tier` :2935, `de_jure_parent_key` :2964; the list is
+        # `held_titles` :3046). The reader used to take "titles", "title_key" and
+        # "de_jure_kingdom", none of which the bridge writes, so the kingdom
+        # filter never ran and every held duchy anywhere counted toward k_england.
+        # A held duchy whose de-jure parent did not read back, or whose meter read
+        # failed, is UNMEASURED: it is neither counted nor dropped.
+        complete, candidates, unmeasured = [], [], []
+        for t in held[:40]:
             if not isinstance(t, dict):
                 continue
+            key = t.get("key")
+            key = key if isinstance(key, str) else ""
             tier = t.get("tier")
-            key = str(t.get("key") or t.get("title_key") or "")
-            if tier != 3 and not key.startswith("d_"):
+            if tier != 3:          # the emitter derives tier from a d_ key itself
                 continue
-            # de-jure-above filter: prefer an explicit field; else accept any duchy
-            # (the checker's count is conservative — the agent verifies the parent).
-            dejure_above = str(t.get("de_jure_kingdom") or t.get("de_jure_liege_key") or "")
-            if dejure_above and _DANELAW_KINGDOM_KEY not in dejure_above:
+            row = {"title_id": t.get("title_id"), "key": key or None}
+            parent = t.get("de_jure_parent_key")
+            if not key or not isinstance(parent, str) or not parent:
+                row["unmeasured"] = ("no title key" if not key
+                                     else "no de_jure_parent_key: the duchy's kingdom did not read back")
+                unmeasured.append(row)
                 continue
-            tkey = key or None
-            row = {"title_id": t.get("title_id"), "key": tkey}
+            if parent != _DANELAW_KINGDOM_KEY:
+                continue
             try:
                 prog = await _query_bridge(state, "query_dejure_progress",
-                                           {"character_id": cid, "title_key": tkey}) if tkey else None
-            except (ConnectionError, TimeoutError):
-                prog = None
-            if isinstance(prog, dict):
-                held_c = prog.get("held"); total_c = prog.get("total")
-                row["held"] = held_c; row["total"] = total_c
-                if isinstance(held_c, int) and isinstance(total_c, int) and total_c > 0 and held_c >= total_c:
-                    complete.append(row)
-                else:
-                    candidates.append(row)
-            else:
-                candidates.append(row)
-        duchy_control = {"complete_duchies": complete, "candidate_duchies": candidates}
+                                           {"character_id": cid, "title_key": key})
+            except (ConnectionError, TimeoutError) as e:
+                prog = {"error": f"bridge_unreachable: {e}"}
+            if not isinstance(prog, dict):
+                prog = {"error": f"unexpected_reply:{type(prog).__name__}"}
+            held_c, total_c = prog.get("held"), prog.get("total")
+            if prog.get("error") or not isinstance(held_c, int) \
+                    or not isinstance(total_c, int) or total_c <= 0:
+                row["unmeasured"] = ("query_dejure_progress: "
+                                     + str(prog.get("error") or "no held/total"))
+                unmeasured.append(row)
+                continue
+            row["held"] = held_c; row["total"] = total_c
+            (complete if held_c >= total_c else candidates).append(row)
+        duchy_control = {"complete_duchies": complete, "candidate_duchies": candidates,
+                         "unmeasured_duchies": unmeasured}
 
     verdict = shield_decision_why_blocked(
         decision, realm=realm, character=character, duchy_control=duchy_control)
-    return _envelope(state, verdict)
+    return _ok("discover", state, verdict)
 
 
 @mcp.tool()
-async def discover(what: str, interaction_type: str = "",
-                   target_id: int = 0, actor_id: int = 0,
-                   interaction: str = "", cb: str = "",
-                   title: str = "", action: str = "", title_id: int = 0,
-                   building: str = "", location_id: int = 0, slot: int = 0,
-                   task: str = "", max_results: int = 0,
-                   character_id: int = 0, decision_type: str = "",
-                   decisions: list = None) -> dict[str, Any]:
-    """Pre-action validation. List interaction/decision types, check acceptance, or
-    validate casus belli. Use before act() to verify feasibility.
+async def discover(
+    what: Annotated[
+        str,
+        Field(description="What to discover (see the list in the description).",
+              json_schema_extra={"enum": DISCOVER_WHATS}),
+    ] = "",
+    interaction_type: str = "",
+    target_id: int = 0, actor_id: int = 0,
+    interaction: str = "", cb: str = "",
+    title: str = "", action: str = "", title_id: int = 0,
+    building: str = "", location_id: int = 0, slot: Optional[int] = None,
+    max_results: int = 0,
+    character_id: int = 0, decision_type: str = "",
+    decisions: list = None, scheme: str = "",
+    candidates: list = None) -> dict[str, Any]:
+    """Pre-action validation: list interaction and decision types, check
+    acceptance, validate casus belli, enumerate valid targets. Use it before do()
+    or declare_war() to check that an action is possible.
 
     Args:
-        what: What to discover: interactions, decisions, valid_decisions,
-              acceptance, valid_cbs,
-              valid_cbs_strict, trigger_result, trigger_slots, war_validity,
-              evaluate_trigger, interaction_validity,
-              decisions (ALL decisions, each annotated with
-              shown/valid/cost_ok/available + a failures[] of unmet-requirement
-              loc-keys + the decision cost{} and the character's
-              current{gold,piety,prestige}); valid_decisions (same eval, ONLY
-              available==true decisions). Both take optional character_id.
-              war_targets (enumerate every target+title+CB the actor can attack —
-              the "who can I declare war on" surface; CANDIDATES ONLY: `declarable`
-              means no relation gate (kin, alliance, truce, imprisonment, already at
-              war) blocks the row, not that the game accepts the war. The strict engine
-              check, cbs(target_id) or what=valid_cbs_strict, is authoritative and wins
-              when the two disagree),
-              imprisonment (can actor imprison/banish/execute target_id, and on
-              what grounds — gate before imprison_interaction),
-              targets (THE "who are valid targets for action X" surface — pass
-              action=war|imprison|execute|banish|revoke_title|claim; returns the
-              candidate list with per-target validity. claim needs title_id),
-              fabricate_targets (which counties are ELIGIBLE fabricate-claim
-              targets for actor_id right now — runs the council task's real
-              eligibility triggers per county; feed a returned title_id into
-              act/set_council_task(task='task_fabricate_claim', target_title_id)).
-        task: For what=fabricate_targets: council task id (default
-              'task_fabricate_claim').
-        max_results: For what=fabricate_targets: cap on eligible counties
-              returned (default 40).
+        what: interactions | decisions (light name list) | decisions_annotated /
+              valid_decisions (pass decisions=[names]: each annotated with
+              shown/valid/cost_ok/available, unmet-requirement keys, cost, and
+              the character's current gold/piety/prestige; valid_decisions keeps
+              only the available ones) | acceptance | valid_cbs | valid_cbs_strict |
+              trigger_result | trigger_slots | war_validity | interaction_validity |
+              construction_check | war_targets | imprisonment | targets |
+              decision_why_blocked. Enumerations are do's: mercenaries,
+              fabricate-claim targets and factions are do(action_class=
+              'mercenaries' | 'fabricate_targets' | 'factions_to_join').
+              construction_check (building, location_id = a barony title id
+              of a holding; slot optional, read from the holding when omitted):
+              the game's own can-build verdict for actor_id with its reasons
+              (engine_reasons: the build button's tooltip lines, gold and
+              innovations included), the price and the actor's gold.
+              war_targets: every target+title+CB the actor can attack. CANDIDATES
+              ONLY: `declarable` means no relation gate (kin, alliance, truce,
+              imprisonment, already at war) blocks the row, not that the game
+              accepts the war; cbs(target_id) or what=valid_cbs_strict is the
+              engine's check and wins when the two disagree.
+              imprisonment: the grounds the game gives actor_id against
+              target_id (has_imprisonment_reason and its modifiers); not whether
+              the game takes an imprisonment: that is targets with
+              action=imprison.
+              targets: the valid targets for action=war|imprison|execute|banish|
+              revoke_title|claim (claim needs title_id). action=imprison is the
+              game's own send check per vassal, the rows
+              do(action_class='imprison_targets') gives: offered only when the
+              game would take the send, each with the target's answer (yes /
+              maybe / no) and score at check time; execute|banish list your
+              vassals with the game's grounds against each.
+              decision_why_blocked: per-clause pass/fail for
+              decision_type=negotiate_the_danelaw|found_kingdom from structural reads.
+              scheme_types: every scheme in the game's database with its target
+              type (character|title), category (hostile|personal|political|
+              contract), is_secret and max_breaches.
+              scheme_targets: whom the actor can start `scheme` against, by the
+              game's own check (the scheme's allow and valid triggers, an
+              existing scheme, the cooldown). target_id checks one character;
+              candidates=[ids] checks those; neither checks your court and
+              vassals, your liege and his court, the holders of titles you claim and their courts. Stops at max_results (default
+              20) valid. A refused row lists the game's reasons, one per failing
+              check, each {check, summary}: the game's words; for a failing
+              allow/valid trigger, that the bridge does not read the game's
+              words for this check; for another check with none, that the
+              game gives no detail.
+        scheme: For what=scheme_targets: the scheme key (from scheme_types).
+        candidates: For what=scheme_targets: character ids to check.
+        max_results: For what=scheme_targets: stop at this many valid (default 20).
         action: For what=targets: the action to enumerate targets for.
         title_id: For what=targets+action=claim (and claimant lookups).
         interaction_type: For what=acceptance / trigger_result: the interaction
@@ -2504,17 +2251,47 @@ async def discover(what: str, interaction_type: str = "",
             CB name to scope the verdict to (e.g. 'claim_cb').
         title: For what=interaction_validity + interaction='declare_war':
                title that owns the claim (informational; e.g. 'd_sistan').
+        decision_type: For what=decision_why_blocked.
+        building / location_id / slot: For what=construction_check: the building
+              key (e.g. 'castle_02'), the holding's barony or county title id,
+              and the building slot. Answers {buildable, building_index}.
+        character_id: For what=decisions / decisions_annotated / valid_decisions
+              / scheme_targets: the character (0 = controlled; actor_id is
+              read when character_id is 0).
+        decisions: For what=decisions_annotated / valid_decisions: the decision
+              keys or name-hashes (from what=decisions) to evaluate.
+    A reply the bridge declined is refused with the gate its reason names.
     """
     state = _get_state()
-    err = await _ensure_connected(state)
+    err = await _ensure_connected(state, "discover")
     if err:
         return err
+    gw = await _gateway_now()             # the envelope's game block: a fresh clock reading
+    if not what:
+        return _blocked("discover", state, "missing_required_argument",
+                        f"what is required; valid: {', '.join(DISCOVER_WHATS)}")
+    if what in ("targets", "decision_why_blocked"):
+        # L14 finding 6: about the bound ruler when no actor is named
+        unbound = await redesign.unbound_refusal(
+            gw, "discover", what, {"actor_id": actor_id or character_id})
+        if unbound is not None:
+            return unbound
 
     # Legibility capstone: what="targets" — "who are the valid targets for
     # action X right now". Some actions resolve in one call; others enumerate a
     # candidate pool then annotate each entry with per-target validity.
     if what == "targets":
         return await _discover_targets(state, action, actor_id, title_id)
+
+    # L14 (finding 8): one door per read. An enumeration discover once had is
+    # do's; the refusal names that door and reads nothing.
+    from tools import DISCOVER_MOVED_TO_DO
+    if what in DISCOVER_MOVED_TO_DO:
+        door = DISCOVER_MOVED_TO_DO[what]
+        return _blocked("discover", state, "unknown_subject",
+                        f"discover(what='{what}') is do(action_class='{door}'), which lists "
+                        "each row with its do_call",
+                        fix={"tool": "do", "args": {"action_class": door}})
 
     # Legibility (re/findings/re_shield_robustness.md (D)): per-clause pass/fail for
     # the SHIELD decisions (negotiate_the_danelaw / found_kingdom) from CHEAP
@@ -2525,13 +2302,20 @@ async def discover(what: str, interaction_type: str = "",
             state, decision_type or interaction_type or "negotiate_the_danelaw_decision",
             actor_id or character_id, title_id)
 
+    if what == "scheme_types":
+        return await redesign.scheme_types_impl(await _gateway_now())
+    if what == "scheme_targets":
+        return await redesign.scheme_targets_impl(
+            await _gateway_now(), scheme, character_id=actor_id or character_id,
+            target_id=target_id, candidates=candidates, max_results=max_results)
+
     from tools import resolve_discover, shape_discover_response
     resolver_params = {
         "what": what, "interaction_type": interaction_type,
         "target_id": target_id, "actor_id": actor_id,
         "interaction": interaction, "cb": cb, "title": title,
         "building": building, "location_id": location_id, "slot": slot,
-        "task": task, "max_results": max_results,
+        "max_results": max_results,
         "character_id": character_id,
         # #64: for what=decisions_annotated / valid_decisions — annotate ONLY these
         # decisions (key names and/or name-hashes from what="decisions").
@@ -2539,521 +2323,170 @@ async def discover(what: str, interaction_type: str = "",
     }
     resolved = resolve_discover(resolver_params)
     if resolved is None:
-        return _error(state, "invalid_param",
-                      f"Unknown discover target: {what}")
+        return _blocked("discover", state, "unknown_subject",
+                        f"unknown discover target '{what}'; valid: {', '.join(DISCOVER_WHATS)}")
 
     action, bridge_params = resolved
+    unbound = await redesign.unbound_refusal(gw, "discover", action, bridge_params)
+    if unbound is not None:
+        return unbound
 
-    # Deferred queries need a game tick to drain. valid_cbs_strict,
-    # trigger_result and interaction_validity all queue work onto the game
-    # thread, so route them through the longer-timeout action path.
-    is_deferred = what in (
-        "acceptance", "valid_cbs", "valid_cbs_strict",
-        "trigger_result", "evaluate_trigger", "interaction_validity",
-    )
+    # A deferred-drain read submits to a game-thread slot and waits for its
+    # verdict, so it takes the longer-budget action path. DEFERRED_DRAIN_READS is
+    # the one Python copy of the bridge's is_deferred_drain_action.
     try:
-        if is_deferred:
-            result = await _action_bridge(state, action, bridge_params, timeout=10.0)
+        if action in DEFERRED_DRAIN_READS:
+            result = await _action_bridge(state, action, bridge_params,
+                                          timeout=DEFERRED_READ_TIMEOUT_S)
+        elif action in BridgeGateway._GAME_THREAD_READS:
+            # A game-thread read (the game's triggers run under the random scope),
+            # through the gateway's action path.
+            result = await _get_gateway().read(action, bridge_params)
         else:
             result = await _query_bridge(state, action, bridge_params)
-        shaped = shape_discover_response(resolver_params, result)
-        return _envelope(state, shaped)
-    except TimeoutError:
-        return _error(state, "timeout", f"Discover '{what}' timed out.")
-    except ConnectionError as e:
-        return _error(state, "bridge_disconnected", str(e))
+    except Exception as e:                               # noqa: BLE001
+        f = _read_failure(f"discover('{what}')", e)
+        return _blocked("discover", state, f["code"], f["detail"])
+    if isinstance(result, dict) and result.get("status") == "sent_no_confirmation":
+        return _blocked("discover", state, "read_timeout",
+                        f"discover('{what}') was sent and the bridge did not answer within "
+                        f"{result.get('waited_s') or DEFERRED_READ_TIMEOUT_S}s",
+                        raw_reason=str(result.get("reason_code") or ""))
+    declined = _declined(result, action)
+    if declined is not None:
+        return _refused("discover", state, declined)
+    shaped = shape_discover_response(resolver_params, result)
+    return _ok("discover", state, shaped)
 
 
 # ---------------------------------------------------------------------------
-# Tool 4: act
-# ---------------------------------------------------------------------------
-# RETIRED (Phase-2 migration, _PHASE2_PARITY.md): FULL v2 parity — every `act` type
-# maps to a `do` intent or `declare_war` (INTENT_TO_ACT + declare_war). Deregistered
-# from the MCP surface + get_tool_definitions + prompts.py. Function kept for the
-# in-process dispatch fallback (agent.py) but NO LONGER advertised. To re-enable for
-# debugging, restore the @mcp.tool() decorator below.
-# @mcp.tool()
-async def act(type: str, interaction_type: str = "", decision_type: str = "",
-              target_id: int = 0, actor_id: int = 0, title_id: int = 0,
-              secondary_actor_id: int = 0, secondary_recipient_id: int = 0,
-              cb_index: int = -1, cb_title_id: int = 0, claimant_id: int = 0,
-              law_name: str = "", option: int = 0, event_id: str = "",
-              instance_id: int = 0,
-              force_player_path: bool = False, casus_belli: str = "",
-              method: str = "", skip_pre_validate: bool = False,
-              focus: str = "", task: str = "",
-              building: str = "", location_id: int = 0,
-              position_id: int = 0, character_id: int = 0, replace: bool = False,
-              maa_type: str = "", action: str = "", regiment_id: int = 0,
-              vassal_id: int = 0, obligation: str = "", level: int = 0,
-              faction_action: str = "", faction_type: str = "",
-              scheme: str = "", scheme_id: int = 0,
-              company_id: int = 0, contract_len: int = 0,
-              doctrine: str = "", law_scope: str = "",
-              faith: str = "", faith_id: int = 0,
-              culture: str = "", culture_id: int = 0,
-              title_key: str = "", title: str = "") -> dict[str, Any]:
-    """Execute a game action: interaction, war, decision, event response, law change, lifestyle focus, council task, or building.
-
-    Args:
-        type: Action category: interaction, war, decision, event, law, lifestyle, council_task, building.
-        focus: For type=lifestyle: focus key to set (e.g. "stewardship_domain_focus").
-        task: For type=council_task: task key to assign (e.g. "task_increase_control").
-            Some tasks need a de jure title target via title_id. Applies on a game
-            tick — poll query(domain="council") to confirm the transition.
-        interaction_type: For type=interaction: exact interaction name.
-        decision_type: For type=decision: exact decision name.
-        target_id: Target character for interactions and war.
-        actor_id: Acting character (0 = controlled).
-        title_id: Title for grant/revoke interactions. For type=create_title, the
-            numeric de-jure title id to create.
-        title_key: For type=create_title: the title KEY to create (e.g. "k_danelaw",
-            "d_northumbria"). Alternative to numeric title_id — the bridge resolves
-            the key. (title= is an accepted alias.)
-        secondary_actor_id: For type=interaction: secondary actor.
-        secondary_recipient_id: For type=interaction: secondary recipient.
-        cb_index: For type=war: CB index (-1 = auto-select).
-        cb_title_id: For type=war: title to claim.
-        claimant_id: For type=war: claimant character.
-        law_name: For type=law: target law name.
-        option: For type=event: option index (0-based).
-        event_id: For type=event: event ID string.
-        instance_id: For type=event: event instance ID.
-        method: For type=war: "ai" (default) routes through the AI war evaluator
-            (target/CB are hints; the AI may decline). "steered" deterministically
-            declares EXACTLY the chosen (target, casus_belli, cb_title_id,
-            claimant_id) via WAR_CREATE_CORE direct — named war, no crash. Use
-            "steered" to force a specific war the AI keeps declining. Requires
-            casus_belli. NOTE: claim_cb needs a PRESSED claim or the engine culls
-            the war.
-        force_player_path: For type=war: bypass the AI war pipeline and call
-            WAR_CREATE_CORE directly. Prefer method="steered" for the supported
-            deterministic path. Requires casus_belli when true.
-        casus_belli: For type=war + (method="steered" or force_player_path=true):
-            CB script name (e.g. "claim_cb"). From discover(what='valid_cbs_strict').
-        skip_pre_validate: For type=war: skip inline pre-validation checks.
-        scheme: For type=scheme: scheme-type key to start (e.g. "murder",
-            "fabricate_hook", "claim_throne"). actor_id = the schemer (must be AI),
-            target_id = the target character. The engine's own scheme-start gates
-            run inside the call (an invalid/dead/cooldown target is refused, not
-            forced). Confirm + watch progress via query(domain="schemes",
-            character_id=<schemer>). Run hostile schemes at PEACE (success drops 50%
-            if at war with the target).
-        scheme_id: For type=scheme + action="cancel": the scheme id to abandon (from
-            query(domain="schemes", character_id=<owner>).schemes[].scheme_id). Cancels
-            the OWNER's own scheme via the engine's RemoveActiveScheme. action defaults
-            to "start" (the scheme=<type>, target_id=<victim> path); set action="cancel"
-            + scheme_id to abandon. Returns {success, action:"cancel", scheme_id, removed}.
-    """
-    state = _get_state()
-    err = await _ensure_connected(state)
-    if err:
-        return err
-
-    from tools import resolve_act
-    from action_selector import validate_act_params
-    act_params = {
-        "type": type, "interaction_type": interaction_type,
-        "decision_type": decision_type, "target_id": target_id,
-        "actor_id": actor_id, "title_id": title_id,
-        "secondary_actor_id": secondary_actor_id,
-        "secondary_recipient_id": secondary_recipient_id,
-        "cb_index": cb_index, "cb_title_id": cb_title_id,
-        "claimant_id": claimant_id, "law_name": law_name,
-        "option": option, "event_id": event_id,
-        "instance_id": instance_id,
-        "force_player_path": force_player_path,
-        "casus_belli": casus_belli,
-        "method": method,
-        "skip_pre_validate": skip_pre_validate,
-        "focus": focus,
-        "task": task,
-        "target_title_id": title_id,
-        "building": building,
-        "location_id": location_id,
-        # write-tool params (appoint / maa / contract / faction / hire / faith / title-law)
-        "position_id": position_id, "character_id": character_id, "replace": replace,
-        "maa_type": maa_type, "action": action, "regiment_id": regiment_id,
-        "vassal_id": vassal_id, "obligation": obligation, "level": level,
-        "faction_action": faction_action, "faction_type": faction_type,
-        "scheme": scheme, "scheme_id": scheme_id,
-        "company_id": company_id, "contract_len": contract_len,
-        "doctrine": doctrine, "law_scope": law_scope,
-        "faith": faith, "faith_id": faith_id,
-        "culture": culture, "culture_id": culture_id,
-        # type=create_title: title by KEY (e.g. "k_danelaw") OR numeric title_id.
-        # tools.resolve_act reads title_key/title for the create_title path; the
-        # bridge IPC handler resolves the key → title_id.
-        "title_key": title_key, "title": title,
-    }
-    verdict = validate_act_params(act_params)
-    if not verdict.get("valid"):
-        return {
-            "ok": False,
-            "error": {
-                "code": "rejected_pre_dispatch",
-                "message": verdict.get("hint", ""),
-                "reason": verdict.get("reason"),
-                "rejected_fields": verdict.get("rejected_fields", []),
-                "retry_with": verdict.get("retry_with", {}),
-            },
-            "tick": state.tick_id,
-            "game_date": state.game_date,
-        }
-    try:
-        resolved = resolve_act(act_params)
-    except ValueError as e:
-        return _error(state, "invalid_param", str(e))
-    if resolved is None:
-        return _error(state, "unknown_action_type",
-                      f"Unknown action type: {type}")
-
-    action, bridge_params = resolved
-    try:
-        result = await _action_bridge(state, action, bridge_params)
-        return _envelope(state, result)
-    except ConnectionError as e:
-        return _error(state, "bridge_disconnected", str(e))
-
-
-# ---------------------------------------------------------------------------
-# Tool 5: steer
+# steer
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def steer(character_id: int = 0, personality: dict = None,
-                subsystems: dict = None) -> dict[str, Any]:
-    """Read or adjust AI steering controls: personality weights and subsystem toggles.
-    No args = read current values. Partial updates supported.
+async def steer(character_id: int = 0, personality: dict = None) -> dict[str, Any]:
+    """Read or adjust the AI's personality weights. No args = read current values.
+    Partial updates supported: the axes you pass are written and locked, the
+    others keep their values. The axes change what the game's AI chooses for this
+    character; prefer set_phase, which writes a whole named posture.
+
+    A write answers like every write: `verdict` applied (the axes read back as
+    written, in `result.readback`), rejected (with `blocked`), or pending (with
+    `pending`; read it back with steer()).
 
     Args:
         character_id: Character to steer (0 = controlled).
-        personality: Personality axes to set. Keys: honor, greed, rationality, energy, boldness, zeal, vengefulness, compassion, sociability, dominance. Values: -100 to +100.
-        subsystems: Subsystem toggles. Keys: Decisions, DeclareWar, Marriages, etc. Values: true/false.
+        personality: Personality axes to set. Keys: honor, greed, rationality, energy,
+            boldness, zeal, vengefulness, compassion, sociability. Values: integers
+            -100 to +100. Any other key or value is refused and nothing is written.
     """
-    state = _get_state()
-    err = await _ensure_connected(state)
+    err = await _ensure_connected(_get_state(), "steer")
     if err:
         return err
-
-    data = {}
-
-    # Read mode: no personality or subsystems specified
-    if not personality and not subsystems:
-        try:
-            p = await _query_bridge(state, "get_ai_personality",
-                                    {"character_id": character_id})
-            data["personality"] = p
-        except Exception as e:
-            data["personality"] = {"error": str(e)}
-
-        try:
-            s = await _query_bridge(state, "get_character_subsystems",
-                                    {"character_id": character_id})
-            data["subsystems"] = s
-        except Exception as e:
-            data["subsystems"] = {"error": str(e)}
-
-        return _envelope(state, data)
-
-    # Write mode
-    if personality:
-        params = {"character_id": character_id}
-        params.update(personality)
-        try:
-            result = await _action_bridge(state, "set_ai_personality", params)
-            data["personality"] = result
-        except Exception as e:
-            data["personality"] = {"error": str(e)}
-
-    if subsystems:
-        params = {"character_id": character_id}
-        params.update(subsystems)
-        try:
-            result = await _action_bridge(state, "set_character_subsystems", params)
-            data["subsystems"] = result
-        except Exception as e:
-            data["subsystems"] = {"error": str(e)}
-
-    return _envelope(state, data)
+    return await redesign.steer_impl(await _gateway_now(), character_id=character_id,
+                                     personality=personality)
 
 
 # ---------------------------------------------------------------------------
-# Tool 6: intent
+# pass_turn
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def intent(action: str, interaction_type: str = "",
-                 actor_id: int = 0, target_id: int = 0,
-                 max_age_ticks: int = 500, request_id: str = "",
-                 max_count: int = 16) -> dict[str, Any]:
-    """Manage the intent queue: queue interactions, list pending, read RESULTS,
-    cancel, or clear all.
-
-    A queued intent is a DEFERRED write — it executes on a later AI tick, not at
-    queue time, so `action="queue"` returns only a request_id, NOT a success/fail
-    verdict. To CONFIRM whether a queued intent actually took effect, poll
-    `action="results"` (the deferred-write confirmation surface): it returns the
-    completed-intent ring with a per-intent verdict you can match by request_id —
-    `status` ∈ success | rejected | crashed (with `rejection_reason` when not
-    success), plus `intent_id`, `action_name`, `tick_id`, `actor_id`, `target_id`.
-    `action="list"` shows only what is still PENDING (not yet drained); a queued
-    intent that has executed leaves `list` and appears under `results`.
-
-    Args:
-        action: Operation: queue, list, results, cancel, clear.
-        interaction_type: For action=queue: interaction to schedule.
-        actor_id: For action=queue: acting character (0 = controlled).
-        target_id: For action=queue: target character (0 = AI chooses).
-        max_age_ticks: For action=queue: expire after N ticks.
-        request_id: For action=cancel: the request_id to cancel.
-        max_count: For action=results: max completed intents to return (default 16).
-    """
-    state = _get_state()
-    err = await _ensure_connected(state)
-    if err:
-        return err
-
-    from tools import resolve_intent
-    resolved = resolve_intent({
-        "action": action, "interaction_type": interaction_type,
-        "actor_id": actor_id, "target_id": target_id,
-        "max_age_ticks": max_age_ticks, "request_id": request_id,
-        "max_count": max_count,
-    })
-    if resolved is None:
-        return _error(state, "invalid_param",
-                      f"Unknown intent action: {action}. "
-                      "Valid: queue, list, results, cancel, clear.")
-
-    bridge_action, bridge_params = resolved
-    try:
-        # list / results are READS (object-graph queries that mutate nothing) — route
-        # them through the query path, not _action_bridge (which logs to the action
-        # log + fabricates sent_no_confirmation on timeout, both wrong for a read).
-        if action in ("list", "results"):
-            result = await _query_bridge(state, bridge_action, bridge_params)
-        else:
-            result = await _action_bridge(state, bridge_action, bridge_params)
-        return _envelope(state, result)
-    except (ConnectionError, TimeoutError) as e:
-        return _error(state, "bridge_disconnected", str(e))
-
-
-# ---------------------------------------------------------------------------
-# Tool 7: game
-# ---------------------------------------------------------------------------
-# RETIRED (Phase-2 migration): FULL v2 parity — session(action=pause|unpause|speed|
-# auto_events) covers all four. Deregistered from the MCP surface. session ALSO
-# tightens the speed guard (4-5 refused while at war). Function kept for fallback.
-# @mcp.tool()
-async def game(action: str, speed: int = 3, enabled: bool = True) -> dict[str, Any]:
-    """Control game flow: pause, unpause, set speed, or toggle auto-event responses.
-
-    Args:
-        action: Operation: pause, unpause, speed, auto_events.
-        speed: For action=speed: game speed 1-5.
-        enabled: For action=auto_events: true = while no session is open the bridge clears the event pause and picks no option.
-    """
-    state = _get_state()
-    err = await _ensure_connected(state)
-    if err:
-        return err
-
-    from tools import resolve_game
-    resolved = resolve_game({
-        "action": action, "speed": speed, "enabled": enabled,
-    })
-    if resolved is None:
-        return _error(state, "invalid_param",
-                      f"Unknown game action: {action}")
-
-    bridge_action, bridge_params = resolved
-    try:
-        result = await _action_bridge(state, bridge_action, bridge_params)
-        return _envelope(state, result)
-    except (ConnectionError, TimeoutError) as e:
-        return _error(state, "bridge_disconnected", str(e))
-
-
-# ---------------------------------------------------------------------------
-# Tool 8: control
-# ---------------------------------------------------------------------------
-# RETIRED (Phase-2 migration): FULL v2 parity — session(action=control|release|whoami)
-# maps to set_controlled_character/release_character and adds whoami. Deregistered.
-# @mcp.tool()
-async def control(action: str, character_id: int = 0,
-                  disable_native_ai: bool = False) -> dict[str, Any]:
-    """Select which AI character the LLM steers, or release one back to native AI.
-
-    Args:
-        action: select or release.
-        character_id: Character to select/release. For select: 0 reverts to human player.
-        disable_native_ai: For action=select: fully disable native AI.
-    """
-    state = _get_state()
-    err = await _ensure_connected(state)
-    if err:
-        return err
-
-    from tools import resolve_control
-    resolved = resolve_control({
-        "action": action, "character_id": character_id,
-        "disable_native_ai": disable_native_ai,
-    })
-    if resolved is None:
-        return _error(state, "invalid_param",
-                      f"Unknown control action: {action}")
-
-    bridge_action, bridge_params = resolved
-    try:
-        result = await _action_bridge(state, bridge_action, bridge_params)
-        return _envelope(state, result)
-    except (ConnectionError, TimeoutError) as e:
-        return _error(state, "bridge_disconnected", str(e))
-
-
-# ---------------------------------------------------------------------------
-# Tool 9: bridge
-# ---------------------------------------------------------------------------
-# RETIRED (Phase-2 migration): FULL v2 parity — session(action=health) composes
-# get_bridge_state + get_offset_validation + who_holds_the_lock + agent_mode, and
-# session(action=whoami) gives the roster. Deregistered from the MCP surface.
-# @mcp.tool()
-async def bridge() -> dict[str, Any]:
-    """Check bridge connection health: session info, controlled characters,
-    personality locks, intent queue depth, tick count."""
-    state = _get_state()
-    err = await _ensure_connected(state)
-    if err:
-        return err
-
-    try:
-        result = await _query_bridge(state, "get_bridge_state", {})
-        return _envelope(state, result)
-    except (ConnectionError, TimeoutError) as e:
-        return _error(state, "bridge_disconnected", str(e))
-
-
-# ---------------------------------------------------------------------------
-# Tool 10: execute_console_command
-# ---------------------------------------------------------------------------
-# DISABLED 2026-06-14: the debug console is a CHEAT a human player cannot use
-# (add_claim/add_prestige/give_title/etc.). For the "operate like a player"
-# campaign we de-register it from the MCP surface so the agent CANNOT cheat —
-# it must earn claims/titles/resources legitimately. To re-enable for debugging,
-# restore the @mcp.tool() decorator below.
-# @mcp.tool()
-async def execute_console_command(command: str) -> dict[str, Any]:
-    """Execute a CK3 debug console command. This bypasses interaction validation
-    and is the ultimate escape hatch for game actions.
-
-    Examples:
-        AI.declare_war 30966
-        add_trait brave 30966
-        add_claim c_tuscany 30966
-        add_piety 500
-        add_realm_law partition_succession_law
-
-    Args:
-        command: Full console command string as typed in the game console.
-    """
-    state = _get_state()
-    err = await _ensure_connected(state)
-    if err:
-        return err
-
-    try:
-        result = await _action_bridge(state, "execute_console_command",
-                                      {"command": command}, timeout=10.0)
-        return _envelope(state, result)
-    except (ConnectionError, TimeoutError) as e:
-        return _error(state, "bridge_disconnected", str(e))
-
-
-# ---------------------------------------------------------------------------
-# Tool 11: pass_turn
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-def pass_turn(reason: str = "") -> dict[str, Any]:
+async def pass_turn(reason: str = "") -> dict[str, Any]:
     """Explicitly choose not to act this cycle. Provide a reason for the decision log.
 
     Args:
         reason: Brief explanation for inaction.
     """
     state = _get_state()
+    await _gateway_now()                  # the envelope's game block: a fresh clock reading
     state.action_log.append({
         "tick": state.tick_id,
         "action": {"type": "pass_turn", "reason": reason},
     })
-    return _envelope(state, {
+    return _ok("pass_turn", state, {
         "action": "pass_turn",
         "reason": reason or "maintaining stability",
     })
 
 
 # ===========================================================================
-# The redesigned 8-tool goal-shaped surface (SPEC docs/notes/mcp-redesign/SPEC.md).
-#
-# ADDITIVE (SPEC §6.2 Phase 1): registered ALONGSIDE the 11 legacy tools above —
-# nothing breaks. Each is a thin wrapper over redesign.py composition + the
-# BridgeGateway (pause-ownership §4, actor-explicitness §5). Every bridge action
-# composed is an existing §3 router entry — see redesign.TOOL_BRIDGE_ACTIONS.
+# The goal-shaped tools (SPEC docs/notes/mcp-redesign/SPEC.md). Each is a thin
+# wrapper over redesign.py composition + the BridgeGateway (dispatch and
+# single-flight §4, actor explicitness §5). The bridge actions each one composes are the ones its
+# redesign.py implementation sends; there is no separate hand-kept list of them.
 # ===========================================================================
 
-
 @mcp.tool()
-async def observe_v2(character_id: int = 0, depth: str = "brief") -> dict[str, Any]:
-    """Your situation report. Returns de-jure county counts for the titles nearest and
-    widest around your holdings (`de_jure`), your current `standing` (gold, debt, stress,
-    strongest faction percentage, succession ETA, whether you are at war), and what
-    changed since the last call (`delta`). `realm_size` is ABSENT because it counts
-    titles rather than counties; `de_jure` counts counties and `self.counties_held`
-    counts yours.
+async def observe(
+    character_id: int = 0,
+    depth: Annotated[
+        str,
+        Field(description="brief: de_jure, standing, wars, money, succession, posture, since. "
+                          "full: also self vitals, war and council briefs and the AI's "
+                          "evaluations.",
+              json_schema_extra={"enum": list(redesign.OBSERVE_DEPTHS)}),
+    ] = "brief") -> dict[str, Any]:
+    """Your situation report: call it first every cycle. Returns de-jure county counts
+    for the titles nearest and widest around your holdings (`de_jure`), your current
+    `standing` (gold, debt, stress, strongest faction percentage, succession ETA,
+    whether you are at war), the personality genome (`posture`), and what changed
+    since the last call (`since`; `delta` is your own share of it). `de_jure` counts
+    counties and `self.counties_held` counts yours.
 
-    Also folds in a concise `succession` block, the per-title partition map summarised:
-    `scatters` (does the next succession split titles across more than one heir?),
-    `eligible_heir_count`, and which heir takes which titles. Drill in with
-    inspect(subject='succession_preview') or succession_plan.
+    Also folds in a `succession` block with succession_plan's verdict, computed the
+    same way: `outcome` (intact, splits, or undetermined when the reads name no heir
+    who takes a title), `passes_intact` (true, false, null when undetermined), the
+    `breaker` (the first other heir who takes titles, and which), `eligible_heir_count`. The
+    per-title map and the levers are succession_plan's.
 
     Args:
         character_id: ruler to reason about (0 = controlled primary; REQUIRED in multi-actor).
-        depth: 'brief' (de_jure+standing+succession+posture+delta) or 'full' (+self vitals, war/council brief).
+        depth: 'brief' or 'full' (adds self vitals, war/council brief and the AI's
+            evaluations). Any other value is refused.
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "observe")
     if err:
         return err
-    import redesign
-    return await redesign.observe_impl(_get_gateway(), character_id=character_id, depth=depth)
+    return await redesign.observe_impl(await _gateway_now(), character_id=character_id, depth=depth)
 
 
 @mcp.tool()
 async def plan_war(character_id: int = 0, goal_scoped: bool = True,
                    ally_free_only: bool = True, exclude_straddling: bool = True,
-                   max_results: int = 8) -> dict[str, Any]:
+                   max_results: int = 8, toward: str = "") -> dict[str, Any]:
     """"What is my single best next war?" Returns a RANKED list of targets that are
     ALREADY declarable, ally-free, and goal-advancing — each row carries a `declare_args`
     object you pass to declare_war VERBATIM. You never name a casus_belli string or hunt
-    a claimant. Rows gate on the ENGINE-authoritative strict-CB inner declarability, not
-    the over-optimistic outer filter (which falsely read as a structural wall for 17
-    generations). Empty list ⇒ `empty_reason` names the single cause (e.g. all truced),
-    which is NOT "structurally walled in".
+    a claimant. Each row passed the game's own declare-war check for that target.
+    Empty list ⇒ `empty_reason` names the commonest
+    `excluded` gate with its count (all gates in `measured.by_gate`), and in `fix` the
+    parameter that would admit those rows (exclude_straddling=False with
+    confirm_straddle on the declare; ally_free_only=False) when one would.
+
+    Each row carries `strength` (your and the target's military strength, with allies,
+    and their ratio, read from the game), `score` (de-jure counties gained x that ratio,
+    capped at 3), `truce`, and `affordability` (the CB's base cost; the game scales the
+    real price by target, so it is an estimate).
 
     Args:
         character_id: aggressor (0 = controlled primary; REQUIRED in multi-actor).
-        goal_scoped: True = only de-jure-goal-advancing targets. False = all declarable.
+        goal_scoped: True = claims, duchies you partly hold and the `toward` title.
+            False = also every duchy bordering your realm.
         ally_free_only: exclude targets that pull allies you'd fight.
-        exclude_straddling: exclude wars expected to cross a death ETA.
+        exclude_straddling: exclude every row while the ruler is old enough that a war
+            would run across his succession (the age declare_war's guard uses).
         max_results: top-N by score.
+        toward: a de-jure title key (county to empire, e.g. "k_france") to conquer
+            toward, anywhere on the map; its duchies are listed first.
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "plan_war")
     if err:
         return err
-    import redesign
-    return await redesign.plan_war_impl(_get_gateway(), character_id=character_id,
-                                        goal_scoped=goal_scoped, ally_free_only=ally_free_only,
-                                        exclude_straddling=exclude_straddling, max_results=max_results)
+    return await redesign.plan_war_impl(await _gateway_now(), character_id=character_id,
+                                         goal_scoped=goal_scoped, ally_free_only=ally_free_only,
+                                         exclude_straddling=exclude_straddling, max_results=max_results,
+                                         toward=toward)
 
 
 @mcp.tool()
@@ -3062,11 +2495,15 @@ async def declare_war(character_id: int = 0, declare_args: dict = None,
                       claimant_id: int = 0, confirm_straddle: bool = False) -> dict[str, Any]:
     """Declare ONE war. Pass a plan_war row's `declare_args` verbatim (or the fields
     explicitly). The only irreversible high-stakes act with its own verb so it cannot
-    fire by accident. BLOCKS until the war is confirmed PERSISTED on the next tick (owns
-    unpause-and-wait) — you never get sent_no_confirmation ambiguity nor a paused-too-fast
-    cull. A `valid` CB does NOT guarantee a landed war; this re-checks pressed-claim +
-    target-state up front. Evaporated war ⇒ verdict:rejected with the exact gate
-    (e.g. target_truced). A straddles_succession war REQUIRES confirm_straddle=true.
+    fire by accident. Reads the war list back after dispatch: the bridge runs the
+    declaration on the game's next pass, paused or running, and the war shows within
+    seconds. Not read in that time: verdict:pending, drains_when "next_pass" (read it
+    by pending.intent_id). Ran but not listed: drains_when "clock_advances" (the game
+    settles it on a later day). It never pauses or unpauses. A `valid` CB does NOT guarantee a landed war; this re-checks
+    pressed-claim + target-state up front. Evaporated war ⇒ verdict:rejected with the
+    exact gate (e.g. target_truced); invisible so far ⇒ verdict:pending, verify with
+    inspect(subject='wars') before declaring again. A straddles_succession war
+    REQUIRES confirm_straddle=true.
 
     Args:
         character_id: aggressor (0 = controlled primary).
@@ -3074,193 +2511,239 @@ async def declare_war(character_id: int = 0, declare_args: dict = None,
         target_id / cb / cb_title_id / claimant_id: escape-hatch fields if no declare_args.
         confirm_straddle: HARD GUARD — refuses a near-death-straddling war unless true.
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "declare_war")
     if err:
         return err
-    import redesign
-    return await redesign.declare_war_impl(_get_gateway(), character_id=character_id,
-                                           declare_args=declare_args, target_id=target_id,
-                                           cb=cb, cb_title_id=cb_title_id, claimant_id=claimant_id,
-                                           confirm_straddle=confirm_straddle)
+    return await redesign.declare_war_impl(await _gateway_now(), character_id=character_id,
+                                            declare_args=declare_args, target_id=target_id,
+                                            cb=cb, cb_title_id=cb_title_id, claimant_id=claimant_id,
+                                            confirm_straddle=confirm_straddle)
 
 
 @mcp.tool()
 async def succession_plan(character_id: int = 0) -> dict[str, Any]:
     """"Will my realm pass through my heir's succession INTACT?" Returns one verdict:
-    passes_intact:true, or splits:true with the cadet who breaks it and the single lever
-    that actually WORKS (drive eligible-heir count toward 1). Do NOT read
-    partition_preview.is_partition yourself — it reflects the CURRENT single holder, not
-    the post-death split, and gave false reassurance that collapsed past runs. The
-    wont_work list names the "fixes" the AI refuses, so you don't burn cycles on them.
+    `outcome` intact (passes_intact true), splits (false, with the `breaker`: the heir
+    who takes titles away) or undetermined (null, with `undetermined_reason` and the
+    `succession_undetermined` warning: no heir was read, or the reads say it does not
+    pass intact and name no breaker), the eligible heir count, and the per-title map (which heir takes which
+    title, under which law). observe's succession block and the live-state hook
+    state the same verdict from the same function. `levers` lists what this ruler can pull, each with its
+    do() call and its read-back: designate_heir (available, the children it can
+    name, the prestige cost), disinherit (only the dynasty head; sent only at your
+    own descendants), grant_title and revoke (revoke_allowed_by: the realm law that
+    allows revoking), title_law and marriage. Fewer eligible heirs means fewer
+    titles split.
 
     Args:
         character_id: the ruler whose death you plan around (0 = controlled primary).
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "succession_plan")
     if err:
         return err
-    import redesign
-    return await redesign.succession_plan_impl(_get_gateway(), character_id=character_id)
+    return await redesign.succession_plan_impl(await _gateway_now(), character_id=character_id)
 
 
 @mcp.tool()
-async def set_phase(phase: str = None, character_id: int = 0,
-                    overrides: dict = None) -> dict[str, Any]:
-    """Assert your strategic posture by NAME instead of hand-tuning ten integers.
-    phase=None reads the current genome. Nothing re-applies it after a succession:
+async def set_phase(
+    phase: Annotated[
+        Optional[str],
+        Field(description="The posture to assert, or null to read the current genome and the phase it matches.",
+              json_schema_extra={"enum": list(redesign.PHASES) + [None]}),
+    ] = None,
+    character_id: int = 0,
+    overrides: dict = None) -> dict[str, Any]:
+    """Assert your strategic posture by NAME instead of hand-tuning nine integers.
+    phase=None reads the current genome and names the phase whose genome the engine
+    holds (result.phase; null when none matches). Nothing re-applies it after a succession:
     call it again for the heir.
 
-    Each call writes, for the ruler: the 10 personality axes; DeclareWar/Decisions
-    subsystem toggles, which are bookkeeping the engine does NOT enforce; and
-    set_character_ai, re-enabling the native AI tick. phase='expansion' also arms
-    the off-goal war veto (AI-picked wars vetoed, declare_war wars not). The veto is
-    ONE process-wide flag: every controlled character of every session,
-    character_id ignored, never disarmed by another phase, on until
-    session(action='set_experimental', flag='off_goal_veto', enabled=false) or the
-    game exits. result.offgoal_veto_armed is true only when the bridge confirms
-    the write; see also offgoal_veto_scope.
+    Each call writes, for the ruler: the personality axes, and set_character_ai,
+    re-enabling the native AI tick. No phase arms an experimental flag.
 
     Args:
-        phase: expansion|rebuild|succession_trough|stalled_siege|fragile_minority|
-               consolidate, or None to read current.
+        phase: the posture name, or None to read the current genome.
         character_id: who to pin (0 = controlled primary; REQUIRED in multi-actor to assert).
-        overrides: escape hatch — per-axis int overrides (discouraged; warns on CallAllies).
+        overrides: escape hatch — per-axis int overrides, -100 to 100 (discouraged). A key
+            that is not an axis or a value out of range is refused and nothing is written.
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "set_phase")
     if err:
         return err
-    import redesign
-    return await redesign.set_phase_impl(_get_gateway(), phase=phase,
-                                         character_id=character_id, overrides=overrides)
+    return await redesign.set_phase_impl(await _gateway_now(), phase=phase,
+                                          character_id=character_id, overrides=overrides)
 
 
 @mcp.tool()
-async def do(intent: str = None, action_class: str = None, candidates: list = None,
-             character_id: int = 0, args: dict = None) -> dict[str, Any]:
+async def do(
+    intent: Annotated[
+        Optional[str],
+        Field(description="The one action to execute; null with action_class enumerates.",
+              json_schema_extra={"enum": list(redesign.INTENTS) + [None]}),
+    ] = None,
+    action_class: Annotated[
+        Optional[str],
+        Field(description="What to enumerate (enumerate mode only).",
+              json_schema_extra={"enum": list(redesign.ACTION_CLASSES) + [None]}),
+    ] = None,
+    candidates: list = None,
+    character_id: int = 0,
+    args: Annotated[
+        Optional[dict],
+        Field(description="Intent-specific keys. " + do_intent_args.table_text()),
+    ] = None) -> dict[str, Any]:
     """Perform one concrete game action that is NOT a war (wars use declare_war), OR
     enumerate what you can do. Two modes:
-     • Enumerate — do(intent=None, action_class="council_tasks") returns available actions,
-       each with the EXACT do_call to run it (copy the row; never guess a type string or
+     • Enumerate — do(action_class="council_tasks") returns available actions, each
+       with the EXACT do_call to run it (copy the row; never guess a type string or
        English key) plus a blocked-why for each unavailable one. For decisions you MUST
-       pass a bounded `candidates` list (unbounded engine eval FREEZES the game, #64).
-     • Execute — do(intent="council_task", args={...}) runs ONE action. Every write returns
-       verdict:applied (PERSISTED — re-read confirms) or a typed rejected. council_task /
-       fabricate warn if the AI will REVERT them. appoint is an intent here, not a
-       discoverable interaction.
+       pass a bounded `candidates` list (an unbounded engine eval stalls the game's thread).
+     • Execute — do(intent="council_task", args={...}) runs ONE action. Every write
+       returns verdict:applied (re-read confirms), verdict:rejected with a named gate,
+       or verdict:pending. The bridge runs a queued write on the game's next pass,
+       paused or running, and its verdict is read back in this call; pending names
+       the wait: pending.drains_when "next_pass" (the verdict was not read in time)
+       or "clock_advances" (it ran; the outcome needs game days, which pass only
+       while the game runs). A pending reply carries pending.intent_id; inspect(subject='pending')
+       lists what is still queued and the outcomes of what drained, and
+       do(intent='cancel_pending', args={'request_id': <intent_id>}) withdraws one the
+       bridge has not yet taken to run (a "clock_advances" pending already ran:
+       result.sent is true, and it cannot be withdrawn).
+       council_task / fabricate warn if the AI will REVERT them. appoint is an intent
+       here, not a discoverable interaction.
 
     Args:
-        intent: one of mint_title, take_decision, interact, convert_faith, convert_culture,
-                set_doctrine, change_law, council_task, appoint, lifestyle, build, muster,
-                men_at_arms, hire_merc, move_capital, set_obligation, respond_event,
-                scheme, faction, scripted_effect, break_alliance, force_offensive_stance.
-                None + action_class ⇒ enumerate mode. break_alliance dissolves a real alliance
-                (args={"target_id": <ally>}) to stop FUTURE off-goal ally-drags — bridge
-                default-OFF + observer-save gated (arm via session set_experimental
-                break_alliance). force_offensive_stance is the per-war DRIVE
-                (args={"war_id": <id>, "attacker_id": <atk>}; attacker_id defaults to
-                character_id) that makes a FORCE-DECLARED war land an ATTACKER-OFFENSIVE stance
-                so it actually sieges — bridge default-OFF + NEEDS-LIVE-VALIDATION (arm via
-                session set_experimental force_offensive_stance).
-        action_class: interactions|decisions|council_tasks|laws|fabricate_targets|
-                      mercenaries|factions_to_join|buildings|imprison_targets|formable_titles|
-                      men_at_arms (enumerate only). formable_titles lists the titles you could
-                      create_title now, each with its de-jure county count and a ready
-                      mint_title do_call (pass `candidates=[...]` to test a custom key set).
-                      mercenaries: free companies, nearest first, each labelled with home
-                      county and men, plus regiments; cost is null (the game prices a hire
-                      per hirer; the hire refuses what you cannot afford). men_at_arms: MaA
-                      types with recruit cost and fielded_regiments (types the realm already
-                      fields are known to be available; the rest are decided at recruit);
-                      30 rows, fielded first then cheapest, or pass candidates=[types].
-                      laws: the other laws in each law group you have; whether a change is
-                      allowed now is decided when change_law runs.
-                      council_task takes args.seat optionally; a task belongs to ONE seat
-                      (task_fabricate_claim is the court chaplain's), a seat that cannot take
-                      it is refused, and every reply names the seat and councillor used.
-        candidates: BOUNDED list for action_class="decisions" (#64 safety); for
-                    "men_at_arms", the MaA type keys to look up.
+        intent: one of the enum. The war intents, for a war's leader or an ally:
+                make_peace (args={"war_id", "terms": white_peace | surrender |
+                enforce_demands}) sends the peace from your side; the enemy's own
+                acceptance decides white peace and enforced demands, a surrender is
+                always taken; applied means the war ended, with its outcome and your
+                gold/prestige before and after. call_ally (args={"war_id", "ally_id"})
+                calls an ally into a war you lead; join_war (args={"war_id",
+                "leader_id"}) joins an ally's war on the side he leads (leader_id
+                defaults to the ally who leads it); applied means the joiner is in the
+                war's participant list. A refusal names the gate: recipient_refuses
+                (they would decline), interaction_invalid (the game's own check),
+                not_war_leader, war_not_found.
+        action_class: formable_titles lists the titles you could create now, each with
+                      its de-jure county count and a ready mint_title do_call (pass
+                      `candidates=[...]` to test a custom key set). mercenaries: free
+                      companies, nearest first, each labelled with home county and men,
+                      plus regiments; cost is null (the game prices a hire per hirer; the
+                      hire refuses what you cannot afford). men_at_arms: MaA types with
+                      recruit cost and fielded_regiments; 30 rows, fielded first then
+                      cheapest, or pass candidates=[types]. laws: the other laws in each
+                      law group you have; whether a change is allowed now is decided when
+                      change_law runs. council_task takes args.seat optionally; a task
+                      belongs to ONE seat (task_fabricate_claim is the court chaplain's), a
+                      seat that cannot take it is refused, and every reply names the seat
+                      and councillor used. buildings: the game's building types (40
+                      rows, or pass candidates=[keys]); pass args={"location_id": <barony
+                      title id of a holding you hold>} and each row is the game's verdict
+                      for you there (available, or blocked with the game's reasons or the
+                      price against your gold) with a complete do_call. A build costs its
+                      price at once and takes its construction_days;
+                      inspect(subject='county') holdings[].construction shows it.
+        candidates: BOUNDED list for action_class="decisions"; for "men_at_arms", the
+                    MaA type keys to look up; for "imprison_targets", the character
+                    ids to check (default: your first 40 vassals). An imprison row's
+                    answer is the target's at check time: check right before sending.
         character_id: actor (0 = controlled primary; REQUIRED in multi-actor).
-        args: intent-specific keys (see the SPEC §2 intent table).
+        args: intent-specific keys, listed per intent under ARGUMENTS BY INTENT in
+              this parameter's description (read from the code). An enumerate row's
+              do_call carries them ready to send; a call missing one is refused
+              with missing_required_argument and fix.rejected_fields names it.
+              cancel_pending takes args.request_id (a pending.intent_id).
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "do")
     if err:
         return err
-    import redesign
-    return await redesign.do_impl(_get_gateway(), intent=intent, action_class=action_class,
-                                  candidates=candidates, character_id=character_id, args=args)
+    return await redesign.do_impl(await _gateway_now(), intent=intent, action_class=action_class,
+                                   candidates=candidates, character_id=character_id, args=args)
 
 
 @mcp.tool()
-async def inspect(subject: str, character_id: int = 0, target_id: int = 0,
-                  title_id: int = 0, war_id: int = 0, title_key: str = "",
-                  dynasty_id: int = 0, include: list = None,
-                  max_results: int = 20) -> dict[str, Any]:
-    """Deep, typed read of ONE subject (character, realm, council, succession,
-    succession_preview, claims, wars, armies, factions, vassals, diplomacy, title, dynasty,
-    laws, schemes, marriage, economy, research, county, opinion, opinion_breakdown,
-    relations, hooks, title_hierarchy, title_succession, claimants, war_score, call_to_arms,
-    development, incoming_schemes, lifestyle, heir_plan, guardian_candidates).
-    `succession_preview` is the per-title
-    PARTITION MAP — which heir gets which title under which succession law (partition vs
-    single-heir) and whether the next succession SCATTERS titles across more than one
-    heir. `heir_plan` lists each child and eligible heir with martial, traits, and the
-    levers that exist for them (education focus / guardian / marriage) with honest
-    status; education_focus/guardian/projected_adult_martial read NULL because no bridge
+async def inspect(
+    subject: Annotated[
+        str,
+        Field(description="The subject to read.",
+              json_schema_extra={"enum": list(redesign.INSPECT_SUBJECTS)}),
+    ] = "",
+    character_id: int = 0, target_id: int = 0,
+    title_id: int = 0, war_id: int = 0, title_key: str = "",
+    dynasty_id: int = 0,
+    max_results: int = 20) -> dict[str, Any]:
+    """Deep, typed read of ONE subject. Whether the next succession passes intact is
+    succession_plan's. `heir_plan` lists each child and eligible heir with martial, traits, education
+    focus, and the levers that exist for them (education focus / guardian / marriage /
+    designate heir); guardian and projected_adult_martial read NULL because no bridge
     read exposes them. `guardian_candidates` lists in-court guardian prospects for a
-    child with their martial. Field names mean what they say.
-    dynasty_id is null for landed rulers by design. borders/de_jure are KNOWN_BROKEN and
-    return a warning, not data — reconstruct adjacency from plan_war targets.
+    child with their martial, and the global high-martial pool to invite. `war_stance` is each war's side, stance and occupation
+    with a stall verdict. `pending` lists the writes still queued in the bridge and the
+    outcomes of the ones that drained (match a do reply's pending.intent_id): the
+    bridge keeps the verdicts of the last 128 drained writes (reads are never kept), a
+    129th drops the oldest (that token is then found only by a read-back), and the
+    newest max_results of them are listed (default 20, at most 64).
+    dynasty_id is null for landed rulers by design. A title's de-jure position is
+    inspect(subject='title') or query(domain='de_jure'); a realm's borders are
+    query(domain='neighbors').
 
     Args:
-        subject: the subject to read (see list above).
+        subject: the subject to read (the enum).
         character_id / target_id / title_id / war_id / dynasty_id: per-subject ids.
         title_key: for the 'title' (de-jure) subject: a title key such as "k_england".
-        include: subject-specific sub-sections.
         max_results: cap.
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "inspect")
     if err:
         return err
-    import redesign
-    return await redesign.inspect_impl(_get_gateway(), subject=subject, character_id=character_id,
-                                       target_id=target_id, title_id=title_id, war_id=war_id,
-                                       title_key=title_key, dynasty_id=dynasty_id,
-                                       include=include, max_results=max_results)
+    return await redesign.inspect_impl(await _gateway_now(), subject=subject, character_id=character_id,
+                                        target_id=target_id, title_id=title_id, war_id=war_id,
+                                        title_key=title_key, dynasty_id=dynasty_id,
+                                        max_results=max_results)
 
 
 @mcp.tool()
-async def cbs(target_id: int, character_id: int = 0) -> dict[str, Any]:
-    """"Show me EVERY casus belli I can use against THIS target, with tradeoffs." Returns
-    the full curated CB list for the (actor, target) pair — each option's `scope`
-    (county | duchy | kingdom | realm | faith_counties), what it `grants` on victory,
-    why it is unmet (`requirements_unmet`), `tradeoffs`, and the dispatch-marshalling hint
-    (`needs_cb_title_id` / `needs_claimant` / `dispatch_supported`). Use this to WEIGH
-    options before declaring — e.g. tribal_subjugation (whole realm, once/lifetime) vs
-    county_conquest (one county) vs duchy_conquest (a whole duchy). `valid_options` is the
-    declarable subset; `best` is the widest-scope declarable one. Re-point a plan_war row's
-    declare_args.cb at any option here. UNPAUSED engine read.
+async def cbs(target_id: int = 0, character_id: int = 0) -> dict[str, Any]:
+    """"Show me EVERY casus belli I can use against THIS target, with tradeoffs." Returns,
+    for the (actor, target) pair, every CB the game accepts now plus every CB of the war
+    families (invasion — the Varangian/Viking adventures included —, conquest, holy war,
+    claim, de jure, subjugation, vassalization) with the game's verdict. Each option: its
+    `family`, `valid` (the game's own CB check), `scope`, what it `grants` on victory where
+    known, why it is unmet (`requirements_unmet`), `tradeoffs`, its base cost, and the
+    dispatch hint (`needs_cb_title_id` / `needs_claimant` / `dispatch_supported`).
+    `valid_options` is the declarable subset, `by_family` groups it, `best` is the first
+    declarable one. Re-point a plan_war row's declare_args.cb at any option here.
+    An engine read on the game thread; works paused or running.
 
     Args:
         target_id: the defender character id (REQUIRED).
         character_id: aggressor (0 = controlled primary; REQUIRED in multi-actor).
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "cbs")
     if err:
         return err
-    import redesign
-    return await redesign.cbs_impl(_get_gateway(), target_id=target_id, character_id=character_id)
+    return await redesign.cbs_impl(await _gateway_now(), target_id=target_id, character_id=character_id)
 
 
 @mcp.tool()
-async def session(action: str, character_id: int = 0, speed: int = 3,
-                  enabled: bool = True, disable_native_ai: bool = False,
-                  flag: str = "", seconds: int = 60) -> dict[str, Any]:
-    """Game-flow, identity, and liveness control. You rarely call this — observe/plan_war/
-    do own pause-state for you. Use it to: switch which ruler you control after a
+async def session(
+    action: Annotated[
+        str,
+        Field(description="The session operation.",
+              json_schema_extra={"enum": list(redesign.SESSION_ACTIONS)}),
+    ] = "",
+    character_id: int = 0, speed: int = redesign.SPEED_MAX,
+    enabled: Optional[bool] = None, disable_native_ai: bool = False,
+    flag: str = "", seconds: int = 60) -> dict[str, Any]:
+    """Game-flow, identity, and liveness control — and the ONLY tool that changes the
+    clock: no other tool pauses, unpauses or sets speed, and every other tool works with
+    the game paused or running. Use it to: switch which ruler you control after a
     succession (control); confirm the controlled ruler is alive+landed (whoami — control
     can silently drift); check bridge liveness if calls time out (health — 'hung' = STOP
-    looping); set speed/pause; or let time pass (wait). Speed is capped at 3; 4-5 is
-    REFUSED while at war, otherwise clamped to 3. The human player can be a target but never an actor.
+    looping); set speed/pause; or let time pass (wait). Speed runs 1 to 3: above 3 is
+    REFUSED while at war (speed_refused_at_war) and otherwise set to 3, below 1 is
+    refused. The human player can be a target but never an actor.
 
     wait: the way to let time pass between cycles. Unpauses if paused, blocks for
     `seconds` (1-110; longer waits are several calls), pauses again, and returns
@@ -3270,9 +2753,9 @@ async def session(action: str, character_id: int = 0, speed: int = 3,
     With no ruler bound, whoami returns ok=false, blocked.gate='no_ruler_bound',
     controlled=null, and blocked.measured.unbound_reason says why ('heir_is_player':
     the human inherited; '': no reason recorded, as after a reconnect). So do
-    observe_v2, plan_war, declare_war, succession_plan, set_phase, do, inspect and
-    cbs when character_id is omitted. observe, query, discover, steer and intent are
-    not checked: they return ok=true with the bridge's empty or declined reply.
+    observe, plan_war, declare_war, succession_plan, set_phase, do, inspect, cbs,
+    steer, and query and discover for anything about the ruler, when character_id
+    is omitted; a read that names no character (the character browser) answers.
     'actor_unresolved' means the read failed, not that nothing is bound. A seat whose
     ruler became the human's character gets 'cannot_act_as_player'. control needs
     character_id: 0 or omitted is refused (missing_character_id), never an unbind.
@@ -3284,34 +2767,30 @@ async def session(action: str, character_id: int = 0, speed: int = 3,
     the last one is freed when the session ends. CK3_AGENT_CHARACTER_ID pre-binds
     one id or a comma-separated list ("13902,12145"); the first is the primary.
 
-    experimental_flags lists the EXPERIMENTAL-unvalidated engine flags, all OFF at
-    boot; set_experimental(flag=<name>, enabled=bool) arms or disarms ONE
-    (off_goal_veto / break_alliance / force_offensive_stance). set_phase('expansion')
-    also arms off_goal_veto, which is process-wide (every controlled character of
-    every session) until disarmed or the game exits. The bridge has no readback:
-    each flag's `live` is null and `last_written_here` is this server's last
-    confirmed write (another seat's write is not seen; null does not mean off).
+    experimental_flags lists the experimental engine flags, all OFF at boot;
+    session(action="set_experimental", flag=<name>, enabled=<bool>) arms or disarms ONE
+    (enabled is required: a call without it is refused). Nothing else arms them;
+    off_goal_veto is process-wide (every controlled character of every session) until
+    disarmed or the game exits. The bridge has no readback: each flag's `live` is null
+    and `last_written_here` is this server's last confirmed write (another seat's
+    write is not seen; null does not mean off).
 
     Args:
-        action: control|add|release|whoami|speed|pause|unpause|wait|health|auto_events|
-            experimental_flags|set_experimental.
+        action: the operation (the enum).
         character_id: for control and add (required, > 0) and release.
-        speed: 1-3 (4-5 refused while at war).
-        enabled: for auto_events AND set_experimental (arm/disarm the flag). The
-            bridge auto-handles events only while NO client socket is open, so never
-            while you are connected; it then clears the event pause, unpauses a
-            paused game, and picks no option.
+        speed: for action=speed, 1-3.
+        enabled: REQUIRED for set_experimental (arm/disarm the flag; no default:
+            a call without it is refused, invalid_argument).
         disable_native_ai: for control and add.
-        flag: for set_experimental — off_goal_veto|break_alliance|force_offensive_stance.
+        flag: for set_experimental — one of session(action='experimental_flags').
         seconds: for wait — how long to let the clock run, 1-110 (default 60).
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "session")
     if err:
         return err
-    import redesign
-    return await redesign.session_impl(_get_gateway(), action=action, character_id=character_id,
-                                       speed=speed, enabled=enabled, disable_native_ai=disable_native_ai,
-                                       flag=flag, seconds=seconds)
+    return await redesign.session_impl(await _gateway_now(), action=action, character_id=character_id,
+                                        speed=speed, enabled=enabled, disable_native_ai=disable_native_ai,
+                                        flag=flag, seconds=seconds)
 
 
 # ===========================================================================
@@ -3345,12 +2824,12 @@ async def board_post(text: str) -> dict[str, Any]:
     Args:
         text: what you want the other lords to read.
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "board_post")
     if err:
         return err
     # ck-2r46. `BridgeGateway` HAS NO `call`. Its public surface is
-    # read / read_unpaused / write / read_inline / read_many /
-    # confirmed_write, with `_call` private — and this line said `.call`, so
+    # read / write / read_many / confirmed_write, with `_dispatch` private —
+    # and this line said `.call`, so
     # every board post in the deploy-40 arm-B smoke failed with
     # "'BridgeGateway' object has no attribute 'call'". The board tools had
     # never been registered in a live seat before ck-2r46's arm fix, so this
@@ -3365,9 +2844,10 @@ async def board_post(text: str) -> dict[str, Any]:
     # because a post "is buffered and executed in a flush like any other
     # write (§3.2), and carries the same flush_id as the actions around it".
     # A post is a mutation that goes through the flush, so it takes the write
-    # path and the gateway owns the polarity, exactly as this class's contract
-    # says the tool impls must let it.
-    return await _get_gateway().write("board_post", {"text": text})
+    # path (the action path, full response), as every write does.
+    gw = await _gateway_now()
+    return redesign.raw_reply_envelope("board_post", await gw.write("board_post", {"text": text}),
+                                        game=gw.game(), bridge_health=gw.health)
 
 
 async def board_read(since_seq: int = 0, limit: int = 0) -> dict[str, Any]:
@@ -3382,19 +2862,50 @@ async def board_read(since_seq: int = 0, limit: int = 0) -> dict[str, Any]:
         since_seq: resume cursor; 0 reads from the start.
         limit: max posts to return (0 = the server's page size).
     """
-    err = await _ensure_connected(_get_state())
+    err = await _ensure_connected(_get_state(), "board_read")
     if err:
         return err
-    # ck-2r46, as above: `.call` does not exist. A read takes `read()`, which
-    # delegates to the same `_call` with read polarity and lets the gateway
-    # own the pause matrix.
-    return await _get_gateway().read(
-        "board_read", {"since_seq": int(since_seq), "limit": int(limit)})
+    # ck-2r46, as above: `.call` does not exist. A read takes `read()`.
+    gw = await _gateway_now()
+    res = await gw.read("board_read", {"since_seq": int(since_seq), "limit": int(limit)})
+    return redesign.raw_reply_envelope("board_read", res, game=gw.game(),
+                                        bridge_health=gw.health)
 
 
 if _board_enabled():
     mcp.add_tool(board_post)
     mcp.add_tool(board_read)
+
+
+def registered_tool_definitions() -> list[dict]:
+    """What this server registers, read from FastMCP's tools/list handler.
+
+    One reader of the surface for everyone who needs it as data: the autonomous
+    loop (agent.py) hands these to the Anthropic API, scripts/gen_tool_reference.py
+    renders the reference from them, and scripts/tool_surface.py's probe takes the
+    names. Each row is {name, description, input_schema}. Run in a thread so a
+    caller's running event loop cannot block or refuse it.
+    """
+    import threading as _th
+    box: list = []
+    err: list = []
+
+    def _run():
+        try:
+            box.append(asyncio.run(mcp.list_tools()))
+        except Exception as e:                                  # noqa: BLE001
+            err.append(e)
+
+    t = _th.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(30)
+    if err:
+        raise err[0]
+    if not box:
+        raise RuntimeError("FastMCP list_tools did not return within 30 s")
+    return [{"name": x.name, "description": x.description or "",
+             "input_schema": x.inputSchema or {"type": "object", "properties": {}}}
+            for x in box[0]]
 
 
 def _write_tool_surface_record() -> None:
@@ -3642,7 +3153,6 @@ async def _release_on_exit_now(state: "BridgeState") -> None:
                 raise ConnectionError("no bridge session")
             while True:
                 bs = await _send_and_wait(state, "get_bridge_state", {}, timeout=4.0)
-                bs = bs.get("data") if isinstance(bs.get("data"), dict) else bs
                 row = next((r for r in bs.get("sessions") or []
                             if isinstance(r, dict) and r.get("session_id") == sid), None)
                 if row is None:

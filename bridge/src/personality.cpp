@@ -138,8 +138,9 @@ bool do_declare_save_identity(const char* params_json, std::string* out) {
 // =============================================================================
 
 bool do_get_ai_personality(const char* params_json, std::string* out) {
+    safe_read_clear();
     void* char_ptr = resolve_character(params_json);
-    if (!char_ptr) {
+    if (!char_ptr || is_sentinel(char_ptr)) {
         ADLOG("get_ai_personality: character not found\n");
         if (out) *out = R"({"success":false,"action":"get_ai_personality","reason":"character_not_found"})";
         return false;
@@ -149,25 +150,24 @@ bool do_get_ai_personality(const char* params_json, std::string* out) {
     // All lock-map sites MUST mask identically or set/get/apply/hook key on
     // different values and the lock lookup misses → reads return the engine's
     // recomputed defaults (the "drift" in A7). See set/hook/apply below.
-    uint32_t cid = read<uint32_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::ID) & 0xFFFFFF;
-    uintptr_t core_data = read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::REALM_DATA);
+    uint32_t cid = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::ID) & 0xFFFFFF;
+    uintptr_t core_data = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::REALM_DATA);
+    // An unreadable id or core-data pointer is a fault, not "no core data".
+    if (safe_read_had_fault()) return answer_memory_access_fault("get_ai_personality", out);
     if (!core_data) {
         ADLOG("get_ai_personality: no core_data for character %u\n", cid);
         if (out) *out = R"({"success":false,"action":"get_ai_personality","reason":"no_core_data"})";
         return false;
     }
 
-    uintptr_t personality_ptr = read<uintptr_t>(core_data + ck3::core_data::PERSONALITY_PTR);
+    uintptr_t personality_ptr = safe_read<uintptr_t>(core_data + ck3::core_data::PERSONALITY_PTR);
+    if (safe_read_had_fault()) return answer_memory_access_fault("get_ai_personality", out);
     if (!personality_ptr) {
         ADLOG("get_ai_personality: no personality data for character %u\n", cid);
         if (out) *out = R"({"success":false,"action":"get_ai_personality","reason":"no_personality_data"})";
         return false;
     }
 
-    static const char* axis_names[] = {
-        "honor", "greed", "rationality", "energy", "boldness",
-        "zeal", "vengefulness", "compassion", "sociability", "dominance"
-    };
 
     // Check personality lock map — copy value under lock to avoid dangling pointer
     PersonalityLock pl_copy = {};
@@ -188,15 +188,8 @@ bool do_get_ai_personality(const char* params_json, std::string* out) {
     r.key("character_id"); r.value_uint(cid);
     r.key("personality"); r.begin_object();
     for (int i = 0; i < 10; i++) {
-        int8_t val;
-        if (has_lock && pl_copy.locked[i]) {
-            val = pl_copy.axes[i];
-        } else if (i < 9) {
-            val = *reinterpret_cast<int8_t*>(personality_ptr + i);
-        } else {
-            val = 0;  // dominance: no engine memory backing, default 0
-        }
-        r.key(axis_names[i]); r.value_int(static_cast<int>(val));
+        const int8_t val = personality_axis_value(personality_ptr, has_lock ? &pl_copy : nullptr, i);
+        r.key(PERSONALITY_AXIS_NAMES[i]); r.value_int(static_cast<int>(val));
     }
     r.end_object();
     if (has_lock) {
@@ -206,33 +199,45 @@ bool do_get_ai_personality(const char* params_json, std::string* out) {
     // reports a held lock's values, so it cannot show whether the writes reached
     // the game. Nine axes (dominance has no engine byte). ADR 0001 P6.
     r.key("engine"); r.begin_object();
-    for (int i = 0; i < 9; i++) {
-        r.key(axis_names[i]); r.value_int(static_cast<int>(safe_read<int8_t>(personality_ptr + i)));
+    for (int i = 0; i < PERSONALITY_ENGINE_AXES; i++) {
+        r.key(PERSONALITY_AXIS_NAMES[i]); r.value_int(static_cast<int>(safe_read<int8_t>(personality_ptr + i)));
     }
     r.end_object();
 
     // Emit basic context
     uintptr_t c = reinterpret_cast<uintptr_t>(char_ptr);
-    uintptr_t realm_data = read<uintptr_t>(c + ck3::character::REALM_DATA);
+    uintptr_t realm_data = safe_read<uintptr_t>(c + ck3::character::REALM_DATA);
     if (realm_data) {
-        r.key("gold");     r.value_float(static_cast<double>(read<int64_t>(realm_data + ck3::core_data::GOLD)) / 100000.0);
-        r.key("prestige"); r.value_float(static_cast<double>(read<int64_t>(realm_data + ck3::core_data::PRESTIGE)) / 100000.0);
-        r.key("piety");    r.value_float(static_cast<double>(read<int64_t>(realm_data + ck3::core_data::PIETY)) / 100000.0);
+        r.key("gold");     r.value_float(static_cast<double>(safe_read<int64_t>(realm_data + ck3::core_data::GOLD)) / 100000.0);
+        r.key("prestige"); r.value_float(static_cast<double>(safe_read<int64_t>(realm_data + ck3::core_data::PRESTIGE)) / 100000.0);
+        r.key("piety");    r.value_float(static_cast<double>(safe_read<int64_t>(realm_data + ck3::core_data::PIETY)) / 100000.0);
     } else {
         r.key("gold");     r.value_float(0.0);
         r.key("prestige"); r.value_float(0.0);
         r.key("piety");    r.value_float(0.0);
     }
-    uintptr_t title_data = read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA);
-    r.key("military_strength"); r.value_int(title_data ? read<int32_t>(title_data + ck3::title_realm::MIL_CURRENT) : 0);
+    uintptr_t title_data = safe_read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA);
+    r.key("military_strength"); r.value_int(title_data ? safe_read<int32_t>(title_data + ck3::title_realm::MIL_CURRENT) : 0);
 
+    // An axis, gold, prestige, piety or strength that read 0 because the read
+    // faulted is not a value: the reply is memory_access_fault, not the zeros.
+    if (safe_read_had_fault()) return answer_memory_access_fault("get_ai_personality", out);
     r.end_object();
     if (out) *out = r.take();
     return true;
 }
 
+int8_t personality_axis_value(uintptr_t personality_ptr, const PersonalityLock* lock, int axis) {
+    if (axis < 0 || axis >= 10) return 0;
+    if (lock && lock->locked[axis]) return lock->axes[axis];
+    if (axis < PERSONALITY_ENGINE_AXES && personality_ptr)
+        return safe_read<int8_t>(personality_ptr + static_cast<uintptr_t>(axis));
+    return 0;   // dominance with no lock: no engine byte
+}
+
 // set_ai_personality: write personality axis values (partial update)
 bool do_set_ai_personality(const char* params_json, std::string* out) {
+    safe_read_clear();
     void* char_ptr = resolve_character(params_json);
     // N3 (surface-audit 2026-08-01): lookup_character returns the DB SENTINEL
     // (non-null!) on an id miss — the old null-only check let a bogus
@@ -258,6 +263,8 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
     // Mask lower 24 bits — see get_ai_personality (A7 lock-map key consistency).
     uint32_t cid = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::ID) & 0xFFFFFF;
     uintptr_t core_data = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(char_ptr) + ck3::character::REALM_DATA);
+    // Checked BEFORE any write: an address from a faulted read is not an address.
+    if (safe_read_had_fault()) return answer_memory_access_fault("set_ai_personality", out);
     if (!core_data) {
         ADLOG("set_ai_personality: no core_data for character %u\n", cid);
         if (out) *out = R"({"success":false,"action":"set_ai_personality","reason":"no_core_data"})";
@@ -265,16 +272,13 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
     }
 
     uintptr_t personality_ptr = safe_read<uintptr_t>(core_data + ck3::core_data::PERSONALITY_PTR);
+    if (safe_read_had_fault()) return answer_memory_access_fault("set_ai_personality", out);
     if (!personality_ptr) {
         ADLOG("set_ai_personality: no personality data for character %u\n", cid);
         if (out) *out = R"({"success":false,"action":"set_ai_personality","reason":"no_personality_data"})";
         return false;
     }
 
-    static const char* axis_names[] = {
-        "honor", "greed", "rationality", "energy", "boldness",
-        "zeal", "vengefulness", "compassion", "sociability", "dominance"
-    };
 
     // N3 (surface-audit 2026-08-01): typed rejection for out-of-range axis
     // values. The old path silently CLAMPED (e.g. boldness:9999 → 100) and
@@ -284,17 +288,17 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
     // "boldness":"banana" still reads as -1 — in range. Range garbage, the
     // audited case, is now rejected.)
     for (int i = 0; i < 10; i++) {
-        if (!json_has_key(params_json, axis_names[i])) continue;
-        int val = json_get_int(params_json, axis_names[i]);
-        if (val < -100 || val > 100) {
+        if (!json_has_key(params_json, PERSONALITY_AXIS_NAMES[i])) continue;
+        int val = json_get_int(params_json, PERSONALITY_AXIS_NAMES[i]);
+        if (val < PERSONALITY_AXIS_MIN || val > PERSONALITY_AXIS_MAX) {
             ADLOG("set_ai_personality: axis %s=%d out of range [-100,100] for character %u — rejected\n",
-                  axis_names[i], val, cid);
+                  PERSONALITY_AXIS_NAMES[i], val, cid);
             if (out) {
                 ResponseBuilder r; r.begin_object();
                 r.key("success"); r.value_bool(false);
                 r.key("action"); r.value_string("set_ai_personality");
                 r.key("reason"); r.value_string("axis_out_of_range");
-                r.key("axis"); r.value_string(axis_names[i]);
+                r.key("axis"); r.value_string(PERSONALITY_AXIS_NAMES[i]);
                 r.key("value"); r.value_int(val);
                 r.key("hint"); r.value_string("axis values must be integers in [-100,100]; no axis was written");
                 r.end_object();
@@ -328,14 +332,14 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
         // Distinguish "key absent" from a legitimate value of -1: check
         // presence FIRST so a real -1 isn't mistaken for missing (and so a
         // missing key can never clear a prior lock — that's the leak).
-        if (!json_has_key(params_json, axis_names[i])) {
+        if (!json_has_key(params_json, PERSONALITY_AXIS_NAMES[i])) {
             if (pl.locked[i]) retained++;   // prior lock preserved (merge)
             continue;
         }
-        int val = json_get_int(params_json, axis_names[i]);
+        int val = json_get_int(params_json, PERSONALITY_AXIS_NAMES[i]);
 
-        if (val < -100) val = -100;
-        if (val > 100) val = 100;
+        if (val < PERSONALITY_AXIS_MIN) val = PERSONALITY_AXIS_MIN;
+        if (val > PERSONALITY_AXIS_MAX) val = PERSONALITY_AXIS_MAX;
 
         if (i < 9) {  // Only 9 axes in engine memory; axis 9 (dominance) is lock-only
             *reinterpret_cast<int8_t*>(personality_ptr + i) = static_cast<int8_t>(val);
@@ -352,7 +356,22 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
         save_personality_locks_locked();
     }
 
-    // Return full personality after writing
+    // The reply after the write. The axes are stored and the locks persisted:
+    // from here a read that faults is said (degraded), never answered as a
+    // refusal, because the change happened (a fault BEFORE the write refuses
+    // above, with nothing written). The axes as read back are the proof of the
+    // store; when that read faulted the reply says so (verified:false) and
+    // names the values it wrote instead of inventing the ones it read.
+    int8_t back[10];
+    for (int i = 0; i < 10; i++) {
+        if (i < 9) {
+            back[i] = safe_read<int8_t>(personality_ptr + i);
+        } else {
+            back[i] = pl.locked[i] ? pl.axes[i] : 0;
+        }
+    }
+    const int axis_faults = safe_read_fault_count();
+
     ResponseBuilder r;
     r.begin_object();
     r.key("success"); r.value_bool(true);
@@ -360,34 +379,55 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
     r.key("character_id"); r.value_uint(cid);
     r.key("axes_written"); r.value_int(written);
     r.key("axes_retained"); r.value_int(retained);  // prior-locked axes kept across this partial update (A11 merge)
-    r.key("personality"); r.begin_object();
-    for (int i = 0; i < 10; i++) {
-        int8_t val;
-        if (i < 9) {
-            val = *reinterpret_cast<int8_t*>(personality_ptr + i);
-        } else if (pl.locked[i]) {
-            val = pl.axes[i];
-        } else {
-            val = 0;
+    if (axis_faults == 0) {
+        r.key("personality"); r.begin_object();
+        for (int i = 0; i < 10; i++) {
+            r.key(PERSONALITY_AXIS_NAMES[i]); r.value_int(static_cast<int>(back[i]));
         }
-        r.key(axis_names[i]); r.value_int(static_cast<int>(val));
+        r.end_object();
+    } else {
+        r.key("personality"); r.value_null();
+        r.key("verified"); r.value_bool(false);
+        r.key("written"); r.begin_object();
+        for (int i = 0; i < 10; i++) {
+            if (!json_has_key(params_json, PERSONALITY_AXIS_NAMES[i])) continue;
+            r.key(PERSONALITY_AXIS_NAMES[i]); r.value_int(static_cast<int>(pl.axes[i]));
+        }
+        r.end_object();
     }
-    r.end_object();
 
+    // The context (gold, prestige, piety, strength): a field whose read faulted
+    // is null, not 0.
     uintptr_t c = reinterpret_cast<uintptr_t>(char_ptr);
-    uintptr_t realm_data = read<uintptr_t>(c + ck3::character::REALM_DATA);
-    if (realm_data) {
-        r.key("gold");     r.value_float(static_cast<double>(read<int64_t>(realm_data + ck3::core_data::GOLD)) / 100000.0);
-        r.key("prestige"); r.value_float(static_cast<double>(read<int64_t>(realm_data + ck3::core_data::PRESTIGE)) / 100000.0);
-        r.key("piety");    r.value_float(static_cast<double>(read<int64_t>(realm_data + ck3::core_data::PIETY)) / 100000.0);
+    auto emit_money = [&](const char* key, uintptr_t addr) {
+        const int before = safe_read_fault_count();
+        const int64_t v = safe_read<int64_t>(addr);
+        r.key(key);
+        if (safe_read_fault_count() != before) r.value_null();
+        else r.value_float(static_cast<double>(v) / 100000.0);
+    };
+    int faults = safe_read_fault_count();
+    uintptr_t realm_data = safe_read<uintptr_t>(c + ck3::character::REALM_DATA);
+    if (safe_read_fault_count() != faults) {
+        r.key("gold"); r.value_null();
+        r.key("prestige"); r.value_null();
+        r.key("piety"); r.value_null();
+    } else if (realm_data) {
+        emit_money("gold", realm_data + ck3::core_data::GOLD);
+        emit_money("prestige", realm_data + ck3::core_data::PRESTIGE);
+        emit_money("piety", realm_data + ck3::core_data::PIETY);
     } else {
         r.key("gold");     r.value_float(0.0);
         r.key("prestige"); r.value_float(0.0);
         r.key("piety");    r.value_float(0.0);
     }
-    uintptr_t title_data = read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA);
-    r.key("military_strength"); r.value_int(title_data ? read<int32_t>(title_data + ck3::title_realm::MIL_CURRENT) : 0);
+    faults = safe_read_fault_count();
+    uintptr_t title_data = safe_read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA);
+    const int32_t strength = title_data ? safe_read<int32_t>(title_data + ck3::title_realm::MIL_CURRENT) : 0;
+    r.key("military_strength");
+    if (safe_read_fault_count() != faults) r.value_null(); else r.value_int(strength);
 
+    if (safe_read_had_fault()) emit_degraded(r, "set_ai_personality");
     r.end_object();
     if (out) *out = r.take();
     return true;
@@ -546,15 +586,15 @@ void install_personality_hooks() {
     };
 
     HookEntry hooks[] = {
-        { ck3::funcs::AI_PERSONALITY_HONOR,        (void*)hook_ai_honor,        "honor" },
-        { ck3::funcs::AI_PERSONALITY_GREED,        (void*)hook_ai_greed,        "greed" },
-        { ck3::funcs::AI_PERSONALITY_RATIONALITY,  (void*)hook_ai_rationality,  "rationality" },
-        { ck3::funcs::AI_PERSONALITY_ENERGY,       (void*)hook_ai_energy,       "energy" },
-        { ck3::funcs::AI_PERSONALITY_BOLDNESS,     (void*)hook_ai_boldness,     "boldness" },
-        { ck3::funcs::AI_PERSONALITY_ZEAL,         (void*)hook_ai_zeal,         "zeal" },
-        { ck3::funcs::AI_PERSONALITY_VENGEFULNESS, (void*)hook_ai_vengefulness, "vengefulness" },
-        { ck3::funcs::AI_PERSONALITY_COMPASSION,   (void*)hook_ai_compassion,   "compassion" },
-        { ck3::funcs::AI_PERSONALITY_SOCIABILITY,  (void*)hook_ai_sociability,  "sociability" },
+        { ck3::funcs::AI_PERSONALITY_HONOR,        (void*)hook_ai_honor,        PERSONALITY_AXIS_NAMES[0] },
+        { ck3::funcs::AI_PERSONALITY_GREED,        (void*)hook_ai_greed,        PERSONALITY_AXIS_NAMES[1] },
+        { ck3::funcs::AI_PERSONALITY_RATIONALITY,  (void*)hook_ai_rationality,  PERSONALITY_AXIS_NAMES[2] },
+        { ck3::funcs::AI_PERSONALITY_ENERGY,       (void*)hook_ai_energy,       PERSONALITY_AXIS_NAMES[3] },
+        { ck3::funcs::AI_PERSONALITY_BOLDNESS,     (void*)hook_ai_boldness,     PERSONALITY_AXIS_NAMES[4] },
+        { ck3::funcs::AI_PERSONALITY_ZEAL,         (void*)hook_ai_zeal,         PERSONALITY_AXIS_NAMES[5] },
+        { ck3::funcs::AI_PERSONALITY_VENGEFULNESS, (void*)hook_ai_vengefulness, PERSONALITY_AXIS_NAMES[6] },
+        { ck3::funcs::AI_PERSONALITY_COMPASSION,   (void*)hook_ai_compassion,   PERSONALITY_AXIS_NAMES[7] },
+        { ck3::funcs::AI_PERSONALITY_SOCIABILITY,  (void*)hook_ai_sociability,  PERSONALITY_AXIS_NAMES[8] },
     };
 
     int installed = 0;

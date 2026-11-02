@@ -1,6 +1,6 @@
 # AI Personality Weights Reference
 
-The 10 personality axes are your PRIMARY steering mechanism. Values range from -100 to +100.
+The 9 personality axes are your PRIMARY steering mechanism. Values range from -100 to +100.
 Partial updates — only specify axes you want to change. The native AI interprets these
 weights across ALL its decisions: war, diplomacy, marriage, council, schemes, everything.
 
@@ -67,12 +67,9 @@ a calculated terror play (dread-based control). Most of the time, moderate-high 
 portfolio. Lower when you need to focus internally. A Sociopath always wants more
 connections — more connections = more optionality.
 
-### dominance (-100 to +100)
-**+high:** Controls vassals tightly, changes laws, centralizes power
-**-low:** Laissez-faire, loose vassal management, decentralized
-**Sociopath note:** Organizational control. High dominance = micromanagement, which can
-trigger faction pushback. Use when you're strong enough to absorb the discontent.
-Lower when your position is fragile. Think "am I strong enough to reorganize right now?"
+There is no dominance axis: the engine keeps nine personality bytes (honor through
+sociability) and no dominance byte, so `steer` and `set_phase` refuse the key. Control
+vassals with the levers that exist (laws, obligations, councillors, titles, hooks).
 
 ---
 
@@ -80,7 +77,7 @@ Lower when your position is fragile. Think "am I strong enough to reorganize rig
 
 ### "The Consolidator" (post-expansion stabilization)
 ```json
-{"rationality": 70, "energy": -20, "boldness": -40, "compassion": 50, "sociability": 40, "dominance": 30}
+{"rationality": 70, "energy": -20, "boldness": -40, "compassion": 50, "sociability": 40}
 ```
 
 ### "The Acquirer" (aggressive expansion)
@@ -100,10 +97,10 @@ Lower when your position is fragile. Think "am I strong enough to reorganize rig
 
 ### "The Crisis Manager" (faction revolt / war defense)
 ```json
-{"rationality": 80, "boldness": 30, "dominance": 60, "energy": 50, "compassion": -20}
+{"rationality": 80, "boldness": 30, "energy": 50, "compassion": -20}
 ```
 
 ### "The Successor" (preparing for leadership transition)
 ```json
-{"rationality": 70, "energy": -10, "greed": 40, "dominance": 40, "boldness": -50}
+{"rationality": 70, "energy": -10, "greed": 40, "boldness": -50}
 ```

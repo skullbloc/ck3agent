@@ -31,7 +31,7 @@ Python 3.11 to 3.14. CMake downloads Zydis on first configure. `make help` lists
 
 `make test` runs the server suite and `tests/` with pytest. No game needed.
 
-* `pyproject.toml` deselects three upstream test ids that read research-tree files not in this repo.
+* `pyproject.toml` deselects the upstream test ids that read research-tree files not in this repo; each one is listed, with its reason, in a comment above `addopts`.
 * Tests sit beside the module: `ck3agent/server/test_<module>.py`. Basenames must be unique repo-wide; there is no `__init__.py`.
 * `ck3agent/server/` uses bare sibling imports such as `from tools import ...`.
   Keep them; the files are shared verbatim with upstream. IDEs: pyright
@@ -69,9 +69,10 @@ Name the platform and BuildID, or the PE TimeDateStamp, in every finding.
 ## 7. Bridge code
 
 * Handlers are one line each in `bridge/src/action_registry.inc`; the dispatch
-  chain and the registry expand from it. A new action also needs a pause-state
-  class in `bridge/src/snapshot.cpp`.
-* Writes to game memory happen only on the AI tick. The IPC thread queues them.
+  chain and the registry expand from it. A new action also needs a thread
+  class in `bridge/src/snapshot.cpp` (IPC thread or the game's command thread).
+* Writes to game memory happen only on the game's command thread, in the
+  bridge's drain, paused or running. The IPC thread queues them.
 * The SIGSEGV guards (`sigsetjmp`) are a crash net, not a safety boundary. Validate pointers before reading.
 * Link nothing beyond libc, libm, libstdc++ and libgcc_s; CI checks `ldd`. Layout: [bridge/README.md](bridge/README.md).
 

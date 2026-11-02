@@ -33,6 +33,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import cpp_strip  # noqa: E402  (bridge/scripts/cpp_strip.py: the one C++ tokenizer)
+
 POINTER_KEY = re.compile(r'"([a-z0-9_]*(?:_ref|_ptr|addr|address|pointer|vtable)|va|ptr|ref)"')
 READERS = re.compile(r"\b(json_get_\w+|json_int\w*|parse_u64\w*|strto\w+|std::sto\w+|ato\w+)\s*\(|"
                      r"\.Get(?:Uint64|Int64|Uint|Int|String)\s*\(")
@@ -43,27 +46,8 @@ SINKS = re.compile(r"\b(is_mapped|safe_read\w*|read_ptr|read_u64|chase_ptr|proce
 
 
 def strip_comments(src: str) -> str:
-    out, i, n = [], 0, len(src)
-    while i < n:
-        c = src[i]
-        if c in "\"'":
-            j = i + 1
-            while j < n and src[j] != c:
-                j += 2 if src[j] == "\\" else 1
-            out.append(src[i:j + 1])
-            i = j + 1
-        elif src.startswith("//", i):
-            j = src.find("\n", i)
-            i = n if j < 0 else j
-        elif src.startswith("/*", i):
-            j = src.find("*/", i + 2)
-            seg = src[i:n if j < 0 else j + 2]
-            out.append("\n" * seg.count("\n"))
-            i = n if j < 0 else j + 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
+    """Comments blanked, string and char literals and newlines kept (cpp_strip)."""
+    return cpp_strip.strip(src, keep_strings=True)
 
 
 def drop_debug_blocks(text: str) -> str:
@@ -90,23 +74,9 @@ def drop_debug_blocks(text: str) -> str:
 
 
 def body_at(text: str, brace: int) -> str:
-    depth, i = 0, brace
-    while i < len(text):
-        c = text[i]
-        if c in "\"'":
-            j = i + 1
-            while j < len(text) and text[j] != c:
-                j += 2 if text[j] == "\\" else 1
-            i = j + 1
-            continue
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                return text[brace:i + 1]
-        i += 1
-    return text[brace:]
+    """The brace-matched block at text[brace] (cpp_strip.match_close)."""
+    end = cpp_strip.match_close(text, brace)
+    return text[brace:] if end < 0 else text[brace:end + 1]
 
 
 def definitions(files: dict[str, str]) -> dict[str, tuple[str, str]]:
@@ -195,13 +165,17 @@ def release_handlers(bridge: Path) -> set[str]:
 
 def census(bridge: Path) -> tuple[list[str], int]:
     files = {}
+    unparsed = []
     for p in sorted((bridge / "src").glob("*.cpp")):
-        files[p.name] = drop_debug_blocks(strip_comments(p.read_text(errors="replace")))
+        try:
+            files[p.name] = drop_debug_blocks(strip_comments(p.read_text(errors="replace")))
+        except cpp_strip.CppParseError as e:      # fail OPEN
+            unparsed.append(f"{p.name}: cannot be tokenized ({e}); nothing in it was checked")
     defs = definitions(files)
     handlers = release_handlers(bridge)
     if len(handlers) < 100:
         return [f"only {len(handlers)} release handlers found; the parse is broken"], 0
-    bad: list[str] = []
+    bad: list[str] = list(unparsed)
     for h in sorted(handlers):
         if h not in defs:
             bad.append(f"{h}: release handler with no definition found (cannot be checked)")
@@ -224,6 +198,16 @@ SELFTEST_BAD = {
     "two hop": 'bool do_x(const char* p, std::string* o) { const char* s = json_get_string(p, "n"); uint64_t a = strtoull(s, nullptr, 16); uintptr_t b = a + 8; return is_mapped(b); }',
     "c cast": 'bool do_x(const char* p, std::string* o) { uint64_t a = json_get_int(p, "n"); void* q = (void*)a; return q; }',
     "address key": 'bool do_x(const char* p, std::string* o) { int a = json_get_int(p, "address"); return a; }',
+    # L13 FF3 (witness X4): the scan stays in phase across a raw string and a
+    # comment with an apostrophe. The escaped-looking-quote row is flagged by the
+    # pre-FF3 checker too (its quotes pair; non-discriminating); the bare-quote
+    # row (a later "/*" then reads as a comment that swallows the handler) is
+    # the one the pre-FF3 checker misses.
+    "pointer key after a raw string": ('static const char* k = R"x(\\")x";\nint b = 1; // it\'s\n'
+        'bool do_x(const char* p, std::string* o) { const char* s = json_get_string(p, "cb_ref"); return s; }'),
+    "pointer key after a raw string with a bare quote": ('static const char* k = R"x(")x"; const char* u = "/*";\n'
+        'bool do_x(const char* p, std::string* o) { const char* s = json_get_string(p, "cb_ref"); return s; }\n'
+        'const char* v = "*/";'),
 }
 SELFTEST_GOOD = {
     "id lookup": 'bool do_x(const char* p, std::string* o) { uint32_t id = json_get_int(p, "character_id"); void* ch = get_character_by_id(id); return is_mapped(reinterpret_cast<uintptr_t>(ch)); }',
@@ -234,12 +218,12 @@ SELFTEST_GOOD = {
 def selftest() -> int:
     fails = 0
     for k, src in SELFTEST_BAD.items():
-        defs = definitions({"x.cpp": src})
-        b = scan_body("do_x", defs["do_x"][1])
+        defs = definitions({"x.cpp": strip_comments(src)})
+        b = scan_body("do_x", defs["do_x"][1]) if "do_x" in defs else []   # unseen is a miss
         print(f"{'ok  ' if b else 'FAIL'} control flags {k}")
         fails += not b
     for k, src in SELFTEST_GOOD.items():
-        defs = definitions({"x.cpp": src})
+        defs = definitions({"x.cpp": strip_comments(src)})
         b = scan_body("do_x", defs["do_x"][1])
         print(f"{'ok  ' if not b else 'FAIL'} control passes {k} {b if b else ''}")
         fails += bool(b)

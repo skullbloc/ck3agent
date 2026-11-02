@@ -38,7 +38,7 @@ namespace bridge {
 
 enum class ThreadRole {
     Unregistered = 0,   // never a default that gets PRINTED as a role
-    GameThread,         // the engine's AI-tick thread; where on_tick runs
+    GameThread,         // runs drain_game_thread_work (L13: the session thread; without the hook, the AI-tick worker)
     IpcServer,
     IpcReader,
     PipelineConductor,

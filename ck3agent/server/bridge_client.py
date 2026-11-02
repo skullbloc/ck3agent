@@ -105,7 +105,7 @@ def world_identity_from_bundle(path: "str | os.PathLike") -> dict:
 def world_identity_from_run_summary(summary: dict, source: str = "run_summary") -> dict:
     """The same, from an already-loaded run_summary document.
 
-    An episode that has a bundle OPEN but not yet sealed holds the document in
+    An episode that has a bundle OPEN and unsealed holds the document in
     memory and has no file to read — and it is exactly that episode which needs
     to declare, at start, before any control session attaches.
     """
@@ -274,7 +274,7 @@ class BridgeClient:
         self.endpoint = endpoint if endpoint is not None else _bridge_endpoint()
         self.sock: Optional[socket.socket] = None
         self._buf = b""
-        #: ck-1qj0. Documents already decoded off a framing line and not yet
+        #: ck-1qj0. Documents already decoded off a framing line and still to be
         #: returned. A split line yields more than one, and `recv()` promises
         #: exactly one per call, so the remainder waits here IN ORDER rather
         #: than being dropped.
@@ -503,7 +503,7 @@ class BridgeClient:
             if resume_token:
                 msg["resume_token"] = resume_token
             # ck-43u3 / ck-h6nx (D'). THE EPISODE-OBSERVER DECLARATION, which
-            # this client could not send. `bridge/harness/client.py` has built
+            # this client could not send. `ck3agent/server/harness_client.py` has built
             # `hs_kwargs["episode_observer"]` since ck-zi99 and handed it to
             # THIS function, which did not accept it — so every attempt died on
             # `handshake() got an unexpected keyword argument`. Two client
@@ -698,11 +698,4 @@ class BridgeClient:
             "actions": actions,
         })
 
-    def send_pause(self, paused: bool):
-        """Request pause/unpause via action envelope."""
-        action = "pause_game" if paused else "unpause_game"
-        self.send_actions(0, [{"action": action}])
 
-    def send_speed(self, speed: int):
-        """Set game speed (1-5) via action envelope."""
-        self.send_actions(0, [{"action": "set_speed", "speed": max(1, min(5, speed))}])

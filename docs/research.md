@@ -11,12 +11,12 @@ differ only in the model, and what is recorded.
 ## Steps: a treatment and a no-agent control
 
 1. **Fresh game process per condition.** Quit and relaunch CK3 between runs.
-   Bridge state, such as claims, toggles and personality writes, lives in the
+   Bridge state, such as claims and personality writes, lives in the
    game process and does not reset on reload.
 2. **Same start in both arms.** The same observer save, and the same ruler
    named by `CK3_AGENT_CHARACTER_ID=<id>`.
-3. **Same clock rule in both arms.** Set `CK3_SUPPRESS_AUTO_UNPAUSE=1`, then
-   unpause explicitly and set the same speed. See [Speed](#speed).
+3. **Same clock rule in both arms.** A loaded save stays paused (the bridge
+   never unpauses on its own); unpause explicitly and set the same speed. See [Speed](#speed).
 4. **Treatment:** `ck3agent run` with the condition's play directory.
 5. **Control:** launch with `CK3_PIPELINE_MODE=null`. Every handshake is
    downgraded to observe (`null_mode_observer_only`), so no client can steer
@@ -30,22 +30,23 @@ each its posture, and every read and write names its ruler with
 `set_phase` per ruler is on record; the manifest's `rulers` lists the rulers
 at start and at stop. Where a study needs several rulers' state over time,
 not independent agents, this serves without a separate observe client: put a
-per-ruler `observe_v2(character_id=...)` in the prompt's cycle and read it from
+per-ruler `observe(character_id=...)` in the prompt's cycle and read it from
 the transcript. It is one model with one context steering all of them, so the
-rulers are not independent arms. `set_phase("expansion")` on one arms the
-off-goal veto for all. Two sessions in one game (one run per arm) remain
-unsupported: they share the clock, the teardown pause and the veto.
+rulers are not independent arms. Two sessions in one game (one run per arm)
+remain unsupported: they share the clock, the teardown pause and any
+experimental flag either arms.
 
 Neither "bridge attached, no client" nor the null-mode arm is a clean control:
 
-- Until the first game tick, the bridge unpauses a paused game every ~3 s.
+- A loaded save stays paused: the bridge goes active on its first pass of the
+  game's command thread and never unpauses on its own.
 - Events of the engine's player character (`PLAYER_CHAR_ID`) depend on whether
-  any client socket is open; observe sessions and clients not yet handshaken
-  count. Open: the bridge pauses on a new event and waits for `respond_event`,
-  which observers are refused, as is `auto_events`. None open, auto-events on
-  (the default): while an event is pending it clears the event pause and
-  unpauses the game, even a pause you set, picking no option; events stay
-  queued. Not checked: whether observer saves set `PLAYER_CHAR_ID`; if it is
+  any client socket is open; observe sessions and clients still to handshake
+  count. Open: a new event waits for the game's player (no tool answers
+  one); the bridge does not pause for it. None open (no switch turns this
+  off): while an event is pending it clears the event
+  pause and unpauses the game only when that event pause stopped it (a pause
+  you set stays), picking no option; events stay queued. Not checked: whether observer saves set `PLAYER_CHAR_ID`; if it is
   0, neither path acts.
 - Steering outlives the client. The last personality write stays in game
   memory after disconnect. In `CK3_EPISODE_MODE=experiment` the claim is kept too.
@@ -80,20 +81,16 @@ repository fails if this table drifts from the code.
 
 Every call also writes, for the ruler:
 
-- `set_character_subsystems`: `DeclareWar`, on for `expansion` and
-  `stalled_siege`, and `Decisions`, always on. The engine does not enforce
-  these toggles; they are bookkeeping.
 - `set_character_ai`: re-enables the ruler's native AI tick.
 
-**`expansion` also arms the off-goal war veto**: AI-picked wars are vetoed,
-`declare_war` wars are not. It is one process-wide flag for every controlled
-character of every session; `character_id` is ignored, no phase disarms it,
-and it lasts until `set_experimental` disarms it or the game exits. The hook
-is experimental and not live-validated. The result reports
-`offgoal_veto_armed`, true only when the bridge confirms the write, and
-`offgoal_veto_scope`. The bridge has no readback; `experimental_flags` shows
-only this server's last confirmed write, so with several seats a null there
-does not mean off.
+No phase arms the off-goal war veto (AI-picked wars vetoed, `declare_war`
+wars not): it is an experimental hook with no live validation, armed only by
+`session(action="set_experimental", flag="off_goal_veto", enabled=true)`.
+It is one process-wide flag for every controlled character of every session;
+`character_id` is ignored, and it lasts until `set_experimental` disarms it or
+the game exits. The bridge has no readback; `experimental_flags` shows only
+this server's last confirmed write, so with several seats a null there does
+not mean off.
 
 ## What is recorded
 
@@ -112,11 +109,11 @@ state-changing bridge verb, refused calls included (`observe_mode`,
 | `args` | request parameters |
 | `result` | the bridge's reply |
 
-Logged as `management`: `pause_game`, `unpause_game`, `pause`, `set_pause`, `set_speed`,
-`set_character_ai`, `set_character_subsystems`, `set_offgoal_veto`, `set_force_offensive_stance`.
-Not logged: reads, and `set_controlled_character`, `release_character`, `set_auto_respond_events`,
-`set_break_alliance_enabled`, `set_cb_selector_override`, `set_vacant_fill_enabled`,
-`set_war_stance_record_walk`, `toggle_all_ai`, `enable_all_ai`, `toggle_ai_subsystem`,
+Logged as `management`: `pause_game`, `unpause_game`, `set_pause`, `set_speed`,
+`set_character_ai`, `set_offgoal_veto`,
+`set_faction_demand_response`.
+Not logged: reads, and `set_controlled_character`, `release_character`,
+`set_cb_selector_override`, `set_war_stance_record_walk`, `toggle_all_ai`, `toggle_ai_subsystem`,
 `select_observe_default`, `enter_observe_mode`, `inject_mouse_click`, `report_usage`,
 `set_budget_config`, `declare_save_identity`. `select_observe_default`,
 `inject_mouse_click` and `set_cb_selector_override` exist only in debug builds.
@@ -161,7 +158,7 @@ reads from the environment of each program the launcher execs, to stay preloaded
 | Variable | Tag | Effect |
 |----------|-----|--------|
 | `XDG_RUNTIME_DIR` | paths | base of the per-user directory; see [files and paths](reference/files-and-paths.md#what-goes-where) |
-| `HOME`, `XDG_DATA_HOME` | paths | fallbacks for the per-user directory and the trigger catalogue |
+| `HOME` | paths | fallback for the per-user directory |
 | `CK3_INSTANCE_LAYOUT` | paths | `user` by default; `legacy` restores the shared `/tmp` layout and a 0666 socket |
 | `CK3_INSTANCE_ID` | paths | instance name; moves socket, log and telemetry under `<root>/<id>/` |
 | `CK3_INSTANCE_ROOT` | paths | parent directory for named instances |
@@ -171,11 +168,9 @@ reads from the environment of each program the launcher execs, to stay preloaded
 | `CK3_BRIDGE_LOG` | paths | bridge log path |
 | `CK3_BRIDGE_LOG_ARCHIVE_DIR` | paths | where rotated bridge logs are gzipped |
 | `CK3_TELE` | paths | telemetry directory, which holds the action log |
-| `CK3_TRIGGER_CATALOGUE_CSV` | paths | trigger catalogue for `evaluate_trigger` |
 | `CK3MAP_BIN` | paths | map-graph artifact; default `<state dir>/ck3map.bin` (`/tmp/ck3map.bin` in the legacy layout) |
 | `CK3_STRICT_BUILD_ID` | experiment | any value not starting with `1` (`0`, `false`, `yes`) loosens the BuildID refusal |
 | `CK3_PIPELINE_MODE` | experiment | `legacy` by default; `pipeline` buffers writes and gives the bridge the clock; `null` is the observe-only control |
-| `CK3_SUPPRESS_AUTO_UNPAUSE` | experiment | `1` stops the repeated unpause before the first tick |
 | `CK3_EPISODE_MODE` | experiment | `experiment` pins claims across disconnects and arms containment |
 | `CK3_EPISODE_ID` | experiment | id stamped into logs and the ledger |
 | `CK3_EPISODE_ARM` | experiment | arm label; arm `b` enables the board |
@@ -213,49 +208,75 @@ Variables read by the Python side are in
 
 ## Default-off writes
 
-Two bridge writes are off by default. Each calls engine code that has not
-been run crash-free on a live game, and a fault there can surface ticks later,
-outside the bridge's crash net. (`scheme_action`, behind `do(intent="scheme")`,
-was validated live on 2026-10-18 and is on by default; its refusal codes are
-below.) Called while off, the bridge refuses with
-`reason: "experimental_write_disabled"` and names the file it reads in
-`enabled_writes_file`. The MCP `do` reply carries the same path in
-`blocked.fix`. Claude cannot arm a write; an operator can, for a controlled
-run.
+No bridge write is off by default in this release. `scheme_action`, behind
+`do(intent="scheme")`, was validated live on 2026-10-18, and `faction_action`,
+behind `do(intent="faction")`, on 2026-10-21; both are on. The bridge keeps the
+gate for a write that has not been run crash-free on a live game, because a
+fault in engine code can surface ticks later, outside the bridge's crash net. A
+gated write called while off is refused with
+`reason: "experimental_write_disabled"`, and the bridge names the file it reads
+in `enabled_writes_file`. The MCP `do` reply carries the same path in
+`blocked.fix`. Claude cannot arm a write; an operator can, for a controlled run.
 
-| Bridge action | MCP intent | What it does |
-|---------------|------------|--------------|
-| `faction_action` | `do(intent="faction")` | creates or joins a faction |
-| `break_alliance` | `do(intent="break_alliance", args={"target_id": <ally>, "confirm_observer_save": true})` | breaks an alliance. Three gates: the `ck3-enabled-writes` line, then `session(action="set_experimental", flag="break_alliance", enabled=true)`, then `confirm_observer_save: true` in `args`; the engine path is unverified (refusals: `break_alliance_disabled`, `observer_save_gated`). Only on a disposable observer save |
+To arm a gated write, add its bridge action name, one per line, to
+`ck3-enabled-writes` in the bridge's state directory: `RUN/ck3-enabled-writes`
+in the default layout (`RUN` is in [files and paths](reference/files-and-paths.md)),
+and the instance directory for a named instance. Use the path in
+`enabled_writes_file` when in doubt. The bridge re-reads the file on every call,
+so arming and disarming need no relaunch. A line must match exactly;
+`scheme_action_x` does not arm `scheme_action`. Delete the line to disarm.
 
-To arm one, add its bridge action name, one per line, to `ck3-enabled-writes`
-in the bridge's state directory: `RUN/ck3-enabled-writes` in the default
-layout (`RUN` is in [files and paths](reference/files-and-paths.md)), and the
-instance directory for a named instance. Use the path in `enabled_writes_file`
-when in doubt. The bridge re-reads the file on every call, so arming and
-disarming need no relaunch. A line must match exactly; `scheme_action_x` does
-not arm `scheme_action`. Delete the line to disarm. For `break_alliance` the
-file line is necessary but not sufficient; see its row.
-
-```bash
-echo faction_action >> /run/user/$(id -u)/ck3agent/ck3-enabled-writes
-```
-
-`do(intent="scheme")` (bridge `scheme_action`) starts a scheme (`murder`,
-`fabricate_hook`, ...) for an AI ruler, or cancels one it owns. It calls the
-engine's own scheme constructor, so the
-game's start rules apply: a target the scheme cannot be used on, a scheme the
-schemer cannot start, or an existing scheme or cooldown against that target
-comes back as `scheme_start_refused`. The ruler must be AI-controlled. The game
-must be running: a paused call returns `game_paused` (the MCP server unpauses
-for the call and restores the pause). A call no game tick picked up within 5 s
-is withdrawn and returns `intent_timeout_cancelled_not_executed`; it does not
-run later. A success returns the new `scheme_id`; check it with
-`query(domain="schemes", character_id=<schemer>)`. A ruler can abandon its
-own scheme with `do(intent="scheme", args={"action": "cancel", "scheme_id":
-<id>})`; another character's scheme is refused `target_ineligible`. A scheme
-type the game only starts with a task contract or an artifact is refused
+`do(intent="scheme")` (bridge `scheme_action`) starts a scheme for an AI
+ruler, or cancels one it owns. A start first asks the game's own start check
+(the check behind the script trigger `can_start_scheme`: the scheme's `allow`
+and `valid` triggers, an existing scheme or cooldown on that target), then
+calls the engine's scheme constructor. A refusal comes back as
+`scheme_start_refused` with `blocked.measured.engine_reasons`: each failing
+trigger with its block (`allow` or `valid`), its script key, and the file and
+line in the game's scripts that hold it. `discover(what="scheme_targets",
+scheme=...)` runs the same check without starting anything, for one
+`target_id`, a `candidates` list, or (neither) the ruler's court and vassals,
+his liege and the liege's court, the holders of titles he claims and their
+courts, and
+`discover(what="scheme_types")` lists the game's schemes with what each targets.
+The ruler must be AI-controlled. The call works with the game paused or
+running (the bridge's drain on the game's command thread picks it up within a
+pass). A call no drain picked up within 5 s is withdrawn and returns
+`intent_timeout_cancelled_not_executed`; it does not run later. A start is
+`applied` once `inspect(subject="schemes")` lists the new `scheme_id` with the
+type and target asked. A cancel (`args={"action": "cancel", "scheme_id": <id>}`)
+first reads the ruler's schemes: an id he does not hold (another character's
+scheme, or one already gone) is refused `name_not_found` and nothing is sent.
+It is `applied` once that scheme (its id, type, target and start date) is no
+longer listed. The game gives a freed id to the next scheme it creates; when
+that has happened, the reply names the new scheme under `result.id_reused_by`.
+A scheme type the
+game creates from a task contract (the `contract` category) or only starts with
+an artifact is refused
 `scheme_type_unsupported`.
+
+`do(intent="faction")` (bridge `faction_action`) manages a vassal's factions
+against its liege: `create` (`faction_type`), `join`, `leave` and
+`press_demand` (`faction_id`). The bridge's own pre-checks run first (only the
+leader presses, only a member leaves, a vassal needs a liege); their refusal
+comes back as `faction_precondition`, said in plain words. Then the game's own
+faction rules run, and their refusal comes back as `faction_refused` with the
+game's sentence in `blocked.summary`. Every success is checked by a second read before the reply
+says `applied`: `create`, `join` and `leave` by the member list of the liege the
+faction is aimed at, `press_demand` by the leader's own faction read on a later
+tick, where the game must now refuse a second press. When the second read
+cannot see the faction, the reply is `write_unconfirmed`, not `applied`. A
+pressed demand is an event the liege answers within days;
+`inspect(subject="factions")` on the liege lists the answer. `do(action_class="factions_to_join")` lists
+what the game allows now, with the reason for what it does not. A faction whose AI leader may
+press its demand now reads `ultimatum: "ai_may_press"`, with his chance at each
+monthly faction tick, and its `threat_level` is `critical`; the game keeps no
+countdown to a due date. A liege sets
+its standing answer to a faction's ultimatum with `do(intent="faction",
+args={"action": "respond_demand", "response": "accept" | "refuse" | "ai"})`;
+the bridge answers the demand event for that ruler with the game's own
+accept or refuse option, and `inspect(subject="factions")` lists the answers
+given.
 
 ## Limits
 
@@ -287,5 +308,5 @@ and the model.
 
 - A control session is refused in the control arm: expected in `null` mode.
   Use an observe session.
-- Arms differ in start date: one of them auto-unpaused. Set
-  `CK3_SUPPRESS_AUTO_UNPAUSE=1` in both.
+- Arms differ in start date: one of them was unpaused earlier than the other.
+  Unpause both explicitly at the same step.

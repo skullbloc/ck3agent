@@ -27,7 +27,11 @@ from ._elf import NotAnElf, read_build_id
 
 PROTOCOL_DIR = Path(__file__).resolve().parent / "protocol"
 MCP_SERVER_NAME = "ck3"
-ALLOW = [f"mcp__{MCP_SERVER_NAME}", "Bash(sleep:*)"]
+ALLOW = [f"mcp__{MCP_SERVER_NAME}"]
+# What an earlier setup wrote into permissions.allow and this one takes back out.
+# The protocol never sleeps in Bash (time passes through session(action="wait")),
+# so a sleep allowance only let a run do what the protocol forbids.
+RETIRED_ALLOW = ["Bash(sleep:*)"]
 # Claude Code hands an MCP call still running after 120 s to a background task;
 # session(action="wait") blocks for up to 110 s by design, and a long read can
 # push past it. Off in the play directory and in `ck3agent run`.
@@ -182,11 +186,14 @@ def merge_settings(d: dict, hook_cmd: str | None, allow: list[str] | None,
             kept.append(g)
         kept.append({"hooks": [{"type": "command", "command": hook_cmd}]})
         groups[:] = kept
-    if allow:
+    perms = d.get("permissions")
+    if allow or isinstance(perms, dict) and "allow" in perms:
+        # A retired rule an earlier setup wrote goes, with or without --no-allow.
         rules = d.setdefault("permissions", {}).setdefault("allow", [])
         if not isinstance(rules, list):
             raise ValueError("permissions.allow is not a list")
-        rules += [r for r in allow if r not in rules]
+        rules[:] = [r for r in rules if r not in RETIRED_ALLOW]
+        rules += [r for r in allow or [] if r not in rules]
     return d
 
 
@@ -213,12 +220,6 @@ def cmd_setup(a: argparse.Namespace) -> int:
     else:
         bridge, bridge_ok = bridge.resolve(), True
         con.ok("bridge library", str(bridge))
-
-    csv = cfg.find_trigger_csv(c)
-    if csv:
-        con.ok("trigger catalogue", str(csv))
-    else:
-        con.warn("trigger catalogue missing", "discover(what=evaluate_trigger) will be unavailable")
 
     if not supported:
         print(f"\n{why}\nNothing written. Rerun setup once the game matches.")
@@ -262,7 +263,6 @@ def cmd_setup(a: argparse.Namespace) -> int:
     con.ok(".claude/settings.json merged", ", ".join(what))
 
     c.ck3_binary, c.bridge_so = str(binary), str(bridge)
-    c.trigger_csv = str(csv) if csv else ""
     c.play_dir = str(play)
     con.ok("config saved", str(c.save()))
     print()
@@ -405,15 +405,13 @@ def doctor_last_line(next_warn: str | None, game: bool, state: str, play: Path) 
 
 # ── launch ───────────────────────────────────────────────────────────────────
 
-def launch_env(base: dict, bridge: Path, csv: Path | None, allow_unsupported: bool,
+def launch_env(base: dict, bridge: Path, allow_unsupported: bool,
                native_wayland: bool) -> tuple[dict, list[str]]:
     """The game's environment, and one note per change worth telling the user."""
     env = dict(base)
     notes: list[str] = []
     pre = [p for p in env.get("LD_PRELOAD", "").replace(":", " ").split() if p != str(bridge)]
     env["LD_PRELOAD"] = ":".join([str(bridge)] + pre)
-    if csv:
-        env.setdefault("CK3_TRIGGER_CATALOGUE_CSV", str(csv))
     if allow_unsupported:
         env["CK3_STRICT_BUILD_ID"] = "0"
     if env.get("WAYLAND_DISPLAY") and not env.get("SDL_VIDEODRIVER") and not native_wayland:
@@ -490,8 +488,7 @@ def cmd_launch(a: argparse.Namespace) -> int:
         con.ok("save staged", f"{save} (sha256 {digest[:12]})")
         record["save"], record["save_sha256"] = str(save), digest
 
-    env, notes = launch_env(os.environ, bridge, cfg.find_trigger_csv(c), a.allow_unsupported,
-                            a.native_wayland)
+    env, notes = launch_env(os.environ, bridge, a.allow_unsupported, a.native_wayland)
     for n in notes:
         con.note(n)
     argv = [str(binary)] + (["--continuelastsave"] if cont else []) + list(a.game_args)
@@ -1188,8 +1185,8 @@ def cmd_config(a: argparse.Namespace) -> int:
     c = cfg.Config.load()
     p = cfg.config_path()
     rows = [("config file", str(p), "exists" if p.exists() else "not written yet")]
-    flags = {"ck3_binary": a.ck3, "bridge_so": a.bridge, "play_dir": a.play_dir, "trigger_csv": None}
-    for name in ("ck3_binary", "bridge_so", "trigger_csv", "play_dir"):
+    flags = {"ck3_binary": a.ck3, "bridge_so": a.bridge, "play_dir": a.play_dir}
+    for name in ("ck3_binary", "bridge_so", "play_dir"):
         r = cfg.resolve(name, c, flags[name])
         rows.append((name, str(r.path) if r.path else "-", r.source))
     rows += [

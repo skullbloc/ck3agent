@@ -59,7 +59,8 @@ def test_hook_dead_bound_ruler_still_alerts():
     out = report(hook, {"get_tick_info": {"paused": True, "game_date": "900.1.1",
                                           "controlled_character_id": 123},
                         "query_character": {"id": 123, "alive": False, "name": "X"}})
-    assert "SUCCESSION: controlled ruler 123 is DEAD" in out
+    assert "SUCCESSION: your ruler 123 is DEAD" in out
+    assert 'session(action="whoami")' in out
 
 
 def test_doctor_says_ready_only_when_the_game_is_active():

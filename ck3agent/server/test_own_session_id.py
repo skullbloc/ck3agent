@@ -17,9 +17,11 @@ which seat I am". The bare ("client",) was worse than useless — on CK3Agent th
 name is the ANTHROPIC client, so the path could reach a wrong object rather than
 no object.
 
-So these rows check the REAL classes. If someone renames BridgeState._client or
-CK3Agent.bridge, a row here reds — rather than every seat quietly losing its
-identity in the next arm.
+So these rows check the REAL class. If someone renames BridgeState._client, a
+row here reds — rather than every seat quietly losing its identity in the next
+arm. (cleanup 2026.11: the retired autonomous loop's path, ("_a", "bridge"),
+was removed with the rest of its leftovers; the production seat is the MCP
+server.)
 """
 
 import ast
@@ -33,8 +35,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 redesign = pytest.importorskip("redesign")
 
 
-def test_the_declared_paths_are_the_two_gateway_shapes():
-    assert redesign.OWN_SESSION_CLIENT_PATHS == (("state", "_client"), ("_a", "bridge"))
+def test_the_declared_path_is_the_mcp_gateway_shape():
+    assert redesign.OWN_SESSION_CLIENT_PATHS == (("state", "_client"),)
 
 
 def test_path_one_resolves_on_the_REAL_BridgeGateway():
@@ -49,32 +51,10 @@ def test_path_one_resolves_on_the_REAL_BridgeGateway():
     assert redesign.own_session_id(gw) == "sess_abc_1"
 
 
-def test_path_two_resolves_on_the_REAL_AgentGateway():
-    agent = pytest.importorskip("agent")
-    # CK3Agent.__init__ must still assign self.bridge — read from the SOURCE,
-    # because constructing a CK3Agent wants an API key and a socket.
-    src = ast.parse(open(agent.__file__).read())
-    cls = next(n for n in ast.walk(src)
-               if isinstance(n, ast.ClassDef) and n.name == "CK3Agent")
-    assigned = {
-        t.attr for fn in cls.body if isinstance(fn, ast.FunctionDef)
-        for n in ast.walk(fn) for t in getattr(n, "targets", [])
-        if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
-        and t.value.id == "self"
-    }
-    assert "bridge" in assigned, (
-        "CK3Agent no longer assigns self.bridge — own_session_id's second path is "
-        "dead and the AUTONOMOUS path, the one that drives arm episodes, has just "
-        "lost its identity")
-    gw = agent._AgentGateway.__new__(agent._AgentGateway)
-    gw._a = type("A", (), {"bridge": type("C", (), {"session_id": "sess_xyz_2"})()})()
-    assert redesign.own_session_id(gw) == "sess_xyz_2"
-
-
-def test_the_client_both_paths_land_on_really_exposes_session_id():
+def test_the_client_the_path_lands_on_really_exposes_session_id():
     abc = pytest.importorskip("async_bridge_client")
     assert hasattr(abc.AsyncBridgeClient, "session_id"), (
-        "both paths land on AsyncBridgeClient; without session_id neither can work")
+        "the path lands on AsyncBridgeClient; without session_id it cannot work")
 
 
 def test_an_UNKNOWN_seat_says_so_instead_of_borrowing_the_global_primary():
@@ -83,7 +63,7 @@ def test_an_UNKNOWN_seat_says_so_instead_of_borrowing_the_global_primary():
     assert redesign.own_session_id(object()) is None
     gw = type("G", (), {"state": type("S", (), {"_client": None})()})()
     assert redesign.own_session_id(gw) is None
-    # a client present but not yet handshaken carries session_id None
+    # a client present and unhandshaken carries session_id None
     gw2 = type("G", (), {"state": type("S", (), {"_client": type("C", (), {"session_id": None})()})()})()
     assert redesign.own_session_id(gw2) is None
     # an empty string is not an identity either

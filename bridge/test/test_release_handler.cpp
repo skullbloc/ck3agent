@@ -75,7 +75,6 @@ std::atomic<uint32_t>    g_controlled_primary{0};
 std::atomic<uint32_t>    g_controlled_heir{0};
 
 std::atomic<bool>        g_agent_mode{false};
-std::atomic<bool>        g_auto_respond_events{false};
 std::atomic<uint64_t>    g_tick_id{0};
 std::atomic<uint64_t>    g_cb_query_busy_count{0};
 std::atomic<bool>        g_war_stance_record_walk_enabled{false};
@@ -105,8 +104,7 @@ uint64_t pipeline_current_flush_id() { return 0; }
 // grant them a carve-out.
 PipelineMode pipeline_mode() { return PipelineMode::Legacy; }
 
-void game_pause()   {}
-void game_unpause() {}
+void clock_write(ClockWrite, ClockOrigin, int) {}
 
 // (require_dispatch_context / action_is_mutation / validate_actor_ownership
 //  come from the real src/session.cpp, which this test links.)
@@ -115,8 +113,6 @@ const char* session_state_string() { return "test"; }
 std::string get_cached_character_name(uint32_t) { return "(test)"; }
 std::string enumerate_interactions() { return "[]"; }
 std::string enumerate_decisions()    { return "[]"; }
-bool set_character_subsystems(uint32_t, const char*) { return false; }
-bool get_character_subsystems(uint32_t, std::string*) { return false; }
 bool get_client_lock_info(ClientLockInfo*) { return false; }
 bool is_game_state_query(const char*) { return false; }
 const char* offset_validation_group_name(int) { return ""; }

@@ -295,6 +295,9 @@ Result watchdog_disarm(bool* fired) {
                       "bridge/src/bridge_init.cpp");
 }
 
+// session_pass_install / _remove / _live: the shared cell, src/os/session_pass.cpp
+// (one implementation for Linux and Windows; libck3_bridge.so compiles it too).
+
 Result rtti_find_vtable(const char*, std::uintptr_t* vtable) {
     if (vtable) *vtable = 0;
     return not_routed("linux: find_typeinfo()/find_vtable() are "

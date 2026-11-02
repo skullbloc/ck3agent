@@ -32,6 +32,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import cpp_strip  # noqa: E402  (bridge/scripts/cpp_strip.py: the one C++ tokenizer)
+
 ADDR_KEY = re.compile(r"(?:^|_)(?:ptr|addr|address|pointer|vtable)(?:_|$)|(?:^|_)va$")
 LOGGER = re.compile(r"^(?:fprintf|dprintf|vfprintf|perror|syslog|\w*LOG\w*|\w*[lL]og\w*)$")
 
@@ -48,27 +51,8 @@ HEX_CONV = re.compile(r"%#?0?\d*(?:l|ll|j|z)?[xX]")
 
 
 def strip_comments(src: str) -> str:
-    out, i, n = [], 0, len(src)
-    while i < n:
-        c = src[i]
-        if c in "\"'":
-            j = i + 1
-            while j < n and src[j] != c:
-                j += 2 if src[j] == "\\" else 1
-            out.append(src[i:j + 1])
-            i = j + 1
-        elif src.startswith("//", i):
-            j = src.find("\n", i)
-            i = n if j < 0 else j
-        elif src.startswith("/*", i):
-            j = src.find("*/", i + 2)
-            seg = src[i:n if j < 0 else j + 2]
-            out.append("\n" * seg.count("\n"))
-            i = n if j < 0 else j + 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
+    """Comments blanked, literals kept: the one tokenizer's (cpp_strip, L13 FF3)."""
+    return cpp_strip.strip(src, keep_strings=True)
 
 
 def drop_debug_blocks(text: str) -> str:
@@ -92,32 +76,8 @@ def drop_debug_blocks(text: str) -> str:
 
 
 def literals(text: str):
-    """(start, end, body) of every string literal."""
-    i, n = 0, len(text)
-    while i < n:
-        c = text[i]
-        if c == "'":
-            j = i + 1
-            while j < n and text[j] != "'":
-                j += 2 if text[j] == "\\" else 1
-            i = j + 1
-            continue
-        if c == '"':
-            if i >= 1 and text[i - 1] == "R":       # raw string R"(...)"
-                k = text.find("(", i)
-                delim = text[i + 1:k]
-                end = text.find(")" + delim + '"', k)
-                end = n if end < 0 else end + len(delim) + 2
-                yield i, end, text[k + 1:end - len(delim) - 2]
-                i = end
-                continue
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == "\\" else 1
-            yield i, j + 1, text[i + 1:j]
-            i = j + 1
-            continue
-        i += 1
+    """(start, end, body, kind) of every string / char literal (cpp_strip)."""
+    return [(st, en, body, kind) for kind, st, en, body in cpp_strip.literals(text)]
 
 
 def enclosing_call(text: str, pos: int) -> tuple[str, int]:
@@ -164,8 +124,8 @@ def scan(rel: str, src: str) -> list[str]:
     for m in re.finditer(r"\.value_(?:u?int\w*|hex|double)\(\s*(?:\([^()]*\)\s*)?"
                          r"(reinterpret_cast<[^>]*>|[\w.>-]*(?:ptr|addr)\w*\s*\))", text):
         bad.append(f"{rel}:{line(m.start())}: R4 a pointer-named value emitted as a number")
-    for start, _end, body in literals(text):
-        raw = text[start - 1:start] == "R"
+    for start, _end, body, kind in literals(text):
+        raw = kind == "raw_string"
         keys = re.findall(r'"([A-Za-z_]\w*)"\s*:' if raw else r'\\"([A-Za-z_][\w]*)\\"\s*:', body)
         for k in keys:
             if ADDR_KEY.search(k) and not k.endswith("rva"):
@@ -204,7 +164,10 @@ def census(bridge: Path) -> list[str]:
                         bad.append(f"{other}: calls log-only {fn}() from {rel}; "
                                    "its exemption does not cover this caller")
             continue
-        bad += scan(rel, src)
+        try:
+            bad += scan(rel, src)
+        except cpp_strip.CppParseError as e:   # fail OPEN: an unparsed file is a finding
+            bad.append(f"{rel}: cannot be tokenized ({e}); nothing in it was checked")
     for rel in LOG_ONLY_HELPERS:
         if rel not in texts:
             bad.append(f"{rel}: exempted log-only helper missing")
@@ -220,6 +183,16 @@ SELFTEST_BAD = {
     "hex of mgr": 'snprintf(h, sizeof h, "0x%lx", mgr);',
     "number of ptr": 'r.key("x"); r.value_uint(reinterpret_cast<uintptr_t>(obj));',
     "raw string key": 'snprintf(b, sizeof b, R"({"error":"x","option_array_ptr":"%d"})", n);',
+    # The scan stays in phase across a raw string holding a quote, and across a
+    # digit separator, each followed by an apostrophe in a comment and a raw
+    # reply key (the FF2 miss: query_handlers.cpp's cb_db_ptr went unseen). The
+    # raw-string row is missed by the pre-FF2 checker. The digit-separator row is
+    # flagged by it too (non-discriminating against it); it reds a strip_comments
+    # fixed without the matching literals() fix.
+    "raw key after a raw string with a quote":
+        'a = R"x(")x";\nint b = 1; // it\'s\nc = R"({"cb_db_ptr":1})";',
+    "raw key after a digit separator":
+        "int n = 1'000;\n// the engine's\nc = R\"({\"cb_db_ptr\":1})\";",
 }
 SELFTEST_GOOD = {
     "log %p": 'fprintf(g_logfile, "x=%p\\n", p);',

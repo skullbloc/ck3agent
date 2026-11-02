@@ -133,5 +133,44 @@ class AnUnmatchedFrameIsWitnessed(unittest.TestCase):
         self.assertEqual(st.unhandled_frames, {})
 
 
+
+
+#: ck-324r's management-ledger record exactly as management_ledger_frame.h builds
+#: it: the caller's id under caller_request_id, no request_id (ck-h4pn). The
+#: bridge broadcasts one on every set_controlled_character / release_character
+#: for the ARM relay; a live launch carried 53 and logged each as UNMATCHED.
+BROADCAST = {"type": "result", "caller_request_id": "someone-elses-call",
+             "action": "session_control", "verb": "set_controlled_character",
+             "ledger_source": "inline_management",
+             "bridge_record": {"session_id": "sess_mercia"}}
+
+
+class TheManagementLedgerBroadcastIsExpected(unittest.TestCase):
+
+    def test_the_broadcast_is_counted_as_a_ledger_record_and_logs_no_UNMATCHED(self):
+        with self.assertLogs("ck3-mcp", level="DEBUG") as cm:
+            st = _run([BROADCAST, BROADCAST])
+        self.assertFalse(any("UNMATCHED LEDGER FRAME" in m for m in cm.output), cm.output)
+        self.assertEqual(st.management_ledger_frames, {"session_control": 2})
+        self.assertNotIn("result", st.unhandled_frames)
+
+    def test_CONTROL_a_result_frame_carrying_a_request_id_nobody_waits_on_is_still_LOUD(self):
+        """The rule is the broadcast's shape, not its ledger_source: an
+        inline_management frame WITH a request_id this session is not waiting on
+        is a reply that went nowhere."""
+        with self.assertLogs("ck3-mcp", level="WARNING") as cm:
+            st = _run([LEDGER])
+        self.assertTrue(any("UNMATCHED LEDGER FRAME" in m for m in cm.output), cm.output)
+        self.assertEqual(st.unhandled_frames.get("result"), 1)
+        self.assertEqual(st.management_ledger_frames, {})
+
+    def test_CONTROL_another_ledger_source_without_request_id_is_still_LOUD(self):
+        other = dict(BROADCAST, ledger_source="pipeline")
+        with self.assertLogs("ck3-mcp", level="WARNING") as cm:
+            st = _run([other])
+        self.assertTrue(any("UNMATCHED LEDGER FRAME" in m for m in cm.output), cm.output)
+        self.assertEqual(st.unhandled_frames.get("result"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

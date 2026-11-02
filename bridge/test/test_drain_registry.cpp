@@ -136,7 +136,7 @@ static void test_distinct_request_ids_still_settle() {
     DrainRegistry reg;
     reg.put(21, mk(21, "3312f62dca3e469ca72cb0831d439598", "set_personality",
                    "{\"action\":\"set_personality\",\"request_id\":\"3312f62dca3e469ca72cb0831d439598\"}"));
-    reg.put(22, mk(22, "b7d1a0", "raise_armies", "{\"action\":\"raise_armies\"}"));
+    reg.put(22, mk(22, "b7d1a0", "create_title", "{\"action\":\"create_title\"}"));
 
     CHECK(round_trip(reg, 21) == 21);
     CHECK(round_trip(reg, 22) == 22);

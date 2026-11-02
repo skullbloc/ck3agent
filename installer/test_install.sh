@@ -180,11 +180,10 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 rel="$work/rel"
-mkdir -p "$rel/lib" "$rel/share" "$rel/wheels"
+mkdir -p "$rel/lib" "$rel/wheels"
 python3 -m build --wheel --outdir "$work/dist" "$src" >/dev/null 2>&1 || { echo "wheel build failed" >&2; exit 2; }
 PYTHON=python3 "$src/installer/bundle_wheels.sh" "$rel/wheels" "$work"/dist/ck3agent-*.whl || { echo "bundling wheels failed" >&2; exit 2; }
 printf 'not a real library\n' > "$rel/lib/libck3_bridge.so"
-printf 'dummy\n' > "$rel/share/trigger_subclasses.csv"
 cp "$src/VERSION" "$src/installer/install.sh" "$src/installer/uninstall.sh" "$rel/"
 cp "$src/installer/test_install.sh" "$rel/test_install.sh"
 chmod -R a+rX "$rel"

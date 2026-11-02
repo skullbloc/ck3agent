@@ -1,0 +1,170 @@
+# The pipeline mode's polarity table (PRE-REGISTERED vocabulary, L13 contract D3).
+# One row per registered action (bridge/src/action_registry.inc, release build):
+#   <action> <classify_polarity's polarity_name> <action_routes_to_drain 0|1>
+# ck3agent/server/test_polarity_bridge_table.py compiles the real classify_polarity,
+# action_routes_to_drain and polarity_name out of the bridge sources beside the
+# registry and compares every row with this file; a changed answer fails by name.
+# Pinned under pre-registration v2 (docs/pre-registration-v2.md, section 5),
+# re-baselined at tree 24cac589 (L16): every row is the answer of the classifier
+# compiled from that tree, as the test above checks, less the five rows lane H
+# deleted with their actions (v2 sections 5.4 and A.2: 155 rows). v1's pin (the answers of
+# 439ab5a6, kept byte for byte by L13, plus L14's query_create_title_cost) is
+# superseded with v1. Change a row only with an amendment to v2.
+toggle_all_ai any 0
+send_interaction tick_write 0
+query_interaction_check tick_read 0
+queue_intent tick_write 0
+query_intents any 0
+query_intent_results any 0
+query_dispatch_result any 0
+cancel_intent tick_write 0
+clear_intents tick_write 0
+send_decision tick_write 0
+set_lifestyle_focus tick_write 1
+set_education_focus tick_write 1
+set_council_task tick_write 1
+construction_check tick_read 1
+construct_building tick_write 1
+declare_war tick_write 0
+pre_validate_war any 0
+set_offgoal_veto any 0
+call_war_create_core tick_write 1
+create_title tick_write 1
+pause_game any 0
+unpause_game any 0
+set_speed any 0
+enter_observe_mode any 0
+toggle_ai_subsystem any 0
+set_character_ai any 0
+report_usage any 0
+set_budget_config any 0
+get_budget_state any 0
+board_post tick_write 0
+board_read any 0
+board_admin tick_write 0
+get_bridge_state any 0
+who_holds_the_lock any 0
+get_offset_validation any 0
+set_controlled_character any 0
+release_character any 0
+get_player_character any 0
+get_controlled_roster any 0
+query_character paused 0
+query_opinion paused 0
+query_opinion_breakdown paused 0
+query_imprisonment_reasons paused 0
+query_realm paused 0
+query_dejure_progress paused 0
+query_succession paused 0
+query_claims paused 0
+query_de_jure paused 0
+query_county_details paused 0
+query_development_growth paused 0
+query_county_neighbors paused 0
+query_province_adjacency paused 0
+query_map_graph paused 0
+query_wars paused 0
+get_active_wars any 0
+query_war_db_scan paused 0
+query_war_score_breakdown any 0
+query_war_stance paused 0
+set_war_stance_record_walk any 0
+query_war_declarations paused 0
+query_war_history any 0
+query_scheme_inits any 0
+query_marriage_observations any 0
+query_council_tasks paused 0
+query_council paused 0
+query_character_memories paused 0
+query_fabricate_targets tick_read 1
+query_create_title_cost tick_read 1
+query_factions paused 0
+query_faction_threat paused 0
+query_vassal_loyalty paused 0
+query_schemes paused 0
+query_incoming_schemes paused 0
+query_scheme_types paused 0
+query_armies paused 0
+query_lifestyle paused 0
+query_interaction tick_read 0
+query_interaction_acceptance tick_read 0
+query_trigger_result tick_read 0
+query_trigger_slots paused 0
+query_debug_flags paused 0
+query_relations paused 0
+query_hooks paused 0
+query_available_cbs paused 0
+query_valid_cbs tick_read 0
+query_cb_validity_strict tick_read 0
+query_cbs_for_target tick_read 0
+query_cbs_for_targets tick_read 0
+query_alliances paused 0
+query_call_to_arms paused 0
+query_diplomatic_range paused 0
+query_cb_catalog any 0
+query_building_types paused 0
+probe_interaction_cascade tick_read 0
+probe_gate_4_slots tick_read 0
+list_pending_interactions paused 0
+tick_diff paused 0
+list_interactions paused 0
+list_decisions paused 0
+list_valid_decisions tick_read 0
+list_decisions_annotated tick_read 0
+get_tick_info any 0
+declare_save_identity any 0
+get_ai_personality any 0
+set_ai_personality tick_write 0
+get_ai_evaluations paused 0
+search_characters paused 0
+query_heir_education paused 0
+query_marriage_candidates paused 0
+query_title_hierarchy paused 0
+query_title_claimants paused 0
+query_title_history paused 0
+query_title_succession paused 0
+query_title_succession_map paused 0
+query_joinable_factions tick_read 0
+faction_action tick_write 0
+set_faction_demand_response any 0
+scheme_action tick_write 0
+move_capital tick_write 1
+set_obligation_level tick_write 1
+appoint_councillor tick_write 1
+maa_recruit tick_write 1
+maa_station tick_write 1
+maa_unstation tick_write 1
+hire_mercenary tick_write 1
+set_doctrine tick_write 1
+set_character_faith tick_write 1
+set_character_culture tick_write 1
+set_title_law tick_write 1
+query_hireable_mercenaries paused 0
+query_maa_types paused 0
+query_valid_war_targets paused 0
+query_conquest_targets tick_read 1
+query_cb_options paused 0
+query_election_state paused 0
+query_dynasty paused 0
+query_levy_readiness paused 0
+query_partition_preview paused 0
+query_succession_simulation paused 0
+query_trait_db paused 0
+query_trait_compatibility paused 0
+query_realm_laws paused 0
+query_law_groups paused 0
+query_available_law_changes paused 0
+change_realm_law tick_write 1
+query_innovation_progress paused 0
+query_fascination_progress paused 0
+query_research_speed paused 0
+set_pause any 0
+query paused 0
+# The debug build's extra rows (-DCK3_BRIDGE_DEBUG_VERBS, the host's build;
+# witness m-8): `debug <action> <polarity> <routes>`, 439ab5a6's answers,
+# computed from 439ab5a6's sources and checked equal at L13 FF2.
+debug set_cb_selector_override any 0
+debug inject_mouse_click any 0
+debug select_observe_default any 0
+debug memory_probe paused 0
+debug resolve_global paused 0

@@ -195,8 +195,8 @@ def _release(monkeypatch, snapshots, refuse=(), connected=True, sid="s1"):
         if action == "get_bridge_state":
             rounds[0] += 1
             held.update(snapshots(rounds[0]))
-            return {"data": {"sessions": [{"session_id": "other", "claimed_character_ids": [7]},
-                                          {"session_id": sid, "claimed_character_ids": sorted(held)}]}}
+            return {"sessions": [{"session_id": "other", "claimed_character_ids": [7]},
+                                 {"session_id": sid, "claimed_character_ids": sorted(held)}]}
         cid = params["character_id"]
         if cid in refuse:
             return {"success": False, "reason": "not_owned_by_session"}

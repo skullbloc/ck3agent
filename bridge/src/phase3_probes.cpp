@@ -1,6 +1,6 @@
 // phase3_probes.cpp — Phase-3 Wave-2 probe handlers (ck-e58l.8)
 //
-// Five read-only probes that convert silent failures in the interaction +
+// Four read-only probes that convert silent failures in the interaction +
 // war-creation pipelines into loud diagnostics. See re/findings/re_interaction_trysend_cascade_v3.md,
 // re_fun_07628500_script_trigger_evaluator.md, re_pending_interaction_consumer.md,
 // re_war_create_core_decomp.md, re_consumer_cansend_state_drift_static.md.
@@ -9,9 +9,8 @@
 //   2. probe_gate_4_slots         — FUN_07628500 per Gate-4 slot
 //   3. list_pending_interactions  — walk CPendingCharacterInteractionManager
 //   4. tick_diff                  — snapshot state, diff across ticks
-//   5. probe_war_orphans          — compare WAR_DB vs game-state active-wars
 //
-// Probes 3 and 5 are pure memory reads and run inline. Probes 1, 2, and 4 need
+// Probe 3 is a pure memory read and runs inline. Probes 1, 2, and 4 need
 // game-thread access (TLS context + tick advance); they submit deferred queries
 // processed in drain_and_execute_intents and poll for completion.
 
@@ -228,7 +227,7 @@ static void emit_pending_mgr_scan_stats(ResponseBuilder& r) {
 // ============================================================================
 
 struct WarSlotInfo {
-    uint32_t war_id;         // 24-bit masked index
+    uint32_t war_id;         // the full handle (generation byte + slot index)
     uint32_t slot_index;     // DB slot
     uintptr_t war_ptr;
     uint32_t attacker_id;
@@ -262,73 +261,19 @@ static std::vector<WarSlotInfo> enumerate_war_db() {
         if ((stored_ref & 0xFFFFFF) != idx) continue;
 
         WarSlotInfo info{};
-        info.war_id = stored_ref & 0xFFFFFF;
+        info.war_id = stored_ref;   // the full handle (L12), as query_wars emits it
         info.slot_index = idx;
         info.war_ptr = wp;
         // Primary attacker/defender/CB refs per ck-e58l.5 §3
         info.attacker_id = safe_read<uint32_t>(wp + 0x228) & 0xFFFFFF;
         info.defender_id = safe_read<uint32_t>(wp + 0x22C) & 0xFFFFFF;
         info.cb_type_ref = safe_read<uint32_t>(wp + 0xA0);
-        if (uintptr_t cbt = safe_read<uintptr_t>(wp + ck3::war_obj::CB_TYPE_REF);
-            cbt && is_mapped(cbt)) {
-            const char* nm = nullptr;
-            size_t nl = 0;
-            if (read_db_obj_name(cbt, nm, nl) && nm) info.cb_type.assign(nm, nl);
-        }
+        info.cb_type = war_cb_type_name(wp);   // the one read of a war's CB name
         info.start_date  = safe_read<int32_t>(wp + 0x80);
         info.is_ended    = safe_read<uint8_t>(wp + ck3::war_obj::IS_ENDED) != 0;
         out.push_back(info);
     }
     return out;
-}
-
-// Raw read of the fields ck-e58l.5 Block K *decomp-inferred* to be the
-// game-state active-wars (ptr/cap/count/allocator at gs+0x28/0x30/0x34/0x38).
-// ck-ltsh (2026-04-21) found the inference is WRONG: on both the 867 AD core
-// dump and the live 1097 AD session, gs+0x20 is a small int (0x24), gs+0x28
-// is 0xffffffff sentinel, and gs+0x34 is garbage. WAR_CREATE_CORE's param_1
-// is not *(GAME_STATE_ROOT) — it's a different struct (likely a CWarManager)
-// that we have not yet pinned. Until then we cannot read the true active-wars
-// array. The raw read is still emitted as a diagnostic so future RE can see
-// when/if the sentinel flips to a real pointer.
-struct ActiveWarsRaw {
-    uintptr_t arr_ptr;
-    int32_t   capacity;
-    int32_t   count;
-    uintptr_t allocator;
-    bool      mapped_gs;
-};
-
-static ActiveWarsRaw read_active_wars_raw() {
-    ActiveWarsRaw r{0, 0, 0, 0, false};
-    uintptr_t gs_ptr = safe_read<uintptr_t>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-    if (!gs_ptr || !is_mapped(gs_ptr)) return r;
-    r.mapped_gs = true;
-    r.arr_ptr   = safe_read<uintptr_t>(gs_ptr + ck3::game_state::ACTIVE_WARS_PTR);
-    r.capacity  = safe_read<int32_t>(gs_ptr + ck3::game_state::ACTIVE_WARS_CAPACITY);
-    r.count     = safe_read<int32_t>(gs_ptr + ck3::game_state::ACTIVE_WARS_COUNT);
-    r.allocator = safe_read<uintptr_t>(gs_ptr + ck3::game_state::ACTIVE_WARS_ALLOCATOR);
-    return r;
-}
-
-// Returns the decoded active-wars id set IF the raw fields look self-consistent
-// (mapped ptr, non-negative count <= capacity, reasonable size). Returns an
-// empty vector when the fields look like the known-broken sentinel pattern, so
-// callers can distinguish "really empty" from "read target is wrong".
-static bool read_active_wars_array(std::vector<uint32_t>& out, ActiveWarsRaw& raw_out) {
-    out.clear();
-    raw_out = read_active_wars_raw();
-    if (!raw_out.mapped_gs) return false;
-    if (!raw_out.arr_ptr || !is_mapped(raw_out.arr_ptr)) return false;
-    if (raw_out.count < 0 || raw_out.capacity < 0) return false;
-    if (raw_out.count > raw_out.capacity || raw_out.count > 10000) return false;
-
-    out.reserve(static_cast<size_t>(raw_out.count));
-    for (int32_t i = 0; i < raw_out.count; i++) {
-        uint32_t id = safe_read<uint32_t>(raw_out.arr_ptr + i * 4);
-        out.push_back(id & 0xFFFFFF);
-    }
-    return true;
 }
 
 // ============================================================================
@@ -395,6 +340,7 @@ static void emit_pending_entry(ResponseBuilder& r, uintptr_t entry_ptr) {
 }
 
 bool do_list_pending_interactions(const char* /*params_json*/, std::string* response_out) {
+    FaultScope fault_scope("list_pending_interactions", response_out);
     ResponseBuilder r;
     r.begin_object();
     r.key("action"); r.value_string("list_pending_interactions");
@@ -484,114 +430,6 @@ bool do_list_pending_interactions(const char* /*params_json*/, std::string* resp
 }
 
 // ============================================================================
-// Probe 5: probe_war_orphans
-// ============================================================================
-//
-// SF3 detector per ck-e58l.5 §5: WAR_DB entries absent from the game-state
-// active-wars int32 array. These are wars whose vtable[2] validity check
-// failed in Block J — on_declaration already fired but the caller sees null.
-
-bool do_probe_war_orphans(const char* /*params_json*/, std::string* response_out) {
-    ResponseBuilder r;
-    r.begin_object();
-    r.key("action"); r.value_string("probe_war_orphans");
-
-    auto db_entries = enumerate_war_db();
-
-    std::vector<uint32_t> active_wars;
-    ActiveWarsRaw raw{};
-    bool active_wars_trustworthy = read_active_wars_array(active_wars, raw);
-
-    // SF3 orphan detection requires the game-state active-wars array as ground
-    // truth for "wars the caller path committed to". ck-ltsh (2026-04-21)
-    // established that the ck3_offsets.h ACTIVE_WARS_* offsets are on the
-    // wrong struct (ck-e58l.5 decomp inferred param_1=*(GAME_STATE_ROOT) but
-    // the gs+0x20 field is not a pointer). Until the true CWarManager
-    // location is found, we cannot distinguish save-loaded wars from SF3
-    // orphans: on a freshly loaded save, every WAR_DB entry looks like an
-    // orphan, giving 100% false positives. The honest answer is: report
-    // WAR_DB state as ground truth, emit raw diagnostic fields so future
-    // RE can confirm when/where the real active-wars struct moves to.
-
-    int active_count = 0;
-    int db_active = 0;
-    for (const auto& w : db_entries) {
-        if (!w.is_ended) db_active++;
-    }
-
-    r.key("orphans"); r.begin_array();
-    r.end_array();
-    r.key("count"); r.value_int(0);
-
-    r.key("war_db_total"); r.value_int(db_active);
-    r.key("active_wars_total"); r.value_int(
-        active_wars_trustworthy ? static_cast<int>(active_wars.size()) : -1);
-
-    // Diagnostic block: raw ACTIVE_WARS_* fields + heuristic classification.
-    // Keep this keyed "diagnostic" to discourage callers from treating it
-    // as the primary result.
-    r.key("diagnostic"); r.begin_object();
-    r.key("active_wars_offsets_trustworthy"); r.value_bool(active_wars_trustworthy);
-    r.key("game_state_mapped"); r.value_bool(raw.mapped_gs);
-#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
-    {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "0x%lx", raw.arr_ptr);
-        r.key("active_wars_ptr_raw"); r.value_string(buf);
-    }
-#endif
-    r.key("active_wars_capacity_raw"); r.value_int(raw.capacity);
-    r.key("active_wars_count_raw"); r.value_int(raw.count);
-#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
-    {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "0x%lx", raw.allocator);
-        r.key("active_wars_allocator_raw"); r.value_string(buf);
-    }
-#endif
-    r.key("note"); r.value_string(
-        "SF3 orphan detection disabled: ck-ltsh proved the ACTIVE_WARS_* "
-        "offsets in ck3_offsets.h are on the wrong struct. WAR_DB scan is "
-        "the authoritative 'live wars' source until the true CWarManager "
-        "location is found. See bead ck-ltsh for the investigation.");
-    r.end_object();
-
-    // Emit the WAR_DB entries as the actual list of active wars so callers
-    // still get useful data in the 'wars' field (replaces the old 'orphans'
-    // shape callers consumed).
-    r.key("wars"); r.begin_array();
-    for (const auto& w : db_entries) {
-        if (w.is_ended) continue;
-        r.begin_object();
-        r.key("war_id"); r.value_uint(w.war_id);
-        r.key("db_slot"); r.value_uint(w.slot_index);
-        r.key("attacker"); r.value_uint(w.attacker_id);
-        r.key("defender"); r.value_uint(w.defender_id);
-        // rc2 B2: the CB type by name. The raw field is the low half of a
-        // CCasusBelliType* (war+0xA0 is a uint64 pointer), so it and war_ptr
-        // are debug-only.
-        if (!w.cb_type.empty()) { r.key("cb_type"); r.value_string(w.cb_type.c_str()); }
-        r.key("start_date"); r.value_int(w.start_date);
-#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
-        r.key("cb_type_ref"); r.value_uint(w.cb_type_ref);
-        {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "0x%lx", w.war_ptr);
-            r.key("war_ptr"); r.value_string(buf);
-        }
-#endif
-        r.end_object();
-        active_count++;
-    }
-    r.end_array();
-
-    r.end_object();
-    if (response_out) *response_out = r.take();
-    (void)active_count;
-    return true;
-}
-
-// ============================================================================
 // tick_diff — snapshot ring buffer
 // ============================================================================
 
@@ -601,9 +439,7 @@ struct TickSnapshot {
     int32_t     game_date;
 
     std::vector<uint32_t> wars;              // active war IDs (from WAR_DB, not ended)
-    std::vector<uint32_t> war_orphans;       // WAR_DB ids not in active-wars array
     std::vector<uint32_t> pending_ids;       // DB ids of pending interactions
-    // Truces omitted — offsets not yet mapped.
 };
 
 static std::mutex g_snapshot_mutex;
@@ -617,9 +453,6 @@ static TickSnapshot capture_snapshot() {
     if (gs) s.game_date = safe_read<int32_t>(gs + ck3::game_state::GAME_DATE);
 
     auto wars = enumerate_war_db();
-    // Orphan detection is disabled until the true active-wars struct is
-    // located (ck-ltsh). Leaving s.war_orphans empty keeps tick_diff's
-    // war_orphans channel silent instead of mirroring the full wars delta.
     s.wars.reserve(wars.size());
     for (const auto& w : wars) {
         if (w.is_ended) continue;
@@ -690,6 +523,7 @@ static void emit_uint_diff(ResponseBuilder& r, const char* key,
 }
 
 bool do_tick_diff(const char* params_json, std::string* response_out) {
+    FaultScope fault_scope("tick_diff", response_out);
     const char* before_tag = json_get_string(params_json, "before_tag");
     bool store_as = json_has_key(params_json, "store_as");
     const char* store_tag = store_as ? json_get_string(params_json, "store_as") : nullptr;
@@ -715,26 +549,20 @@ bool do_tick_diff(const char* params_json, std::string* response_out) {
             if (response_out) *response_out = r.take();
             return true;
         }
-    } else {
-        // No tag provided — capture NOW, wait for tick advance, capture again
-        before = capture_snapshot();
-        have_before = true;
     }
 
-    TickSnapshot after;
-    if (before_tag && before_tag[0]) {
-        // Caller supplied a tag — just diff against current state
-        after = capture_snapshot();
-    } else {
-        // Wait up to ~3s for tick to advance
-        uint64_t start_tick = before.tick_id;
-        for (int i = 0; i < 60; i++) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            uint64_t now = g_tick_id.load(std::memory_order_relaxed);
-            if (now != start_tick) break;
-        }
-        after = capture_snapshot();
-    }
+    // L13 (witness W3): no wait for a tick here. This handler is a game-thread
+    // read: it runs inside the session-pass drain, holding the session's command
+    // mutex, so no daily tick can run while it waits — the old "wait up to ~3 s
+    // for g_tick_id to move" stalled every engine command for 3 s and then
+    // reported tick_from == tick_to. A diff is taken against a stored snapshot:
+    // call once with store_as, let the clock run (the player's call), then call
+    // with before_tag. With no before_tag the reply is the BASELINE only
+    // (baseline_only:true, before == after == now), never a diff that could be
+    // read as "nothing changed".
+    TickSnapshot after = capture_snapshot();
+    const bool baseline_only = !have_before;
+    if (baseline_only) before = after;
 
     bool paused_after = is_paused();
 
@@ -747,6 +575,7 @@ bool do_tick_diff(const char* params_json, std::string* response_out) {
     ResponseBuilder r;
     r.begin_object();
     r.key("action"); r.value_string("tick_diff");
+    r.key("baseline_only"); r.value_bool(baseline_only);
     r.key("tick_advanced_from"); r.value_int(before.tick_id);
     r.key("tick_advanced_to"); r.value_int(after.tick_id);
     r.key("game_date_before"); r.value_int(before.game_date);
@@ -756,7 +585,6 @@ bool do_tick_diff(const char* params_json, std::string* response_out) {
 
     emit_uint_diff(r, "wars", before.wars, after.wars);
     emit_uint_diff(r, "pending", before.pending_ids, after.pending_ids);
-    emit_uint_diff(r, "war_orphans", before.war_orphans, after.war_orphans);
 
     r.end_object();
     if (response_out) *response_out = r.take();
@@ -821,6 +649,9 @@ bool cascade_query_pending() {
 void process_cascade_query();
 
 bool do_probe_interaction_cascade(const char* params_json, std::string* response_out) {
+    // L13: a game-thread read now; its slot is serviced here, so a faulted read
+    // answers degraded, never a silent 0.
+    FaultScope fault_scope("probe_interaction_cascade", response_out);
     const char* type = json_get_string(params_json, "interaction_name");
     if (!type || !type[0]) type = json_get_string(params_json, "interaction_type");
     if (!type || !type[0]) {
@@ -861,11 +692,12 @@ bool do_probe_interaction_cascade(const char* params_json, std::string* response
     g_cascade_query.slot_count = 0;
     g_cascade_query.error[0] = '\0';
     g_cascade_query.state.store(1, std::memory_order_release);
+    service_slots_if_game_thread();
 
     // Poll up to 3s for completion
     bool done = false;
     for (int i = 0; i < 60; i++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        slot_poll_wait();
         int st = g_cascade_query.state.load(std::memory_order_acquire);
         if (st == 2 || st == 3) { done = true; break; }
     }
@@ -879,7 +711,7 @@ bool do_probe_interaction_cascade(const char* params_json, std::string* response
 
     if (!done) {
         r.key("error"); r.value_string("timeout_waiting_for_game_thread");
-        r.key("hint"); r.value_string("Game must be unpaused for at least one tick.");
+        r.key("hint"); r.value_string(kDrainTimeoutHint);
         g_cascade_query.state.store(0, std::memory_order_release);
         r.end_object();
         if (response_out) *response_out = r.take();
@@ -923,6 +755,7 @@ bool do_probe_interaction_cascade(const char* params_json, std::string* response
 }
 
 bool do_probe_gate_4_slots(const char* params_json, std::string* response_out) {
+    FaultScope fault_scope("probe_gate_4_slots", response_out);
     // Gate-4 slot evaluation is a subset of the trigger-query already implemented
     // in query_trigger_result. Re-route to that handler with trigger_slot = "all".
     //
@@ -970,16 +803,13 @@ bool do_probe_gate_4_slots(const char* params_json, std::string* response_out) {
 // process_cascade_query — game-thread processor
 // ============================================================================
 //
-// Currently a minimal implementation: we do NOT yet build the TLS ctx here and
-// call FUN_06b42310 with a param_4 collector. Instead, we evaluate the same
-// gate-4 trigger slots via the existing trigger_query infrastructure and
-// derive a rejection_summary from the first failing slot.
-//
-// Full cascade probing with a bridge-allocated error collector (per ck-t7m3 §9)
-// is a follow-up — the collector's internal shape (FUN_0763ddc0 / FUN_0763dfe0
-// record format) has not been fully RE'd. See re_interaction_trysend_cascade_v3.md
-// §8 ("Candidate future bead"). This handler therefore currently surfaces gate-4
-// slot results only; gates 1/2/3/5 are reported as "not probed".
+// Scope: this processor does not build the TLS ctx or call FUN_06b42310 with
+// a param_4 collector (the collector's record format, FUN_0763ddc0 /
+// FUN_0763dfe0, is not RE'd; re_interaction_trysend_cascade_v3.md §8). It
+// evaluates the same gate-4 trigger slots via the trigger_query
+// infrastructure and derives a rejection_summary from the first failing slot.
+// Gate-4 slot results are surfaced; gates 1/2/3/5 are reported as
+// "not probed".
 
 void process_cascade_query() {
     int expected = 1;
@@ -1021,20 +851,19 @@ void process_cascade_query() {
     // GATE 2 — initial scope filter preflight (ck-9f32).
     //
     // The native cascade's Gate 2 (FUN_06b41e70) runs seven sub-gates before
-    // gate-4 trigger evaluation. Until the bridge wires the native error
-    // collector (param_4 in FUN_06b42310; see re_interaction_trysend_cascade_v3.md
-    // §8), we can't observe the cascade's own rejection payload. Instead we
-    // reproduce two sub-gate predicates the A.2 observability scenarios need
-    // to distinguish from GATE_4_SLOT_A:
+    // gate-4 trigger evaluation. The bridge passes no native error collector
+    // (param_4 in FUN_06b42310; see re_interaction_trysend_cascade_v3.md §8),
+    // so the cascade's own rejection payload is not observed. This preflight
+    // reproduces the two sub-gate predicates the A.2 observability scenarios
+    // distinguish from GATE_4_SLOT_A:
     //
     //   2b → SAME_ACTOR_TARGET     (actor == target; FUN_06b41640 liveness core)
     //   2d → DEFENDER_ALREADY_AT_WAR (declare_war_interaction against a pair
     //        where the target already holds an active WAR_DB entry; approximates
     //        FUN_067f0e40's conflict family — duplicate / one-way block)
     //
-    // Other sub-gates (2a/2c/2e/2f/2g) remain unprobed here and continue to
-    // surface as GATE_4_* or approved. Widening gate-2 coverage is tracked in
-    // the follow-up bead blocked by ck-t7m3 §9.
+    // Scope: 2b and 2d are probed; 2a/2c/2e/2f/2g surface as GATE_4_* or
+    // approved.
     {
         uint32_t actor  = g_cascade_query.actor_id  & 0xFFFFFF;
         uint32_t target = g_cascade_query.target_id & 0xFFFFFF;

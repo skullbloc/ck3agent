@@ -93,9 +93,8 @@ bool action_routes_to_drain(const char* action_type);
 // ============================================================================
 // Called by the reader thread for every non-handshake line, BEFORE the legacy
 // inline/queue ladder. Returns true when the pipeline consumed the envelope
-// (replies already emitted). In legacy mode this returns false for everything
-// except the mode-independent `get_action_polarity` introspection verb, so the
-// legacy ladder below it is reached unchanged.
+// (replies already emitted). In legacy mode it returns false for everything,
+// so the legacy ladder below it is reached unchanged.
 bool pipeline_handle_envelope(const std::string& line, Session* session);
 
 // THE FLUSH A HANDLER IS RUNNING INSIDE (ck-6kvq.12, R4 / §3.2).
@@ -258,8 +257,7 @@ bool pipeline_tick_owner_grace(uint64_t now_ms);
 //
 //   AI_WAR_SUPPRESS          u8   intent_dispatch.cpp, ai_eval_hook.cpp   (§2.9's own example)
 //   ALLOW_RANDOM_IN_SCOPE    u64  arm_/restore_fake_random_scope helpers  (~21 call sites)
-//   PLAYER_CHAR_ID           u32  intent_dispatch.cpp x3                  (raise_armies/raiders/create_title)
-//   DISPATCH_MGR_RECORDER    u64  ai_eval_hook.cpp DIRECT_CMD_V7
+//   PLAYER_CHAR_ID           u32  intent_dispatch.cpp                     (create_title)
 //   COMMAND_DISPATCH_GATE    u8   ai_eval_hook.cpp acceptance query
 //   DEBUG_YESMEN             u8   ai_eval_hook.cpp execute_direct_dispatch
 //   DEBUG_BYPASS             u8   ai_eval_hook.cpp execute_direct_dispatch
@@ -271,13 +269,13 @@ bool pipeline_tick_owner_grace(uint64_t now_ms);
 //   - the CB-selector override (ai_cb_selector_hook.cpp): a bridge-side struct,
 //     not an address, so "read it back and restore it" has no meaning.
 //   - the one-way writes that are NOT pulses and never had a restore:
-//     INTERACTION_DB+0x1000, the war-data front-buffer entry[0], the
-//     event_handler pause flag, and the AI subsystem toggle bytes. A ledger
+//     the war-data front-buffer entry[0], the event_handler pause flag,
+//     and the AI subsystem toggle bytes. A ledger
 //     cannot restore a value nobody saved; these want a fix, not a ledger.
 //
 // NOTE ON THE DESIGN DOC: §2.9 names "the DeclareWar subsystem byte" as the
 // second pulsed global. It is not one. `AI_TOGGLE_BASE+0x07` has exactly one
-// writer (do_toggle_ai_subsystem, action_handlers.cpp), a one-way
+// writer (case_toggle_ai_subsystem, dispatch_router.cpp), a one-way
 // `*flag = enabled ? 1 : 0` with no save and no restore anywhere in the bridge.
 
 // Enter the ledger BEFORE writing the global. `global` and `site` must outlive
@@ -375,8 +373,8 @@ void pipeline_set_budget_exhausted(const char* session_id, bool exhausted);
 // never fire — which is exactly the withdrawal. The `gate_held_beyond_max`
 // termination reason retires with it (knock-on to ck-6kvq.1, §6.3).
 //
-// episode_id has no producer yet (bead .2) unless CK3_EPISODE_ID is set; it is
-// emitted as "" rather than omitted, so the lanes coding against this shape keep
+// episode_id has no producer in the bridge: it is CK3_EPISODE_ID when set, and
+// otherwise emitted as "" rather than omitted, so the lanes coding against this shape keep
 // a stable key set.
 //
 // `last_flush_ms` vs `last_flush_age_ms` (ck-6kvq.9 left this open): the name

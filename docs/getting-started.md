@@ -18,7 +18,7 @@ From download to Claude's first move, about 15 minutes.
 ## 1. Download and verify
 
 From the [releases page](https://github.com/skullbloc/ck3agent/releases),
-download `ck3agent-2026.10.0-linux-x86_64.tar.gz` and `SHA256SUMS` into one
+download `ck3agent-2026.11.0-linux-x86_64.tar.gz` and `SHA256SUMS` into one
 directory. Verify there, before unpacking:
 
 ```bash
@@ -26,15 +26,15 @@ cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-Expected: `ck3agent-2026.10.0-linux-x86_64.tar.gz: OK`. With the GitHub CLI
+Expected: `ck3agent-2026.11.0-linux-x86_64.tar.gz: OK`. With the GitHub CLI
 you can also run
-`gh attestation verify ck3agent-2026.10.0-linux-x86_64.tar.gz --repo skullbloc/ck3agent`.
+`gh attestation verify ck3agent-2026.11.0-linux-x86_64.tar.gz --repo skullbloc/ck3agent`.
 
 ## 2. Install
 
 ```bash
-tar xzf ck3agent-2026.10.0-linux-x86_64.tar.gz
-cd ck3agent-2026.10.0-linux-x86_64
+tar xzf ck3agent-2026.11.0-linux-x86_64.tar.gz
+cd ck3agent-2026.11.0-linux-x86_64
 ./install.sh
 ```
 

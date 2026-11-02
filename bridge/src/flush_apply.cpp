@@ -109,10 +109,9 @@ ApplyResult apply_flush_plan(const FlushPlan& plan, FlushEffects& fx, TicketTabl
                 // moved past another agent's write in the same flush.
                 for (const BufferedCall& c : step.calls) {
                     if (!fx.routes_to_drain(c)) {
-                        // IPC-thread-safe deferred call: the flush has already
-                        // guaranteed a live clock, which is the only thing the
-                        // old per-call pulse was buying (§2.5). serve_one does
-                        // its own Pending->Running claim.
+                        // A call served in the flush (action_routes_to_drain 0;
+                        // serve() runs a game-state read on the game thread).
+                        // serve_one does its own Pending->Running claim.
                         serve_one(c, fx, tickets, plan.flush_id, out, &out.served_tick);
                         continue;
                     }

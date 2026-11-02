@@ -53,10 +53,32 @@
 
 namespace bridge {
 
+// The AI personality axes, in the engine's byte order at personality_ptr. The
+// first PERSONALITY_ENGINE_AXES have an engine byte; dominance (index 9) exists
+// only in the lock table. Every bridge reader and writer names the axes from
+// this one table, and ck3agent/server/personality_axes.AXES mirrors it
+// (test_steer_tool.py reads this header and checks the mirror).
+inline constexpr int PERSONALITY_AXIS_COUNT = 10;
+inline constexpr int PERSONALITY_ENGINE_AXES = 9;
+inline constexpr const char* PERSONALITY_AXIS_NAMES[PERSONALITY_AXIS_COUNT] = {
+    "honor", "greed", "rationality", "energy", "boldness",
+    "zeal", "vengefulness", "compassion", "sociability", "dominance"
+};
+// The range set_ai_personality accepts; a value outside it is refused.
+inline constexpr int PERSONALITY_AXIS_MIN = -100;
+inline constexpr int PERSONALITY_AXIS_MAX = 100;
+
 struct PersonalityLock {
     int8_t axes[10];       // Desired values for all 10 axes
     bool locked[10];       // Which axes are locked (vs. left to engine)
 };
+
+// What one axis reads as, for every reader (get_ai_personality, query_character,
+// get_ai_evaluations): a held lock's value, else the engine byte for the nine,
+// else 0 for dominance. Until cleanup 2026.11 (lane l6, F10) query_character and
+// get_ai_evaluations read a tenth engine byte, past the array: the dominance they
+// reported differed between launches of one save.
+int8_t personality_axis_value(uintptr_t personality_ptr, const PersonalityLock* lock, int axis);
 
 // shared_mutex: shared_lock for reads (hot path), unique_lock for writes.
 // Guards BOTH tables below.

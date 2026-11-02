@@ -17,6 +17,11 @@ from . import _console as con
 #: The bridge's own refusal line (bridge/src). Matched exactly: other lines contain "REFUSED".
 REFUSAL = "REFUSED: unsupported CK3 build"
 
+#: What a bridge built WITHOUT a ../VERSION file reports as `bridge_version`: the
+#: `set(CK3_BRIDGE_VERSION ...)` default in bridge/CMakeLists.txt, i.e. a research
+#: checkout's build, never a release. Mirrored here; test_bridge checks the mirror.
+RESEARCH_BRIDGE_VERSION = "0.1.0"
+
 
 def _instance():
     bootstrap_server()
@@ -82,8 +87,7 @@ def call(bc, action: str, params: dict | None = None, timeout: float = 8.0) -> d
 
 
 def _tick(r) -> dict | None:
-    if isinstance(r, dict) and isinstance(r.get("data"), dict):
-        r = {**r["data"], **r}
+    # get_tick_info's reply as the bridge writes it (no reply carries a `data` wrapper).
     return r if isinstance(r, dict) else None
 
 
@@ -340,13 +344,36 @@ def handshake_check(sock: str) -> tuple[bool, str]:
     seen = ack.get("observed_build_id") or ack.get("build_id") or "?"
     state = str(ack.get("session_state") or ack.get("status") or "?")
     con.ok("bridge handshake", f"session_state={state}, BuildID {str(seen)[:12]}")
+    ok = bridge_version_row(ack)
+    return ok, state
+
+
+def bridge_version_row(ack: dict) -> bool:
+    """Print the bridge-version row from a handshake_ack; False only on a mismatch.
+
+    The ack's fields come from bridge/src/ipc_server.cpp: `bridge_version`
+    (handshake_provenance_fields, CK3_BRIDGE_VERSION) and `build_git_sha`,
+    `build_git_branch`, `build_git_dirty` (the handshake_ack snprintf, from
+    gen_provenance.cmake). A release tree's bridge reports the release version;
+    a research checkout's reports RESEARCH_BRIDGE_VERSION, which is not a
+    release number to compare but a build to name by its commit."""
     bv = ack.get("bridge_version")
-    if bv and bv != __version__:
+    if not bv:
+        con.warn("bridge version", "the bridge sent no bridge_version (older than rc2); "
+                 f"ck3agent {__version__} cannot check it")
+        return True
+    if bv == RESEARCH_BRIDGE_VERSION:
+        sha = ack.get("build_git_sha") or "unknown"
+        branch = ack.get("build_git_branch") or "unknown"
+        dirty = ack.get("build_git_dirty") or "unknown"
+        con.warn("bridge version", f"research build {bv} (git {sha}, branch {branch}, {dirty}), "
+                 f"not a release; ck3agent {__version__} ships bridge {__version__}")
+        return True
+    if bv != __version__:
         con.fail("bridge version", f"bridge {bv}, ck3agent {__version__}: reinstall so they match")
-        return False, state
-    if bv:
-        con.ok("bridge version", bv)
-    return True, state
+        return False
+    con.ok("bridge version", bv)
+    return True
 
 
 def last_launch_time(logs_dir: Path) -> float | None:

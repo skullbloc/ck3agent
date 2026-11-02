@@ -49,8 +49,7 @@ the release workflow and its artifacts.
   execution as you. Use it only in a disposable VM.
 - **Debug verbs.** `memory_probe` and `resolve_global` read raw memory.
   `inject_mouse_click` and `select_observe_default` send synthetic mouse
-  clicks. `execute_console_command` passes commands to the game console.
-  `set_cb_selector_override` hands client-supplied pointers to the engine.
+  clicks. `set_cb_selector_override` hands client-supplied pointers to the engine.
   Release builds leave out their registry entries and handler code, so these
   verbs do not exist in a release `.so`. Calling one returns
   `error: unavailable_in_release`. They are compiled in only when the bridge

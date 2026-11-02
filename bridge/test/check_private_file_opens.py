@@ -26,65 +26,23 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import cpp_strip  # noqa: E402  (bridge/scripts/cpp_strip.py: the one C++ tokenizer)
+
 ALLOWED_FOPEN = {"include/private_fopen.h": 1}
 CALL = re.compile(r"\b(fopen|freopen|open|openat|posix_spawn_file_actions_addopen|creat)\s*\(")
 STREAM = re.compile(r"(?<![A-Za-z_])(?:std::)?(ofstream|fstream)\b")
 
 
 def strip_comments(src: str) -> str:
-    """Drop // and /* */ comments, keep string and char literals and newlines."""
-    out, i, n = [], 0, len(src)
-    while i < n:
-        c = src[i]
-        if c in "\"'":
-            j = i + 1
-            while j < n and src[j] != c:
-                j += 2 if src[j] == "\\" else 1
-            out.append(src[i:j + 1])
-            i = j + 1
-        elif src.startswith("//", i):
-            j = src.find("\n", i)
-            i = n if j < 0 else j
-        elif src.startswith("/*", i):
-            j = src.find("*/", i + 2)
-            seg = src[i:n if j < 0 else j + 2]
-            out.append("\n" * seg.count("\n"))
-            i = n if j < 0 else j + 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
+    """Comments blanked, string and char literals and newlines kept (cpp_strip)."""
+    return cpp_strip.strip(src, keep_strings=True)
 
 
 def call_args(text: str, open_paren: int) -> list[str] | None:
-    """Top-level comma-split arguments of the call whose '(' is at open_paren."""
-    depth, args, cur, i = 0, [], [], open_paren
-    while i < len(text):
-        c = text[i]
-        if c in "\"'":
-            j = i + 1
-            while j < len(text) and text[j] != c:
-                j += 2 if text[j] == "\\" else 1
-            cur.append(text[i:j + 1])
-            i = j + 1
-            continue
-        if c == "(":
-            depth += 1
-            if depth > 1:
-                cur.append(c)
-        elif c == ")":
-            depth -= 1
-            if depth == 0:
-                args.append("".join(cur).strip())
-                return args
-            cur.append(c)
-        elif c == "," and depth == 1:
-            args.append("".join(cur).strip())
-            cur = []
-        else:
-            cur.append(c)
-        i += 1
-    return None
+    """Top-level comma-split arguments of the call whose '(' is at open_paren
+    (cpp_strip.split_args: literals and comments cannot move the depth)."""
+    return cpp_strip.split_args(text, open_paren)
 
 
 def resolve_flags(text: str, pos: int, ident: str) -> str | None:
@@ -102,8 +60,9 @@ def resolve_flags(text: str, pos: int, ident: str) -> str | None:
 
 def scan(rel: str, src: str) -> tuple[list[str], int]:
     text = re.sub(r"(?m)^[ \t]*#[ \t]*include\b.*$", "", strip_comments(src))
+    code = cpp_strip.strip(text)        # same offsets, literals blanked: calls in code only
     bad, fopens = [], 0
-    for m in CALL.finditer(text):
+    for m in CALL.finditer(code):
         name = m.group(1)
         before = text[max(0, m.start() - 2):m.start()]
         if before.endswith(".") or before.endswith("->"):
@@ -137,7 +96,7 @@ def scan(rel: str, src: str) -> tuple[list[str], int]:
                 flags = flags + " " + resolved
             if "O_CREAT" in flags and "O_NOFOLLOW" not in flags:
                 bad.append(f"{rel}:{line}: {name}( O_CREAT without O_NOFOLLOW")
-    for m in STREAM.finditer(text):
+    for m in STREAM.finditer(code):
         line = text.count("\n", 0, m.start()) + 1
         bad.append(f"{rel}:{line}: std::{m.group(1)} writes without O_NOFOLLOW")
     return bad, fopens
@@ -153,7 +112,11 @@ def census(bridge: Path) -> list[str]:
         return [f"{bridge}: only {len(files)} source files found; wrong directory?"]
     for p in files:
         rel = p.relative_to(bridge).as_posix()
-        b, fopens = scan(rel, p.read_text(encoding="utf-8", errors="replace"))
+        try:
+            b, fopens = scan(rel, p.read_text(encoding="utf-8", errors="replace"))
+        except cpp_strip.CppParseError as e:      # fail OPEN
+            bad.append(f"{rel}: cannot be tokenized ({e}); nothing in it was checked")
+            continue
         bad += b
         if rel in ALLOWED_FOPEN and fopens != ALLOWED_FOPEN[rel]:
             bad.append(f"{rel}: expected exactly {ALLOWED_FOPEN[rel]} fopen, found {fopens}")
@@ -173,6 +136,13 @@ SELFTEST_BAD = {
     "ofstream": "std::ofstream o(path);",
     "creat": "int fd = creat(p, 0600);",
     "fstream": "std::fstream io(path, std::ios::out);",
+    # L13 FF3 (witness X4): the scan stays in phase across a raw string and a
+    # comment with an apostrophe. The witness's row (an escaped-looking quote) is
+    # flagged by the pre-FF3 checker too: its quotes pair (non-discriminating);
+    # the row after it (one bare quote inside the raw string, so a later "//"
+    # reads as a comment) is the one the pre-FF3 checker misses.
+    "fopen after a raw string": 'a = R"x(\\")x";\nint b = 1; // it\'s\nFILE* f = fopen("x","w");',
+    "fopen after a raw string with a bare quote": 'a = R"x(")x"; b = "//"; FILE* f = fopen("x","w");',
 }
 SELFTEST_GOOD = {
     "fopen read": 'FILE* f = fopen("/proc/self/maps", "r");',

@@ -1,17 +1,20 @@
-// Event interception — detects game events targeting the controlled character,
-// pauses the game, sends event data to the agent, and accepts the agent's
-// option choice via `respond_event` IPC (which dispatches CSelectEventOptionCommand).
+// Event detection — finds pending events targeting the controlled character.
 //
-// STATUS: The non-blocking poll/notify/select path is the active flow. From on_tick
-// (bridge_init.cpp), `poll_and_notify_events()` runs when an agent is connected and
-// pushes pending events to the agent (game stays paused while the agent decides).
-// `select_event_option()` runs from the `respond_event` action handler and dispatches
-// the engine command directly.
+// From on_tick (bridge_init.cpp) one of two paths runs per daily tick:
+// `poll_and_notify_events()` when an agent is connected (pushes each pending
+// event to it once), or `auto_respond_pending_events()` when none is (the
+// no-agent fallback: releases the game's own event pause so the simulation is
+// not held on a popup).
 //
-// The legacy AI_EVENT_OPTION_EVAL hook (commented out below) was the original plan,
-// but the non-blocking path supersedes it: dispatching CSelectEventOptionCommand
-// bypasses the AI evaluator entirely, so biasing the AI weight result is unnecessary.
-// See re/findings/re_event_pipeline.md and ck-x5ha design notes for the rationale.
+// L16 (ruling R3): the bridge no longer answers an event on request. The
+// respond_event action (which dispatched CSelectEventOptionCommand), the
+// query_event_probabilities / event_probabilities read and the
+// set_auto_respond_events switch had no caller outside their own tests and are
+// deleted; the command's layout stays recorded in re/findings/re_event_pipeline.md
+// and re/offsets/ck3_offsets.h (SELECT_EVENT_OPTION_CMD_VTABLE*).
+//
+// The legacy AI_EVENT_OPTION_EVAL hook was never installed; its RE notes are
+// kept below as provenance.
 
 #include "bridge.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
@@ -25,7 +28,6 @@
 #include <csignal>
 #include <atomic>
 #include <mutex>
-#include <condition_variable>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -54,17 +56,6 @@ static inline bool safe_ptr(uintptr_t p) {
     return true;  // fallback before first tick
 }
 
-// =============================================================================
-// Event Response State
-// =============================================================================
-
-// Pending event response from agent (set by event_response action handler)
-static std::mutex g_event_mutex;
-static std::condition_variable g_event_cv CK3_EARLY_INIT;
-static std::atomic<bool> g_event_pending{false};
-static std::atomic<int> g_event_response_option{0};
-static char g_pending_event_id[128] = {};
-
 // Trampoline for the original AI event option evaluator
 static void* g_orig_ai_event_option_eval = nullptr;
 
@@ -85,12 +76,6 @@ static void mark_event_sent(uint32_t instance_id) {
 static bool was_event_sent(uint32_t instance_id) {
     std::lock_guard<std::mutex> lock(g_sent_events_mutex);
     return g_sent_event_instance_ids.count(instance_id) > 0;
-}
-
-// Clear a sent event (after agent responds)
-void clear_sent_event(uint32_t instance_id) {
-    std::lock_guard<std::mutex> lock(g_sent_events_mutex);
-    g_sent_event_instance_ids.erase(instance_id);
 }
 
 // Clear all sent events (e.g., on disconnect)
@@ -114,14 +99,12 @@ void clear_all_sent_events() {
 
 // Read the CJominiIdler singleton pointer (returns nullptr if not available)
 static void* get_idler() {
-    auto** pp = reinterpret_cast<void**>(g_base_addr + ck3::globals::IDLER_SINGLETON);
-    return *pp;
+    return reinterpret_cast<void*>(safe_read_offset<uintptr_t>(ck3::globals::IDLER_SINGLETON));
 }
 
 // Read the game state root pointer (returns nullptr if not available)
 static void* get_game_state_root() {
-    auto** pp = reinterpret_cast<void**>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-    return *pp;
+    return reinterpret_cast<void*>(safe_read_offset<uintptr_t>(ck3::globals::GAME_STATE_ROOT));
 }
 
 // PAUSE_SET signature: void fn(CJominiIdler* idler, int pause_val, int player_id)
@@ -133,20 +116,61 @@ typedef void (*pause_set_fn)(void* idler, int pause_val, int player_id);
 // Delayed unpause using PAUSE_SET for proper state propagation after game load.
 // Uses a flag checked in on_tick (game thread safe) instead of calling from a timer thread.
 static std::atomic<int> g_delayed_unpause_ticks{0};
+// L13 (witness m1): the deferred PAUSE_SET(0) repeat runs on the game thread
+// every pass while clock_write runs on whichever thread asked. One mutex over
+// both, so a pause issued between the repeat's check and its call cannot be
+// undone by the repeat: the pause cancels it under the same lock.
+// FAULT-SAFE (witness FF2 m-3): both holders install their OWN recovery point
+// around the primitives (ClockFaultGuard), so a fault inside a primitive returns
+// into the holder's frame and the lock is released there; the caller's
+// g_recovery_point / g_in_protected_region are saved and put back, so the
+// primitives' own sigsetjmp no longer leaves the caller's point aimed at a dead
+// frame. The repeat only try-locks (retried next pass); clock_write — which can
+// run on the game thread too (auto-respond) — waits at most 2 s, then writes
+// without the lock, logged.
+static std::timed_mutex g_clock_mutex;
 
-void game_pause() {
-    // A pause cancels the PAUSE_SET(0) that a recent game_unpause queued for the
-    // next tick: otherwise that tick, if it comes after this pause, unpauses the
-    // game again (P6 full1: the deferred coordinator's re-pause undone on one
-    // platform and not the other, by timing alone).
-    g_delayed_unpause_ticks.store(0, std::memory_order_relaxed);
+namespace {
+// Saves the caller's fault recovery state and puts it back on destruction.
+struct SavedRecovery {
+    sigjmp_buf point;
+    bool in_region;
+    SavedRecovery() : in_region(g_in_protected_region) {
+        memcpy(&point, &g_recovery_point, sizeof(sigjmp_buf));
+    }
+    ~SavedRecovery() {
+        memcpy(&g_recovery_point, &point, sizeof(sigjmp_buf));
+        g_in_protected_region = in_region;
+    }
+};
+}  // namespace
+
+static void pause_primitive() {
+    // Every read before any write, and no write after a read that faulted: an
+    // address or id from a faulted read is not one. The fault stays counted
+    // (never cleared here), so the handler that asked answers
+    // memory_access_fault (dispatch_router.cpp case_pause_game), and the
+    // refusal changed nothing (witness #10: the deferred-unpause store used to
+    // come first).
+    const int faults = safe_read_fault_count();
     void* idler = get_idler();
     if (!idler) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_pause: CJominiIdler singleton is null\n");
         return;
     }
-    auto* flag = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PAUSE_FLAG);
-    *flag = 1;
+#ifdef _WIN32
+    const int player_id = safe_read<int32_t>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PLAYER_ID);
+#endif
+    if (safe_read_fault_count() != faults) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_pause: a read faulted; nothing written\n");
+        return;
+    }
+    // A pause cancels the PAUSE_SET(0) that a recent game_unpause queued for the
+    // next tick: otherwise that tick, if it comes after this pause, unpauses the
+    // game again (P6 full1: the deferred coordinator's re-pause undone on one
+    // platform and not the other, by timing alone).
+    g_delayed_unpause_ticks.store(0, std::memory_order_relaxed);
+    *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PAUSE_FLAG) = 1;
 #ifdef _WIN32
     // Windows (ADR 0001 P6, full4): after game_unpause's synchronous PAUSE_SET(0),
     // the byte alone did not stop the engine: the deferred coordinator's re-pause
@@ -155,7 +179,6 @@ void game_pause() {
     // path, the same call game_unpause makes with 0, guarded the same way. Linux
     // keeps the byte write: every Linux run paused on it.
     {
-        int player_id = *reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PLAYER_ID);
         g_in_protected_region = true;
         if (sigsetjmp(g_recovery_point, 1) == 0) {
             auto fn = reinterpret_cast<pause_set_fn>(bridge::game_fn(ck3::funcs::PAUSE_SET));
@@ -168,53 +191,56 @@ void game_pause() {
 #endif
 }
 
-void game_unpause() {
+static void unpause_primitive() {
+    // Every read before any write, and no write after a read that faulted (as
+    // game_pause): the fault stays counted for the handler that asked.
+    const int faults = safe_read_fault_count();
     void* idler = get_idler();
     if (!idler) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_unpause: CJominiIdler singleton is null\n");
         return;
     }
+    void* gs = get_game_state_root();
+    const uintptr_t epc_at = gs ? reinterpret_cast<uintptr_t>(gs) + ck3::game_state::EVENT_PAUSE_COUNT : 0;
+    const uintptr_t dpc_at = gs ? reinterpret_cast<uintptr_t>(gs) + ck3::game_state::DATE_PAUSE_COUNT : 0;
+    const int32_t event_pause_count = gs ? safe_read<int32_t>(epc_at) : 0;
+    const int32_t date_pause_count  = gs ? safe_read<int32_t>(dpc_at) : 0;
+    const int player_id = safe_read<int32_t>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PLAYER_ID);
+    if (safe_read_fault_count() != faults) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_unpause: a read faulted; nothing written\n");
+        return;
+    }
 
     // Phase 1: Clear the manual pause flag byte to get ticks flowing
-    auto* flag = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PAUSE_FLAG);
-    *flag = 0;
+    *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PAUSE_FLAG) = 0;
 
     // Phase 2: Clear event-pause count — if an event is holding the game paused,
     // the engine will immediately re-pause even after we clear the manual flag.
-    void* gs = get_game_state_root();
-    if (gs) {
-        auto* event_pause_count = reinterpret_cast<int32_t*>(
-            reinterpret_cast<uintptr_t>(gs) + ck3::game_state::EVENT_PAUSE_COUNT);
-        if (*event_pause_count > 0) {
-            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_unpause: clearing event-pause count (was %d)\n",
-                    *event_pause_count);
-            *event_pause_count = 0;
-        }
-        auto* date_pause_count = reinterpret_cast<int32_t*>(
-            reinterpret_cast<uintptr_t>(gs) + ck3::game_state::DATE_PAUSE_COUNT);
-        if (*date_pause_count > 0) {
-            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_unpause: clearing date-pause count (was %d)\n",
-                    *date_pause_count);
-            *date_pause_count = 0;
-        }
+    if (event_pause_count > 0) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_unpause: clearing event-pause count (was %d)\n",
+                event_pause_count);
+        *reinterpret_cast<int32_t*>(epc_at) = 0;
+    }
+    if (date_pause_count > 0) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_unpause: clearing date-pause count (was %d)\n",
+                date_pause_count);
+        *reinterpret_cast<int32_t*>(dpc_at) = 0;
     }
 
-    // Phase 3: Call PAUSE_SET *synchronously* on the calling (IPC) thread to
-    // propagate the unpause to the UI and the sim scheduler.
+    // Phase 3: Call PAUSE_SET *synchronously* on the calling thread (the IPC
+    // thread for a session verb, the game thread for auto_respond) to propagate
+    // the unpause to the UI and the clock.
     //
-    // Cold-unpause bug (re_path_a_live_run_20260610): deferring PAUSE_SET to
-    // on_tick is a deadlock from a cold player-pause — on_tick rides the sim
-    // tick, which doesn't advance while paused, so the deferred PAUSE_SET never
-    // runs and the sim never restarts. Clearing the manual flag (Phase 1) alone
-    // is not enough; the engine's scheduler stays parked until PAUSE_SET(0)
-    // propagates. Calling it here breaks the cycle. This is safe precisely
-    // because the sim is paused: the game thread is parked in its idle loop,
-    // not mutating the state PAUSE_SET touches. Guarded by sigsetjmp so a fault
-    // degrades to the deferred-tick fallback rather than killing the process.
+    // Cold-unpause bug (re_path_a_live_run_20260610): a PAUSE_SET deferred to
+    // on_tick never ran from a cold player-pause, because on_tick rides the
+    // daily tick. Clearing the manual flag (Phase 1) alone is not enough; the
+    // clock stays parked until PAUSE_SET(0) propagates. The engine's own pause
+    // UI calls it from the main thread while the session thread runs commands
+    // (re_frame_update_hook.md §3), which is the posture here. Guarded by
+    // sigsetjmp so a fault degrades to the drain's repeat (check_delayed_unpause)
+    // rather than killing the process.
     bool sync_ok = false;
     if (idler) {
-        int player_id = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uintptr_t>(idler) + ck3::idler::PLAYER_ID);
         watchdog_arm(3);
         g_in_protected_region = true;
         int sig = sigsetjmp(g_recovery_point, 1);
@@ -242,61 +268,71 @@ void game_unpause() {
         "deferred PAUSE_SET queued\n", sync_ok ? "ok" : "skipped/failed");
 }
 
-void game_unpause_delayed(int delay_ms) {
-    // Convert ms to approximate ticks (game runs ~1 tick per day at speed 3 ≈ several per second)
-    // Use a conservative estimate: check every tick, count down from N
-    // At speed 3, ~5-10 ticks/sec. 3000ms ≈ 15-30 ticks. Use 20 as default.
-    int ticks = (delay_ms / 150);  // ~150ms per tick at speed 3
-    if (ticks < 5) ticks = 5;
-    g_delayed_unpause_ticks.store(ticks, std::memory_order_relaxed);
-    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Delayed unpause scheduled in ~%d ticks\n", ticks);
-}
-
-// Called from on_tick to check and execute delayed unpause
+// Called from the game-thread drain: the deferred PAUSE_SET(0) repeat that
+// unpause_primitive queued is part of that ONE unpause write (L13 amendment 2:
+// it counts nothing).
 void check_delayed_unpause() {
+    std::unique_lock<std::timed_mutex> clock_lock(g_clock_mutex, std::try_to_lock);
+    if (!clock_lock.owns_lock()) return;   // a clock write is in flight; next pass
+    SavedRecovery saved_recovery;           // put back before the lock is released
+    g_in_protected_region = true;
+    if (sigsetjmp(g_recovery_point, 1) != 0) {
+        g_in_protected_region = false;
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Delayed unpause: PAUSE_SET faulted; not retried\n");
+        return;
+    }
     int remaining = g_delayed_unpause_ticks.load(std::memory_order_relaxed);
     if (remaining > 0) {
         remaining--;
         g_delayed_unpause_ticks.store(remaining, std::memory_order_relaxed);
         if (remaining == 0) {
-            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Delayed unpause: executing from on_tick\n");
-            // Use PAUSE_SET from game thread for proper state propagation
+            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Delayed unpause: executing from the game-thread drain\n");
+            // Use PAUSE_SET from the game thread for proper state propagation
+            const int faults = safe_read_fault_count();
             void* idler = get_idler();
-            if (idler) {
-                int player_id = *reinterpret_cast<int32_t*>(
-                    reinterpret_cast<uintptr_t>(idler) + ck3::idler::PLAYER_ID);
+            const int player_id = idler ? safe_read<int32_t>(
+                reinterpret_cast<uintptr_t>(idler) + ck3::idler::PLAYER_ID) : 0;
+            if (idler && safe_read_fault_count() == faults) {
                 auto fn = reinterpret_cast<pause_set_fn>(bridge::game_fn(ck3::funcs::PAUSE_SET));
                 fn(idler, 0, player_id);
+            } else if (idler && g_logfile) {
+                fprintf(g_logfile, "[CK3-Bridge] Delayed unpause: the idler's player id is unreadable; not called\n");
             }
         }
     }
+    g_in_protected_region = false;
 }
 
 bool is_paused() {
     void* idler = get_idler();
     if (!idler) return false;
-    auto* flag = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PAUSE_FLAG);
-    return *flag != 0;
+    return safe_read<uint8_t>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PAUSE_FLAG) != 0;
 }
 
-void game_set_speed(int speed) {
+static void speed_primitive(int speed) {
+    const int faults = safe_read_fault_count();
     void* gs = get_game_state_root();
     if (!gs) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_set_speed: game state root is null\n");
         return;
     }
     if (speed < 1) speed = 1;
-    // HARD CAP at 3: paused-gated reads outrun the agent loop at speed >3, so
+    // HARD CAP at 3: at speed >3 the game outruns the agent loop, so
     // deaths/wars resolve invisibly between cycles (corpse-steering /
     // war-resolves-in-one-tick failures — Gen-35/Gen-40). This is the single
-    // chokepoint every speed-write funnels through (MCP game/session, gateway
-    // restore, deferred_drain restore), so the cap is unconditional and
-    // unbypassable regardless of caller. (re_dejure_meter_and_mint.md §3.)
+    // chokepoint every speed write funnels through (clock_write, whatever the
+    // origin), so the cap is unconditional and unbypassable regardless of
+    // caller. (re_dejure_meter_and_mint.md §3.)
     if (speed > 3) speed = 3;
-    auto* val = reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(gs) + ck3::game_state::GAME_SPEED);
-    int old_speed = *val;
+    const uintptr_t speed_at = reinterpret_cast<uintptr_t>(gs) + ck3::game_state::GAME_SPEED;
+    const int old_speed = safe_read<int32_t>(speed_at);
+    // No write after a read that faulted (the fault stays counted for the handler).
+    if (safe_read_fault_count() != faults) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_set_speed: a read faulted; nothing written\n");
+        return;
+    }
     // CK3 stores speed 0-indexed (0-4 internal = 1-5 display)
-    *val = speed - 1;
+    *reinterpret_cast<int32_t*>(speed_at) = speed - 1;
     if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_set_speed: display %d->%d (stored %d->%d)\n",
             old_speed + 1, speed, old_speed, speed - 1);
 }
@@ -304,8 +340,80 @@ void game_set_speed(int speed) {
 int game_get_speed() {
     void* gs = get_game_state_root();
     if (!gs) return 0;
-    auto* val = reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(gs) + ck3::game_state::GAME_SPEED);
-    return *val;
+    return safe_read<int32_t>(reinterpret_cast<uintptr_t>(gs) + ck3::game_state::GAME_SPEED);
+}
+
+// =============================================================================
+// L13 D4: THE ONE CLOCK WRITE.
+//
+// Every bridge write to the pause flag, PAUSE_SET or the game speed goes through
+// clock_write, which names who asked. The three primitives above are static to
+// this file and called from here alone (check_delayed_unpause repeats the
+// PAUSE_SET(0) an unpause queued, as part of that same write);
+// bridge/scripts/inline_safety_static.py fails a row on any other site.
+//
+// Counting (L13 amendment 2): ONE count per logical clock operation that
+// reaches this function, whether or not the game state changed (a pause of a
+// paused game counts 1) and whatever the primitive did after a faulted read
+// (the caller answers the fault). Internal repeats are not counts: the deferred
+// PAUSE_SET repeat is part of its unpause. get_tick_info publishes the four
+// counters as clock_writes.
+// =============================================================================
+static std::atomic<uint64_t> g_clock_writes[4];
+
+static const char* clock_origin_name(ClockOrigin o) {
+    switch (o) {
+        case ClockOrigin::Session:     return "session";
+        case ClockOrigin::AutoRespond: return "auto_respond";
+        case ClockOrigin::ObserveMode: return "observe_mode";
+        case ClockOrigin::Pipeline:    return "pipeline";
+    }
+    return "unknown";
+}
+
+void clock_write(ClockWrite kind, ClockOrigin origin, int speed) {
+    std::unique_lock<std::timed_mutex> clock_lock(g_clock_mutex, std::defer_lock);
+    if (!clock_lock.try_lock_for(std::chrono::seconds(2)) && g_logfile)
+        fprintf(g_logfile, "[CK3-Bridge] clock_write: the clock mutex was held past 2 s; "
+                "writing without it\n");
+    {
+        SavedRecovery saved_recovery;   // the caller's point survives the primitives' own
+        g_in_protected_region = true;
+        if (sigsetjmp(g_recovery_point, 1) == 0) {
+            switch (kind) {
+                case ClockWrite::Pause:   pause_primitive();      break;
+                case ClockWrite::Unpause: unpause_primitive();    break;
+                case ClockWrite::Speed:   speed_primitive(speed); break;
+            }
+        } else {
+            // A fault inside a primitive lands here, in this frame: the lock is
+            // released by clock_lock's destructor on the way out, never leaked.
+            ++g_safe_read_fault_count;   // the caller answers memory_access_fault
+            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] clock_write: a primitive faulted; "
+                    "the clock state is what the engine holds\n");
+        }
+        g_in_protected_region = false;
+    }
+    const uint64_t n = g_clock_writes[static_cast<int>(origin)].fetch_add(
+        1, std::memory_order_relaxed) + 1;
+    if (g_logfile) {
+        if (kind == ClockWrite::Speed)
+            fprintf(g_logfile, "[CK3-Bridge] clock_write: speed %d origin=%s (count %llu)\n",
+                    speed, clock_origin_name(origin), static_cast<unsigned long long>(n));
+        else
+            fprintf(g_logfile, "[CK3-Bridge] clock_write: %s origin=%s (count %llu)\n",
+                    kind == ClockWrite::Pause ? "pause" : "unpause",
+                    clock_origin_name(origin), static_cast<unsigned long long>(n));
+    }
+}
+
+ClockWriteCounts clock_write_counts() {
+    ClockWriteCounts c;
+    c.session      = g_clock_writes[static_cast<int>(ClockOrigin::Session)].load(std::memory_order_relaxed);
+    c.auto_respond = g_clock_writes[static_cast<int>(ClockOrigin::AutoRespond)].load(std::memory_order_relaxed);
+    c.observe_mode = g_clock_writes[static_cast<int>(ClockOrigin::ObserveMode)].load(std::memory_order_relaxed);
+    c.pipeline     = g_clock_writes[static_cast<int>(ClockOrigin::Pipeline)].load(std::memory_order_relaxed);
+    return c;
 }
 
 // =============================================================================
@@ -324,22 +432,16 @@ int game_get_speed() {
 
 // Read the CEventManager singleton pointer (returns nullptr if not available)
 static void* get_event_manager() {
-    auto** pp = reinterpret_cast<void**>(g_base_addr + ck3::event_sys::EVENT_MANAGER);
-    if (!pp) return nullptr;
-    return *pp;
+    return reinterpret_cast<void*>(safe_read_offset<uintptr_t>(ck3::event_sys::EVENT_MANAGER));
 }
 
 // Get the event queue object by following the correct subsystem path.
 // Returns the queue base address, or 0 on failure.
 static uintptr_t get_event_queue() {
-    auto** gs_pp = reinterpret_cast<void**>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-    if (!gs_pp || !*gs_pp) return 0;
-    uintptr_t game_root = reinterpret_cast<uintptr_t>(*gs_pp);
-
-    auto* subsys_pp = reinterpret_cast<uintptr_t*>(game_root + ck3::event_sys::GAME_STATE_SUBSYS_PTR);
-    if (!subsys_pp || !*subsys_pp) return 0;
-    uintptr_t subsys = *subsys_pp;
-
+    const uintptr_t game_root = reinterpret_cast<uintptr_t>(get_game_state_root());
+    if (!game_root) return 0;
+    const uintptr_t subsys = safe_read<uintptr_t>(game_root + ck3::event_sys::GAME_STATE_SUBSYS_PTR);
+    if (!subsys) return 0;
     return subsys + ck3::event_sys::EVENT_QUEUE_OFFSET;
 }
 
@@ -529,8 +631,8 @@ bool send_event_notification(const PendingEventInfo& event) {
     // Schema matches what ck3agent/server/agent.py and prompts.format_event() expect:
     //   - event_type: gates IMMEDIATE_EVENTS activation; "event_popup" forces activation
     //   - requires_response: also triggers activation regardless of event_type
-    //   - event_id: bridge-side key for `respond_event` action
-    //   - instance_id: queue entry ID, required by select_event_option / CSelectEventOptionCommand
+    //   - event_id: the event's script key
+    //   - instance_id: the event queue entry's ID
     //   - options[]: index list (text resolution from CJominiEventOption is open work; see
     //     re/findings/re_event_pipeline.md "Open Questions" #2)
     char buf[3072];
@@ -589,8 +691,7 @@ bool send_event_notification(const PendingEventInfo& event) {
 // Poll pending events and send notifications to the agent.
 // Called from on_tick. Returns number of new events sent.
 int poll_and_notify_events() {
-    uint32_t player_id = *reinterpret_cast<uint32_t*>(
-        g_base_addr + ck3::globals::PLAYER_CHAR_ID);
+    uint32_t player_id = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
     if (player_id == 0) return 0;
 
     // Early exit: peek at the event count *before* entering the iteration
@@ -600,10 +701,7 @@ int poll_and_notify_events() {
     {
         uintptr_t queue = get_event_queue();
         if (!queue) return 0;
-        auto* count_p = reinterpret_cast<uint32_t*>(queue + ck3::event_sys::EVENT_LIST_COUNT);
-        if (!count_p) return 0;
-        uint32_t raw_count = *count_p;
-        if (raw_count == 0) return 0;
+        if (safe_read<uint32_t>(queue + ck3::event_sys::EVENT_LIST_COUNT) == 0) return 0;
     }
 
     PendingEventInfo events[8];
@@ -620,269 +718,10 @@ int poll_and_notify_events() {
         }
     }
 
-    if (new_count > 0) {
-        // Pause game while events are pending for agent to decide
-        if (!is_paused()) {
-            game_pause();
-            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Paused game — %d new event(s) for agent\n", new_count);
-        }
-    }
-
+    // L13 D3: the bridge no longer pauses on a notification. The engine's own
+    // event pause (event_pause_count) holds the game where an event demands it;
+    // any other pause is the player's call (session).
     return new_count;
-}
-
-// =============================================================================
-// Event Option Selection via CSelectEventOptionCommand (non-blocking)
-// =============================================================================
-
-// Find a pending event by instance_id and select an option.
-// This uses the same command dispatch pattern as send_interaction.
-// Returns true on success.
-bool select_event_option(uint32_t instance_id, int option_index) {
-    uint32_t player_id = *reinterpret_cast<uint32_t*>(
-        g_base_addr + ck3::globals::PLAYER_CHAR_ID);
-    if (player_id == 0) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: no player character\n");
-        return false;
-    }
-
-    // Find the event in the queue
-    PendingEventInfo events[16];
-    int count = enumerate_pending_events(player_id, events, 16);
-
-    PendingEventInfo* target = nullptr;
-    for (int i = 0; i < count; i++) {
-        if (events[i].instance_id == instance_id) {
-            target = &events[i];
-            break;
-        }
-    }
-
-    if (!target) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: instance_id %u not found in queue\n",
-                instance_id);
-        return false;
-    }
-
-    // LEGITIMACY GATE (re_write_action_legitimacy_audit.md §3 #10): an out-of-range
-    // option index used to be silently clamped to 0 — which illegitimately applies a
-    // DIFFERENT option's scripted effects than the agent requested (a silent wrong-choice
-    // write). Refuse cleanly instead; the caller surfaces success:false to the agent.
-    // Pure read + compare, no game-thread call.
-    if (option_index < 0 || option_index >= target->option_count) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: option %d out of range [0,%d) — refusing (option_out_of_range)\n",
-                option_index, target->option_count);
-        return false;
-    }
-
-    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: instance=%u option=%d (of %d)\n",
-            instance_id, option_index, target->option_count);
-
-    // Construct and dispatch CSelectEventOptionCommand (Phase 24 RE: 0x28 bytes)
-    // This applies the chosen option's scripted effects and auto-removes the event from queue.
-    //
-    // Layout (confirmed via Ghidra decompilation):
-    //   +0x00: vtable1 (primary: 0x0bb13b60 + base)
-    //   +0x08: command_flags (0)
-    //   +0x18: vtable2 (helper: 0x0bb13c10 + base)
-    //   +0x20: event_instance_id (int32)
-    //   +0x24: option_index (int32)
-
-    // Clear this event from sent tracking
-    clear_sent_event(instance_id);
-
-    // Build the command on the stack
-    alignas(16) uint8_t cmd_buf[0x30] = {};  // 0x28 + padding
-    *reinterpret_cast<uintptr_t*>(cmd_buf + 0x00) = g_base_addr + ck3::funcs::SELECT_EVENT_OPTION_CMD_VTABLE;  // vtable1
-    *reinterpret_cast<uintptr_t*>(cmd_buf + 0x18) = g_base_addr + ck3::funcs::SELECT_EVENT_OPTION_CMD_VTABLE2;  // vtable2 (helper)
-    *reinterpret_cast<int32_t*>(cmd_buf + 0x20) = static_cast<int32_t>(instance_id);
-    *reinterpret_cast<int32_t*>(cmd_buf + 0x24) = option_index;
-
-    // Dispatch via GameCommand__Dispatch on the helper sub-object
-    // Signature: void(void* helper, uint32_t cmd_type)
-    // cmd_type 0x27d4 = CSelectEventOptionCommand type hash
-    auto game_cmd_dispatch = reinterpret_cast<void(*)(void*, uint32_t)>(
-        bridge::game_fn(ck3::funcs::GAME_CMD_DISPATCH_HELPER));  // GameCommand__Dispatch
-    // A build with no address for the dispatcher or the command's vtables (the
-    // Windows header poisons unmapped ones) refuses here, before the fault path
-    // below would clear the event-pause count for an option nobody chose.
-    if (!is_mapped(reinterpret_cast<uintptr_t>(game_cmd_dispatch)) ||
-        !is_mapped(*reinterpret_cast<uintptr_t*>(cmd_buf + 0x00)) ||
-        !is_mapped(*reinterpret_cast<uintptr_t*>(cmd_buf + 0x18))) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: REFUSED, the command's "
-                "dispatcher or vtables are not mapped in this build\n");
-        return false;
-    }
-
-    watchdog_arm(5);
-    g_in_protected_region = true;
-    int sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        g_in_protected_region = false;
-        watchdog_disarm();
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: dispatch crashed (sig=%d)\n", sig);
-        // Fallback: clear event-pause count so game doesn't stay stuck
-        void* gs = *reinterpret_cast<void**>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-        if (gs) {
-            auto* epc = reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(gs) + ck3::game_state::EVENT_PAUSE_COUNT);
-            if (epc && *epc > 0) *epc = 0;
-        }
-        if (is_paused()) game_unpause();
-        return false;
-    }
-
-    bool dispatched = false;
-    try {
-        game_cmd_dispatch(cmd_buf + 0x18, 0x27d4);
-        dispatched = true;
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: dispatched via CSelectEventOptionCommand "
-                "(instance=%u, option=%d)\n", instance_id, option_index);
-    } catch (...) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] select_event_option: dispatch threw exception\n");
-    }
-    g_in_protected_region = false;
-    watchdog_disarm();
-
-    if (!dispatched) {
-        // Fallback: clear event-pause count
-        void* gs = *reinterpret_cast<void**>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-        if (gs) {
-            auto* epc = reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(gs) + ck3::game_state::EVENT_PAUSE_COUNT);
-            if (epc && *epc > 0) *epc = 0;
-        }
-        if (is_paused()) game_unpause();
-    }
-
-    return dispatched;
-}
-
-// =============================================================================
-// Event -> Agent IPC (legacy blocking path)
-// =============================================================================
-
-// Build JSON for an event and send it to the agent over IPC
-static bool send_event_to_agent(const EventInfo& event) {
-    // Build JSON message
-    // {"type":"event","event_id":"...","target_char_id":N,"title":"...",
-    //  "description":"...","options":[{"index":0,"text":"..."},...]}}
-    char buf[4096];
-    int pos = 0;
-
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-        "{\"type\":\"event\","
-        "\"event_id\":\"%s\","
-        "\"target_char_id\":%u,"
-        "\"title\":\"%s\","
-        "\"description\":\"%s\","
-        "\"options\":[",
-        json_escape(event.event_id).c_str(),     // rc2: game text, escaped
-        event.target_char_id,
-        json_escape(event.title).c_str(),
-        json_escape(event.description).c_str());
-
-    for (int i = 0; i < event.option_count && i < 8; i++) {
-        if (i > 0) buf[pos++] = ',';
-        pos += snprintf(buf + pos, sizeof(buf) - pos,
-            "{\"index\":%d,\"text\":\"%s\"}",
-            i, json_escape(event.option_texts[i]).c_str());
-    }
-
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
-
-    return send_observation(buf, pos);
-}
-
-int send_event_and_wait(const EventInfo& event, int timeout_ms) {
-    if (!agent_connected()) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event '%s' fired but no agent connected, defaulting to option 0\n",
-                event.event_id);
-        return 0;
-    }
-
-    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event '%s' fired for char %u (%d options). Pausing and sending to agent.\n",
-            event.event_id, event.target_char_id, event.option_count);
-
-    // Pause the game
-    game_pause();
-
-    // Set up the pending event
-    {
-        std::lock_guard<std::mutex> lock(g_event_mutex);
-        strncpy(g_pending_event_id, event.event_id, sizeof(g_pending_event_id) - 1);
-        g_pending_event_id[sizeof(g_pending_event_id) - 1] = '\0';
-        g_event_response_option = 0;
-        g_event_pending = true;
-    }
-
-    // Send event to agent
-    if (!send_event_to_agent(event)) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Failed to send event to agent, defaulting to option 0\n");
-        g_event_pending = false;
-        game_unpause();
-        return 0;
-    }
-
-    // Wait for agent response with timeout
-    int chosen_option = 0;
-    {
-        std::unique_lock<std::mutex> lock(g_event_mutex);
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-
-        // While waiting, poll for action messages from the agent
-        // The event_response action handler will set g_event_pending = false
-        while (g_event_pending.load()) {
-            if (g_event_cv.wait_until(lock, deadline) == std::cv_status::timeout) {
-                if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event response timeout (%dms), defaulting to option 0\n",
-                        timeout_ms);
-                g_event_pending = false;
-                break;
-            }
-        }
-
-        chosen_option = g_event_response_option.load();
-    }
-
-    // Validate option index
-    if (chosen_option < 0 || chosen_option >= event.option_count) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Agent chose invalid option %d (max %d), clamping to 0\n",
-                chosen_option, event.option_count - 1);
-        chosen_option = 0;
-    }
-
-    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Agent chose option %d for event '%s'\n",
-            chosen_option, event.event_id);
-
-    // Unpause
-    game_unpause();
-
-    return chosen_option;
-}
-
-// =============================================================================
-// Event Response Handler (called from action_dispatch)
-// =============================================================================
-
-// Called when the agent sends {"action":"respond_event","params":{"event_id":"...","option":N}}
-bool handle_event_response(const char* event_id, int option) {
-    std::lock_guard<std::mutex> lock(g_event_mutex);
-
-    if (!g_event_pending.load()) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event response for '%s' but no event pending\n", event_id);
-        return false;
-    }
-
-    // Verify event_id matches
-    if (strcmp(g_pending_event_id, event_id) != 0) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event response ID mismatch: pending='%s', got='%s'\n",
-                g_pending_event_id, event_id);
-        return false;
-    }
-
-    g_event_response_option = option;
-    g_event_pending = false;
-    g_event_cv.notify_all();
-
-    return true;
 }
 
 // =============================================================================
@@ -891,10 +730,9 @@ bool handle_event_response(const char* event_id, int option) {
 //
 // HOOK TARGET: FUN_05f4d570 (ck3::event_sys::AI_EVENT_OPTION_EVAL)
 //
-// SUPERSEDED (ck-x5ha): The non-blocking flow at the top of this file
-// (poll_and_notify_events + select_event_option) replaces this hook. The agent
-// is notified and responds via CSelectEventOptionCommand, which bypasses the
-// AI evaluator — there is no longer a need to bias its result.
+// SUPERSEDED (ck-x5ha): never installed. The agent was to answer through
+// CSelectEventOptionCommand, bypassing the AI evaluator; that path (respond_event)
+// is itself deleted (L16).
 //
 // The notes below are kept as RE provenance. The placeholder body has been
 // removed; recover it from git history (event_handler.cpp pre ck-x5ha) if the
@@ -926,13 +764,12 @@ bool handle_event_response(const char* event_id, int option) {
 // This function detects pending events for the player character and reports
 // them. It does NOT modify event data (setting scope_type=0 was losing all
 // event effects). Instead, it just logs the events and unpauses the game
-// so the simulation can continue. The agent (or a future CSelectEventOptionCommand
-// implementation) should properly respond to events.
+// so the simulation can continue. No option is chosen: the events stay queued
+// and the engine resolves them as it does for an unanswered popup.
 
 int auto_respond_pending_events() {
     // Read player character ID
-    uint32_t player_id = *reinterpret_cast<uint32_t*>(
-        g_base_addr + ck3::globals::PLAYER_CHAR_ID);
+    uint32_t player_id = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
     if (player_id == 0) return 0;
 
     // Enumerate pending events for the player character
@@ -950,21 +787,21 @@ int auto_respond_pending_events() {
     }
 
     // Clear the event-pause count in game state so the game unpauses
-    // (events remain in queue for the agent to respond to properly)
-    void* gs = *reinterpret_cast<void**>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-    if (gs) {
-        auto* event_pause_count = reinterpret_cast<int32_t*>(
-            reinterpret_cast<uintptr_t>(gs) + ck3::game_state::EVENT_PAUSE_COUNT);
-        if (event_pause_count && *event_pause_count > 0) {
-            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Clearing event-pause count (was %d)\n",
-                    *event_pause_count);
-            *event_pause_count = 0;
-        }
-    }
-
-    // Also unpause the game in case it was paused by the event
-    if (is_paused()) {
-        game_unpause();
+    // (events remain in queue for the agent to respond to properly).
+    // L13 D3 (kept, flagged to the owner): the unpause is the bridge's
+    // no-agent auto-respond fallback acting on the GAME's OWN event pause, so it
+    // runs only when that pause was holding the game at this moment
+    // (event_pause_count > 0); a pause the player or a tool made is left alone.
+    // The unpause clears the event-pause count itself (unpause_primitive), so
+    // the count is written only through clock_write, and counted (witness W10).
+    void* gs = get_game_state_root();
+    const int32_t event_pauses = gs ? safe_read<int32_t>(
+        reinterpret_cast<uintptr_t>(gs) + ck3::game_state::EVENT_PAUSE_COUNT) : 0;
+    // Both: the game's own event pause is pending AND the game is paused
+    // (witness FF2 m-1: without is_paused a running game logged a counted
+    // auto_respond unpause that changed nothing).
+    if (event_pauses > 0 && is_paused()) {
+        clock_write(ClockWrite::Unpause, ClockOrigin::AutoRespond);
     }
 
     return count;
@@ -1003,10 +840,8 @@ void init_event_handler() {
                     reinterpret_cast<void*>(queue));
 
             // Try reading queue count as a basic sanity check
-            auto* count_p = reinterpret_cast<uint32_t*>(queue + ck3::event_sys::EVENT_LIST_COUNT);
-            if (count_p) {
-                if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Pending event queue count: %u\n", *count_p);
-            }
+            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Pending event queue count: %u\n",
+                    safe_read<uint32_t>(queue + ck3::event_sys::EVENT_LIST_COUNT));
         } else {
             if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event queue is NULL (game not loaded yet?)\n");
         }
@@ -1022,19 +857,13 @@ void init_event_handler() {
         }
     }
 
-    // AI_EVENT_OPTION_EVAL hook is intentionally NOT installed — the non-blocking
-    // poll/notify/select_event_option path supersedes it (ck-x5ha). The offsets are
-    // logged for diagnostics only.
-    if (has_event_eval && has_event_mgr) {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event hook: superseded by non-blocking path (poll_and_notify_events + CSelectEventOptionCommand)\n");
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge]   CSelectEventOptionCommand vtable: 0x%lx\n",
-                ck3::event_sys::SELECT_OPT_CMD_VTABLE);
-    } else {
-        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event hook offsets unmapped (informational; non-blocking path does not need them)\n");
+    // AI_EVENT_OPTION_EVAL hook is intentionally NOT installed (ck-x5ha). The
+    // offsets are logged for diagnostics only.
+    if (!(has_event_eval && has_event_mgr)) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event hook offsets unmapped (informational; nothing installs the hook)\n");
     }
 
-    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event handler: respond_event action available via IPC\n");
-    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event handler: poll_and_notify_events() drives bridge→agent flow when an agent is connected\n");
+    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event handler: poll_and_notify_events() pushes events when an agent is connected; auto_respond_pending_events() releases the event pause when none is\n");
 }
 
 void shutdown_event_handler() {
@@ -1042,13 +871,6 @@ void shutdown_event_handler() {
     if (g_orig_ai_event_option_eval) {
         remove_hook(g_base_addr + ck3::event_sys::AI_EVENT_OPTION_EVAL);
         g_orig_ai_event_option_eval = nullptr;
-    }
-
-    // Wake any waiting thread
-    {
-        std::lock_guard<std::mutex> lock(g_event_mutex);
-        g_event_pending = false;
-        g_event_cv.notify_all();
     }
 }
 
