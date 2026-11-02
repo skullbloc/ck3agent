@@ -199,6 +199,22 @@ int main() {
         check(!fired, "watchdog_disarm: fired is false");
     }
 #endif
+#ifndef CK3_OS_CELL_SESSION_PASS
+    {
+        SessionPassLayout l{0x1000, 8, 16, 24, 25, 32, SessionLock::srwlock_exclusive, 0x2000};
+        SessionPassReport rep{SessionPassState::installed, 9, 9, 9, 9};
+        refusal(session_pass_install(l, [] {}, &rep), "session_pass_install");
+        check(rep.state == SessionPassState::refused && rep.slot == 0 && rep.slot_value == 0 &&
+                  rep.arg_value == 0 && rep.wrapper == 0,
+              "session_pass_install: report is a refusal, empty");
+        int inflight = 9;
+        refusal(session_pass_remove(&inflight), "session_pass_remove");
+        check(inflight == 0, "session_pass_remove: inflight is 0");
+        bool live = true;
+        refusal(session_pass_live(&live), "session_pass_live");
+        check(!live, "session_pass_live: live is false");
+    }
+#endif
     {
         std::uintptr_t vt = 9;
         refusal(rtti_find_vtable("x", &vt), "rtti_find_vtable");

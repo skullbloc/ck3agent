@@ -51,10 +51,11 @@ def _seat_facing_text() -> str:
 #: of these gets `unknown_verb`. Derived from the registered tool list and
 #: `do`'s intent enum, not hand-maintained.
 def _uncallable_examples():
-    import gen_tool_reference as gtr          # noqa: PLC0415
-    defs = gtr.collect_mcp_tools(gtr._import_tools_module())
+    import mcp_server                          # noqa: PLC0415
+    defs = mcp_server.registered_tool_definitions()
     tools = {t["name"] for t in defs}
-    intents = set(gtr._enum_for(defs, "do", "intent"))
+    do = next(t for t in defs if t["name"] == "do")
+    intents = set(do["input_schema"]["properties"]["intent"]["enum"]) - {None}
     return tools, intents
 
 
@@ -74,17 +75,17 @@ def test_set_character_ai_IS_NOT_on_the_seat_surface():
     # than a count being pinned.
     import registered_prompts as rp                          # noqa: PLC0415
     board = rp.board_tool_names()
-    # ck-zgh4, AMENDMENT 6: 16 -> 15, execute_console_command off the advertised
-    # surface. Asserted BY NAME as well as by count, because 16 -> 15 is
-    # satisfied by any tool leaving, and because "15" already meant something
-    # else in this tree — the count actually REGISTERED via @mcp.tool() while
-    # 16 were advertised. Both now read 15, so the count alone no longer
-    # distinguishes "amendment 6 applied" from "the old registered/advertised
-    # gap". The name does.
-    assert "execute_console_command" not in tools, (
-        "execute_console_command is back on the advertised surface; amendment 6 "
-        "removed it, and this file's premise was re-confirmed against its absence")
-    assert len(tools - board) == 15 and len(intents) == 20, (
+    # cleanup 2026.11: 13 tools. The retired act/game/control/bridge/
+    # execute_console_command, the intent queue tool and observe_v2 are gone;
+    # asserted BY NAME as well as by count, because a count is satisfied by any
+    # tool leaving.
+    for gone in ("execute_console_command", "act", "intent", "observe_v2"):
+        assert gone not in tools, f"{gone} is back on the registered surface"
+    # cleanup 2026.11 (D6): scripted_effect and break_alliance went with the
+    # bridge's execute_scripted_effect and break_alliance actions.
+    for gone in ("scripted_effect", "break_alliance"):
+        assert gone not in intents, f"do intent {gone} is back"
+    assert len(tools - board) == 13 and intents == set(redesign.INTENTS), (
         f"surface moved: {len(tools - board)} non-board tools, {len(intents)} "
         f"intents (board tools present: {sorted(tools & board) or 'none'}) — "
         "re-check this file's premise before trusting its rows")

@@ -957,7 +957,7 @@ ResumeVerdict resume_identity_verdict(const WorldIdentity& recorded,
     if (presented.empty()) {
         // The client resumed without vouching for the world now loaded.  It may
         // still declare separately (reconcile_declared_world is where that
-        // answer lands) — but it has not yet, and the world changed, so there is
+        // answer lands) — but it has not, and the world changed, so there is
         // no affirmation to rely on.
         *why = "world_changed_no_declared_identity";
         return ResumeVerdict::DISCARD;
@@ -1423,7 +1423,6 @@ bool action_is_readonly(const char* action_type) {
         "get_ai_evaluations",
         "get_offset_validation",
         "get_active_wars",
-        "list_watchlist",
         "list_interactions",
         "list_decisions",
         "list_valid_decisions",

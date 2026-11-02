@@ -57,7 +57,7 @@ class _Gw:
     async def read(self, action, params):
         self.reads.append(action)
         if action == "query_character":
-            return {"character_id": params.get("character_id"), "name": "Someone"}
+            return {"id": params.get("character_id"), "name": "Someone"}
         return {}
 
     def game(self):
@@ -151,7 +151,7 @@ def test_an_UNWITNESSED_success_still_applies_but_warns_in_so_many_words():
     gw, out = _control({"status": "sent"})
     assert out["verdict"] == "applied"
     assert out["result"]["control_witnessed"] is False
-    assert any("UNWITNESSED" in w for w in (out.get("warnings") or [])), out.get("warnings")
+    assert any("UNWITNESSED" in w["detail"] for w in (out.get("warnings") or [])), out.get("warnings")
 
 
 # ── 3. the enumeration itself ────────────────────────────────────────────────
@@ -185,7 +185,7 @@ class _SeatGw(_Gw):
         if action == "get_bridge_state":
             return {"controlled_primary": 11111, "sessions": self._sessions}
         if action == "query_character":
-            return {"character_id": params.get("character_id"), "name": "Someone"}
+            return {"id": params.get("character_id"), "name": "Someone"}
         return {}
 
 
@@ -201,7 +201,7 @@ def test_the_echo_names_WHAT_THE_SEAT_HOLDS_when_it_differs_from_the_request():
     assert out["result"]["controlled"]["id"] == 99999
     assert out["result"]["requested_character_id"] == 30853
     assert out["result"]["controlled_is_held"] is True
-    assert any("NOT the requested 30853" in w for w in out["warnings"]), out["warnings"]
+    assert any("NOT the requested 30853" in w["detail"] for w in out["warnings"]), out["warnings"]
 
 
 def test_the_reply_is_the_first_authority_and_no_second_read_is_made():
@@ -234,7 +234,7 @@ def test_an_UNDETERMINABLE_holding_is_labelled_as_the_request_not_presented_as_f
     out = asyncio.run(redesign.session_impl(gw, "control", character_id=30853))
     assert out["result"]["controlled_is_held"] is False
     assert out["result"]["controlled"]["id"] == 30853
-    assert any("has not been confirmed against the seat" in w
+    assert any("has not been confirmed against the seat" in w["detail"]
                for w in out["warnings"]), out["warnings"]
 
 
@@ -322,4 +322,4 @@ def test_a_witnessed_release_applies_and_an_unwitnessed_one_warns():
     out2 = asyncio.run(redesign.session_impl(gw2, "release", character_id=30853))
     assert out2["verdict"] == "applied"
     assert out2["result"]["release_witnessed"] is False
-    assert any("may still hold the character" in w for w in out2["warnings"])
+    assert any("may still hold the character" in w["detail"] for w in out2["warnings"])

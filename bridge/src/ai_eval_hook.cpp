@@ -9,11 +9,13 @@
 
 #include "action_dispatch_internal.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
-#include "named_trigger_eval.h"
 #include "runtime_resolver.h"
 #include "cb_outer_filter.h"
 #include "pipeline.h"                 // ck-6kvq.10: the pulse ledger (§2.9)
+#include "scheme_engine.h"             // l3-schemes: execute_scheme_check_intent
+#include "engine_text.h"               // F16: the check's engine sentences, cleaned
 #include <Zydis/Zydis.h>
+#include "tls_prologue_scan.h"         // F12: the TLS guard and context offsets
 #include <chrono>
 #include <thread>
 
@@ -61,9 +63,9 @@ alignas(16) static uint8_t g_cb_option_storage[kCBOptionEntryCap *
 // Global deferred trigger evaluation query slot
 TriggerQuery g_trigger_query = {};
 
-// TLS offsets discovered at runtime (fall back to hardcoded if discovery fails)
-static uintptr_t g_tls_guard_offset   = 0x6e8;   // default from current binary
-static uintptr_t g_tls_context_offset = 0x3a78;   // default from current binary
+// TLS offsets: ck3_offsets.h interaction_ctx, confirmed against the running binary at init
+static uintptr_t g_tls_guard_offset   = ck3::interaction_ctx::TLS_GUARD_FS_OFFSET;
+static uintptr_t g_tls_context_offset = ck3::interaction_ctx::TLS_CONTEXT_FS_OFFSET;
 
 // ck-62eo: WHICH of those two the pipeline is actually running on. Discovery
 // failure was logged once at init and then indistinguishable from success
@@ -78,8 +80,9 @@ static bool g_tls_offsets_discovered = false;
 // This address is DERIVED, not observed: fs_base minus g_tls_guard_offset,
 // where that offset is a HARDCODED FALLBACK whenever discovery fails — and
 // discovery fails as the NORMAL case in production ("TLS offset discovery
-// failed, using hardcoded defaults (guard=0x6e8, context=0x3a78)" appears in
-// both the crashed episode and a separate running probe). So both accesses were
+// failed, using hardcoded defaults" appeared in both the crashed episode and a
+// separate running probe, with a guard default that was wrong: see
+// ck3_offsets.h interaction_ctx::TLS_GUARD_FS_OFFSET). So both accesses were
 // unvalidated touches of an address computed from a constant the running binary
 // may not agree with.
 //
@@ -108,7 +111,7 @@ static TlsGuard read_tls_guard(const uint8_t* guard_byte) {
         ADLOG("TLS_GUARD: byte at %p is UNREADABLE (offset -0x%lx, source=%s) — "
               "REFUSING rather than assuming a guard state\n",
               (const void*)guard_byte, (unsigned long)g_tls_guard_offset,
-              g_tls_offsets_discovered ? "discovered" : "HARDCODED_FALLBACK");
+              g_tls_offsets_discovered ? "discovered" : "ck3_offsets.h");
         return TlsGuard::Unreadable;
     }
 #ifdef _WIN32
@@ -164,136 +167,35 @@ std::mutex g_controlled_mutex;
 // TLS Offset Auto-Discovery
 // =============================================================================
 
-// Scan the AI_INTERACTION_CORE function for FS-segment memory references.
-// The function uses two TLS variables accessed via FS:
-//   1. A guard byte (cmp byte ptr fs:[rip+disp32], 0) -- smaller offset (~0x6e8)
-//   2. An interaction context pointer (mov reg, fs:[rip+disp32]) -- larger offset (~0x3a78)
-// These offsets change with recompilation, so we extract them from the machine code.
+// Both TLS offsets, read from AI_INTERACTION_CORE's own prologue
+// (tls_prologue_scan.h). When the scan fails the compiled-in values
+// (ck3_offsets.h interaction_ctx) stay, and the log says which ran.
 static bool discover_tls_offsets() {
-    // NOTE: The TLS references (guard byte at FS[-0x6e8] and context at FS[-0x3a78])
-    // are in AI_INTERACTION_CORE (FUN_04dc4540), NOT AI_INTERACTION_DECISION (FUN_04dc4b90).
-    // AI_INTERACTION_DECISION is the outer wrapper; CORE is the callee that actually
-    // accesses the thread-local interaction context.
     uintptr_t func_addr = bridge::game_fn(ck3::funcs::AI_INTERACTION_CORE);
     if (!is_mapped(func_addr)) {
         ADLOG("TLS_DISCOVER: AI_INTERACTION_CORE at 0x%lx is not mapped\n", func_addr);
         return false;
     }
-
-    // Decode up to 512 bytes — the TLS references are near the function prologue
-    // but AI_INTERACTION_CORE is 1482 bytes; 512 gives comfortable margin.
-    static constexpr size_t SCAN_SIZE = 512;
-    const uint8_t* code = reinterpret_cast<const uint8_t*>(func_addr);
-
-    ZydisDecoder decoder;
-    ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
-
-    ZydisDecodedInstruction insn;
-    ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-
-    // Collect all FS-relative RIP-displacement values
-    std::vector<uintptr_t> fs_offsets;
-    size_t offset = 0;
-
-    while (offset < SCAN_SIZE) {
-        if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, code + offset,
-                                                  SCAN_SIZE - offset, &insn, operands))) {
-            offset++;
-            continue;
-        }
-
-        // Look for memory operands with FS segment override
-        for (int i = 0; i < insn.operand_count_visible; i++) {
-            if (operands[i].type == ZYDIS_OPERAND_TYPE_MEMORY &&
-                operands[i].mem.segment == ZYDIS_REGISTER_FS) {
-                // The TLS access pattern uses RIP-relative addressing with FS override.
-                // The displacement is a negative value relative to FS base.
-                // In x86-64 ELF TLS, the actual TLS offset comes from the linker
-                // and appears as the RIP+disp32 resolved absolute in the GOT/TLS area.
-                //
-                // However, the Ghidra decompilation shows in_FS_OFFSET[-0x6e8] etc.,
-                // meaning the compiler generates: fs:[0] to get the TLS base, then
-                // subtracts the offset. We need to find the displacement values.
-                //
-                // Pattern 1 (guard check): 64 80 3c 25 XX XX XX XX 00
-                //   = cmp byte ptr fs:[abs32], 0
-                // Pattern 2 (context load): 64 48 8b 04 25 XX XX XX XX
-                //   = mov rax, qword ptr fs:[abs32]
-                //
-                // With Zydis, the absolute address appears as mem.disp.value
-                if (operands[i].mem.disp.value != 0) {
-                    int64_t disp = operands[i].mem.disp.value;
-                    // TLS offsets in x86-64 Linux are negative from FS base,
-                    // so the absolute address = FS_BASE + disp (where disp is negative).
-                    // The compiler emits fs:[negative_value] which wraps around.
-                    // Convert to the positive offset from FS base.
-                    uintptr_t abs_offset;
-                    if (disp < 0) {
-                        abs_offset = static_cast<uintptr_t>(-disp);
-                    } else {
-                        // fs:[positive] means FS_BASE - (2^64 - disp) ...
-                        // Actually for TLS __thread vars, the offset stored is the
-                        // negative offset directly. The linker resolves the GOT entry
-                        // to contain the negative offset from FS base.
-                        // If positive but large, it wraps: treat as unsigned and negate
-                        if (disp > 0x7FFFFFFF) {
-                            abs_offset = static_cast<uintptr_t>(
-                                -static_cast<int64_t>(static_cast<uint64_t>(disp)));
-                        } else {
-                            // Small positive offset -- unlikely for TLS but record it
-                            abs_offset = static_cast<uintptr_t>(disp);
-                        }
-                    }
-
-                    ADLOG("TLS_DISCOVER: FS-segment ref at func+0x%zx: "
-                          "disp=0x%lx (abs_offset=0x%lx) insn_mnemonic=%u\n",
-                          offset, (unsigned long)disp, (unsigned long)abs_offset,
-                          insn.mnemonic);
-                    if (abs_offset > 0 && abs_offset < 0x100000) {
-                        fs_offsets.push_back(abs_offset);
-                    }
-                }
-            }
-        }
-
-        offset += insn.length;
-    }
-
-    if (fs_offsets.size() < 2) {
-        ADLOG("TLS_DISCOVER: Found only %zu FS-segment refs (need at least 2)\n",
-              fs_offsets.size());
+    static constexpr size_t SCAN_SIZE = 256;
+    TlsPrologue p;
+    if (!scan_tls_prologue(reinterpret_cast<const uint8_t*>(func_addr), SCAN_SIZE, &p)) {
+        ADLOG("TLS_DISCOVER: not found in AI_INTERACTION_CORE's first %zu bytes "
+              "(guard=0x%lx context=0x%lx)\n", SCAN_SIZE,
+              (unsigned long)p.guard, (unsigned long)p.context);
         return false;
     }
-
-    // Sort and deduplicate
-    std::sort(fs_offsets.begin(), fs_offsets.end());
-    fs_offsets.erase(std::unique(fs_offsets.begin(), fs_offsets.end()), fs_offsets.end());
-
-    if (fs_offsets.size() < 2) {
-        ADLOG("TLS_DISCOVER: Only %zu unique FS offsets after dedup\n", fs_offsets.size());
-        return false;
+    if (p.guard != ck3::interaction_ctx::TLS_GUARD_FS_OFFSET ||
+        p.context != ck3::interaction_ctx::TLS_CONTEXT_FS_OFFSET) {
+        ADLOG("TLS_DISCOVER: this binary differs from ck3_offsets.h "
+              "(guard 0x%lx vs 0x%lx, context 0x%lx vs 0x%lx); using this binary's\n",
+              (unsigned long)p.guard, (unsigned long)ck3::interaction_ctx::TLS_GUARD_FS_OFFSET,
+              (unsigned long)p.context, (unsigned long)ck3::interaction_ctx::TLS_CONTEXT_FS_OFFSET);
     }
-
-    // The guard offset is the smaller value, the context offset is the larger
-    uintptr_t guard = fs_offsets[0];
-    uintptr_t context = fs_offsets[fs_offsets.size() - 1];
-
-    // Sanity checks: guard should be small (< 0x2000), context should be larger
-    if (guard >= context) {
-        ADLOG("TLS_DISCOVER: Unexpected ordering: guard=0x%lx >= context=0x%lx\n",
-              (unsigned long)guard, (unsigned long)context);
-        return false;
-    }
-    if (guard > 0x4000 || context > 0x20000) {
-        ADLOG("TLS_DISCOVER: Offsets out of expected range: guard=0x%lx context=0x%lx\n",
-              (unsigned long)guard, (unsigned long)context);
-        return false;
-    }
-
-    g_tls_guard_offset = guard;
-    g_tls_context_offset = context;
-    ADLOG("TLS_DISCOVER: SUCCESS -- guard=0x%lx context=0x%lx (from %zu FS refs)\n",
-          (unsigned long)guard, (unsigned long)context, fs_offsets.size());
+    g_tls_guard_offset = p.guard;
+    g_tls_context_offset = p.context;
+    ADLOG("TLS_DISCOVER: SUCCESS -- guard fs:-0x%lx (cmp at func+0x%zx), "
+          "context fs_base-0x%lx (lea at func+0x%zx)\n",
+          (unsigned long)p.guard, p.guard_at, (unsigned long)p.context, p.context_at);
     return true;
 }
 
@@ -336,7 +238,10 @@ static uintptr_t get_fs_base() {
 using fn_ctx_init       = void(*)(uintptr_t* tls_ctx, void* interaction, void* character);
 using fn_ctx_reset      = void(*)(uintptr_t* tls_ctx);
 using fn_ctx_set_target = void(*)(uintptr_t* tls_ctx, uint32_t target_char_id, char do_setup);
-using fn_ctx_validate   = uint64_t(*)(uintptr_t* tls_ctx);
+// A C++ bool (engine_bool.h): its five engine callers test AL only (objdump
+// 0x4cc4883, 0x4cc4992, 0x4321c24 movzbl al, 0x4cc39c4). L14 S3: read as uint64_t
+// on Linux until then; the Windows build already masked AL.
+using fn_ctx_validate   = bridge::EngineBoolFn<uintptr_t*>;
 using fn_try_send       = char(*)(uintptr_t* tls_ctx, long extra);
 using fn_build_send_cmd = void(*)(void** out_cmd, uintptr_t tls_ctx);
 using fn_game_cmd_dispatch = uint64_t(*)(void* dispatch_mgr, void** cmd_ptr, uint32_t priority, int zero);
@@ -659,6 +564,167 @@ static bool destroy_game_command_in_place(void* cmd) {
     return true;
 }
 
+// =============================================================================
+// The interaction window's choices (lane l4, re/findings/re_interactions.md)
+// =============================================================================
+
+// The name of a scope-name registry id (§2): the registry's id -> name vector, the
+// read FUN_081f0c80 makes. Empty for an id the registry does not hold.
+std::string scope_name_for_id(uint32_t id) {
+    const uintptr_t reg = g_base_addr + ck3::globals::SCOPE_NAME_REGISTRY;
+    const uintptr_t names = safe_read<uintptr_t>(reg + ck3::scope_name_registry::NAMES_ARRAY);
+    const int32_t count = safe_read<int32_t>(reg + ck3::scope_name_registry::NAMES_COUNT);
+    const uint32_t idx = id & 0xFFFFFF;
+    if (!names || !is_mapped(names) || count <= 0 || idx >= static_cast<uint32_t>(count)) return {};
+    return ad_read_std_string(names + static_cast<uintptr_t>(idx) * ck3::scope_name_registry::NAME_STRIDE);
+}
+
+// The send-option flag names an interaction declares, in script order (index = the
+// option's slot in the selection array the window toggles).
+std::vector<std::string> interaction_send_option_names(void* interaction) {
+    std::vector<std::string> out;
+    const uintptr_t def = reinterpret_cast<uintptr_t>(interaction);
+    if (!def) return out;
+    const int32_t n = safe_read<int32_t>(def + ck3::interaction_def::OPTION_COUNT);
+    const uintptr_t arr = safe_read<uintptr_t>(def + ck3::interaction_def::OPTION_ARRAY_PTR);
+    if (n <= 0 || n > 64 || !arr || !is_mapped(arr)) return out;
+    for (int32_t i = 0; i < n; ++i) {
+        const uintptr_t opt = arr + static_cast<uintptr_t>(i) * ck3::interaction_def::OPT_STRIDE;
+        out.push_back(scope_name_for_id(safe_read<uint32_t>(opt + ck3::interaction_def::OPT_FLAG_NAME_ID)));
+    }
+    return out;
+}
+
+// A living character's full engine id (generation byte included), or 0.
+static uint32_t living_full_char_id(uint32_t id) {
+    if ((id & 0xFFFFFF) == 0) return 0;
+    void* c = lookup_character(id & 0xFFFFFF);
+    if (!c || !g_char_is_alive || !g_char_is_alive(c)) return 0;
+    const uint32_t full = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(c) + ck3::character::ID);
+    return ((full & 0xFFFFFF) == (id & 0xFFFFFF)) ? full : 0;
+}
+
+// Write the secondary characters, the title target and the requested send options into
+// the TLS context, the way the interaction window does, then read the selection back.
+// Runs inside the pipeline's protected region. Returns false with intent->rejection_reason
+// set when a choice names something that does not exist or the engine does not take.
+bool apply_interaction_window_choices(Intent* intent, void* tls_ctx, void* interaction) {
+    using fn_set_char = void (*)(uintptr_t ctx, uint32_t char_ref, char eval);
+    using fn_set_object = void (*)(uintptr_t ctx, const void* scope_value, char eval);
+    using fn_select = void (*)(uintptr_t ctx, int index);
+    const uintptr_t ctx = reinterpret_cast<uintptr_t>(tls_ctx);
+    const uintptr_t c = reinterpret_cast<uintptr_t>(tls_ctx);
+
+    struct SecondarySlot { uint32_t id; uintptr_t fn; const char* what; };
+    const SecondarySlot slots[2] = {
+        {intent->secondary_actor_id, ck3::funcs::INTERACTION_CTX_SET_SECONDARY_ACTOR, "secondary_actor"},
+        {intent->secondary_recipient_id, ck3::funcs::INTERACTION_CTX_SET_SECONDARY_RECIPIENT, "secondary_recipient"},
+    };
+    for (const auto& s : slots) {
+        if (s.id == 0) continue;
+        const uint32_t full = living_full_char_id(s.id);
+        if (!full) {
+            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
+                     "%s_not_living:%u", s.what, s.id & 0xFFFFFF);
+            return false;
+        }
+        ADLOG("TLS_PIPELINE: %s = %u\n", s.what, full & 0xFFFFFF);
+        reinterpret_cast<fn_set_char>(bridge::game_fn(s.fn))(ctx, full, 1);
+    }
+
+    if (intent->title_id > 0) {
+        const uintptr_t tobj = lookup_title_obj(static_cast<uint32_t>(intent->title_id));
+        if (!tobj || !is_mapped(tobj)) {
+            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
+                     "title_not_found:%d", intent->title_id);
+            return false;
+        }
+        const uint32_t full_tid = safe_read<uint32_t>(tobj + ck3::title_obj::TITLE_ID);
+        alignas(16) uint8_t sv[ck3::scope_value::SIZE] = {};
+        *reinterpret_cast<uint16_t*>(sv + ck3::scope_value::TYPE) = ::scope_value_type::TITLE;   // global namespace in ck3_offsets.h
+        *reinterpret_cast<uint64_t*>(sv + ck3::scope_value::VALUE) = full_tid;
+        ADLOG("TLS_PIPELINE: target title = %u\n", full_tid & 0xFFFFFF);
+        // The interaction's special data holds the picked title too (re_interactions.md
+        // §3b): CRevokeTitle's one title, CGrantTitlesOffer's list. Written before the
+        // target object's eval so the scope setup sees both.
+        const uintptr_t data = safe_read<uintptr_t>(c + ck3::interaction_ctx::SCRIPTED_DATA_PTR);
+        const uintptr_t vt = data && is_mapped(data) ? safe_read<uintptr_t>(data) : 0;
+        if (vt && vt == g_base_addr + ck3::special_data::REVOKE_TITLE_VTABLE) {
+            *reinterpret_cast<uint32_t*>(data + ck3::special_data::REVOKE_TITLE_ID) = full_tid;
+            ADLOG("TLS_PIPELINE: revoke title data = %u\n", full_tid & 0xFFFFFF);
+        } else if (vt && vt == g_base_addr + ck3::special_data::GRANT_TITLES_OFFER_VTABLE) {
+            int32_t cap = safe_read<int32_t>(data + ck3::special_data::OFFER_CAPACITY);
+            uintptr_t arr = safe_read<uintptr_t>(data + ck3::special_data::OFFER_DATA);
+            if (!arr || cap < 1) {
+                const uintptr_t alloc = safe_read<uintptr_t>(data + ck3::special_data::OFFER_ALLOCATOR);
+                const uintptr_t alloc_vt = alloc ? safe_read<uintptr_t>(alloc) : 0;
+                const uintptr_t fn = alloc_vt ? safe_read<uintptr_t>(alloc_vt + ck3::special_data::ALLOCATOR_VT_ALLOC) : 0;
+                if (!fn || !is_mapped(fn)) {
+                    snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
+                             "title_offer_allocator_unreadable");
+                    return false;
+                }
+                arr = reinterpret_cast<uintptr_t (*)(uintptr_t, int, int)>(fn)(alloc, 1, 4);
+                *reinterpret_cast<uintptr_t*>(data + ck3::special_data::OFFER_DATA) = arr;
+                *reinterpret_cast<int32_t*>(data + ck3::special_data::OFFER_CAPACITY) = 1;
+            }
+            *reinterpret_cast<uint32_t*>(arr) = full_tid;
+            *reinterpret_cast<int32_t*>(data + ck3::special_data::OFFER_COUNT) = 1;
+            ADLOG("TLS_PIPELINE: grant offer = [%u]\n", full_tid & 0xFFFFFF);
+        }
+        reinterpret_cast<fn_set_object>(
+            bridge::game_fn(ck3::funcs::INTERACTION_CTX_SET_TARGET_OBJECT))(ctx, sv, 1);
+    }
+
+    if (!intent->send_options.empty()) {
+        const std::vector<std::string> names = interaction_send_option_names(interaction);
+        std::string available;
+        for (const auto& n : names) { if (!available.empty()) available += ","; available += n; }
+        size_t start = 0;
+        const std::string& req = intent->send_options;
+        while (start <= req.size()) {
+            size_t end = req.find(',', start);
+            if (end == std::string::npos) end = req.size();
+            const std::string want = req.substr(start, end - start);
+            start = end + 1;
+            if (want.empty()) continue;
+            int idx = -1;
+            for (size_t i = 0; i < names.size(); ++i) if (names[i] == want) { idx = static_cast<int>(i); break; }
+            if (idx < 0) {
+                snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
+                         "send_option_unknown:%s", want.c_str());
+                intent->console_output = "this interaction's send options: " +
+                                         (available.empty() ? std::string("none") : available);
+                return false;
+            }
+            const int32_t sel_count = safe_read<int32_t>(c + ck3::interaction_ctx::OPTION_SELECTION_COUNT);
+            if (idx >= sel_count) {
+                snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
+                         "send_option_not_offered:%s", want.c_str());
+                return false;
+            }
+            ADLOG("TLS_PIPELINE: select send option %s (index %d)\n", want.c_str(), idx);
+            reinterpret_cast<fn_select>(bridge::game_fn(ck3::funcs::INTERACTION_SELECT_OPTION))(
+                ctx, idx);
+            const uintptr_t sel = safe_read<uintptr_t>(c + ck3::interaction_ctx::OPTION_SELECTION_PTR);
+            if (!sel || !is_mapped(sel) || safe_read<uint8_t>(sel + idx) != 1) {
+                snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
+                         "send_option_not_taken:%s", want.c_str());
+                return false;
+            }
+        }
+        // The selection as the engine holds it now (options that start enabled included).
+        std::string applied;
+        const int32_t sel_count = safe_read<int32_t>(c + ck3::interaction_ctx::OPTION_SELECTION_COUNT);
+        const uintptr_t sel = safe_read<uintptr_t>(c + ck3::interaction_ctx::OPTION_SELECTION_PTR);
+        for (int32_t i = 0; sel && i < sel_count && i < static_cast<int32_t>(names.size()); ++i) {
+            if (safe_read<uint8_t>(sel + i) == 1) { if (!applied.empty()) applied += ","; applied += names[i]; }
+        }
+        intent->send_options_applied = applied;
+    }
+    return true;
+}
+
 // DEAD_FOR_WAR_PER_CKE58L17.1 — declare_war_interaction is NOT a viable caller of
 // this function. Production dispatch now routes WAR_DECLARE intents through
 // execute_war_intent (action_handlers.cpp:680, ai_eval_hook.cpp:3803). The
@@ -668,7 +734,24 @@ static bool destroy_game_command_in_place(void* cmd) {
 // Keep this function for non-war targeted interactions: marriage, gift,
 // sway, vassalization, imprison, etc. See is_direct_dispatch_interaction()
 // for the current whitelist.
-static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void* interaction) {
+// F16 (l10 witness 4): what query_interaction_check reads from the send pipeline itself,
+// past the game's validity (CTX_VALIDATE): the recipient's pre-answer
+// (interaction_acceptance_decision in mode 1, the mode InteractionTrySend_V2 asks for
+// the recipient: 0 yes, 1 maybe, 2 no) with the game's own pre-answer sentence, and
+// the recipient's ai_accept score (FUN_06b43c70, ck3_offsets.h
+// GET_AI_ACCEPT_NEGOT_SCORE: itype+0x1B90 in the recipient's scope, ctx+0x2DC;
+// fixed point /100000, for a "maybe" interaction the chance in percent, 0x98967f
+// being the decision's ceiling). Mode 0 reads the SECONDARY recipient (ctx+0x2E8):
+// with none it is 100.0 for every target (run l10fx5-live-1). re_imprisonment.md.
+struct InteractionCheck {
+    bool scored = false;
+    int answer = -1;
+    int64_t accept_score = 0;
+    std::string answer_text;
+};
+
+static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void* interaction,
+                                          InteractionCheck* check = nullptr) {
     uint32_t actor_id = read<uint32_t>(reinterpret_cast<uintptr_t>(character) + ck3::character::ID);
     uint32_t target_id = intent->target_id;
 
@@ -798,7 +881,7 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
     }
 
     // Dispatch manager — DAT_0c69dd68 is an INLINE STRUCT in .bss, NOT a pointer.
-    // Pass the ADDRESS of the struct directly (same as v7 path).
+    // Pass the ADDRESS of the struct directly.
     uintptr_t dispatch_mgr_ptr = g_base_addr + g_dispatch_mgr_offset;
     if (!is_mapped(dispatch_mgr_ptr)) {
         ADLOG("TLS_PIPELINE: dispatch_mgr not available (0x%lx)\n", dispatch_mgr_ptr);
@@ -841,6 +924,39 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
         // Step 4: SET_TARGET(tls_ctx, target_char_id, 1)
         ADLOG("TLS_PIPELINE: SET_TARGET(target=%u)\n", target_id & 0xFFFFFF);
         ctx_set_target(reinterpret_cast<uintptr_t*>(tls_ctx), target_id, 1);
+
+        // Step 4.1: the war the interaction is about, as its target scope
+        // (call_ally_interaction, join_war_interaction: `scope:target` is the war).
+        // ctx+0x2F0 is the target scope object {u16 type; u64 value @+8}; the war
+        // type is 0x10 (re/findings/re_war.md §2). SET_TARGET just cleared it, so
+        // write it, then re-run SET_TARGET's own tail (scope setup + evaluate) so
+        // the saved scopes carry `target` before CTX_VALIDATE reads them.
+        if (intent->has_target_war) {
+            uint8_t* ctx_bytes = reinterpret_cast<uint8_t*>(tls_ctx);
+            *reinterpret_cast<uint16_t*>(ctx_bytes + ck3::interaction_ctx::TARGET_SCOPE_TYPE) =
+                ck3::interaction_ctx::SCOPE_TYPE_WAR;
+            *reinterpret_cast<uint64_t*>(ctx_bytes + ck3::interaction_ctx::TARGET_SCOPE_VALUE) =
+                static_cast<uint64_t>(intent->target_war_id);
+            auto scope_setup = reinterpret_cast<void (*)(uintptr_t*, char)>(
+                bridge::game_fn(ck3::funcs::INTERACTION_CTX_SCOPE_SETUP));
+            auto evaluate = reinterpret_cast<void (*)(uintptr_t*)>(
+                bridge::game_fn(ck3::funcs::INTERACTION_POPULATE_OPTIONS));
+            ADLOG("TLS_PIPELINE: target scope = war %u; SCOPE_SETUP + EVALUATE\n",
+                  intent->target_war_id);
+            scope_setup(reinterpret_cast<uintptr_t*>(tls_ctx), 1);
+            evaluate(reinterpret_cast<uintptr_t*>(tls_ctx));
+        }
+
+        // Step 4.2 (lane l4): what the player sets in the interaction window besides the
+        // recipient: the secondary characters, the title target and the send options.
+        // SET_TARGET clears the title target, so this runs after it; it runs after the
+        // war scope's re-evaluate too, so the option selection it reads back is final.
+        if (!apply_interaction_window_choices(intent, tls_ctx, interaction)) {
+            ADLOG("TLS_PIPELINE: window choices refused: %s\n", intent->rejection_reason);
+            g_in_protected_region = false;
+            watchdog_disarm();
+            return false;
+        }
 
         // --- Step 4.5 stripped: war CB injection removed (DEAD_FOR_WAR_PER_CKE58L17.1) ---
         // Previously: CASUS_BELLI_DB scan, AttachCBState/AttachCBTitle calls, and
@@ -1114,27 +1230,82 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
 
         // Step 5: IsInteractionValid(tls_ctx)
         ADLOG("TLS_PIPELINE: CTX_VALIDATE\n");
-        uint64_t valid_result = ctx_validate(reinterpret_cast<uintptr_t*>(tls_ctx));
-#ifdef _WIN32
-        valid_result &= 0xFF;   // MSVC returns the verdict in al (ck3_offsets_win.h)
-#endif
-        if (valid_result == 0) {
-            ADLOG("TLS_PIPELINE: CTX_VALIDATE returned 0 — interaction not valid for this target\n");
+        const bool valid_result = ctx_validate(reinterpret_cast<uintptr_t*>(tls_ctx));
+        if (!valid_result) {
+            // The engine's own words for the refusal: the same check run through the
+            // interaction menu's tooltip path (re_interactions.md §7), so the player reads
+            // which condition failed (a law, prestige, an election, a truce ...).
+            std::string engine_why;
+            const uintptr_t with_text = bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE_WITH_TEXT);
+            if (is_mapped(with_text)) {
+                reinterpret_cast<uint64_t (*)(uintptr_t*, std::string*)>(with_text)(
+                    reinterpret_cast<uintptr_t*>(tls_ctx), &engine_why);
+            }
+            ADLOG("TLS_PIPELINE: CTX_VALIDATE returned 0 — interaction not valid for this target: %s\n",
+                  engine_why.c_str());
             snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                      "interaction_not_valid_for_target");
+            intent->console_output = engine_why.substr(0, 1024);
             g_in_protected_region = false;
             watchdog_disarm();
             return false;
         }
-        ADLOG("TLS_PIPELINE: CTX_VALIDATE returned 0x%lx (valid)\n", (unsigned long)valid_result);
+        ADLOG("TLS_PIPELINE: CTX_VALIDATE returned true (valid)\n");
+
+        // Step 5.5 (query_interaction_check only): the recipient's pre-answer and the
+        // ai_accept score, the two numbers a player reads in the interaction window
+        // ("might succeed", the chance). The engine computes both again inside
+        // InteractionTrySend_V2 and BUILD_SEND_CMD; neither sends anything.
+        if (check) {
+            using fn_decision = uint64_t (*)(uintptr_t*, int, std::string*);
+            using fn_score = int64_t (*)(uintptr_t*);
+            const uintptr_t decision_fn = bridge::game_fn(ck3::funcs::ACCEPTANCE_DECISION);
+            const uintptr_t score_fn = bridge::game_fn(ck3::funcs::GET_AI_ACCEPT_NEGOT_SCORE);
+            if (is_mapped(decision_fn) && is_mapped(score_fn)) {
+                std::string text;
+                check->answer = static_cast<int>(reinterpret_cast<fn_decision>(decision_fn)(
+                    reinterpret_cast<uintptr_t*>(tls_ctx), 1, &text) & 0xFF);
+                check->accept_score = reinterpret_cast<fn_score>(score_fn)(
+                    reinterpret_cast<uintptr_t*>(tls_ctx));
+                check->answer_text = clean_engine_text(text);
+                check->scored = true;
+                ADLOG("TLS_PIPELINE: CHECK answer=%d accept_score=%lld\n", check->answer,
+                      (long long)check->accept_score);
+            }
+        }
 
         // Step 6: CheckAcceptance(tls_ctx, 0) → bool
         ADLOG("TLS_PIPELINE: CHECK_ACCEPTANCE\n");
         char acceptance = check_acceptance(reinterpret_cast<uintptr_t*>(tls_ctx), 0);
         if (!acceptance) {
-            ADLOG("TLS_PIPELINE: CHECK_ACCEPTANCE returned 0 — target would reject\n");
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "target_would_reject");
+            // Lane l4: InteractionTrySend is three engine checks in a row (decompile of
+            // 0x6b43eb0): the send cascade (is_valid_showing_failures_only, can_send ...),
+            // the recipient's answer (InteractionTrySend_V2: 2 = declines), the cost.
+            // Name the one that said no; "the target would reject" was reported for
+            // all three, which sent a player after the recipient's opinion when the
+            // actor lacked dynasty renown.
+            using fn_cascade = char (*)(uintptr_t*, char, char, intptr_t);
+            using fn_answer = char (*)(uintptr_t*, intptr_t, intptr_t, intptr_t, intptr_t);
+            const uintptr_t cascade_fn = bridge::game_fn(ck3::funcs::INTERACTION_TRY_SEND_CASCADE);
+            const uintptr_t answer_fn = bridge::game_fn(ck3::funcs::INTERACTION_TRY_SEND_V2);
+            // Where the two checks cannot be called (a build that does not map them), the
+            // refusal keeps the undivided name.
+            const char* why = "target_would_reject";
+            std::string cascade_text;   // the cascade's failure text (its 4th argument, a std::string*)
+            if (is_mapped(cascade_fn) && is_mapped(answer_fn)) {
+                why = "send_cost_unaffordable";
+                if (!reinterpret_cast<fn_cascade>(cascade_fn)(
+                        reinterpret_cast<uintptr_t*>(tls_ctx), 1, 1,
+                        reinterpret_cast<intptr_t>(&cascade_text))) {
+                    why = "send_conditions_not_met";
+                    intent->console_output = cascade_text.substr(0, 1024);
+                } else if (reinterpret_cast<fn_answer>(answer_fn)(
+                               reinterpret_cast<uintptr_t*>(tls_ctx), 0, 0, 0, 0) == 2) {
+                    why = "target_would_reject";
+                }
+            }
+            ADLOG("TLS_PIPELINE: CHECK_ACCEPTANCE returned 0 — %s\n", why);
+            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "%s", why);
             g_in_protected_region = false;
             watchdog_disarm();
             return false;
@@ -1154,6 +1325,8 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
     watchdog_disarm();
 
     if (!pipeline_ok) return false;
+    // query_interaction_check: the send's own checks all passed; nothing is built or sent.
+    if (check) return true;
 
     // --- Steps 7-9: BUILD_SEND_CMD → Clone → DISPATCH ---
     // Build the wrapper command object on the stack
@@ -1279,43 +1452,24 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
 }
 
 // =============================================================================
-// Direct Command Construction (v7) — bypasses TLS pipeline AND AI_INTERACTION_DECISION
+// Direct-dispatch list — which interactions take the TLS pipeline (v6)
 // =============================================================================
-//
-// Complete pipeline for hostile/targeted interactions:
-//   1. BUILD_SEND_INTERACTION_CMD(cmd_buf, interaction, actor_id, target_id, 0, 1)
-//   2. BUILD_SEND_CMD_FROM_BUF(wrapper, cmd_buf)  — deep copy, sets vtables
-//   3. wrapper.vtable[9](&clone, &wrapper)          — heap-allocated clone
-//   4. GAME_COMMAND_DISPATCH(dispatch_mgr, &clone, 7, 0)
-//   5. Cleanup: destroy cmd_buf via INTERACTION_TLS_DESTRUCTOR, destroy wrapper via vtable[0]
-//
-// This path does NOT touch the TLS interaction context at all. It constructs the
-// command buffer directly from the interaction definition + actor/target IDs, then
-// feeds it through the same ctor → clone → dispatch pipeline the engine uses.
 
-// Function pointer types for direct command construction
-using fn_build_send_interaction_cmd = void(*)(void* cmd_buf, void* interaction,
-                                               uint32_t actor_id, uint32_t target_id,
-                                               int zero, int one);
-using fn_build_send_cmd_from_buf = void(*)(void* wrapper, void* cmd_buf);
-using fn_interaction_data_dtor = void(*)(void* cmd_buf);
-
-// List of interactions that should use direct command construction (v7).
-// These are hostile or scheme-like interactions where AI_INTERACTION_DECISION's
+// List of interactions dispatched through the TLS pipeline with an explicit
+// target. These are hostile or scheme-like interactions where AI_INTERACTION_DECISION's
 // target iteration / scoring is unnecessary or counterproductive (e.g., murder
 // targets are not in the AI's normal ai_targets pool).
 static bool is_direct_dispatch_interaction(const char* name) {
     // TLS pipeline (v6) dispatch list: interactions that work via CTX_INIT -> SET_TARGET ->
     // VALIDATE -> TRY_SEND -> BUILD_CMD -> DISPATCH with just actor+target.
-    // revoke_title_interaction additionally requires a title-scope target written at
-    // cmd+0x2F0 (16-byte PDX object ref); see Step 1.5a2 below. The intent struct
-    // carries title_id (intent_queue.h) which is resolved against LANDED_TITLE_DB
-    // and packed into the scope value before ValidateScopes is called.
+    // revoke_title_interaction, grant_titles_interaction and buy_claim_interaction
+    // additionally take a title as the interaction's target object (ctx+0x2F0, a 16-byte
+    // scope value); apply_interaction_window_choices writes it from the intent's title_id.
     //
     // DEAD_FOR_WAR_PER_CKE58L17.1: declare_war_interaction removed from this list.
     // declare_war now dispatches via execute_war_intent (action_handlers.cpp:680).
     // Keeping it in the list would route declare_war through the structurally
-    // dead TLS/v7 path for INTERACTION-type intents — which is the opposite of
+    // dead TLS path for INTERACTION-type intents — which is the opposite of
     // what ck-0ftj fixed.
     //
     // Name corrections (verified against live game list_interactions, 2026-04-01):
@@ -1344,7 +1498,7 @@ static bool is_direct_dispatch_interaction(const char* name) {
         "demand_conversion_interaction",
         "arrange_marriage_interaction",
         // Vassal management
-        "revoke_title_interaction",       // Phase 28: needs title scope at cmd+0x2F0 (set in Step 1.5a2)
+        "revoke_title_interaction",       // title target at ctx+0x2F0 (see above)
         "imprison_interaction",
         "execute_prisoner_interaction",
         "ransom_interaction",
@@ -1356,10 +1510,15 @@ static bool is_direct_dispatch_interaction(const char* name) {
         // through to the dead v5 AI_INTERACTION_DECISION path (which walks the actor's
         // own candidate pool and ignores the explicit target_id, so it mis-targeted /
         // no-op'd). It carries no scripted_effect scope frame and needs no secondary
-        // title scope, so the v7 BUILD_SEND_INTERACTION_CMD(actor,target) path is
-        // sufficient — same as imprison/execute above. No scope_ctx (#73) dependency.
+        // title scope, so the plain actor+target TLS dispatch is sufficient — same
+        // as imprison/execute above. No scope_ctx (#73) dependency.
         // Engine key verified: common/character_interactions/00_dynast_interactions.txt.
         "disinherit_interaction",
+        // Lane l4: the succession levers. grant_titles carries the title as the
+        // interaction's target object (ctx+0x2F0, written by apply_interaction_window_choices);
+        // designate_heir is actor + child.
+        "grant_titles_interaction",
+        "designate_heir_interaction",
         // Peaceful interactions (must use TLS — v5 AI_INTERACTION_DECISION returns false
         // when actor is the player character, since AI decision functions skip player chars)
         "gift_interaction",
@@ -1369,11 +1528,22 @@ static bool is_direct_dispatch_interaction(const char* name) {
         // the actor's OWN candidate pool and ignores the caller's explicit target_id —
         // so they always returned ai_no_valid_target even when discover(acceptance)
         // succeeded on the same target. Route them through the TLS pipeline so the
-        // explicit target is honored. buy_claim is a secondary-scope interaction:
-        // it needs the claim's title written at cmd+0x2F0 (pass title_id like
-        // revoke_title); without that title scope the TLS path will still reject.
+        // explicit target is honored. buy_claim takes the claim's title as its target
+        // object (ctx+0x2F0, see above).
         "elope_interaction",
         "buy_claim_interaction",
+        // Peace (lane l5, F8): the three end-war interactions, from either war
+        // leader's seat. The engine derives scope:war from ARE_AT_WAR(actor,
+        // recipient) (CEndWar*InteractionData, re/findings/re_war.md §1), so the
+        // explicit enemy war leader is all they need. Through v5 they were gated
+        // by the AI's own ai_potential/ai_will_do (an AI only offers terms at war
+        // score >= 100, for instance), which no player is held to.
+        "end_war_attacker_victory_interaction",
+        "end_war_attacker_defeat_interaction",
+        "end_war_attacker_white_peace_interaction",
+        // Offer to join an ally's war (the ally's seat); the war rides as the
+        // target scope like call_ally_interaction's.
+        "join_war_interaction",
         nullptr
     };
     for (const char** p = direct_list; *p; ++p) {
@@ -1382,900 +1552,6 @@ static bool is_direct_dispatch_interaction(const char* name) {
     return false;
 }
 
-// DEAD_FOR_WAR_PER_CKE58L17.1 — declare_war_interaction is NOT a viable caller of
-// this v7 direct-command pipeline. Production declare_war routes through
-// execute_war_intent (action_handlers.cpp:680 / ai_eval_hook.cpp:3803). The
-// previously-present war Step 1.5b CB setup (CASUS_BELLI_DB scan, AttachCBState,
-// AttachCBTitle, game-date stamp) has been stripped per ck-e58l.33.
-//
-// Keep for non-war direct-dispatch interactions (marriage spouse setup, revoke
-// title scope, etc.) — see is_direct_dispatch_interaction().
-static bool execute_direct_command_dispatch(Intent* intent, void* character, void* interaction) {
-    // Use volatile to prevent longjmp clobber warnings
-    volatile uint32_t actor_id = read<uint32_t>(reinterpret_cast<uintptr_t>(character) + ck3::character::ID);
-    volatile uint32_t target_id = intent->target_id;
-
-    ADLOG("DIRECT_CMD_V7: === BEGIN === interaction=%s actor=%u target=%u\n",
-          intent->interaction_name.c_str(), actor_id & 0xFFFFFF, target_id & 0xFFFFFF);
-
-    if (target_id == 0) {
-        ADLOG("DIRECT_CMD_V7: target_id=0 — direct command construction requires explicit target\n");
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "direct_cmd_requires_target");
-        return false;
-    }
-
-    // --- Resolve function pointers ---
-    auto build_interaction_cmd = reinterpret_cast<fn_build_send_interaction_cmd>(
-        bridge::game_fn(ck3::funcs::BUILD_SEND_INTERACTION_CMD));
-    auto build_send_cmd = reinterpret_cast<fn_build_send_cmd_from_buf>(
-        bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF));
-    auto interaction_dtor = reinterpret_cast<fn_interaction_data_dtor>(
-        bridge::game_fn(ck3::funcs::INTERACTION_TLS_DESTRUCTOR));
-    auto game_dispatch = reinterpret_cast<fn_game_cmd_dispatch>(
-        bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH));
-
-    // Validate all function pointers are mapped
-    if (!is_mapped(reinterpret_cast<uintptr_t>(build_interaction_cmd))) {
-        ADLOG("DIRECT_CMD_V7: BUILD_SEND_INTERACTION_CMD at 0x%lx not mapped\n",
-              bridge::game_fn(ck3::funcs::BUILD_SEND_INTERACTION_CMD));
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "build_interaction_cmd_not_mapped");
-        return false;
-    }
-    if (!is_mapped(reinterpret_cast<uintptr_t>(build_send_cmd))) {
-        ADLOG("DIRECT_CMD_V7: BUILD_SEND_CMD_FROM_BUF at 0x%lx not mapped\n",
-              bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF));
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "build_send_cmd_not_mapped");
-        return false;
-    }
-    if (!is_mapped(reinterpret_cast<uintptr_t>(interaction_dtor))) {
-        ADLOG("DIRECT_CMD_V7: INTERACTION_TLS_DESTRUCTOR at 0x%lx not mapped\n",
-              bridge::game_fn(ck3::funcs::INTERACTION_TLS_DESTRUCTOR));
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "interaction_dtor_not_mapped");
-        return false;
-    }
-    if (!is_mapped(reinterpret_cast<uintptr_t>(game_dispatch))) {
-        ADLOG("DIRECT_CMD_V7: GAME_COMMAND_DISPATCH at 0x%lx not mapped\n",
-              bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH));
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "game_dispatch_not_mapped");
-        return false;
-    }
-
-    // Dispatch manager — DAT_0c69dd68 is an INLINE STRUCT in .bss, NOT a pointer.
-    // Pass the ADDRESS of the struct directly. Do NOT dereference it.
-    // The engine calls: FUN_07660390(&DAT_0c69dd68, &clone, 7, 0)
-    // Inside, it accesses param_1+0x25a (gate), param_1+0x3E8 (queue), etc.
-    uintptr_t dispatch_mgr_addr = g_base_addr + g_dispatch_mgr_offset;
-    if (!is_mapped(dispatch_mgr_addr)) {
-        ADLOG("DIRECT_CMD_V7: dispatch_mgr addr 0x%lx not mapped\n", dispatch_mgr_addr);
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "dispatch_mgr_not_mapped");
-        return false;
-    }
-    // Sanity: check that the struct has reasonable values at known offsets
-    uint8_t gate_byte = safe_read<uint8_t>(dispatch_mgr_addr + ck3::dispatch_mgr::GATE_BYTE);
-    uintptr_t queue_ptr = safe_read<uintptr_t>(dispatch_mgr_addr + ck3::dispatch_mgr::QUEUE_PTR);
-    ADLOG("DIRECT_CMD_V7: dispatch_mgr at 0x%lx (gate=0x%x, queue=0x%lx)\n",
-          dispatch_mgr_addr, gate_byte, queue_ptr);
-
-    // Check dispatch gate before doing expensive work
-    uint8_t dispatch_gate = safe_read<uint8_t>(g_base_addr + ck3::globals::COMMAND_DISPATCH_GATE);
-    if ((dispatch_gate & 0xfd) != 0) {
-        ADLOG("DIRECT_CMD_V7: dispatch gate blocked (gate=0x%02x) — skipping\n", dispatch_gate);
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "dispatch_gate_blocked");
-        return false;
-    }
-
-    // --- Step 1: BUILD_SEND_INTERACTION_CMD ---
-    // Allocate cmd_buf on the stack (0x380 bytes, 16-byte aligned)
-    alignas(16) uint8_t cmd_buf[ck3::interaction_cmd::CMD_BUF_SIZE] = {};
-
-    ADLOG("DIRECT_CMD_V7: Step 1 — BUILD_SEND_INTERACTION_CMD(buf=%p, interaction=%p, "
-          "actor=%u, target=%u, 0, 1)\n",
-          cmd_buf, interaction, actor_id, target_id);
-
-    watchdog_arm(5);
-    g_in_protected_region = true;
-    int sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        g_in_protected_region = false;
-        watchdog_disarm();
-        const char* sig_name = (sig == 1) ? "SIGSEGV" : (sig == 2) ? "SIGALRM" : "UNKNOWN";
-        ADLOG("DIRECT_CMD_V7: Step 1 BUILD_SEND_INTERACTION_CMD crashed (%s)\n", sig_name);
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "build_interaction_cmd_%s", sig_name);
-        return false;
-    }
-
-    try {
-        build_interaction_cmd(cmd_buf, interaction, actor_id, target_id, 0, 1);
-    } catch (...) {
-        g_in_protected_region = false;
-        watchdog_disarm();
-        ADLOG("DIRECT_CMD_V7: Step 1 BUILD_SEND_INTERACTION_CMD threw exception\n");
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "build_interaction_cmd_exception");
-        return false;
-    }
-    g_in_protected_region = false;
-    watchdog_disarm();
-
-    ADLOG("DIRECT_CMD_V7: Step 1 complete — cmd_buf populated\n");
-
-    // --- Step 1.5a: Marriage spouse setup (arrange_marriage_interaction only) ---
-    //
-    // Marriage dispatch requires 2 extra char refs beyond actor/target rulers:
-    //   +0x2DC: spouse from recipient's court (secondary_recipient_id)
-    //   +0x2E4: spouse from actor's court (secondary_actor_id)
-    // After AutoSetup (type 0x14), +0x2DC and +0x2E4 are 0xFFFFFFFF.
-    // We write the spouse refs, then call ValidateScopes to rebuild scope paths.
-    //
-    if (strcmp(intent->interaction_name.c_str(), "arrange_marriage_interaction") == 0) {
-        ADLOG("DIRECT_CMD_V7: MARRIAGE === begin spouse setup ===\n");
-
-        if (intent->secondary_recipient_id != 0) {
-            *reinterpret_cast<uint32_t*>(cmd_buf + ck3::interaction_ctx::TARGET_CHAR_REF) =
-                intent->secondary_recipient_id;
-            ADLOG("DIRECT_CMD_V7: MARRIAGE — set +0x2DC (recipient spouse) = %u\n",
-                  intent->secondary_recipient_id & 0xFFFFFF);
-        } else {
-            ADLOG("DIRECT_CMD_V7: MARRIAGE — WARNING: secondary_recipient_id=0, +0x2DC left as-is\n");
-        }
-
-        if (intent->secondary_actor_id != 0) {
-            *reinterpret_cast<uint32_t*>(cmd_buf + ck3::interaction_ctx::SECONDARY_RECIPIENT_REF) =
-                intent->secondary_actor_id;
-            ADLOG("DIRECT_CMD_V7: MARRIAGE — set +0x2E4 (actor spouse) = %u\n",
-                  intent->secondary_actor_id & 0xFFFFFF);
-        } else {
-            ADLOG("DIRECT_CMD_V7: MARRIAGE — WARNING: secondary_actor_id=0, +0x2E4 left as-is\n");
-        }
-
-        // Re-validate scopes after manual ctx edits (SIGSEGV-protected)
-        uintptr_t validate_scopes_addr = bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES);
-        if (is_mapped(validate_scopes_addr)) {
-            auto validate_scopes = reinterpret_cast<void(*)(void*, int)>(validate_scopes_addr);
-            ADLOG("DIRECT_CMD_V7: MARRIAGE — calling ValidateScopes at 0x%lx\n", validate_scopes_addr);
-
-            watchdog_arm(5);
-            g_in_protected_region = true;
-            int marriage_sig = sigsetjmp(g_recovery_point, 1);
-            if (marriage_sig != 0) {
-                g_in_protected_region = false;
-                watchdog_disarm();
-                ADLOG("DIRECT_CMD_V7: MARRIAGE — ValidateScopes crashed (sig=%d)\n", marriage_sig);
-                // Non-fatal: continue with dispatch, scopes may still be valid enough
-            } else {
-                try {
-                    validate_scopes(cmd_buf, 0);
-                    ADLOG("DIRECT_CMD_V7: MARRIAGE — ValidateScopes completed\n");
-                } catch (...) {
-                    ADLOG("DIRECT_CMD_V7: MARRIAGE — ValidateScopes threw exception\n");
-                }
-                g_in_protected_region = false;
-                watchdog_disarm();
-            }
-        } else {
-            ADLOG("DIRECT_CMD_V7: MARRIAGE — ValidateScopes not mapped at 0x%lx\n", validate_scopes_addr);
-        }
-
-        ADLOG("DIRECT_CMD_V7: MARRIAGE === spouse setup complete ===\n");
-    }
-
-    // --- Step 1.5a1b: assign-guardian setup (educate_child_interaction) ---  §3
-    //
-    // educate_child_interaction is the ONLY other 2-secondary interaction:
-    //   secondary_actor     = GUARDIAN  (intent->secondary_actor_id)
-    //   secondary_recipient = WARD      (intent->secondary_recipient_id)
-    //   on_accept sets set_relation_guardian = scope:guardian on the ward.
-    // Slot mapping mirrors arrange_marriage VERBATIM (the only proven 2-secondary
-    // template): ward (secondary_recipient_id) -> 0x2DC, guardian (secondary_actor_id)
-    // -> 0x2E4. This is the highest-probability mapping, but the scope-declaration
-    // ORDER for educate_child may differ from marriage, so which secondary lands in
-    // which of {0x2DC,0x2E0,0x2E4} is the ONE genuinely-unknown variable (re_heir_
-    // guardian_RE.md §3). ★ EXPERIMENTAL — confirm by readback (query_heir_education
-    // guardian_id) on first live run; if guardian not set, fall back to 0x2E0 for the
-    // guardian. A wrong slot fails INEFFECTIVE (no guardian set), not crashing — the
-    // writes are into our own cmd_buf and ValidateScopes is SIGSEGV-trapped, identical
-    // to the marriage wrapper. Strictly improves the current silent no-op (IDs dropped).
-    if (strcmp(intent->interaction_name.c_str(), "educate_child_interaction") == 0) {
-        ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD === begin guardian setup (EXPERIMENTAL slot map) ===\n");
-
-        if (intent->secondary_recipient_id != 0) {
-            *reinterpret_cast<uint32_t*>(cmd_buf + ck3::interaction_ctx::TARGET_CHAR_REF) =
-                intent->secondary_recipient_id;  // ward -> 0x2DC (marriage mapping)
-            ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — set +0x2DC (ward) = %u\n",
-                  intent->secondary_recipient_id & 0xFFFFFF);
-        } else {
-            ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — WARNING: secondary_recipient_id(ward)=0, +0x2DC left as-is\n");
-        }
-
-        if (intent->secondary_actor_id != 0) {
-            *reinterpret_cast<uint32_t*>(cmd_buf + ck3::interaction_ctx::SECONDARY_RECIPIENT_REF) =
-                intent->secondary_actor_id;  // guardian -> 0x2E4 (marriage mapping)
-            ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — set +0x2E4 (guardian) = %u\n",
-                  intent->secondary_actor_id & 0xFFFFFF);
-        } else {
-            ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — WARNING: secondary_actor_id(guardian)=0, +0x2E4 left as-is\n");
-        }
-
-        // Re-validate scopes after manual ctx edits (SIGSEGV-protected) — clone of marriage.
-        uintptr_t validate_scopes_addr = bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES);
-        if (is_mapped(validate_scopes_addr)) {
-            auto validate_scopes = reinterpret_cast<void(*)(void*, int)>(validate_scopes_addr);
-            ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — calling ValidateScopes at 0x%lx\n", validate_scopes_addr);
-
-            watchdog_arm(5);
-            g_in_protected_region = true;
-            int educate_sig = sigsetjmp(g_recovery_point, 1);
-            if (educate_sig != 0) {
-                g_in_protected_region = false;
-                watchdog_disarm();
-                ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — ValidateScopes crashed (sig=%d)\n", educate_sig);
-                // Non-fatal: continue with dispatch.
-            } else {
-                try {
-                    validate_scopes(cmd_buf, 0);
-                    ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — ValidateScopes completed\n");
-                } catch (...) {
-                    ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — ValidateScopes threw exception\n");
-                }
-                g_in_protected_region = false;
-                watchdog_disarm();
-            }
-        } else {
-            ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD — ValidateScopes not mapped at 0x%lx\n", validate_scopes_addr);
-        }
-
-        ADLOG("DIRECT_CMD_V7: EDUCATE_CHILD === guardian setup complete ===\n");
-    }
-
-    // --- Step 1.5a2: secondary title scope target (revoke_title + buy_claim) ---
-    //
-    // Phase 28 RE: revoke_title needs a title target at cmd+0x2F0 as a 16-byte scope value:
-    //   +0x2F0: uint16 type=4 (PDX object ref), +0x2F2: 6 bytes padding, +0x2F8: uint64 title_packed_ref
-    // The title_packed_ref is the full 32-bit packed ref from title_obj+0x10 (includes generation byte).
-    // After writing, call ValidateScopes to propagate into scope paths.
-    //
-    // A2/A3: buy_claim_interaction is also a secondary-scope interaction — it needs
-    // the claim's title in the same slot. The scope offset (0x2F0) for buy_claim is
-    // MEDIUM confidence (inferred from revoke_title); the write is wrapped in the
-    // same sigsetjmp/watchdog guard below, so a wrong offset fails safe (no crash,
-    // just an ineffective scope) rather than taking down the game.
-    const bool needs_title_scope =
-        (strcmp(intent->interaction_name.c_str(), "revoke_title_interaction") == 0 ||
-         strcmp(intent->interaction_name.c_str(), "buy_claim_interaction") == 0);
-    if (needs_title_scope && intent->title_id > 0) {
-        ADLOG("DIRECT_CMD_V7: REVOKE_TITLE === begin title scope setup ===\n");
-
-        // Resolve title object from the title DB
-        uint32_t title_id = static_cast<uint32_t>(intent->title_id) & 0xFFFFFF;
-        uintptr_t title_obj = 0;
-        {
-            uintptr_t tdb = safe_read<uintptr_t>(g_base_addr + ck3::globals::LANDED_TITLE_DB);
-            if (tdb) {
-                uintptr_t arr = safe_read<uintptr_t>(tdb + ck3::hash_map::TABLE_PTR);
-                uint32_t cnt = safe_read<uint32_t>(tdb + ck3::hash_map::CAPACITY);
-                if (arr && title_id < cnt) {
-                    title_obj = safe_read<uintptr_t>(arr + ck3::hash_map::ENTRY_HEADER_SIZE
-                                                     + static_cast<uintptr_t>(title_id) * ck3::hash_map::ENTRY_STRIDE);
-                }
-            }
-        }
-
-        if (title_obj && is_mapped(title_obj)) {
-            // Read the full 32-bit packed ref from title_obj+0x10
-            uint32_t title_packed_ref = safe_read<uint32_t>(title_obj + 0x10);
-            ADLOG("DIRECT_CMD_V7: REVOKE_TITLE — title_id=%u, packed_ref=0x%08x\n", title_id, title_packed_ref);
-
-            // Write scope value at cmd+0x2F0: type=4, pad=0, id=packed_ref
-            *reinterpret_cast<uint16_t*>(cmd_buf + 0x2F0) = 4;  // scope type = PDX object ref
-            memset(cmd_buf + 0x2F2, 0, 6);                       // padding
-            *reinterpret_cast<uint64_t*>(cmd_buf + 0x2F8) = static_cast<uint64_t>(title_packed_ref);
-
-            // Re-validate scopes (reuse the same ValidateScopes pattern as marriage)
-            uintptr_t validate_scopes_addr = bridge::game_fn(ck3::funcs::INTERACTION_CTX_VALIDATE_SCOPES);
-            if (is_mapped(validate_scopes_addr)) {
-                auto validate_scopes = reinterpret_cast<void(*)(void*, int)>(validate_scopes_addr);
-                watchdog_arm(5);
-                g_in_protected_region = true;
-                int rt_sig = sigsetjmp(g_recovery_point, 1);
-                if (rt_sig != 0) {
-                    g_in_protected_region = false;
-                    watchdog_disarm();
-                    ADLOG("DIRECT_CMD_V7: REVOKE_TITLE — ValidateScopes crashed (sig=%d)\n", rt_sig);
-                } else {
-                    try {
-                        validate_scopes(cmd_buf, 0);
-                        ADLOG("DIRECT_CMD_V7: REVOKE_TITLE — ValidateScopes completed\n");
-                    } catch (...) {
-                        ADLOG("DIRECT_CMD_V7: REVOKE_TITLE — ValidateScopes threw exception\n");
-                    }
-                    g_in_protected_region = false;
-                    watchdog_disarm();
-                }
-            }
-        } else {
-            ADLOG("DIRECT_CMD_V7: REVOKE_TITLE — title_obj not found for id=%u\n", title_id);
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "revoke_title_not_found");
-        }
-
-        ADLOG("DIRECT_CMD_V7: REVOKE_TITLE === title scope setup complete ===\n");
-    }
-
-    // --- Step 1.5b stripped: DEAD_FOR_WAR_PER_CKE58L17.1 ---
-    // Previously: war CB setup for declare_war_interaction — CASUS_BELLI_DB scan,
-    // AttachCBState + AttachCBTitle, game-date stamp at raw_buf+0x2C0 (Gate-3
-    // misnomer — actually player-char check). All of it is dead because
-    // declare_war now routes through execute_war_intent (AI war pipeline), not
-    // CSendCharacterInteractionCommand. See re_bridge_offset_audit.md §5 FIX-6
-    // and ck-e58l.17.1 for the structural proof that this path cannot reach
-    // WAR_CREATE_CORE.
-
-#if 0  // DEAD_FOR_WAR_PER_CKE58L17.1 — preserved for archaeology only
-    if (strcmp(intent->interaction_name.c_str(), "declare_war_interaction") == 0) {
-        ADLOG("DIRECT_CMD_V7: WAR === begin CB setup for declare_war_interaction ===\n");
-
-        // --- A) Set war_target and claimant ---
-        *reinterpret_cast<uint32_t*>(cmd_buf + ck3::interaction_ctx::SECONDARY_ACTOR_REF) =
-            static_cast<uint32_t>(target_id);
-        uint32_t claimant = intent->claimant_id;
-        if (claimant == 0) claimant = static_cast<uint32_t>(actor_id);
-        *reinterpret_cast<uint32_t*>(cmd_buf + ck3::interaction_ctx::SECONDARY_RECIPIENT_REF) = claimant;
-        ADLOG("DIRECT_CMD_V7: WAR — A) war_target=%u, claimant=%u\n",
-              target_id & 0xFFFFFF, claimant & 0xFFFFFF);
-
-        // Phase 38 finding: PopulateOptions re-run and ReconcileWarOptions are UNNECESSARY.
-        // The AI ignores ReconcileWarOptions' return value. PopulateOptions always fails for
-        // declare_war because war_target/claimant are -1 during BuildSendInteractionCmd
-        // (same as the AI path). Just set fields, AttachCB, stamp date, dispatch.
-
-        // --- B) AttachCBState + AttachCBTitle — populate cmd+0x330 sub-object ---
-        //
-        // The cmd+0x330 sub-object layout (0x30 bytes):
-        //   +0x00: (unused)
-        //   +0x08: uint64 cb_type_ref — CCasusBelliType* (written by AttachCBState)
-        //   +0x10: uint64 title_data_ptr — dynamic array of uint32 title IDs
-        //   +0x18: int32 title_capacity
-        //   +0x1C: int32 title_count
-        //   +0x20: ptr allocator (CPdxArray allocator object)
-        //   +0x28: uint32 claimant_ref — claimant char ref for claim_cb (0xFFFFFFFF for non-claim)
-        //
-        // Strategy: Look up the first valid CB type from CASUS_BELLI_DB for this
-        // actor/target pair, then write cb_type_ref and title data directly into
-        // the sub-object fields. For AttachCBTitle, pre-set capacity in the
-        // sub-object so the function's memcpy path is used (no allocator realloc).
-        //
-        // AttachCBState signature: void(long cmd_330_ptr, uint64 cb_type_ref)
-        //   Trivial: *(param_1 + 8) = param_2
-        //
-        // AttachCBTitle signature: void(long cmd_330_ptr, uint32* title_source)
-        //   title_source layout: +0x00=claimant_ref, +0x08=title_ids_ptr, +0x14=count
-        //   When dest capacity >= source count, just memcpy (no allocator calls).
-
-        volatile uintptr_t found_cb_type = 0;
-        char found_cb_name[128] = {};
-
-        // B.1) Look up CB type from CASUS_BELLI_DB
-        {
-            uintptr_t cb_db = safe_read<uintptr_t>(g_base_addr + ck3::globals::CASUS_BELLI_DB);
-            if (cb_db && is_mapped(cb_db)) {
-                uintptr_t cb_arr = safe_read<uintptr_t>(cb_db + ck3::game_db::ENTRIES_ARRAY);
-                int32_t cb_count = safe_read<int32_t>(cb_db + ck3::game_db::LIVE_COUNT);
-                if (cb_count < 0 || cb_count > 500) cb_count = 0;
-
-                ADLOG("DIRECT_CMD_V7: WAR — B.1) scanning %d CB types in CASUS_BELLI_DB\n", cb_count);
-
-                void* attacker = lookup_character(actor_id);
-                void* defender = lookup_character(target_id);
-
-                if (attacker && defender && cb_arr && is_mapped(cb_arr)) {
-                    auto cb_validity_check = reinterpret_cast<bool(*)(void*, void*, void*, void*, int)>(
-                        bridge::game_fn(ck3::funcs::CB_VALIDITY_CHECK));
-
-                    // When title_id is set, prefer claim-type CBs (target_mode=6)
-                    bool want_claim = (intent->title_id > 0);
-
-                    // If cb_index is specified, use ONLY that CB — skip validity check
-                    // and want_claim filtering. The agent already chose this CB.
-                    if (intent->cb_index >= 0 && intent->cb_index < cb_count) {
-                        volatile uintptr_t cb_type = safe_read<uintptr_t>(cb_arr + intent->cb_index * 8);
-                        if (cb_type && is_mapped(cb_type)) {
-                            found_cb_type = cb_type;
-                            const char* name_ptr = nullptr;
-                            size_t name_len = 0;
-                            if (read_db_obj_name(cb_type, name_ptr, name_len)) {
-                                size_t copy_len = (name_len < sizeof(found_cb_name) - 1) ? name_len : sizeof(found_cb_name) - 1;
-                                memcpy(found_cb_name, name_ptr, copy_len);
-                                found_cb_name[copy_len] = '\0';
-                            }
-                            ADLOG("DIRECT_CMD_V7: WAR — B.1) using specified cb_index=%d: %s (ptr=0x%lx)\n",
-                                  intent->cb_index, found_cb_name, found_cb_type);
-                        } else {
-                            ADLOG("DIRECT_CMD_V7: WAR — B.1) specified cb_index=%d has invalid pointer — aborting (no auto-select)\n",
-                                  intent->cb_index);
-                        }
-                    } else if (intent->cb_index >= 0) {
-                        ADLOG("DIRECT_CMD_V7: WAR — B.1) specified cb_index=%d out of range (count=%d) — aborting (no auto-select)\n",
-                              intent->cb_index, cb_count);
-                    } else {
-                    // Auto-select: cb_index not specified, find first valid CB
-                    for (int32_t i = 0; i < cb_count && i < 100; i++) {
-                        volatile uintptr_t cb_type = safe_read<uintptr_t>(cb_arr + i * 8);
-                        if (!cb_type || !is_mapped(cb_type)) continue;
-
-                        // Check if CB is enabled
-                        uint8_t enabled = safe_read<uint8_t>(cb_type + ck3::cb_type::ENABLED_FLAG);
-                        if (!enabled) continue;
-
-                        // When pressing a claim (title_id set), only accept claim-type CBs
-                        if (want_claim) {
-                            int32_t tmode = safe_read<int32_t>(cb_type + ck3::cb_type::TARGET_MODE);
-                            if (tmode != ck3::cb_type::TARGET_CLAIM) continue;  // skip non-claim CBs
-                        }
-
-                        // Read CB name for logging
-                        const char* name_ptr = nullptr;
-                        size_t name_len = 0;
-                        char cb_name_buf[128] = {};
-                        if (read_db_obj_name(cb_type, name_ptr, name_len)) {
-                            size_t copy_len = (name_len < sizeof(cb_name_buf) - 1) ? name_len : sizeof(cb_name_buf) - 1;
-                            memcpy(cb_name_buf, name_ptr, copy_len);
-                            cb_name_buf[copy_len] = '\0';
-                        }
-
-                        // Call CB_VALIDITY_CHECK with SIGSEGV recovery
-                        bool valid = false;
-                        watchdog_arm(2);
-                        g_in_protected_region = true;
-                        int cb_sig = sigsetjmp(g_recovery_point, 1);
-                        if (cb_sig != 0) {
-                            g_in_protected_region = false;
-                            watchdog_disarm();
-                            ADLOG("DIRECT_CMD_V7: WAR — CB_VALIDITY_CHECK crashed for %s (sig=%d)\n",
-                                  cb_name_buf, cb_sig);
-                            continue;
-                        }
-                        try {
-                            // D8 hardening: shared large BSS buffer instead of a
-                            // 32-entry stack array — see g_cb_option_storage.
-                            memset(g_cb_option_storage, 0, sizeof(g_cb_option_storage));
-                            void* alloc_vtable = reinterpret_cast<void*>(g_base_addr + pdx_array::CB_OPTION_ALLOCATOR_VTABLE);
-                            struct {
-                                void*    data;
-                                uint32_t capacity;
-                                uint32_t count;
-                                void**   allocator;
-                            } cb_output_list;
-                            void* alloc_obj = alloc_vtable;
-                            cb_output_list.data = g_cb_option_storage;
-                            cb_output_list.capacity = kCBOptionEntryCap;
-                            cb_output_list.count = 0;
-                            cb_output_list.allocator = &alloc_obj;
-
-                            valid = cb_validity_check(
-                                reinterpret_cast<void*>(cb_type),
-                                &cb_output_list,
-                                attacker, defender, 0);
-                            if (cb_output_list.count >= kCBOptionEntryCap) {
-                                ADLOG("DIRECT_CMD_V7: WAR — D8 GUARD: CB option enumeration "
-                                      "for %s filled the %u-entry buffer — the fatal engine "
-                                      "growth path was one entry away; raise kCBOptionEntryCap\n",
-                                      cb_name_buf, kCBOptionEntryCap);
-                            }
-                        } catch (...) {
-                            valid = false;
-                            ADLOG("DIRECT_CMD_V7: WAR — CB_VALIDITY_CHECK exception for %s (idx=%d)\n",
-                                  cb_name_buf, i);
-                        }
-                        g_in_protected_region = false;
-                        watchdog_disarm();
-
-                        ADLOG("DIRECT_CMD_V7: WAR — CB_VALIDITY_CHECK(%s, idx=%d) returned %d\n",
-                              cb_name_buf, i, valid ? 1 : 0);
-
-                        if (valid) {
-                            found_cb_type = cb_type;
-                            strncpy(found_cb_name, cb_name_buf, sizeof(found_cb_name) - 1);
-                            ADLOG("DIRECT_CMD_V7: WAR — B.1) FOUND valid CB: %s (ptr=0x%lx, idx=%d)\n",
-                                  found_cb_name, found_cb_type, i);
-                            break;
-                        }
-                    }
-                    } // end auto-select branch
-                } else {
-                    ADLOG("DIRECT_CMD_V7: WAR — B.1) attacker/defender lookup failed\n");
-                }
-            } else {
-                ADLOG("DIRECT_CMD_V7: WAR — B.1) CASUS_BELLI_DB not found\n");
-            }
-        }
-
-        if (found_cb_type == 0) {
-            ADLOG("DIRECT_CMD_V7: WAR — B.1) WARNING: no valid CB found for actor=%u target=%u\n",
-                  actor_id & 0xFFFFFF, target_id & 0xFFFFFF);
-        }
-
-        // B.2) AttachCBState — write cb_type_ref to cmd+0x338
-        if (found_cb_type != 0) {
-            // WAR_ATTACH_STATE is trivial: *(cmd+0x330+8) = cb_type_ref
-            // We can call the actual function or just write directly. Call it for correctness.
-            uintptr_t attach_state_addr = bridge::game_fn(ck3::funcs::WAR_ATTACH_STATE);
-            if (is_mapped(attach_state_addr)) {
-                auto attach_cb_state = reinterpret_cast<void(*)(void*, uintptr_t)>(attach_state_addr);
-                ADLOG("DIRECT_CMD_V7: WAR — B.2) calling AttachCBState(cmd+0x330, cb=0x%lx) [%s]\n",
-                      found_cb_type, found_cb_name);
-                attach_cb_state(cmd_buf + 0x330, found_cb_type);
-            } else {
-                // Fallback: write directly (same thing AttachCBState does)
-                ADLOG("DIRECT_CMD_V7: WAR — B.2) AttachCBState not mapped, writing directly\n");
-                *reinterpret_cast<uintptr_t*>(cmd_buf + 0x338) = found_cb_type;
-            }
-
-            uintptr_t verify = *reinterpret_cast<uintptr_t*>(cmd_buf + 0x338);
-            ADLOG("DIRECT_CMD_V7: WAR — B.2) verify cmd+0x338 = 0x%lx (expected 0x%lx)\n",
-                  verify, found_cb_type);
-        }
-
-        // B.3) AttachCBTitle — populate title array in cmd+0x330 sub-object
-        //
-        // The title_source struct for AttachCBTitle:
-        //   +0x00: uint32 claim_type
-        //   +0x08: ptr title_ids (uint32 array)
-        //   +0x14: int32 count
-        //
-        // Strategy: Pre-set the destination's capacity and data pointer so
-        // AttachCBTitle uses the memcpy path (no allocator realloc needed).
-        // Use a static buffer that persists through the dispatch pipeline.
-        if (found_cb_type != 0 && intent->title_id > 0) {
-            // Static title buffer — persists until next war dispatch (single-threaded)
-            static uint32_t s_war_title_buf[16] = {};
-            s_war_title_buf[0] = static_cast<uint32_t>(intent->title_id);
-
-            // Pre-set destination capacity and data pointer so AttachCBTitle
-            // sees capacity(16) >= count(1) and does a simple memcpy.
-            *reinterpret_cast<uintptr_t*>(cmd_buf + 0x340) = reinterpret_cast<uintptr_t>(s_war_title_buf);
-            *reinterpret_cast<int32_t*>(cmd_buf + 0x348) = 16;  // capacity
-            *reinterpret_cast<int32_t*>(cmd_buf + 0x34C) = 0;   // count (AttachCBTitle will set this)
-
-            // Build the title_source struct for AttachCBTitle
-            // Layout: +0x00=claimant_ref(u32), +0x08=title_ids_ptr(u64), +0x14=count(u32)
-            // WAR_ATTACH_CB copies source[0] to dest+0x28 which maps to CLAIMANT_REF (cb+0x198)
-            alignas(16) uint8_t title_source[0x20] = {};
-            *reinterpret_cast<uint32_t*>(title_source + 0x00) = claimant;  // claimant char ref (copied to cmd+0x358 = CLAIMANT_REF)
-            *reinterpret_cast<uintptr_t*>(title_source + 0x08) = reinterpret_cast<uintptr_t>(s_war_title_buf);
-            *reinterpret_cast<int32_t*>(title_source + 0x14) = 1;   // count = 1 title
-
-            uintptr_t attach_cb_addr = bridge::game_fn(ck3::funcs::WAR_ATTACH_CB);
-            if (is_mapped(attach_cb_addr)) {
-                auto attach_cb_title = reinterpret_cast<void(*)(void*, void*)>(attach_cb_addr);
-                ADLOG("DIRECT_CMD_V7: WAR — B.3) calling AttachCBTitle(cmd+0x330, title_source) "
-                      "title_id=%d\n", intent->title_id);
-
-                watchdog_arm(3);
-                g_in_protected_region = true;
-                int title_sig = sigsetjmp(g_recovery_point, 1);
-                if (title_sig != 0) {
-                    g_in_protected_region = false;
-                    watchdog_disarm();
-                    ADLOG("DIRECT_CMD_V7: WAR — B.3) AttachCBTitle crashed (sig=%d) — "
-                          "falling back to direct write\n", title_sig);
-                    // Fallback: write fields directly
-                    *reinterpret_cast<uintptr_t*>(cmd_buf + 0x340) =
-                        reinterpret_cast<uintptr_t>(s_war_title_buf);
-                    *reinterpret_cast<int32_t*>(cmd_buf + 0x348) = 16;  // capacity
-                    *reinterpret_cast<int32_t*>(cmd_buf + 0x34C) = 1;   // count
-                    *reinterpret_cast<uint32_t*>(cmd_buf + 0x358) = claimant;  // claimant char ref
-                } else {
-                    try {
-                        attach_cb_title(cmd_buf + 0x330, title_source);
-                        ADLOG("DIRECT_CMD_V7: WAR — B.3) AttachCBTitle completed\n");
-                    } catch (...) {
-                        ADLOG("DIRECT_CMD_V7: WAR — B.3) AttachCBTitle threw exception — "
-                              "falling back to direct write\n");
-                        *reinterpret_cast<uintptr_t*>(cmd_buf + 0x340) =
-                            reinterpret_cast<uintptr_t>(s_war_title_buf);
-                        *reinterpret_cast<int32_t*>(cmd_buf + 0x348) = 16;
-                        *reinterpret_cast<int32_t*>(cmd_buf + 0x34C) = 1;
-                        *reinterpret_cast<uint32_t*>(cmd_buf + 0x358) = claimant;  // claimant char ref
-                    }
-                    g_in_protected_region = false;
-                    watchdog_disarm();
-                }
-            } else {
-                // Direct write fallback
-                ADLOG("DIRECT_CMD_V7: WAR — B.3) AttachCBTitle not mapped, writing directly\n");
-                *reinterpret_cast<uintptr_t*>(cmd_buf + 0x340) =
-                    reinterpret_cast<uintptr_t>(s_war_title_buf);
-                *reinterpret_cast<int32_t*>(cmd_buf + 0x348) = 16;  // capacity
-                *reinterpret_cast<int32_t*>(cmd_buf + 0x34C) = 1;   // count
-                *reinterpret_cast<uint32_t*>(cmd_buf + 0x358) = claimant;  // claimant char ref
-            }
-
-            int32_t verify_count = *reinterpret_cast<int32_t*>(cmd_buf + 0x34C);
-            ADLOG("DIRECT_CMD_V7: WAR — B.3) verify: title_count=%d, title_id=%u\n",
-                  verify_count, s_war_title_buf[0]);
-        } else if (found_cb_type != 0) {
-            // CB found but no title specified — some CBs (e.g. subjugation) don't need titles
-            ADLOG("DIRECT_CMD_V7: WAR — B.3) no title_id specified (title_id=%d), "
-                  "skipping AttachCBTitle\n", intent->title_id);
-        }
-
-        // Phase 38 finding: ReconcileWarOptions is UNNECESSARY — the AI ignores its return value.
-        // It's called only for side effects (option byte selection), but the engine's Execute
-        // handler reads cmd+0x338 (CB type) directly, not the option byte at cmd+0x300.
-        // Skipping ReconcileWarOptions eliminates the false-return confusion and state corruption.
-
-        // --- C) Gate 3 analysis (NO ACTION NEEDED for player-controlled characters) ---
-        //
-        // Execute Gate 3 checks: *(int32*)(wrapper+0x2F8) == GetCurrentGameDate()
-        //   wrapper+0x2F8 = raw_buf+0x2D8 = ACTOR_CHAR_REF (the actor's character ID)
-        //   GetCurrentGameDate() at 0x062642d0 returns *(DAT_0bfad8c0) = PLAYER_CHAR_ID
-        //
-        // So Gate 3 is really: "is the actor the player character?"
-        // This PASSES automatically when actor == controlled character (36010 == 36010).
-        // The game date stamp at raw_buf+0x2C0 is UNRELATED to this gate.
-        //
-        // Previous analysis incorrectly identified this as a game date staleness check.
-        // The function "GetCurrentGameDate" is MISNAMED — it returns player char ID, not date.
-        // Keeping the date stamp for safety (it doesn't hurt), but it's not required.
-        uintptr_t gs_root = safe_read<uintptr_t>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-        int32_t game_date = 0;
-        if (gs_root != 0) {
-            game_date = safe_read<int32_t>(gs_root + ck3::game_state::GAME_DATE);
-        }
-        if (game_date != 0) {
-            *reinterpret_cast<int32_t*>(cmd_buf + 0x2C0) = game_date;
-            ADLOG("DIRECT_CMD_V7: WAR — D) stamped game_date=%d at raw_buf+0x2C0 "
-                  "(from GAME_STATE_ROOT+0x08)\n", game_date);
-        } else {
-            ADLOG("DIRECT_CMD_V7: WAR — D) WARNING: could not read game date "
-                  "(gs_root=0x%lx), raw_buf+0x2C0 left as 0\n", gs_root);
-        }
-
-        // --- E) Inspect cmd+0x330 CB sub-object ---
-        uintptr_t cb_type_ref = *reinterpret_cast<uintptr_t*>(cmd_buf + 0x338);
-        int32_t title_count = *reinterpret_cast<int32_t*>(cmd_buf + 0x34C);
-        ADLOG("DIRECT_CMD_V7: WAR — E) cmd+0x338 (cb_type_ref)=0x%lx, cmd+0x34C (title_count)=%d\n",
-              cb_type_ref, title_count);
-        if (cb_type_ref == 0) {
-            ADLOG("DIRECT_CMD_V7: WAR — WARNING: cb_type_ref is 0 — CB sub-object not populated\n");
-        }
-
-        ADLOG("DIRECT_CMD_V7: WAR === CB setup complete (cb=%s) ===\n", found_cb_name);
-    }
-#endif  // DEAD_FOR_WAR_PER_CKE58L17.1 (Step 1.5b war CB setup)
-
-    // --- Step 1.5c: Generic send_option selection (any interaction with cb_index) ---
-    // For interactions with send_options (release_from_prison banish/recruit, etc.),
-    // the agent can pass cb_index to select a specific option. This uses the same
-    // option system (interaction+0x2530) as war CB options.
-    // Skip for marriage (no options). declare_war no longer reaches this function
-    // (see DEAD_FOR_WAR_PER_CKE58L17.1 banner at function top), so a declare_war
-    // exclusion here is unnecessary.
-    if (intent->cb_index >= 0 &&
-        strcmp(intent->interaction_name.c_str(), "arrange_marriage_interaction") != 0) {
-        uintptr_t select_addr = bridge::game_fn(ck3::funcs::INTERACTION_SELECT_OPTION);
-        if (is_mapped(select_addr)) {
-            auto select_option = reinterpret_cast<void(*)(void*, int)>(select_addr);
-            ADLOG("DIRECT_CMD_V7: SEND_OPTION — SelectOption(cmd, %d)\n", intent->cb_index);
-            watchdog_arm(3);
-            g_in_protected_region = true;
-            int opt_sig = sigsetjmp(g_recovery_point, 1);
-            if (opt_sig != 0) {
-                g_in_protected_region = false;
-                watchdog_disarm();
-                ADLOG("DIRECT_CMD_V7: SEND_OPTION — SelectOption crashed (sig=%d)\n", opt_sig);
-            } else {
-                try {
-                    select_option(cmd_buf, intent->cb_index);
-                    ADLOG("DIRECT_CMD_V7: SEND_OPTION — SelectOption(%d) completed\n", intent->cb_index);
-                } catch (...) {
-                    ADLOG("DIRECT_CMD_V7: SEND_OPTION — SelectOption threw exception\n");
-                }
-                g_in_protected_region = false;
-                watchdog_disarm();
-            }
-        }
-    }
-
-    // --- Steps 2-4: BUILD_SEND_CMD_FROM_BUF → Clone → DISPATCH ---
-    alignas(16) uint8_t wrapper_buf[0x400] = {};  // CSendCharInteractionCmd is 0x368B; 0x400 for safety margin
-    void* volatile wrapper_ptr = &wrapper_buf[0];
-    bool dispatched = false;
-
-    watchdog_arm(5);
-    g_in_protected_region = true;
-    sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        g_in_protected_region = false;
-        watchdog_disarm();
-        const char* sig_name = (sig == 1) ? "SIGSEGV" : (sig == 2) ? "SIGALRM" : "UNKNOWN";
-        ADLOG("DIRECT_CMD_V7: Steps 2-4 crashed (%s) — cleaning up cmd_buf\n", sig_name);
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "direct_cmd_build_dispatch_%s", sig_name);
-        // Cleanup cmd_buf on crash
-        try { interaction_dtor(cmd_buf); } catch (...) {}
-        return false;
-    }
-
-    try {
-        // Step 2: BUILD_SEND_CMD_FROM_BUF(wrapper, cmd_buf)
-        // This constructs CSendCharacterInteractionCommand from the cmd_buf data.
-        // It sets vtables, deep-copies interaction data, computes hashes.
-        ADLOG("DIRECT_CMD_V7: Step 2 — BUILD_SEND_CMD_FROM_BUF(wrapper=%p, cmd_buf=%p) via 0x%lx\n",
-              wrapper_ptr, cmd_buf, bridge::game_fn(ck3::funcs::BUILD_SEND_CMD_FROM_BUF));
-        build_send_cmd(wrapper_ptr, cmd_buf);
-
-        // Validate: wrapper should have a vtable pointer at offset 0
-        uintptr_t wrapper_vtable = *reinterpret_cast<uintptr_t*>(wrapper_ptr);
-        if (!wrapper_vtable || !is_mapped(wrapper_vtable)) {
-            ADLOG("DIRECT_CMD_V7: wrapper vtable invalid after BUILD_SEND_CMD (0x%lx)\n",
-                  wrapper_vtable);
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "wrapper_vtable_invalid");
-            // Cleanup cmd_buf
-            try { interaction_dtor(cmd_buf); } catch (...) {}
-            g_in_protected_region = false;
-            watchdog_disarm();
-            return false;
-        }
-        ADLOG("DIRECT_CMD_V7: Step 2 complete — wrapper vtable = 0x%lx\n", wrapper_vtable);
-
-        // Step 3: Clone via the vtable (per ABI: game_command_clone_fn / clone_game_command)
-        uintptr_t clone_fn_ptr = game_command_clone_fn(wrapper_ptr);
-        if (!clone_fn_ptr || !is_mapped(clone_fn_ptr)) {
-            ADLOG("DIRECT_CMD_V7: clone vtable slot invalid (0x%lx)\n", clone_fn_ptr);
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "clone_vtable_entry_invalid");
-            // Cleanup: destroy wrapper then cmd_buf
-            try { destroy_game_command_in_place(wrapper_ptr); } catch (...) {}
-            try { interaction_dtor(cmd_buf); } catch (...) {}
-            g_in_protected_region = false;
-            watchdog_disarm();
-            return false;
-        }
-
-        ADLOG("DIRECT_CMD_V7: Step 3 — CLONE via vtable slot at 0x%lx\n", clone_fn_ptr);
-        void* clone_ptr = clone_game_command(clone_fn_ptr, wrapper_ptr);
-
-        if (!clone_ptr || !is_mapped(reinterpret_cast<uintptr_t>(clone_ptr))) {
-            ADLOG("DIRECT_CMD_V7: Clone returned invalid pointer (0x%lx)\n",
-                  reinterpret_cast<uintptr_t>(clone_ptr));
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "clone_returned_invalid");
-            // Cleanup wrapper + cmd_buf
-            try { destroy_game_command_in_place(wrapper_ptr); } catch (...) {}
-            try { interaction_dtor(cmd_buf); } catch (...) {}
-            g_in_protected_region = false;
-            watchdog_disarm();
-            return false;
-        }
-        ADLOG("DIRECT_CMD_V7: Step 3 complete — clone at %p\n", clone_ptr);
-
-        // Step 3.5: Write interaction_ptr to INTERACTION_DB+0x1000.
-        //
-        // ⚠️  ck-8cns: The "Gate 2" framing for this stamp is REFUTED. See
-        //    re/findings/re_gate2_stamp_verification.md. Summary:
-        //    - The compare in CSendCharacterInteractionCmd::Execute (0x0619b800)
-        //      runs AFTER SendCharacterInteraction has already dispatched.
-        //      It cannot gate the war.
-        //    - Slot 14 of the InteractionDB pinned-interaction array (offset
-        //      0x1000) is statically bound to &influence_candidacy_interaction
-        //      at DB load — no runtime writers exist in the game.
-        //    - This stamp permanently corrupts that binding. Removal tracked
-        //      in ck-ukox8. Left in place here pending scenario verification
-        //      that war declarations still succeed without it.
-        //
-        // Original (now-incorrect) rationale, kept for context:
-        //
-        // CSendCharInteractionCmd::Execute (CGameCommandHelper vtable[1]) has Gate 2:
-        //   *(wrapper+0x20) == *(*(INTERACTION_DB) + 0x1000)
-        // This compares the command's interaction definition pointer against a
-        // "current interaction" field in the INTERACTION_DB object. If they don't
-        // match, the command is SILENTLY REJECTED (no error, no log, just returns).
-        //
-        // The field at DB+0x1000 is updated by successful command execution, so it
-        // holds the ptr of whatever interaction was last dispatched. Our command's
-        // interaction ptr will never match unless we pre-stamp it.
-        //
-        // Fix: Read the interaction ptr from cmd_buf[0] and write it to DB+0x1000.
-        // This is safe because we're on the game thread during DRAIN_INTENTS.
-        {
-            uintptr_t interaction_ptr = *reinterpret_cast<uintptr_t*>(cmd_buf);
-            uintptr_t idb_ptr = safe_read<uintptr_t>(g_base_addr + ck3::globals::INTERACTION_DB);
-            if (idb_ptr && is_mapped(idb_ptr) && interaction_ptr && is_mapped(interaction_ptr)) {
-                uintptr_t gate_field_addr = idb_ptr + ck3::interaction_db_internal::CURRENT_INTERACTION;
-                uintptr_t old_gate = safe_read<uintptr_t>(gate_field_addr);
-                *reinterpret_cast<uintptr_t*>(gate_field_addr) = interaction_ptr;
-                ADLOG("DIRECT_CMD_V7: Step 3.5 — stamped INTERACTION_DB+0x1000 = 0x%lx "
-                      "(was 0x%lx, interaction_ptr from cmd_buf)\n", interaction_ptr, old_gate);
-            } else {
-                ADLOG("DIRECT_CMD_V7: Step 3.5 — WARNING: could not stamp INTERACTION_DB+0x1000 "
-                      "(idb=0x%lx, interaction=0x%lx)\n", idb_ptr, interaction_ptr);
-            }
-        }
-
-        // Step 4: GAME_COMMAND_DISPATCH(&dispatch_mgr_struct, &clone, 7, 0)
-        // dispatch_mgr_addr is the ADDRESS of the inline struct, passed directly (not dereferenced)
-        //
-        // RECORDER BYPASS: The dispatch manager has a command recorder at +0x3f0.
-        // When non-null, GAME_COMMAND_DISPATCH clones our command AGAIN for the
-        // recorder's replay log. This second clone's DeepCopy throws because our
-        // manually-constructed command has allocator state that doesn't survive
-        // a third copy. Temporarily null the recorder to skip this path.
-        uintptr_t recorder_addr = dispatch_mgr_addr + ck3::dispatch_mgr::RECORDER_PTR;
-        uintptr_t old_recorder = safe_read<uintptr_t>(recorder_addr);
-        if (old_recorder) {
-            ADLOG("DIRECT_CMD_V7: Temporarily disabling command recorder at 0x%lx (was 0x%lx)\n",
-                  recorder_addr, old_recorder);
-            // R1c (ck-6kvq.10, §2.9). This pulse has NO working crash restore:
-            // `old_recorder` is scoped inside this try block, so neither the
-            // catch(...) below nor the enclosing sigsetjmp recovery can put it
-            // back. A fault in game_dispatch therefore leaves the engine's
-            // command recorder permanently NULL and every later command is
-            // silently dropped from the replay log. The ledger is the only thing
-            // that restores it.
-            (void)bridge::pulse_enter_global(
-                "DISPATCH_MGR_RECORDER", "direct_cmd_v7_dispatch",
-                recorder_addr, 8, old_recorder);
-            *reinterpret_cast<uintptr_t*>(recorder_addr) = 0;
-        }
-
-        ADLOG("DIRECT_CMD_V7: Step 4 — GAME_COMMAND_DISPATCH(mgr=0x%lx, clone=%p, priority=7, 0)\n",
-              dispatch_mgr_addr, clone_ptr);
-        game_dispatch(reinterpret_cast<void*>(dispatch_mgr_addr), &clone_ptr, 7, 0);
-
-        // Restore recorder
-        if (old_recorder) {
-            *reinterpret_cast<uintptr_t*>(recorder_addr) = old_recorder;
-            bridge::pulse_exit_addr(recorder_addr);   // R1c: after the restore
-            ADLOG("DIRECT_CMD_V7: Restored command recorder\n");
-        }
-
-        // Post-dispatch: if engine took ownership, clone_ptr may be nulled.
-        // If not nulled, destroy the clone ourselves.
-        if (clone_ptr != nullptr) {
-            ADLOG("DIRECT_CMD_V7: clone_ptr not nulled by dispatch — destroying\n");
-            try { delete_game_command(clone_ptr); } catch (...) {}
-        }
-
-        dispatched = true;
-        ADLOG("DIRECT_CMD_V7: Step 4 complete — command dispatched\n");
-
-        // Step 5: Cleanup wrapper (stack-allocated: destroy in place, free nothing)
-        ADLOG("DIRECT_CMD_V7: Step 5 — destroying wrapper in place\n");
-        destroy_game_command_in_place(wrapper_ptr);
-
-        // Step 6: Cleanup cmd_buf via interaction data destructor
-        ADLOG("DIRECT_CMD_V7: Step 6 — destroying cmd_buf via INTERACTION_TLS_DESTRUCTOR\n");
-        interaction_dtor(cmd_buf);
-
-    } catch (...) {
-        g_in_protected_region = false;
-        watchdog_disarm();
-        ADLOG("DIRECT_CMD_V7: Steps 2-4 threw C++ exception — cleaning up cmd_buf\n");
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "direct_cmd_build_dispatch_exception");
-        try { interaction_dtor(cmd_buf); } catch (...) {}
-        return false;
-    }
-    g_in_protected_region = false;
-    watchdog_disarm();
-
-    if (dispatched) {
-        ADLOG("DIRECT_CMD_V7: === SUCCESS === %s sent (actor=%u, target=%u)\n",
-              intent->interaction_name.c_str(), actor_id & 0xFFFFFF, target_id & 0xFFFFFF);
-    }
-
-    return dispatched;
-}
 
 bool execute_direct_dispatch(Intent* intent, void* character, void* interaction) {
     // === ENTRY: full intent dump (mirror execute_war_intent style for the
@@ -2293,8 +1569,8 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
           character, interaction);
     ADLOG("  secondary_actor_id=0x%08x secondary_recipient_id=0x%08x\n",
           intent->secondary_actor_id, intent->secondary_recipient_id);
-    ADLOG("  force_bypass=%d debug_all_paths=%d queued_tick=%lu ttl_ticks=%u request_id='%s'\n",
-          intent->force_bypass, intent->debug_all_paths,
+    ADLOG("  force_bypass=%d queued_tick=%lu ttl_ticks=%u request_id='%s'\n",
+          intent->force_bypass,
           (unsigned long)intent->queued_tick,
           intent->ttl_ticks, intent->request_id.c_str());
 
@@ -2330,13 +1606,9 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
     //      Used by targeted non-war interactions (marriage, gift, sway, vassalization, etc.).
     //   2. v5 scoring hook: AI_INTERACTION_DECISION with score manipulation. Fallback
     //      for interactions not on the direct-dispatch list.
-    //   3. v7 direct command: used only for interactions that explicitly need cmd-buf
-    //      setup beyond TLS (none today now that declare_war moved off this path).
     //
     // DEAD_FOR_WAR_PER_CKE58L17.1: declare_war no longer reaches execute_direct_dispatch.
-    // WAR_DECLARE intents go through drain_and_execute_intents → execute_war_intent
-    // (action_handlers.cpp:680, ai_eval_hook.cpp:3803). The previous
-    // "TLS-then-v7-fallback for declare_war" chain has been removed.
+    // WAR_DECLARE intents go through drain_and_execute_intents → execute_war_intent.
     //
     // Priority 1: TLS pipeline for targeted non-war interactions
     if (intent->target_id != 0 &&
@@ -2364,9 +1636,19 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
         // real reason with a misleading success.
         {
             const char* rej = intent->rejection_reason;
+            // Lane l4: the engine's own verdicts and the window choices the bridge could
+            // not apply are authoritative too; the v5 fallback would send the
+            // interaction without them (or to another target).
             bool legitimate_game_reject =
                 strcmp(rej, "interaction_not_valid_for_target") == 0 ||
-                strcmp(rej, "target_would_reject") == 0;
+                strcmp(rej, "target_would_reject") == 0 ||
+                strcmp(rej, "send_conditions_not_met") == 0 ||
+                strcmp(rej, "send_cost_unaffordable") == 0 ||
+                strncmp(rej, "send_option_", 12) == 0 ||
+                strncmp(rej, "secondary_actor_not_living", 26) == 0 ||
+                strncmp(rej, "secondary_recipient_not_living", 30) == 0 ||
+                strncmp(rej, "title_not_found", 15) == 0 ||
+                strcmp(rej, "title_offer_allocator_unreadable") == 0;
             if (legitimate_game_reject) {
                 ADLOG("DISPATCH: TLS game-reject '%s' is authoritative, NOT falling back to v5 (would deliver to wrong target)\n",
                       rej);
@@ -2544,363 +1826,93 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
     return sent;
 }
 
+
 // =============================================================================
-// War Debug Dispatch — try all dispatch paths independently
+// query_interaction_check — the send pipeline's own checks, nothing sent (F16)
 // =============================================================================
 //
-// Called from drain_and_execute_intents when intent->debug_all_paths is set.
-// Tries each war declaration path independently, logs results per-path.
-// Stops trying further paths once a war is successfully created.
-// Results are written to intent->debug_log as a JSON array.
+// One INTERACTION intent whose console_command is "check" or "check:<id>,<id>,...":
+// for each target (target_id, or the listed candidates) execute_tls_pipeline_dispatch
+// runs exactly the steps a send runs (CTX_INIT .. the window's choices, the game's
+// validity CTX_VALIDATE with its sentence, InteractionTrySend: the send conditions,
+// the recipient's refusal, the cost) and stops before BUILD_SEND_CMD. Beside it the
+// recipient's pre-answer and the ai_accept score (InteractionCheck). The result is a
+// JSON object in console_output: {"interaction", "actor_id", "results": [...]}.
+static constexpr size_t kCheckMaxTargets = 64;
 
-static void execute_war_debug_dispatch(Intent* intent, void* character, void* interaction) {
-    volatile uint32_t actor_id = read<uint32_t>(reinterpret_cast<uintptr_t>(character) + ck3::character::ID);
-    uint32_t target_id = intent->target_id;
-
-    ADLOG("WAR_DEBUG: === BEGIN === actor=%u target=%u\n",
-          actor_id & 0xFFFFFF, target_id & 0xFFFFFF);
-
-    // Read war count helper
-    auto read_war_count = [&]() -> int32_t {
-        uintptr_t tr = resolve_title_realm(reinterpret_cast<uintptr_t>(character));
-        if (!tr) return -1;
-        return read<int32_t>(tr + ck3::title_realm::WAR_REF_ARRAY + 0x0C);
-    };
-
-    int32_t initial_wars = read_war_count();
-
-    // Build JSON array manually with ResponseBuilder-style approach
-    std::string paths_json = "[";
-    bool war_created = false;
-    const char* successful_path = nullptr;
-    bool first_entry = true;
-
-    auto append_path_result = [&](const char* path_name, const char* result,
-                                   const char* log_msg, int32_t wars_before,
-                                   int32_t wars_after) {
-        if (!first_entry) paths_json += ",";
-        first_entry = false;
-        paths_json += "{\"path\":\"";
-        paths_json += path_name;
-        paths_json += "\",\"result\":\"";
-        paths_json += result;
-        paths_json += "\",\"wars_before\":";
-        paths_json += std::to_string(wars_before);
-        paths_json += ",\"wars_after\":";
-        paths_json += std::to_string(wars_after);
-        paths_json += ",\"log\":\"";
-        // Escape the log message for JSON
-        for (const char* p = log_msg; *p; ++p) {
-            if (*p == '"') paths_json += "\\\"";
-            else if (*p == '\\') paths_json += "\\\\";
-            else if (*p == '\n') paths_json += "\\n";
-            else if (*p == '\r') paths_json += "\\r";
-            else paths_json += *p;
+static void execute_interaction_check_intent(Intent* real, void* character, void* interaction) {
+    std::vector<uint32_t> targets;
+    const std::string& cmd = real->console_command;
+    if (cmd.size() > 6 && cmd.compare(0, 6, "check:") == 0) {
+        size_t i = 6;
+        while (i < cmd.size() && targets.size() < kCheckMaxTargets) {
+            size_t j = cmd.find(',', i);
+            if (j == std::string::npos) j = cmd.size();
+            const unsigned long v = strtoul(cmd.substr(i, j - i).c_str(), nullptr, 10);
+            if (v > 0) targets.push_back(static_cast<uint32_t>(v) & 0xFFFFFF);
+            i = j + 1;
         }
-        paths_json += "\"}";
-    };
-
-    // --- Path 1: TLS pipeline (v6) ---
-    if (!war_created && target_id != 0) {
-        ADLOG("WAR_DEBUG: trying path 1 — TLS pipeline (v6)\n");
-        int32_t wb = read_war_count();
-
-        // Clear any prior rejection reason
-        intent->rejection_reason[0] = '\0';
-
-        bool result = execute_tls_pipeline_dispatch(intent, character, interaction);
-        int32_t wa = read_war_count();
-        bool path_war = (wb >= 0 && wa > wb);
-
-        char log_buf[256];
-        snprintf(log_buf, sizeof(log_buf),
-                 "execute_tls_pipeline_dispatch returned %s, rejection='%s'",
-                 result ? "true" : "false",
-                 intent->rejection_reason[0] ? intent->rejection_reason : "none");
-        ADLOG("WAR_DEBUG: path 1 result: %s\n", log_buf);
-
-        const char* res_str = path_war ? "war_created" :
-                              result ? "dispatched_no_war" :
-                              intent->rejection_reason[0] ? intent->rejection_reason : "failed";
-        append_path_result("tls_pipeline_v6", res_str, log_buf, wb, wa);
-
-        if (path_war) {
-            war_created = true;
-            successful_path = "tls_pipeline_v6";
-        }
-        intent->rejection_reason[0] = '\0';
+    } else if (real->target_id) {
+        targets.push_back(real->target_id & 0xFFFFFF);
     }
-
-    // --- Path 2: v7 direct command dispatch ---
-    if (!war_created && target_id != 0 &&
-        strcmp(intent->interaction_name.c_str(), "declare_war_interaction") == 0) {
-        ADLOG("WAR_DEBUG: trying path 2 — v7 direct command\n");
-        int32_t wb = read_war_count();
-
-        intent->rejection_reason[0] = '\0';
-
-        bool result = execute_direct_command_dispatch(intent, character, interaction);
-        int32_t wa = read_war_count();
-        bool path_war = (wb >= 0 && wa > wb);
-
-        char log_buf[256];
-        snprintf(log_buf, sizeof(log_buf),
-                 "execute_direct_command_dispatch returned %s, rejection='%s'",
-                 result ? "true" : "false",
-                 intent->rejection_reason[0] ? intent->rejection_reason : "none");
-        ADLOG("WAR_DEBUG: path 2 result: %s\n", log_buf);
-
-        const char* res_str = path_war ? "war_created" :
-                              result ? "dispatched_no_war" :
-                              intent->rejection_reason[0] ? intent->rejection_reason : "failed";
-        append_path_result("direct_command_v7", res_str, log_buf, wb, wa);
-
-        if (path_war) {
-            war_created = true;
-            successful_path = "direct_command_v7";
-        }
-        intent->rejection_reason[0] = '\0';
+    real->consumed = true;
+    if (targets.empty()) {
+        real->rejected = true;
+        snprintf(real->rejection_reason, sizeof real->rejection_reason, "target_id_required");
+        return;
     }
-
-    // --- Path 3: v5 AI scoring hook (AI_INTERACTION_DECISION) ---
-    if (!war_created) {
-        ADLOG("WAR_DEBUG: trying path 3 — v5 AI scoring hook\n");
-        volatile int32_t wb = read_war_count();
-
-        intent->rejection_reason[0] = '\0';
-
-        // Replicate the v5 path from execute_direct_dispatch
-        auto ai_decide = reinterpret_cast<bool(*)(void*, void*, uint32_t)>(
-            bridge::game_fn(ck3::funcs::AI_INTERACTION_DECISION));
-        uint32_t rng_seed = (actor_id ^ (g_tick_id.load() * 2654435761u)) & 0x7FFFFFFE;
-
-        // Arm score hook to force target
-        if (target_id != 0 && g_score_hook_installed) {
-            g_force_target_id.store(target_id & 0xFFFFFF, std::memory_order_release);
-            arm_score_hook();
+    if (!is_direct_dispatch_interaction(real->interaction_name.c_str())) {
+        // Only the TLS pipeline sends to the named target; the check is its steps.
+        real->rejected = true;
+        snprintf(real->rejection_reason, sizeof real->rejection_reason, "interaction_not_checkable");
+        return;
+    }
+    ResponseBuilder r;
+    r.begin_object();
+    r.key("interaction"); r.value_string(real->interaction_name.c_str());
+    r.key("actor_id"); r.value_uint(real->actor_id & 0xFFFFFF);
+    r.key("results"); r.begin_array();
+    for (uint32_t t : targets) {
+        Intent one = *real;
+        one.target_id = t;
+        one.rejection_reason[0] = '\0';
+        one.console_output.clear();
+        r.begin_object();
+        r.key("target_id"); r.value_uint(t);
+        void* tc = lookup_character(t);
+        if (!tc || is_sentinel(tc)) {
+            r.key("sendable"); r.value_bool(false);
+            r.key("refused_by"); r.value_string("target_not_found");
+            r.end_object();
+            continue;
         }
-
-        watchdog_arm(5);
-        g_in_protected_region = true;
-        int sig = sigsetjmp(g_recovery_point, 1);
-        bool sent = false;
-        bool crashed = false;
-        if (sig != 0) {
-            g_in_protected_region = false;
-            watchdog_disarm();
-            g_force_target_id.store(0, std::memory_order_release);
-            disarm_score_hook();
-            crashed = true;
-            const char* sig_name = (sig == 1) ? "SIGSEGV" :
-                                   (sig == 2) ? "SIGALRM_TIMEOUT" : "UNKNOWN";
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "ai_decide_%s", sig_name);
-        } else {
-            try {
-                sent = ai_decide(character, interaction, rng_seed);
-            } catch (...) {
-                snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                         "ai_decide_exception");
+        InteractionCheck chk;
+        const bool sendable = execute_tls_pipeline_dispatch(&one, character, interaction, &chk);
+        r.key("sendable"); r.value_bool(sendable);
+        if (!sendable) {
+            r.key("refused_by");
+            r.value_string(one.rejection_reason[0] ? one.rejection_reason : "unknown");
+            const std::string why = clean_engine_text(one.console_output);
+            if (!why.empty()) { r.key("engine_reason"); r.value_string(why.c_str(), why.size()); }
+        }
+        if (chk.scored) {
+            static const char* kAnswers[] = {"yes", "maybe", "no"};
+            r.key("answer");
+            r.value_string(chk.answer >= 0 && chk.answer <= 2 ? kAnswers[chk.answer] : "unknown");
+            r.key("accept_score"); r.value_double(static_cast<double>(chk.accept_score) / 100000.0);
+            if (!chk.answer_text.empty()) {
+                r.key("answer_text"); r.value_string(chk.answer_text.c_str(), chk.answer_text.size());
             }
-            g_in_protected_region = false;
-            watchdog_disarm();
-            g_force_target_id.store(0, std::memory_order_release);
-            disarm_score_hook();
         }
-
-        int32_t wa = read_war_count();
-        bool path_war = (wb >= 0 && wa > wb);
-
-        char log_buf[256];
-        snprintf(log_buf, sizeof(log_buf),
-                 "AI_INTERACTION_DECISION returned %s, crashed=%s, rejection='%s'",
-                 sent ? "true" : "false",
-                 crashed ? "true" : "false",
-                 intent->rejection_reason[0] ? intent->rejection_reason : "none");
-        ADLOG("WAR_DEBUG: path 3 result: %s\n", log_buf);
-
-        const char* res_str = path_war ? "war_created" :
-                              sent ? "dispatched_no_war" :
-                              crashed ? intent->rejection_reason :
-                              "ai_no_valid_target";
-        append_path_result("ai_scoring_v5", res_str, log_buf, wb, wa);
-
-        if (path_war) {
-            war_created = true;
-            successful_path = "ai_scoring_v5";
-        }
-        intent->rejection_reason[0] = '\0';
+        r.end_object();
     }
-
-    // --- Path 4: WAR_DECLARE intent type (execute_war_intent — AI pipeline) ---
-    if (!war_created) {
-        ADLOG("WAR_DEBUG: trying path 4 — execute_war_intent (AI war pipeline)\n");
-        int32_t wb = read_war_count();
-
-        // Create a temporary intent with WAR_DECLARE type
-        Intent war_intent = *intent;
-        war_intent.type = IntentType::WAR_DECLARE;
-        war_intent.rejection_reason[0] = '\0';
-        war_intent.consumed = false;
-        war_intent.executed = false;
-        war_intent.rejected = false;
-
-        bool result = execute_war_intent(&war_intent);
-        int32_t wa = read_war_count();
-        bool path_war = (wb >= 0 && wa > wb);
-
-        char log_buf[256];
-        snprintf(log_buf, sizeof(log_buf),
-                 "execute_war_intent returned %s, executed=%s, rejected=%s, rejection='%s'",
-                 result ? "true" : "false",
-                 war_intent.executed ? "true" : "false",
-                 war_intent.rejected ? "true" : "false",
-                 war_intent.rejection_reason[0] ? war_intent.rejection_reason : "none");
-        ADLOG("WAR_DEBUG: path 4 result: %s\n", log_buf);
-
-        const char* res_str = path_war ? "war_created" :
-                              result ? "dispatched_no_war" :
-                              war_intent.rejection_reason[0] ? war_intent.rejection_reason : "failed";
-        append_path_result("war_intent_ai_pipeline", res_str, log_buf, wb, wa);
-
-        if (path_war) {
-            war_created = true;
-            successful_path = "war_intent_ai_pipeline";
-        }
-    }
-
-    // --- Path 5: Direct AI war pipeline (mirror console AI.declare_war) ---
-    // Uses CHAR_GET_AI_CONTROLLER → war_target_eval → war_declare_exec → war_post_decl
-    // with pacing flag cleared. Unlike path 4 (execute_war_intent), this calls the
-    // pipeline functions directly without the intent infrastructure.
-    if (!war_created) {
-        ADLOG("WAR_DEBUG: trying path 5 — direct AI war pipeline\n");
-        volatile int32_t wb = read_war_count();
-
-        volatile bool result = false;
-        volatile bool crashed = false;
-        char crash_reason[128] = {};
-
-        auto get_ai_ctrl = reinterpret_cast<void*(*)(void*)>(
-            bridge::game_fn(ck3::funcs::CHAR_GET_AI_CONTROLLER));
-        auto war_target_eval = reinterpret_cast<void*(*)(void*)>(
-            bridge::game_fn(ck3::funcs::AI_WAR_TARGET_EVAL));
-        auto war_declare_exec = reinterpret_cast<void(*)(void*, void*)>(
-            bridge::game_fn(ck3::funcs::AI_WAR_DECLARE_EXEC));
-        auto war_post_decl = reinterpret_cast<void(*)(void*, int, int)>(
-            bridge::game_fn(ck3::funcs::AI_WAR_POST_DECL));
-
-        // Clear pacing flag
-        uint8_t* pacing_ptr = reinterpret_cast<uint8_t*>(
-            g_base_addr + ck3::globals::AI_WAR_SUPPRESS);
-        volatile uint8_t old_pacing = 0;
-        volatile bool pacing_mapped = is_mapped(reinterpret_cast<uintptr_t>(pacing_ptr));
-        if (pacing_mapped) {
-            old_pacing = *pacing_ptr;
-            // R1c (ck-6kvq.10, §2.9): the second AI_WAR_SUPPRESS pulse site.
-            (void)bridge::pulse_enter_global(
-                "AI_WAR_SUPPRESS", "declare_war_debug_path5",
-                reinterpret_cast<uintptr_t>(pacing_ptr), 1, old_pacing);
-            *pacing_ptr = 0;
-        }
-
-        watchdog_arm(8);
-        g_in_protected_region = true;
-        int sig = sigsetjmp(g_recovery_point, 1);
-        if (sig != 0) {
-            g_in_protected_region = false;
-            watchdog_disarm();
-            if (pacing_mapped) {
-                *pacing_ptr = old_pacing;
-                bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pacing_ptr));  // R1c
-            }
-            crashed = true;
-            const char* sig_name = (sig == 1) ? "SIGSEGV" :
-                                   (sig == 2) ? "SIGALRM_TIMEOUT" : "UNKNOWN";
-            snprintf(crash_reason, sizeof(crash_reason), "direct_ai_pipeline_%s", sig_name);
-        } else {
-            try {
-                void* ai_ctrl = get_ai_ctrl(character);
-                if (ai_ctrl && is_mapped(reinterpret_cast<uintptr_t>(ai_ctrl))) {
-                    void* war_data = war_target_eval(ai_ctrl);
-                    war_declare_exec(ai_ctrl, war_data);
-                    uint32_t rng_seed = (actor_id ^ (g_tick_id.load() * 2654435761u)) & 0x7FFFFFFE;
-                    war_post_decl(ai_ctrl, static_cast<int>(rng_seed), 1);
-                    result = true;
-                } else {
-                    snprintf(crash_reason, sizeof(crash_reason), "no_ai_controller");
-                }
-            } catch (...) {
-                snprintf(crash_reason, sizeof(crash_reason), "direct_ai_pipeline_exception");
-            }
-            g_in_protected_region = false;
-            watchdog_disarm();
-        }
-
-        // Restore pacing
-        if (pacing_mapped) {
-            *pacing_ptr = old_pacing;
-            bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pacing_ptr));  // R1c
-        }
-
-        int32_t wa = read_war_count();
-        bool path_war = (wb >= 0 && wa > wb);
-
-        char log_buf[256];
-        snprintf(log_buf, sizeof(log_buf),
-                 "direct_ai_pipeline called=%s, crashed=%s, reason='%s', pacing_was=%u",
-                 result ? "true" : "false",
-                 crashed ? "true" : "false",
-                 crash_reason[0] ? crash_reason : "none",
-                 old_pacing);
-        ADLOG("WAR_DEBUG: path 5 result: %s\n", log_buf);
-
-        const char* res_str = path_war ? "war_created" :
-                              result ? "dispatched_no_war" :
-                              crash_reason[0] ? crash_reason : "failed";
-        append_path_result("direct_ai_pipeline", res_str, log_buf, wb, wa);
-
-        if (path_war) {
-            war_created = true;
-            successful_path = "direct_ai_pipeline";
-        }
-    }
-
-    paths_json += "]";
-
-    // Build full debug_log JSON
-    int32_t final_wars = read_war_count();
-    std::string debug_json = "{\"paths_tried\":";
-    debug_json += paths_json;
-    debug_json += ",\"war_created\":";
-    debug_json += war_created ? "true" : "false";
-    debug_json += ",\"successful_path\":";
-    if (successful_path) {
-        debug_json += "\"";
-        debug_json += successful_path;
-        debug_json += "\"";
-    } else {
-        debug_json += "null";
-    }
-    debug_json += ",\"initial_wars\":";
-    debug_json += std::to_string(initial_wars);
-    debug_json += ",\"final_wars\":";
-    debug_json += std::to_string(final_wars);
-    debug_json += "}";
-
-    intent->debug_log = std::move(debug_json);
-    intent->executed = war_created;
-    intent->consumed = true;
-    if (!war_created) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "all_paths_failed");
-    }
-
-    ADLOG("WAR_DEBUG: === DONE === war_created=%s successful_path=%s initial=%d final=%d\n",
-          war_created ? "true" : "false",
-          successful_path ? successful_path : "none",
-          initial_wars, final_wars);
+    r.end_array();
+    r.end_object();
+    real->console_output = r.take();
+    real->executed = true;
+    real->rejected = false;
+    ADLOG("CHECK_INTERACTION: %s actor=%u targets=%zu\n", real->interaction_name.c_str(),
+          real->actor_id & 0xFFFFFF, targets.size());
 }
 
 // =============================================================================
@@ -2986,8 +1998,18 @@ void process_acceptance_query() {
     // (body: mov al,1; ret at 0x03a5c3e0), so the call does NOT filter invalid interactions — its
     // only value is proving the vtable ptr dispatches cleanly (protected by sigsetjmp below).
     uintptr_t interaction_addr = reinterpret_cast<uintptr_t>(interaction);
-    uintptr_t vtable = read<uintptr_t>(interaction_addr);
-    auto is_valid_fn = reinterpret_cast<bool(*)(void*)>(read<uintptr_t>(vtable + ck3::interaction_def::VTABLE_IS_VALID));
+    const uintptr_t vtable = safe_read<uintptr_t>(interaction_addr);
+    const uintptr_t is_valid_addr =
+        vtable ? safe_read<uintptr_t>(vtable + ck3::interaction_def::VTABLE_IS_VALID) : 0;
+    if (!is_valid_addr || !is_mapped(is_valid_addr)) {
+        snprintf(g_acceptance_query.error, sizeof(g_acceptance_query.error),
+                 "interaction_vtable_unreadable");
+        g_acceptance_query.would_accept = false;
+        g_acceptance_query.state.store(3, std::memory_order_release);
+        ADLOG("ACCEPTANCE_QUERY: interaction '%s' vtable unreadable\n", interaction_type);
+        return;
+    }
+    auto is_valid_fn = reinterpret_cast<bool(*)(void*)>(is_valid_addr);
 
     bool valid = false;
     // Protected call for is_valid
@@ -3404,7 +2426,7 @@ void process_cb_query() {
     // target_char_ptr (vs the realm-walked derived key the engine uses at
     // FUN_06831c70) is the simpler engine-faithful read — under-rejects the
     // doctrine-positive case (faith doctrine 0x247 fast-path at decomp lines
-    // 242-260) but never over-rejects. Doctrine refinement deferred to followup.
+    // 242-260) but never over-rejects. The doctrine fast-path is not mirrored.
     //
     // Failure modes (all → i2_eval_ok=false → gate skipped, results match
     // legacy 5-gate behavior): helpers not mapped, list pointers unmapped,
@@ -3452,8 +2474,9 @@ void process_cb_query() {
     // demoted to DIAGNOSTIC-ONLY (still evaluated + counted for telemetry,
     // never emit a `dropped` result; the CB falls through to the inner
     // check, which is the verdict). The cheap STRUCTURAL gates (script-only
-    // group, disabled/stage2/no-members group flags, kind_relation_mode)
-    // stay hard drops — they filter CBs the inner check can't distinguish.
+    // group, disabled/stage2/no-members group flags) stay hard drops — they
+    // filter CBs the inner check can't distinguish. kind_relation_mode is
+    // diagnostic-only too (lane l5, see its site below).
     // Killswitch BRIDGE_DISTRUST_INNER_CB_VALIDITY=1 restores the old
     // pre-drop behavior for A/B debugging.
     static const bool distrust_inner_cb_validity = []() {
@@ -3516,7 +2539,7 @@ void process_cb_query() {
                     uintptr_t tlist = get_truce_list(attacker);
                     if (tlist && is_mapped(tlist)) {
                         uintptr_t t_begin = safe_read<uintptr_t>(tlist + 0);
-                        int32_t   t_count = safe_read<int32_t>(tlist + 0xC);
+                        int32_t   t_count = safe_read<int32_t>(tlist + pdx_array::COUNT);
                         if (t_begin && is_mapped(t_begin) &&
                             t_count > 0 && t_count < 1000) {
                             uintptr_t t_end = t_begin + (size_t)t_count * 8;
@@ -3669,8 +2692,8 @@ void process_cb_query() {
         // read above for the ck-eteb script-only filter).
         //
         // Per-CB outer triggers (cb_type::ALLOWED_FOR_CHAR / ALLOWED_AGAINST /
-        // VALID_TO_START_*) need a CB-rooted scope context — out of scope for
-        // this bead, deferred to ck-39e1.
+        // VALID_TO_START_*) need a CB-rooted scope context and are not
+        // evaluated here.
         if (strict_mode) {
             const char* outer_drop_reason = nullptr;
             if (!group_ptr || !is_mapped(group_ptr)) {
@@ -3817,7 +2840,21 @@ void process_cb_query() {
                     (i2_in_alliance != 0 || relation_mode != 1) &&
                     (relation_mode != 2 || i2_in_alliance != 0 ||
                      i2_in_truce != 0);
-                if (!passes) {
+                // lane l5 (F8, re/findings/re_war.md §7): this gate is the AI's own
+                // candidate filter in ai_cb_evaluate_all, keyed on the CB's TARGET
+                // mode (maybe_ai_cb_title_relation_mode reads cb_type+0x738) and on
+                // two engine lists the bridge approximates as alliance/truce. It
+                // says which CBs an AI considers, not which a ruler may declare:
+                // live867 l5-r2 dropped invasion_war, claim_cb and county_conquest_cb
+                // against every unallied, untruced target. The inner
+                // CB_VALIDITY_CHECK is the verdict, as for the #114 pre-drops;
+                // BRIDGE_DISTRUST_INNER_CB_VALIDITY=1 restores the drop.
+                if (!passes && !distrust_inner_cb_validity) {
+                    strict_dropped_kind_relation++;
+                    ADLOG("CB_QUERY: kind_relation_mode would drop cb=%s mode=%d "
+                          "in_alliance=%u in_truce=%u; the inner check decides\n",
+                          cb_name, relation_mode, i2_in_alliance, i2_in_truce);
+                } else if (!passes) {
                     strict_dropped_kind_relation++;
                     CBQueryResult dropped;
                     dropped.cb_index = cb_idx;
@@ -4153,141 +3190,31 @@ void process_cb_query() {
 // by clearing it before submitting; we wait briefly if it is 1/4 (busy).
 
 // =============================================================================
-// Shared slot acquisition with bounded retry-on-busy + stale reclaim (ck-#95)
+// cb_query_acquire_slot — claim the single-flight g_cb_query slot
 // =============================================================================
 //
-// The g_cb_query slot is SINGLE-FLIGHT global state shared between the agent's
-// CB-validity queries AND the engine's own AI CB evaluations (both drain through
-// process_cb_query on the game thread). When the deferred-drain coordinator
-// pulses the game unpaused to service an agent query, the engine's concurrent AI
-// may grab the slot first → the agent query sees state 1/4 and used to fail-closed
-// with cb_query_busy, which the live agent treats as "degraded" → it HOLDS and
-// misses expansion (the #95 class). A SECOND failure mode: a prior query that
-// timed out (rc=-3) used to leave the slot wedged at state 1 forever (the engine
-// never serviced it because it was re-paused), so EVERY subsequent caller's
-// busy-wait drained for nothing and returned cb_query_busy — a stuck-busy slot.
+// L13 FF1-B/FF2: every g_cb_query user runs on the GAME thread (the slot
+// submitters are game-thread reads and service their own slot there; the drain
+// is the only other user), so the slot has one serial owner and the claim needs
+// no CAS and no busy-wait: a slot that is pending (1) or being serviced (4) on
+// this thread cannot clear by waiting, and the callers service a pending one
+// first (service_slots_if_game_thread). Off the game thread there is no serial
+// owner, so the claim refuses (the caller answers cb_query_busy) rather than
+// race one. The pre-L13 busy-wait, stale-slot reclaim and dead-servicer reclaim
+// (D8) existed for an IPC-thread claimant racing the drain and are deleted.
 //
-// This helper resolves both: it polls for a clean slot (0/2/3) across a bounded
-// budget of retry attempts, and — critically — RECLAIMS a slot stuck at state 1
-// (pending, never picked up by the game thread) once its submit timestamp is
-// older than a generous staleness window. State 4 (game thread actively in
-// CB_VALIDITY_CHECK) is normally never reclaimed — that would race a live
-// writer; we wait it out, which is bounded by the engine's own per-query
-// service time.
-//
-// D8 EXCEPTION (probe P4.7 item 4, 2026-08-01): a state-4 slot whose
-// service_start_ns is older than kServiceStaleNs IS reclaimed. If the game
-// thread dies inside CB_VALIDITY_CHECK (engine-side SIGSEGV absorbed by CK3's
-// own crash handler — the 07-31/08-01 minidump class), the slot would
-// otherwise stay 4 forever and every later CB query would return
-// cb_query_busy for the rest of the session (a genuine permanent wedge).
-// Legitimate service completes in ~0.5-4s (per-CB watchdog bounds hangs), so
-// a 30s-old state-4 means the servicing thread is gone. The CAS-based reclaim
-// keeps the (vanishingly unlikely) still-alive-but-slow writer race window
-// explicit and logged.
-//
-// Returns true and leaves the slot reset to 0 (empty, ready to submit) on
-// success. Returns false (caller emits cb_query_busy) only when the slot stayed
-// genuinely busy — actively serviced (state 4) or freshly pending (state 1 with
-// a recent submit) — across the whole budget.
-//
-// Crash-hardened: pure atomic loads + at most a results.clear() on a slot we
-// have exclusively reclaimed. No name-cache drain, no game-object traversal, no
-// allocation under the AI hook. Polled budgets only (no signal watchdog — the
-// reader thread masks SIGALRM; the I15 lesson).
+// Returns true and leaves the slot reset to 0 (empty, ready to submit).
 static bool cb_query_acquire_slot() {
-    // Per-attempt drain window and overall retry budget. ~3 attempts of 500ms
-    // each = ~1.5s overall worst case before declaring busy, comfortably inside
-    // the do_query_*_strict timeout (>= 2000ms) so a transient engine-AI
-    // collision is ridden out rather than surfaced as a hard failure.
-    constexpr int kAttempts        = 3;
-    constexpr int kBusyWaitMs      = 500;
-    constexpr int kPollIntervalMs  = 25;
-    // A state-1 slot whose submit is older than this was abandoned (the game
-    // thread never CAS'd it 1→4 — e.g. a prior caller timed out while paused).
-    // Safe to reclaim: no game thread owns a never-serviced pending slot.
-    constexpr uint64_t kStaleNs    = 8ULL * 1000 * 1000 * 1000;  // 8s
-    // D8: a state-4 slot whose service START is older than this has a dead
-    // servicing thread (crashed inside CB_VALIDITY_CHECK) — reclaim so one
-    // crash cannot wedge query_cbs_for_target for the whole session.
-    constexpr uint64_t kServiceStaleNs = 30ULL * 1000 * 1000 * 1000;  // 30s
-
-    for (int attempt = 0; attempt < kAttempts; ++attempt) {
-        int busy_waited = 0;
-        while (busy_waited < kBusyWaitMs) {
-            int st = g_cb_query.state.load(std::memory_order_acquire);
-            if (st == 0 || st == 2 || st == 3) {
-                // Clear any stale completed result, then claim empty.
-                if (st == 2 || st == 3) {
-                    g_cb_query.results.clear();
-                    g_cb_query.state.store(0, std::memory_order_release);
-                }
-                return true;
-            }
-            // Stuck-busy reclaim: a long-pending (state 1) slot that the game
-            // thread never picked up is abandoned — take it over. Re-check the
-            // state under the staleness test to avoid racing a 1→4 transition.
-            if (st == 1) {
-                const uint64_t now_ns = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch()).count());
-                const uint64_t submit_ns =
-                    g_cb_query.submit_ns.load(std::memory_order_acquire);
-                if (submit_ns != 0 && now_ns > submit_ns &&
-                    (now_ns - submit_ns) > kStaleNs) {
-                    int expected = 1;
-                    // CAS 1→0: only succeeds if still pending (not yet 1→4'd by
-                    // the game thread). On success we own a clean empty slot.
-                    if (g_cb_query.state.compare_exchange_strong(
-                            expected, 0, std::memory_order_acq_rel)) {
-                        g_cb_query.results.clear();
-                        if (g_logfile) fprintf(g_logfile,
-                            "[CK3-Bridge] cb_query: reclaimed stale pending slot "
-                            "(submit age %llu ms)\n",
-                            (unsigned long long)((now_ns - submit_ns) / 1000000ULL));
-                        return true;
-                    }
-                    // Lost the CAS: game thread just grabbed it (now state 4).
-                    // Fall through and wait it out.
-                }
-            }
-            // D8 self-reset (P4.7 item 4): bounded STATE-4 reclaim. A service
-            // older than kServiceStaleNs means the servicing game thread died
-            // mid-CB_VALIDITY_CHECK (engine-side SIGSEGV absorbed by CK3's own
-            // crash handler never stores state 2/3) — without this, the slot
-            // wedges at 4 and EVERY subsequent CB query in the session returns
-            // cb_query_busy.
-            if (st == 4) {
-                const uint64_t now_ns = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch()).count());
-                const uint64_t svc_ns =
-                    g_cb_query.service_start_ns.load(std::memory_order_acquire);
-                if (svc_ns != 0 && now_ns > svc_ns &&
-                    (now_ns - svc_ns) > kServiceStaleNs) {
-                    int expected = 4;
-                    if (g_cb_query.state.compare_exchange_strong(
-                            expected, 0, std::memory_order_acq_rel)) {
-                        g_cb_query.results.clear();
-                        if (g_logfile) fprintf(g_logfile,
-                            "[CK3-Bridge] cb_query: reclaimed DEAD in-service slot "
-                            "(service age %llu ms) — servicing thread presumed "
-                            "crashed (D8 self-reset)\n",
-                            (unsigned long long)((now_ns - svc_ns) / 1000000ULL));
-                        return true;
-                    }
-                    // Lost the CAS: the service just completed (state 2/3).
-                    // Loop around and claim it via the clean-slot path.
-                }
-            }
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(kPollIntervalMs));
-            busy_waited += kPollIntervalMs;
+    if (!bridge::on_game_thread()) return false;
+    const int st = g_cb_query.state.load(std::memory_order_acquire);
+    if (st == 0 || st == 2 || st == 3) {
+        if (st != 0) {
+            g_cb_query.results.clear();
+            g_cb_query.state.store(0, std::memory_order_release);
         }
-        // This attempt's window expired still busy. Re-submit/retry: loop back
-        // for another drain window (bounded by kAttempts) before giving up.
+        return true;
     }
-    return false;  // genuinely busy across the whole budget → caller emits busy
+    return false;
 }
 
 int cb_query_count_valid_sync(uint32_t actor_id,
@@ -4308,6 +3235,7 @@ int cb_query_count_valid_sync(uint32_t actor_id,
     // Acquire the single-flight slot with bounded retry-on-busy + stale reclaim
     // (ck-#95). Rides out transient collisions with the engine's own AI CB eval
     // and reclaims a slot wedged-pending by a prior timed-out query.
+    if (g_cb_query.state.load(std::memory_order_acquire) == 1) service_slots_if_game_thread();
     if (!cb_query_acquire_slot()) {
         g_cb_query_busy_count.fetch_add(1, std::memory_order_relaxed);  // H3
         set_err("cb_query_busy");
@@ -4331,12 +3259,13 @@ int cb_query_count_valid_sync(uint32_t actor_id,
     g_cb_query.submit_tick.store(g_tick_id.load(std::memory_order_relaxed),
                                  std::memory_order_relaxed);
     g_cb_query.state.store(1, std::memory_order_release);
+    service_slots_if_game_thread();
 
     // Poll for game-thread completion. Same 50ms cadence as do_query_valid_cbs.
     if (timeout_ms < 50) timeout_ms = 50;
     int waited = 0;
     while (waited < timeout_ms) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        slot_poll_wait();
         waited += 50;
         int s = g_cb_query.state.load(std::memory_order_acquire);
         if (s == 2 || s == 3) {
@@ -4365,8 +3294,8 @@ int cb_query_count_valid_sync(uint32_t actor_id,
     // wedged pending request (the stuck-busy failure mode). If the slot is
     // still pending (state 1, game thread never picked it up — e.g. it was
     // re-paused under us), reclaim it via CAS 1→0. If the game thread is
-    // actively servicing (state 4) we leave it; cb_query_acquire_slot's stale
-    // reclaim will recover the slot for the next caller if it never completes.
+    // actively servicing (state 4) we leave it (on the game thread, where every
+    // slot user runs since L13, a state-4 slot is this thread's own service).
     {
         int expected = 1;
         if (g_cb_query.state.compare_exchange_strong(
@@ -4390,19 +3319,18 @@ int cb_query_count_valid_sync(uint32_t actor_id,
 //             a ruler (char+0x1B8 != 0) AND alive (char+0x1C8 == 0). Self-
 //             pair check is implicit in the engine's front-buffer iterator.
 //
-//             Deferred to follow-up RE: faith/realm/government/era cross-
-//             checks (FUN_067539c0/0674adf0/066e4fb0) and truce/alliance
-//             flag construction (FUN_0678b570/GetTruceList) — see Open
+//             Not mirrored: faith/realm/government/era cross-checks
+//             (FUN_067539c0/0674adf0/066e4fb0) and truce/alliance flag
+//             construction (FUN_0678b570/GetTruceList) — see Open
 //             Questions in re/findings/re_a1_path_a_re_20260425.md.
 //
 //   Stage 2 — group-level outer-trigger flag filter (process_cb_query,
 //             game thread, when CBQuery::strict_mode=true). Decomp lines
 //             357-360: per-group requires DISABLED_FLAG==0 AND
-//             STAGE2_FLAG==0 AND members count > 0. Script trigger at
-//             group+0x48 deferred (needs scope_ctx; out of scope per bead).
+//             STAGE2_FLAG==0 AND members count > 0. The script trigger at
+//             group+0x48 is not evaluated (it needs a scope_ctx).
 //
-// Stage 4 (score evaluator) is explicitly out of scope (per bead — may be
-// obviated by Stage 1+2 alone, otherwise pivots to Path B').
+// Stage 4 (the score evaluator) is not mirrored.
 //
 // On bilateral reject the function returns -4 with `*out_total = 0` and
 // a short reason in `*out_error` (caller treats as fail-closed).
@@ -4480,6 +3408,7 @@ int cb_query_count_valid_strict(uint32_t actor_id,
 
     // Acquire the single-flight slot with bounded retry-on-busy + stale reclaim
     // (ck-#95). Same shape as cb_query_count_valid_sync.
+    if (g_cb_query.state.load(std::memory_order_acquire) == 1) service_slots_if_game_thread();
     if (!cb_query_acquire_slot()) {
         g_cb_query_busy_count.fetch_add(1, std::memory_order_relaxed);  // H3
         set_err("cb_query_busy");
@@ -4504,11 +3433,12 @@ int cb_query_count_valid_strict(uint32_t actor_id,
     g_cb_query.submit_tick.store(g_tick_id.load(std::memory_order_relaxed),
                                  std::memory_order_relaxed);
     g_cb_query.state.store(1, std::memory_order_release);
+    service_slots_if_game_thread();
 
     if (timeout_ms < 50) timeout_ms = 50;
     int waited = 0;
     while (waited < timeout_ms) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        slot_poll_wait();
         waited += 50;
         int s = g_cb_query.state.load(std::memory_order_acquire);
         if (s == 2 || s == 3) {
@@ -4553,10 +3483,9 @@ int cb_query_count_valid_strict(uint32_t actor_id,
 // the spec's wire format with per-CB reason strings.
 //
 // Per-CB outer triggers (allowed_for_character / allowed_against_character /
-// valid_to_start) are NOT yet evaluated — those need a CB-rooted scope_ctx
-// and are deferred to ck-39e1. When ck-39e1 lands, process_cb_query will
-// set additional outer_reason values ("allowed_for_character_failed", etc.)
-// and the wire format will surface them automatically.
+// valid_to_start) are not evaluated: they need a CB-rooted scope_ctx, which
+// this probe does not build. outer_reason therefore carries only the Stage 1
+// and Stage 2 reasons.
 int cb_query_strict_full_sync(uint32_t actor_id,
                               uint32_t target_id,
                               int      timeout_ms,
@@ -4610,7 +3539,10 @@ int cb_query_strict_full_sync(uint32_t actor_id,
     if (actor_death != 0) { set_err("bilateral_actor_dead"); return -4; }
 
     // Acquire the single-flight slot with bounded retry-on-busy + stale reclaim
-    // (ck-#95).
+    // (ck-#95). L13: on the game thread a slot an IPC caller left pending is
+    // serviced here first — this thread is the one that would service it, so
+    // waiting for it to clear could only time out.
+    if (g_cb_query.state.load(std::memory_order_acquire) == 1) service_slots_if_game_thread();
     if (!cb_query_acquire_slot()) {
         g_cb_query_busy_count.fetch_add(1, std::memory_order_relaxed);  // H3
         set_err("cb_query_busy");
@@ -4634,10 +3566,13 @@ int cb_query_strict_full_sync(uint32_t actor_id,
                                  std::memory_order_relaxed);
     g_cb_query.state.store(1, std::memory_order_release);
 
+    // On the game thread nobody else will service the slot: do it here.
+    service_slots_if_game_thread();
+
     if (timeout_ms < 50) timeout_ms = 50;
     int waited = 0;
     while (waited < timeout_ms) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        slot_poll_wait();
         waited += 50;
         int s = g_cb_query.state.load(std::memory_order_acquire);
         if (s == 2 || s == 3) {
@@ -5150,368 +4085,6 @@ void process_trigger_query() {
 }
 
 // =============================================================================
-// Console Command Handler Table + Execution
-// =============================================================================
-//
-// Console handlers have ABI: SResult* handler(SResult* out, const SCommandData* data)
-// where SResult is returned by value via hidden pointer (Itanium C++ ABI).
-//
-// SCommandData layout (from decompilation of FUN_05c7e6d0):
-//   +0x00: ptr to arg array (each entry 0x20 bytes: +0x00=char*, +0x08=len)
-//   +0x0C: int32 arg_count
-//
-// SResult layout (from decompilation of FUN_041f3db0):
-//   +0x00: uint8 success (0=fail, 1=ok)
-//   +0x08: std::string message (SSO: data at +0x08, len at +0x10, sso_buf at +0x18)
-
-// Console handler function pointer type
-typedef void* (*console_handler_fn)(void* result_out, const void* command_data);
-
-struct ConsoleCommandEntry {
-    const char* name;
-    uintptr_t handler_offset;  // base-relative
-};
-
-static const ConsoleCommandEntry g_console_commands[] = {
-    {"AI.declare_war",          ck3::console_handlers::CMD_AI_DECLARE_WAR},
-    {"AI.Enable",               ck3::console_handlers::CMD_AI_ENABLE},
-    {"AI.Disable",              ck3::console_handlers::CMD_AI_DISABLE},
-    {"AI.ToggleAll",            ck3::console_handlers::CMD_AI_TOGGLE_ALL},
-    {"AI.try_send_decision",    ck3::console_handlers::CMD_AI_TRY_DECISION},
-    {"ai.interaction_values",   ck3::console_handlers::CMD_AI_INTERACTION_VALS},
-    {"add_piety",               ck3::console_handlers::CMD_ADD_PIETY},
-    {"add_prestige",            ck3::console_handlers::CMD_ADD_PRESTIGE},
-    {"add_stress",              ck3::console_handlers::CMD_ADD_STRESS},
-    {"add_dread",               ck3::console_handlers::CMD_ADD_DREAD},
-    {"add_influence",           ck3::console_handlers::CMD_ADD_INFLUENCE},
-    {"add_trait",               ck3::console_handlers::CMD_ADD_TRAIT},
-    {"add_claim",               ck3::console_handlers::CMD_ADD_CLAIM},
-    {"give_title",              ck3::console_handlers::CMD_GIVE_TITLE},
-    {"add_realm_law",           ck3::console_handlers::CMD_ADD_REALM_LAW},
-    {"add_title_law",           ck3::console_handlers::CMD_ADD_TITLE_LAW},
-    {"add_doctrine",            ck3::console_handlers::CMD_ADD_DOCTRINE},
-    {"change_fervor",           ck3::console_handlers::CMD_CHANGE_FERVOR},
-    {"add_innovation",          ck3::console_handlers::CMD_ADD_INNOVATION},
-    {"add_fascination",         ck3::console_handlers::CMD_ADD_FASCINATION},
-    {"add_relation",            ck3::console_handlers::CMD_ADD_RELATION},
-    {"add_secret",              ck3::console_handlers::CMD_ADD_SECRET},
-    {"helplog",                 ck3::console_handlers::CMD_HELPLOG},
-    {"aiwatch",                 ck3::console_handlers::CMD_AIWATCH},
-    {"debug_mode",              ck3::console_handlers::CMD_DEBUG_MODE},
-    {"script_docs",             ck3::console_handlers::CMD_SCRIPT_DOCS},
-    {"scripted_tests",          ck3::console_handlers::CMD_SCRIPTED_TESTS},
-    {"debug_event",             ck3::console_handlers::CMD_DEBUG_EVENT},
-    {"event_queue",             ck3::console_handlers::CMD_EVENT_QUEUE},
-    {"event_counts",            ck3::console_handlers::CMD_EVENT_COUNTS},
-    // Round 2: newly discovered handlers (ck-hxy9)
-    {"AI.try_send_interaction", ck3::console_handlers::CMD_AI_TRY_INTERACTION},
-    {"add_realm_law_skip_effects", ck3::console_handlers::CMD_ADD_REALM_LAW_SKIP},
-    {"change_culture",          ck3::console_handlers::CMD_CHANGE_CULTURE},
-    {"set_culture",             ck3::console_handlers::CMD_SET_CULTURE},
-    {"charinfo",                ck3::console_handlers::CMD_CHARINFO},
-    {"set_sexuality",           ck3::console_handlers::CMD_SET_SEXUALITY},
-    {"know_schemes",            ck3::console_handlers::CMD_KNOW_SCHEMES},
-    {"end_schemes",             ck3::console_handlers::CMD_END_SCHEMES},
-    {"tick_day",                ck3::console_handlers::CMD_TICK_DAY},
-    {"tick_development",        ck3::console_handlers::CMD_TICK_DEVELOPMENT},
-    {"abort_travel_plan",       ck3::console_handlers::CMD_ABORT_TRAVEL},
-    {"pause_on",                ck3::console_handlers::CMD_PAUSE_ON},
-    {"pause_and_save_on",       ck3::console_handlers::CMD_PAUSE_SAVE_ON},
-    {"test_save",               ck3::console_handlers::CMD_TEST_SAVE},
-};
-static const size_t g_console_command_count = sizeof(g_console_commands) / sizeof(g_console_commands[0]);
-
-static console_handler_fn lookup_console_handler(const char* name) {
-    for (size_t i = 0; i < g_console_command_count; i++) {
-        if (strcasecmp(g_console_commands[i].name, name) == 0) {
-            uintptr_t addr = g_base_addr + g_console_commands[i].handler_offset;
-            if (!is_mapped(addr)) {
-                ADLOG("console: handler for '%s' at 0x%lx not mapped\n", name, addr);
-                return nullptr;
-            }
-            return reinterpret_cast<console_handler_fn>(addr);
-        }
-    }
-    return nullptr;
-}
-
-// Argument entry in SCommandData (0x20 byte stride)
-struct ConsoleArgEntry {
-    const char* data;       // +0x00
-    uint64_t length;        // +0x08
-    uint64_t reserved[2];   // +0x10, +0x18
-};
-
-// SCommandData (minimal — only fields we know)
-struct SCommandData {
-    ConsoleArgEntry* args;  // +0x00
-    uint32_t pad_08;        // +0x08
-    int32_t arg_count;      // +0x0C
-    uint8_t pad_rest[48];   // safety padding for unknown fields
-};
-
-// SResult (console handler output)
-// Handler writes: +0x00 = success byte, +0x08 = std::string (libstdc++ layout).
-// Using a real std::string ensures proper heap cleanup when SResult is destructed.
-struct SResult {
-    uint8_t success;        // +0x00
-    uint8_t _pad[7];        // +0x01..0x07
-    std::string message;    // +0x08 (libstdc++ SSO: data, length, sso_buf/capacity)
-};
-
-// ck-ehbi: harness-level set_truce implementation.
-// `set_truce` is a PDXScript effect, not a console handler, so it has no
-// fn_ptr entry in g_console_commands[]. The harness still invokes it via
-// execute_console_command (bridge/harness/console.py:set_truce), so we
-// special-case it here: call the game's GET_OR_CREATE_RELATION +
-// TRUCE_ADD_ENTRY primitives directly. Runs on the game thread (caller
-// execute_console_intent is driven by drain_and_execute_intents).
-//
-// Usage: set_truce <char_a_id> <char_b_id> <days>
-static bool handle_set_truce(const std::vector<std::string>& tokens,
-                              std::string& out_msg) {
-    if (tokens.size() != 4) {
-        out_msg = "set_truce: expected 3 args (char_a char_b days)";
-        return false;
-    }
-
-    uint32_t char_a_id = static_cast<uint32_t>(atoi(tokens[1].c_str()));
-    uint32_t char_b_id = static_cast<uint32_t>(atoi(tokens[2].c_str()));
-    int32_t  days      = atoi(tokens[3].c_str());
-    if (char_a_id == 0 || char_b_id == 0 || days <= 0) {
-        out_msg = "set_truce: invalid args";
-        return false;
-    }
-    if (char_a_id == char_b_id) {
-        out_msg = "set_truce: char_a == char_b";
-        return false;
-    }
-
-    void* char_a = lookup_character(char_a_id);
-    void* char_b = lookup_character(char_b_id);
-    if (!char_a || is_sentinel(char_a)) {
-        out_msg = "set_truce: char_a not found";
-        return false;
-    }
-    if (!char_b || is_sentinel(char_b)) {
-        out_msg = "set_truce: char_b not found";
-        return false;
-    }
-
-    uintptr_t got_addr = bridge::game_fn(ck3::funcs::GET_OR_CREATE_RELATION);
-    uintptr_t tae_addr = bridge::game_fn(ck3::funcs::TRUCE_ADD_ENTRY);
-    if (!is_mapped(got_addr) || !is_mapped(tae_addr)) {
-        out_msg = "set_truce: engine functions not mapped";
-        return false;
-    }
-
-    using fn_get_or_create = uintptr_t(*)(void*, void*);
-    using fn_truce_add     = void(*)(uintptr_t, uint32_t, int64_t*, void*, int32_t, char);
-    auto get_or_create = reinterpret_cast<fn_get_or_create>(got_addr);
-    auto truce_add     = reinterpret_cast<fn_truce_add>(tae_addr);
-
-    // Raw 32-bit IDs (CCharacter+0x18). TRUCE_ADD_ENTRY compares these
-    // against CDiplomaticRelation::CHAR_ID_LOW/HIGH which store raw values.
-    uint32_t raw_id_a = read<uint32_t>(reinterpret_cast<uintptr_t>(char_a)
-                                        + ck3::character::ID);
-    uint32_t raw_id_b = read<uint32_t>(reinterpret_cast<uintptr_t>(char_b)
-                                        + ck3::character::ID);
-
-    int32_t current_date = 0;
-    uintptr_t gs = read_offset<uintptr_t>(ck3::globals::GAME_STATE_ROOT);
-    if (gs && is_mapped(gs)) current_date = read<int32_t>(gs + ck3::game_state::GAME_DATE);
-    if (current_date <= 0) {
-        out_msg = "set_truce: failed to read current game date";
-        return false;
-    }
-
-    // Expiry: 24 sub-day ticks per game day. Stored as int64 at relation
-    // +0x28/+0x58; upper 32 bits left zero to match the game's own pattern.
-    int64_t expiry_date = static_cast<int64_t>(current_date)
-                           + static_cast<int64_t>(days) * 24;
-
-    uintptr_t rel = get_or_create(char_a, char_b);
-    if (!rel || !is_mapped(rel)) {
-        out_msg = "set_truce: GET_OR_CREATE_RELATION returned invalid ptr";
-        return false;
-    }
-
-    uint32_t slot_low  = read<uint32_t>(rel + ck3::diplomatic_relation::CHAR_ID_LOW);
-    uint32_t slot_high = read<uint32_t>(rel + ck3::diplomatic_relation::CHAR_ID_HIGH);
-    bool a_in_rel = (slot_low == raw_id_a) || (slot_high == raw_id_a);
-    bool b_in_rel = (slot_low == raw_id_b) || (slot_high == raw_id_b);
-    if (!a_in_rel || !b_in_rel) {
-        char buf[256];
-        snprintf(buf, sizeof(buf),
-                 "set_truce: relation ids mismatch (slots=%u/%u want=%u/%u)",
-                 slot_low, slot_high, raw_id_a, raw_id_b);
-        out_msg = buf;
-        return false;
-    }
-
-    // Reason string — libstdc++ std::string, matching the ABI
-    // TRUCE_ADD_ENTRY uses (_M_assign on param_4).
-    std::string reason_str = "bridge_set_truce";
-
-    truce_add(rel, raw_id_a, &expiry_date, &reason_str,
-              ck3::diplomatic_relation::TRUCE_REASON_ATTACKER, 0);
-    truce_add(rel, raw_id_b, &expiry_date, &reason_str,
-              ck3::diplomatic_relation::TRUCE_REASON_DEFENDER, 0);
-
-    char buf[256];
-    snprintf(buf, sizeof(buf),
-             "truce set between %u and %u for %d days (expires at tick %ld)",
-             char_a_id, char_b_id, days, static_cast<long>(expiry_date));
-    out_msg = buf;
-    return true;
-}
-
-void execute_console_intent(Intent* intent) {
-    if (!intent || intent->console_command.empty()) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "empty_command");
-        intent->consumed = true;
-        return;
-    }
-
-    // Parse: first token is command name, rest are args
-    std::string cmd = intent->console_command;
-    std::vector<std::string> tokens;
-    {
-        size_t pos = 0;
-        while (pos < cmd.size()) {
-            while (pos < cmd.size() && (cmd[pos] == ' ' || cmd[pos] == '\t')) pos++;
-            if (pos >= cmd.size()) break;
-            size_t start = pos;
-            while (pos < cmd.size() && cmd[pos] != ' ' && cmd[pos] != '\t') pos++;
-            tokens.push_back(cmd.substr(start, pos - start));
-        }
-    }
-
-    if (tokens.empty()) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "empty_command");
-        intent->consumed = true;
-        return;
-    }
-
-    const std::string& cmd_name = tokens[0];
-
-    // ck-ehbi: `set_truce` is a PDXScript effect, not a console handler, but
-    // the harness still invokes it via execute_console_command. Intercept it
-    // before the fn_ptr lookup (which would reject as unknown_command) and
-    // dispatch directly to GET_OR_CREATE_RELATION + TRUCE_ADD_ENTRY.
-    if (strcasecmp(cmd_name.c_str(), "set_truce") == 0) {
-        std::string msg;
-        bool ok = false;
-        bool crashed = false;
-        watchdog_arm(5);
-        g_in_protected_region = true;
-        if (sigsetjmp(g_recovery_point, 1) == 0) {
-            ok = handle_set_truce(tokens, msg);
-        } else {
-            crashed = true;
-            msg = "set_truce: SIGSEGV in handler";
-        }
-        g_in_protected_region = false;
-        watchdog_disarm();
-
-        intent->executed = ok && !crashed;
-        intent->rejected = !intent->executed;
-        intent->consumed = true;
-        intent->console_output = msg;
-        if (!intent->executed) {
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "%.250s", msg.c_str());
-        }
-        ADLOG("console: set_truce -> success=%d msg='%s'\n",
-              intent->executed ? 1 : 0, msg.c_str());
-        return;
-    }
-
-    console_handler_fn handler = lookup_console_handler(cmd_name.c_str());
-    if (!handler) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "unknown_command: %.100s", cmd_name.c_str());
-        intent->consumed = true;
-        ADLOG("console: unknown command '%s'\n", cmd_name.c_str());
-        return;
-    }
-
-    // Build argument entries (tokens[1..N] are the arguments)
-    size_t arg_count = tokens.size() - 1;
-    std::vector<ConsoleArgEntry> arg_entries(arg_count);
-    for (size_t i = 0; i < arg_count; i++) {
-        arg_entries[i].data = tokens[i + 1].c_str();
-        arg_entries[i].length = tokens[i + 1].size();
-        arg_entries[i].reserved[0] = 0;
-        arg_entries[i].reserved[1] = 0;
-    }
-
-    // Build SCommandData
-    SCommandData cmd_data = {};
-    cmd_data.args = arg_entries.empty() ? nullptr : arg_entries.data();
-    cmd_data.arg_count = static_cast<int32_t>(arg_count);
-
-    // Prepare SResult — the handler constructs the std::string at +0x08
-    // by writing data/length/sso_buf directly. Using a real std::string
-    // ensures proper destructor cleanup (heap free if non-SSO).
-    SResult result;
-    memset(&result, 0, sizeof(result));
-
-    ADLOG("console: calling handler for '%s' with %zu args\n",
-          cmd_name.c_str(), arg_count);
-
-    // Call the handler on the game thread with SIGSEGV protection
-    watchdog_arm(5);
-    g_in_protected_region = true;
-    volatile bool crashed = false;
-
-    if (sigsetjmp(g_recovery_point, 1) == 0) {
-        handler(&result, &cmd_data);
-    } else {
-        crashed = true;
-        ADLOG("console: SIGSEGV in handler for '%s'\n", cmd_name.c_str());
-    }
-
-    g_in_protected_region = false;
-    watchdog_disarm();
-
-    if (crashed) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "handler_crashed");
-        intent->consumed = true;
-        // Don't destruct result.message — it may be in a corrupted state
-        memset(&result, 0, sizeof(result));
-        return;
-    }
-
-    // Read result
-    intent->executed = (result.success != 0);
-    intent->rejected = (result.success == 0);
-    intent->consumed = true;
-
-    // Extract output string from the std::string the handler constructed
-    if (!result.message.empty()) {
-        size_t safe_len = std::min(result.message.size(), (size_t)4096);
-        intent->console_output = result.message.substr(0, safe_len);
-    }
-
-    if (!intent->executed) {
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "handler_returned_failure");
-    }
-
-    ADLOG("console: '%s' -> success=%d output='%s'\n",
-          cmd_name.c_str(), result.success,
-          intent->console_output.substr(0, 100).c_str());
-
-    // SResult destructor cleans up result.message (std::string dtor frees heap if needed)
-}
-
-// =============================================================================
 // drain_and_execute_intents — Serial intent execution from on_tick
 // =============================================================================
 //
@@ -5521,7 +4094,13 @@ void execute_console_intent(Intent* intent) {
 //
 // This is safe: single-threaded, TLS initialized, no contention.
 
-void drain_and_execute_intents() {
+// The game-thread query slots, serviced: each slot an IPC-side or game-thread
+// handler submitted (state 1) is evaluated here. Called by the drain every pass,
+// and by a handler that submits a slot while it is itself ON the game thread
+// (L13 D1: the slot submitters are game-thread reads now), which is the one
+// thread that could ever service it — so it services it at once instead of
+// polling for a drain that cannot run until it returns.
+void service_query_slots() {
     // Process any pending acceptance query (deferred from IPC thread)
     if (g_acceptance_query.state.load(std::memory_order_acquire) == 1) {
         process_acceptance_query();
@@ -5529,15 +4108,10 @@ void drain_and_execute_intents() {
 
     // Process any pending CB validity query (deferred from IPC thread).
     // H1 (re_warplanner_lifecycle.md §1.4): service up to kCbDrainPerTick CB
-    // submissions per tick instead of exactly one. When the deferred-drain
-    // coordinator pulses unpaused for only a tick or two, a SECOND bridge CB
-    // caller that resubmits within the same pulse window otherwise has to wait a
-    // whole tick → falls into the retry/timeout path unnecessarily. Allowing a
-    // bounded few iterations lets a fast resubmit land in the same pulse.
-    // SAFE/superset: process_cb_query CAS-guards 1→4 and returns immediately if
-    // not pending, so an iteration with no pending submission is a single atomic
-    // load + return — no new state, no allocation. The existing acquire-retry in
-    // cb_query_acquire_slot still covers a caller that hasn't submitted yet.
+    // submissions per pass instead of exactly one (historically for a second
+    // caller resubmitting inside one pulse window; the pulse is gone, and the
+    // bound is kept as the per-pass cap). process_cb_query CAS-guards 1→4 and
+    // returns at once if not pending.
     static constexpr int kCbDrainPerTick = 2;
     for (int i = 0; i < kCbDrainPerTick &&
          g_cb_query.state.load(std::memory_order_acquire) == 1; ++i) {
@@ -5549,21 +4123,47 @@ void drain_and_execute_intents() {
         process_trigger_query();
     }
 
-    // Process any pending named-trigger eval query (ck-fo7x.4, deferred from IPC thread)
-    if (g_named_trigger_query.state.load(std::memory_order_acquire) == 1) {
-        process_named_trigger_query();
-    }
-
     // #64: Process any pending annotated decision-eval query (deferred from IPC thread;
     // the trigger evals must run here on the game thread where the watchdog fires).
     if (g_decision_eval_query.state.load(std::memory_order_acquire) == 1) {
         process_decision_eval_query();
     }
 
+    // Faction options (query_joinable_factions): the engine's create/join/leave/
+    // press verdicts are trigger evaluations, so they run here on the game thread.
+    if (faction_query_pending()) {
+        process_faction_query();
+    }
+
     // Process any pending interaction-cascade probe (ck-e58l.8, deferred from IPC thread)
     if (cascade_query_pending()) {
         process_cascade_query();
     }
+
+}
+
+void service_slots_if_game_thread() {
+    if (!bridge::on_game_thread()) return;
+    // The process_* functions install their own fault recovery points; the
+    // caller's are saved and put back around them.
+    sigjmp_buf saved_point;
+    memcpy(&saved_point, &g_recovery_point, sizeof(sigjmp_buf));
+    const bool saved_protected = g_in_protected_region;
+    service_query_slots();
+    memcpy(&g_recovery_point, &saved_point, sizeof(sigjmp_buf));
+    g_in_protected_region = saved_protected;
+}
+
+void slot_poll_wait() {
+    // Off the game thread the drain services the slot on its next pass, so the
+    // poll waits; on it the slot was serviced at submit (service_slots_if_game_thread)
+    // and waiting would only stall every engine command behind the session mutex.
+    if (bridge::on_game_thread()) return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+}
+
+void drain_and_execute_intents() {
+    service_query_slots();
 
     // Fast-path atomic check — avoid the mutex when there are no intents
     if (g_intent_queue.pending_count_fast() == 0) {
@@ -5581,108 +4181,93 @@ void drain_and_execute_intents() {
 
     ADLOG("DRAIN_INTENTS: %zu intents to process\n", snapshot.size());
 
-    for (auto& intent : snapshot) {
-        if (intent.consumed) continue;
+    for (const auto& queued : snapshot) {
+        // L13 FF3 (witness X3): claim the intent under the queue's lock (it is
+        // consumed + in flight from here) and execute on our own copy; finish()
+        // hands the verdict back under the lock. No pointer into the queue is
+        // held across the execution, so an enqueue, cancel or clear on the IPC
+        // thread cannot move the record, and no reader copies one being written.
+        Intent work;
+        if (!g_intent_queue.claim(queued.seq, &work)) continue;   // retired/cancelled/taken
+        Intent* real = &work;
 
         // M1: install the owning session context for the duration of this intent.
-        // The guard is scoped to the iteration so a crash/longjmp still restores
-        // the previous context on destruction.
+        // The guard restores the previous context when the iteration ends. A
+        // crash's siglongjmp skips its destructor: the drain's recovery
+        // (recover_drain_crash, bridge_init.cpp) restores it instead.
         bridge::ClientContext intent_ctx;
         std::unique_ptr<bridge::ClientContextGuard> intent_ctx_guard;
-        if (!intent.session_id.empty()) {
-            bridge::Session* s = bridge::g_session_registry.find(intent.session_id);
+        if (!real->session_id.empty()) {
+            bridge::Session* s = bridge::g_session_registry.find(real->session_id);
             if (s) {
                 intent_ctx.session = s;
-                intent_ctx.action_type = intent.interaction_name.c_str();
+                intent_ctx.action_type = real->interaction_name.c_str();
                 intent_ctx_guard = std::make_unique<bridge::ClientContextGuard>(&intent_ctx);
             }
         }
 
-        // 2026-06-09: record the in-flight intent so the outer on_tick recovery
-        // handler can convert a game-thread crash here into a structured
-        // rejection instead of a silent 5s IPC timeout. Cleared after the
-        // switch; set again per intent.
-        g_inflight_intent_rid = intent.request_id;
+        // 2026-06-09: record the in-flight intent so the outer recovery handler
+        // can convert a game-thread crash here into a structured rejection
+        // instead of a silent IPC timeout. By seq (FF4, m10). Cleared after
+        // finish().
+        g_inflight_intent_seq = work.seq;
 
-        switch (intent.type) {
+        switch (real->type) {
         case IntentType::INTERACTION: {
-            // Resolve character and interaction objects
-            void* character = lookup_character(intent.actor_id);
+            void* character = lookup_character(real->actor_id);
             if (!character) {
                 ADLOG("DRAIN_INTENTS: actor %u not found — rejecting %s\n",
-                      intent.actor_id & 0xFFFFFF, intent.interaction_name.c_str());
-                // Mark in the real queue
-                Intent* real = g_intent_queue.find_for_character(
-                    intent.actor_id & 0xFFFFFF, IntentType::INTERACTION);
-                if (real) {
-                    real->rejected = true;
-                    snprintf(real->rejection_reason, sizeof(real->rejection_reason),
-                             "actor_not_found");
-                    real->consumed = true;
-                }
-                continue;
+                      real->actor_id & 0xFFFFFF, real->interaction_name.c_str());
+                real->rejected = true;
+                snprintf(real->rejection_reason, sizeof(real->rejection_reason),
+                         "actor_not_found");
+                real->consumed = true;
+                break;
             }
 
-            void* interaction = lookup_interaction(intent.interaction_name.c_str());
+            void* interaction = lookup_interaction(real->interaction_name.c_str());
             if (!interaction) {
                 ADLOG("DRAIN_INTENTS: interaction '%s' not found — rejecting\n",
-                      intent.interaction_name.c_str());
-                Intent* real = g_intent_queue.find_for_character(
-                    intent.actor_id & 0xFFFFFF, IntentType::INTERACTION);
-                if (real) {
-                    real->rejected = true;
-                    snprintf(real->rejection_reason, sizeof(real->rejection_reason),
-                             "interaction_not_found");
-                    real->consumed = true;
-                }
-                continue;
+                      real->interaction_name.c_str());
+                real->rejected = true;
+                snprintf(real->rejection_reason, sizeof(real->rejection_reason),
+                         "interaction_not_found");
+                real->consumed = true;
+                break;
             }
 
-            // Find the real intent in the queue (snapshot is a copy)
-            Intent* real = g_intent_queue.find_for_character_interaction(
-                intent.actor_id & 0xFFFFFF, intent.interaction_hash);
-            if (!real) {
-                ADLOG("DRAIN_INTENTS: intent vanished from queue — skipping\n");
-                continue;
-            }
-
-            ADLOG("DRAIN_INTENTS: executing INTERACTION %s actor=%u target=%u debug=%s\n",
+            ADLOG("DRAIN_INTENTS: executing INTERACTION %s actor=%u target=%u\n",
                   real->interaction_name.c_str(),
                   real->actor_id & 0xFFFFFF,
-                  real->target_id & 0xFFFFFF,
-                  real->debug_all_paths ? "YES" : "NO");
+                  real->target_id & 0xFFFFFF);
 
-            if (real->debug_all_paths) {
-                // Debug mode: try all dispatch paths, collect results
-                execute_war_debug_dispatch(real, character, interaction);
+            if (real->console_command.compare(0, 5, "check") == 0) {
+                execute_interaction_check_intent(real, character, interaction);
+                break;
+            }
+
+            bool dispatched = execute_direct_dispatch(real, character, interaction);
+
+            if (dispatched) {
+                ADLOG("DRAIN_INTENTS: SUCCESS %s actor=%u target=%u\n",
+                      real->interaction_name.c_str(),
+                      real->actor_id & 0xFFFFFF,
+                      real->target_id & 0xFFFFFF);
+                real->executed = true;
+                real->consumed = true;
             } else {
-                bool dispatched = execute_direct_dispatch(real, character, interaction);
-
-                if (dispatched) {
-                    ADLOG("DRAIN_INTENTS: SUCCESS %s actor=%u target=%u\n",
-                          real->interaction_name.c_str(),
-                          real->actor_id & 0xFFFFFF,
-                          real->target_id & 0xFFFFFF);
-                    real->executed = true;
-                    real->consumed = true;
-                } else {
-                    ADLOG("DRAIN_INTENTS: REJECTED %s actor=%u target=%u — %s\n",
-                          real->interaction_name.c_str(),
-                          real->actor_id & 0xFFFFFF,
-                          real->target_id & 0xFFFFFF,
-                          real->rejection_reason);
-                    real->rejected = true;
-                    real->consumed = true;
-                }
+                ADLOG("DRAIN_INTENTS: REJECTED %s actor=%u target=%u — %s\n",
+                      real->interaction_name.c_str(),
+                      real->actor_id & 0xFFFFFF,
+                      real->target_id & 0xFFFFFF,
+                      real->rejection_reason);
+                real->rejected = true;
+                real->consumed = true;
             }
             break;
         }
 
         case IntentType::WAR_DECLARE: {
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::WAR_DECLARE);
-            if (!real) continue;
-
             // Full dequeue dump (ck-l8ge): the IPC enqueue logs the intent on
             // arrival, but between enqueue and dequeue any caller-side mutation
             // would otherwise be invisible. Dump all dispatch-relevant fields
@@ -5709,59 +4294,13 @@ void drain_and_execute_intents() {
         }
 
         case IntentType::DECISION: {
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::DECISION);
-            if (!real) continue;
-
             ADLOG("DRAIN_INTENTS: executing DECISION actor=%u decision='%s'\n",
                   real->actor_id & 0xFFFFFF, real->interaction_name.c_str());
             execute_decision_intent(real);
             break;
         }
 
-        case IntentType::CONSOLE_EXECUTE: {
-            // Find the real intent by request_id (console intents have no actor)
-            Intent* real = nullptr;
-            {
-                auto snap = g_intent_queue.snapshot();
-                for (auto& s : snap) {
-                    if (!s.consumed && s.type == IntentType::CONSOLE_EXECUTE &&
-                        s.request_id == intent.request_id) {
-                        // Find in actual queue
-                        real = g_intent_queue.find_for_character(0, IntentType::CONSOLE_EXECUTE);
-                        // Walk until we find the right one
-                        break;
-                    }
-                }
-            }
-            if (!real) {
-                // Fallback: find any unconsumed CONSOLE_EXECUTE
-                real = g_intent_queue.find_for_character(0, IntentType::CONSOLE_EXECUTE);
-            }
-            if (!real) continue;
-
-            ADLOG("DRAIN_INTENTS: executing CONSOLE_EXECUTE '%s'\n",
-                  real->console_command.c_str());
-            execute_console_intent(real);
-            break;
-        }
-
-        case IntentType::SCRIPTED_EFFECT: {
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::SCRIPTED_EFFECT);
-            if (!real) continue;
-
-            ADLOG("DRAIN_INTENTS: executing SCRIPTED_EFFECT actor=%u effect='%s'\n",
-                  real->actor_id & 0xFFFFFF, real->interaction_name.c_str());
-            execute_scripted_effect_intent(real);
-            break;
-        }
-
         case IntentType::WAR_CREATE_CORE_DIRECT: {
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::WAR_CREATE_CORE_DIRECT);
-            if (!real) continue;
-
             ADLOG("DRAIN_INTENTS: executing WAR_CREATE_CORE_DIRECT actor=%u target=%u cb='%s' title=%d claimant=%u\n",
                   real->actor_id & 0xFFFFFF, real->target_id & 0xFFFFFF,
                   real->interaction_name.c_str(), real->title_id,
@@ -5770,25 +4309,7 @@ void drain_and_execute_intents() {
             break;
         }
 
-        case IntentType::WAR_FORCE_OFFENSIVE_STANCE: {
-            // Fix B1a (re_caiwarcoordinator_FINAL.md): drive the engine's own
-            // per-coordinator stance tick on the steered war's record so the AI
-            // prosecutes it offensively. Game-thread serial; DEFAULT-OFF behind
-            // g_force_offensive_stance. actor_id = attacker; title_id = war_id.
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::WAR_FORCE_OFFENSIVE_STANCE);
-            if (!real) continue;
-            ADLOG("DRAIN_INTENTS: executing WAR_FORCE_OFFENSIVE_STANCE actor=%u war=0x%x\n",
-                  real->actor_id & 0xFFFFFF, static_cast<uint32_t>(real->title_id));
-            execute_war_force_offensive_stance_intent(real);
-            break;
-        }
-
         case IntentType::FACTION: {
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::FACTION);
-            if (!real) continue;
-
             ADLOG("DRAIN_INTENTS: executing FACTION actor=%u liege=%u type='%s' action='%s'\n",
                   real->actor_id & 0xFFFFFF, real->target_id & 0xFFFFFF,
                   real->interaction_name.c_str(), real->console_command.c_str());
@@ -5796,50 +4317,10 @@ void drain_and_execute_intents() {
             break;
         }
 
-        case IntentType::RAISE_ARMIES: {
-            // A8.2 (re_raise_armies.md): raise the chosen AI's levies via the
-            // guarded g_PlayerCharacterID global-swap primitive. Game-thread
-            // serial section only — mirrors the WAR_DECLARE case.
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::RAISE_ARMIES);
-            if (!real) continue;
-
-            ADLOG("DRAIN_INTENTS: executing RAISE_ARMIES actor=%u\n",
-                  real->actor_id & 0xFFFFFF);
-            execute_raise_armies_intent(real);
-            ADLOG("DRAIN_INTENTS: RAISE_ARMIES post-execute actor=%u executed=%d rejected=%d reason='%s'\n",
-                  real->actor_id & 0xFFFFFF,
-                  real->executed ? 1 : 0,
-                  real->rejected ? 1 : 0,
-                  real->rejection_reason[0] ? real->rejection_reason : "");
-            break;
-        }
-        case IntentType::RAISE_RAIDERS: {
-            // #96 (re_raid_system.md): toggle the chosen AI's raised armies into
-            // RAIDING mode via the guarded g_PlayerCharacterID global-swap
-            // primitive. Game-thread serial section only — mirrors RAISE_ARMIES.
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::RAISE_RAIDERS);
-            if (!real) continue;
-
-            ADLOG("DRAIN_INTENTS: executing RAISE_RAIDERS actor=%u\n",
-                  real->actor_id & 0xFFFFFF);
-            execute_raise_raiders_intent(real);
-            ADLOG("DRAIN_INTENTS: RAISE_RAIDERS post-execute actor=%u executed=%d rejected=%d reason='%s'\n",
-                  real->actor_id & 0xFFFFFF,
-                  real->executed ? 1 : 0,
-                  real->rejected ? 1 : 0,
-                  real->rejection_reason[0] ? real->rejection_reason : "");
-            break;
-        }
         case IntentType::CREATE_TITLE: {
             // #111 (re_create_title_action.md): LEGITIMATE de-jure create-title via
             // CCreateTitleCommand + CanExecute gate + GAME_COMMAND_DISPATCH(0xe).
             // Game-thread serial section only — under watchdog+sigsetjmp+fake-RNG.
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::CREATE_TITLE);
-            if (!real) continue;
-
             ADLOG("DRAIN_INTENTS: executing CREATE_TITLE actor=%u title_id=%d\n",
                   real->actor_id & 0xFFFFFF, real->title_id);
             execute_create_title_intent(real);
@@ -5855,12 +4336,16 @@ void drain_and_execute_intents() {
             // (murder / fabricate_hook / claim_throne) via CreateActiveScheme forward.
             // The engine's own gates run inside that call (self-gating). Game-thread
             // serial section only — under watchdog+sigsetjmp+fake-RNG.
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::SCHEME);
-            if (!real) continue;
-
-            // #scheme_cancel: branch start vs cancel on console_command ("cancel" => abandon
-            // an owned scheme via RemoveActiveScheme; default/"start" => CreateActiveScheme).
+            // console_command picks the sub-operation: "cancel" => RemoveActiveScheme on an
+            // owned scheme; "check:..." => CanStartScheme only (scheme_engine.cpp);
+            // "start" => CanStartScheme, then CreateActiveScheme.
+            if (real->console_command.compare(0, 5, "check") == 0) {
+                ADLOG("DRAIN_INTENTS: executing SCHEME CHECK owner=%u scheme='%s' target=%u\n",
+                      real->actor_id & 0xFFFFFF, real->interaction_name.c_str(),
+                      real->target_id & 0xFFFFFF);
+                execute_scheme_check_intent(real);
+                break;
+            }
             if (real->console_command == "cancel") {
                 ADLOG("DRAIN_INTENTS: executing SCHEME CANCEL owner=%u scheme_id=%d\n",
                       real->actor_id & 0xFFFFFF, real->title_id);
@@ -5883,31 +4368,16 @@ void drain_and_execute_intents() {
                   real->rejection_reason[0] ? real->rejection_reason : "");
             break;
         }
-        case IntentType::BREAK_ALLIANCE: {
-            // re_break_alliance_FINAL.md Path B: the literal gated break via
-            // break_alliance_cmd(actor, ally, 0). Game-thread serial section only —
-            // under watchdog+sigsetjmp+fake-RNG. Only ever queued when the
-            // g_enable_break_alliance flag is armed (do_break_alliance).
-            Intent* real = g_intent_queue.find_for_character(
-                intent.actor_id & 0xFFFFFF, IntentType::BREAK_ALLIANCE);
-            if (!real) continue;
-            ADLOG("DRAIN_INTENTS: executing BREAK_ALLIANCE actor=%u ally=%u\n",
-                  real->actor_id & 0xFFFFFF, real->target_id & 0xFFFFFF);
-            execute_break_alliance_intent(real);
-            ADLOG("DRAIN_INTENTS: BREAK_ALLIANCE post-execute actor=%u executed=%d rejected=%d reason='%s'\n",
-                  real->actor_id & 0xFFFFFF,
-                  real->executed ? 1 : 0,
-                  real->rejected ? 1 : 0,
-                  real->rejection_reason[0] ? real->rejection_reason : "");
-            break;
-        }
         // REMOVED: IntentType::MOVE_ARMY case deleted per design (agent does not
         // drive army micro).
         }
 
-        // Intent finished without crashing — clear the in-flight marker.
-        g_inflight_intent_rid.clear();
+        // Intent finished without crashing — hand the verdict back and clear
+        // the in-flight marker.
+        g_intent_queue.finish(work);
+        g_inflight_intent_seq = 0;
     }
+
 
     ADLOG("DRAIN_INTENTS: done\n");
 }
@@ -5921,15 +4391,15 @@ void init_tls_offsets() {
         g_tls_offsets_discovered = true;
     } else {
         g_tls_offsets_discovered = false;
-        ADLOG("WARNING: TLS offset discovery failed, using hardcoded defaults "
+        ADLOG("WARNING: TLS offset discovery failed, using ck3_offsets.h "
               "(guard=0x%lx, context=0x%lx)\n",
               (unsigned long)g_tls_guard_offset, (unsigned long)g_tls_context_offset);
     }
 
     ADLOG("TLS offsets initialized (guard=0x%lx, context=0x%lx, source=%s). "
-          "Intents execute from on_tick serial section.\n",
+          "Intents execute from the game-thread drain.\n",
           (unsigned long)g_tls_guard_offset, (unsigned long)g_tls_context_offset,
-          g_tls_offsets_discovered ? "discovered" : "HARDCODED_FALLBACK");
+          g_tls_offsets_discovered ? "discovered" : "ck3_offsets.h");
 }
 
 // Discover vtable and dispatch manager addresses from instruction decoding.
@@ -6103,7 +4573,6 @@ bool queue_intent(uint32_t actor_id, uint32_t target_id,
                   uint32_t claimant_id, int cb_index,
                   uint32_t secondary_actor_id, uint32_t secondary_recipient_id,
                   int title_id,
-                  bool debug_all_paths,
                   IntentType intent_type) {
     if (!interaction_type || !interaction_type[0]) return false;
 
@@ -6143,14 +4612,13 @@ bool queue_intent(uint32_t actor_id, uint32_t target_id,
     intent.ttl_ticks = ttl;
     intent.request_id = req_id;
     intent.force_bypass = force_bypass;
-    intent.debug_all_paths = debug_all_paths;
 
     g_intent_queue.enqueue(std::move(intent));
 
-    ADLOG("Intent queued (via queue_intent): %s actor=%u target=%u hash=0x%08x ttl=%u title_id=%d cb_idx=%d claimant=%u bypass=%s debug=%s\n",
+    ADLOG("Intent queued (via queue_intent): %s actor=%u target=%u hash=0x%08x ttl=%u title_id=%d cb_idx=%d claimant=%u bypass=%s\n",
           interaction_type, actor_id & 0xFFFFFF, target_id & 0xFFFFFF,
           hash, ttl, title_id, cb_index, claimant_id & 0xFFFFFF,
-          force_bypass ? "YES" : "NO", debug_all_paths ? "YES" : "NO");
+          force_bypass ? "YES" : "NO");
     return true;
 }
 

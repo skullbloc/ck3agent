@@ -149,14 +149,6 @@ def test_resolve_precedence_and_config_shows_sources(install, monkeypatch, capsy
     assert "(env CK3_BINARY)" in out and "(discovery)" in out and "(default)" in out
 
 
-def test_trigger_csv_honours_env_then_config(tmp_path, monkeypatch):
-    a, b = tmp_path / "a.csv", tmp_path / "b.csv"
-    a.write_text("x"), b.write_text("y")
-    assert cfg.find_trigger_csv(cfg.Config(trigger_csv=str(a))) == a
-    monkeypatch.setenv("CK3_TRIGGER_CATALOGUE_CSV", str(b))
-    assert cfg.find_trigger_csv(cfg.Config(trigger_csv=str(a))) == b
-
-
 # ── setup ────────────────────────────────────────────────────────────────────
 
 def test_setup_exits_1_on_unsupported_build_and_writes_nothing(install, tmp_path, capsys):
@@ -180,11 +172,39 @@ def test_setup_writes_play_dir_and_config(install, supported, tmp_path, capsys):
     settings = json.loads((play / ".claude/settings.json").read_text())
     hook = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
     assert hook.split() == argv + ["hook-state"]
-    assert settings["permissions"]["allow"] == cli.ALLOW
+    assert settings["permissions"]["allow"] == cli.ALLOW == ["mcp__ck3"]
     assert (play / "CLAUDE.md").exists()
     assert f"LD_PRELOAD={so.resolve()} %command%" in out
     c = cfg.Config.load()
     assert (c.ck3_binary, c.bridge_so, c.play_dir) == (str(ck3), str(so.resolve()), str(play.resolve()))
+
+
+def test_setup_takes_back_the_sleep_allowance_an_earlier_setup_wrote(install, supported, tmp_path):
+    """D12: the play-dir allow-list no longer carries Bash(sleep:*): the protocol
+    lets time pass with session(action="wait"), never a Bash sleep. A play
+    directory set up by 2026.10 has the entry; setup removes it and keeps the
+    player's own rules."""
+    ck3, _ = install
+    play = tmp_path / "play"
+    (play / ".claude").mkdir(parents=True)
+    old = {"permissions": {"allow": ["mcp__ck3", "Bash(sleep:*)", "Bash(ls:*)"]}}
+    (play / ".claude/settings.json").write_text(json.dumps(old))
+    assert cli.main(["setup", "--ck3", str(ck3), "--play-dir", str(play)]) == 0
+    s = json.loads((play / ".claude/settings.json").read_text())
+    assert s["permissions"]["allow"] == ["mcp__ck3", "Bash(ls:*)"]
+    assert not any("sleep" in r for r in cli.ALLOW)
+
+
+def test_setup_no_allow_still_takes_back_the_sleep_allowance(install, supported, tmp_path):
+    """--no-allow adds no rule of ours, and still removes the retired one."""
+    ck3, _ = install
+    play = tmp_path / "play"
+    (play / ".claude").mkdir(parents=True)
+    old = {"permissions": {"allow": ["Bash(sleep:*)", "Bash(ls:*)"]}}
+    (play / ".claude/settings.json").write_text(json.dumps(old))
+    assert cli.main(["setup", "--ck3", str(ck3), "--play-dir", str(play), "--no-allow"]) == 0
+    s = json.loads((play / ".claude/settings.json").read_text())
+    assert s["permissions"]["allow"] == ["Bash(ls:*)"]
 
 
 def test_setup_merges_existing_settings(install, supported, tmp_path, monkeypatch):
@@ -336,12 +356,12 @@ def test_doctor_ignores_a_refusal_older_than_the_last_launch(tmp_path, capsys):
 def test_launch_env_switches_wayland_to_x11():
     so = Path("/lib/b.so")
     env, notes = cli.launch_env({"WAYLAND_DISPLAY": "wayland-0", "LD_PRELOAD": "/x.so /lib/b.so"},
-                                so, None, False, False)
+                                so, False, False)
     assert env["SDL_VIDEODRIVER"] == "x11" and "WAYLAND_DISPLAY" not in env and notes
     assert env["LD_PRELOAD"] == "/lib/b.so:/x.so"
-    env, _ = cli.launch_env({"WAYLAND_DISPLAY": "w"}, so, None, False, True)
+    env, _ = cli.launch_env({"WAYLAND_DISPLAY": "w"}, so, False, True)
     assert env["WAYLAND_DISPLAY"] == "w" and "SDL_VIDEODRIVER" not in env
-    env, _ = cli.launch_env({"WAYLAND_DISPLAY": "w", "SDL_VIDEODRIVER": "wayland"}, so, None, True, False)
+    env, _ = cli.launch_env({"WAYLAND_DISPLAY": "w", "SDL_VIDEODRIVER": "wayland"}, so, True, False)
     assert env["SDL_VIDEODRIVER"] == "wayland" and env["CK3_STRICT_BUILD_ID"] == "0"
 
 
@@ -756,7 +776,7 @@ def test_a_reconnected_server_killed_mid_release_is_released_through_its_current
     fb = bridge(delays={("ck3agent", "get_bridge_state"): 2.0}, drop_after_claim={"ck3agent": drop})
     monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
     monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
-    monkeypatch.setenv("FAKE_MCP_CALL", json.dumps({"name": "intent", "arguments": {"action": "list"}}))
+    monkeypatch.setenv("FAKE_MCP_CALL", json.dumps({"name": "query", "arguments": {"domain": "realm"}}))
     monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42")
     assert cli.main(["run", "--quiet"]) == 0
     m = manifest_of(play)

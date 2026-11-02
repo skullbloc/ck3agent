@@ -252,8 +252,9 @@ inline std::atomic<std::uint64_t> g_arm_refused_latched{0};
 //: to the war count, and a `called > skipped` test MASKED a real unguarded
 //: site in exactly the episodes the "skip the check, make the war" ruling
 //: creates: one unguarded site plus one latched war is (1,1), which that test
-//: reads as clean. The walk site now tests the latch before arming, which is
-//: what makes `== 0` true by construction rather than by argument.
+//: reads as clean. The walk site then tested the latch before arming (and was
+//: deleted with the scripted-effect path in cleanup 2026.11), which is what
+//: makes `== 0` true by construction rather than by argument.
 inline std::atomic<std::uint64_t> g_arm_called_while_latched{0};
 
 //: the law-refusal DIAGNOSTIC (action_handlers.cpp, do_change_realm_law's

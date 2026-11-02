@@ -1054,6 +1054,13 @@ std::string get_cached_character_name(uint32_t char_id) {
     return {};
 }
 
+std::string recorded_or_cached_name(const char* recorded, uint32_t char_id) {
+    if (recorded && recorded[0]) return recorded;
+    char_id &= 0xFFFFFF;
+    if (char_id == 0 || char_id == 0xFFFFFF) return {};
+    return get_cached_character_name(char_id);
+}
+
 void request_name_resolution(uint32_t char_id) {
     std::lock_guard<std::mutex> lock(g_name_cache_mutex);
     if (g_name_cache.find(char_id) == g_name_cache.end()) {

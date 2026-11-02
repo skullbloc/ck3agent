@@ -15,7 +15,6 @@ HANDLERS = (
     "bridge::do_query_resolve_global(",
     "bridge::do_inject_mouse_click(",
     "bridge::do_select_observe_default(",
-    "bridge::do_execute_console_command(",
     "bridge::do_set_cb_selector_override(",
 )
 CONTROL = "bridge::dispatch_action("

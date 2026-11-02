@@ -72,11 +72,12 @@ set(CK3_BRIDGE_SOURCES
     src/event_handler.cpp
     src/name_tables.cpp
     src/world_epoch.cpp
-    src/ai_subsystem_hooks.cpp
     src/runtime_resolver.cpp
     src/build_id_witness.cpp      # ck-nkyc leg (e): the observed BuildID + strictness witness
     src/sig_scanner.cpp
     src/intent_dispatch.cpp
+    src/intent_queue.cpp          # L13 FF2: IntentQueue members, engine-free (test_intent_lookup)
+    src/factions.cpp              # F16: faction management, both seats (re_factions.md)
     src/snapshot.cpp
     src/session.cpp
     src/deferred_drain.cpp
@@ -87,6 +88,7 @@ set(CK3_BRIDGE_SOURCES
     src/war_history.cpp
     src/war_history_hook.cpp
     src/scheme_init_hook.cpp
+    src/scheme_engine.cpp         # l3-schemes: the scheme reads + CanStartScheme (re_schemes.md)
     src/ai_cb_selector_hook.cpp
     src/marriage_observation_hook.cpp
     src/council_task_hook.cpp
@@ -94,8 +96,6 @@ set(CK3_BRIDGE_SOURCES
     src/offgoal_war_veto_hook.cpp
     src/offset_validator.cpp
     src/phase3_probes.cpp
-    src/named_trigger_eval.cpp
-    src/script_block_parser.cpp
     src/launcher_bypass.cpp
     src/lobby_view_hook.cpp
     src/map_graph.cpp
@@ -114,10 +114,10 @@ set(CK3_BRIDGE_SOURCES
     # cut its branch — a CLEAN git merge, a semantic collision only the build
     # could see).
     src/pipeline_mode.cpp
-    # ck-p2sb — the deferred coordinator's refusal counts. A LEAF TU for the same
+    # ck-p2sb — the deferred lock's refusal count. A LEAF TU for the same
     # reason pipeline_mode.cpp is one: dispatch_router.cpp reports them, so every
     # host target that compiles dispatch_router.cpp needs this too. They are NOT
-    # in deferred_drain.cpp because that TU pulls in is_paused()/game_get_speed().
+    # in deferred_drain.cpp, which needs bridge.h and the bridge log.
     src/clock_leak_backstop.cpp
     src/deferred_counters.cpp
     # ck-6kvq.13 — R6: the decision-budget ledger. PURE; compiled standalone
@@ -180,7 +180,10 @@ endif()
 #                                     refusal the cell no longer gives
 # Every os.h entry point not covered by a cell stays a typed refusal in
 # src/os/windows/stubs.cpp, which Linux keeps compiling as strict C++17.
-set(CK3_WIN_CELLS process entry image identity safe_read threads paths write_protected transport exec_alloc guarded watchdog)
+# One exception, session_pass: ONE cell for both platforms (L14 m-16),
+# src/os/session_pass.cpp, tested by src/os/test/test_os_session_pass.cpp
+# (ctest test_os_win_session_pass here, test_os_linux_session_pass on linux).
+set(CK3_WIN_CELLS process entry image identity safe_read threads paths write_protected transport exec_alloc guarded watchdog session_pass)
 set(CK3_WIN_CELL_DEFS "")
 foreach(_c ${CK3_WIN_CELLS})
     string(TOUPPER "${_c}" _C)
@@ -192,7 +195,7 @@ set(CK3_OS_PORTABLE src/os/os_common.cpp src/os/pe_image.cpp src/os/sha256.cpp s
 set(CK3_OS_PORTABLE_TESTS pe_image sha256 win_paths_rules format_fixed2)
 
 if(CK3_PLATFORM STREQUAL "linux")
-    add_library(ck3_os STATIC src/os/os_common.cpp src/os/linux/os_linux.cpp)
+    add_library(ck3_os STATIC src/os/os_common.cpp src/os/linux/os_linux.cpp src/os/session_pass.cpp)
     # The adapters forward to bridge code (bridge.h, instance_paths.cpp,
     # build_id_witness.cpp); a consumer links those sources itself, so ck3_os
     # never carries a second copy of them.
@@ -200,7 +203,11 @@ if(CK3_PLATFORM STREQUAL "linux")
 elseif(CK3_PLATFORM STREQUAL "windows")
     set(_cells "")
     foreach(_c ${CK3_WIN_CELLS})
-        list(APPEND _cells src/os/windows/${_c}.cpp)
+        if(_c STREQUAL "session_pass")
+            list(APPEND _cells src/os/session_pass.cpp)   # shared with linux
+        else()
+            list(APPEND _cells src/os/windows/${_c}.cpp)
+        endif()
     endforeach()
     add_library(ck3_os STATIC ${CK3_OS_PORTABLE} src/os/windows/stubs.cpp
         src/os/windows/common.cpp src/os/windows/identity_gate.cpp ${_cells})
@@ -337,6 +344,13 @@ elseif(CK3_PLATFORM STREQUAL "windows")
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
         target_compile_definitions(ck3_bridge_core_win PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS
             _CRT_NONSTDC_NO_DEPRECATE)
+        # The POSIX additions reach every translation unit by force-include, not by
+        # shadowing CRT header names (<string.h>, <time.h>, ... then #include_next):
+        # cl.exe has no #include_next (C1021 on the public CI's first real-MSVC run;
+        # clang-cl has it, so the cross build never saw it). No shim header shares a
+        # name with a UCRT header (tests/test_no_crt_shadowing.py in the public tree).
+        set(_ck3_posix_fi "$<$<COMPILE_LANGUAGE:CXX>:/FI${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/posix/ck3_posix.h>")
+        target_compile_options(ck3_bridge_core_win PRIVATE ${_ck3_posix_fi})
         target_link_libraries(ck3_bridge_core_win PUBLIC ck3_os bcrypt)
         # Zydis from the pinned source archive (the vendored lib64/ is Linux).
         include(FetchContent)
@@ -369,6 +383,7 @@ elseif(CK3_PLATFORM STREQUAL "windows")
             target_include_directories(test_os_win_posix_recovery BEFORE PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/os/windows/posix ${CMAKE_CURRENT_SOURCE_DIR}/include)
             target_compile_definitions(test_os_win_posix_recovery PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+            target_compile_options(test_os_win_posix_recovery PRIVATE ${_ck3_posix_fi})
             target_link_libraries(test_os_win_posix_recovery PRIVATE ck3_os)
             add_test(NAME test_os_win_posix_recovery COMMAND test_os_win_posix_recovery)
         endif()
@@ -404,6 +419,16 @@ if(BUILD_BRIDGE_TESTS)
         # ck3 is PIE; the image-base checks need a PIE main executable too.
         target_link_options(test_os_linux_adapters PRIVATE -pie)
         add_test(NAME test_os_linux_adapters COMMAND test_os_linux_adapters)
+
+        # The session-pass cell, the one libck3_bridge.so routes through: the
+        # rows test_os_win_session_pass runs under wine, at the Linux layout
+        # (ck3::dispatch_mgr) with a pthread mutex.
+        add_executable(test_os_linux_session_pass src/os/test/test_os_session_pass.cpp)
+        target_include_directories(test_os_linux_session_pass PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets)
+        target_link_libraries(test_os_linux_session_pass PRIVATE ck3_os Threads::Threads)
+        target_compile_definitions(test_os_linux_session_pass PRIVATE _GNU_SOURCE)
+        target_compile_options(test_os_linux_session_pass PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_linux_session_pass COMMAND test_os_linux_session_pass)
 
         # The Windows path rules and instance_paths.cpp must refuse the same
         # ids. Linux-only (it forks to set the environment per case).
@@ -444,7 +469,13 @@ if(BUILD_BRIDGE_TESTS)
     endif()
     if(CK3_PLATFORM STREQUAL "windows")
         foreach(_c ${CK3_WIN_CELLS})
-            add_executable(test_os_win_${_c} src/os/test/test_os_win_${_c}.cpp)
+            if(_c STREQUAL "session_pass")
+                add_executable(test_os_win_${_c} src/os/test/test_os_session_pass.cpp)   # shared with linux
+                # the layout the bridge reads (ck3_win::struct_layout::SESSION_*)
+                target_include_directories(test_os_win_${_c} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets/windows)
+            else()
+                add_executable(test_os_win_${_c} src/os/test/test_os_win_${_c}.cpp)
+            endif()
             target_link_libraries(test_os_win_${_c} PRIVATE ck3_os)
             target_compile_definitions(test_os_win_${_c} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
             set_target_properties(test_os_win_${_c} PROPERTIES CXX_EXTENSIONS OFF)
@@ -519,6 +550,9 @@ endif()
 
 # Build as shared library (.so) for LD_PRELOAD injection
 add_library(ck3_bridge SHARED ${CK3_BRIDGE_SOURCES})
+# The session-pass cell (os::session_pass_*), shared with Windows, where it is
+# in ck3_os; libck3_bridge.so does not link ck3_os, so it compiles the cell.
+target_sources(ck3_bridge PRIVATE src/os/session_pass.cpp)
 
 # Build provenance — regenerated every build (git SHA, dirty state, offsets MD5,
 # build time) so a deployed .so can always be matched to its source commit.
@@ -633,8 +667,8 @@ target_link_libraries(ck3_bridge PRIVATE rt)
 target_compile_options(ck3_bridge PRIVATE -O2 -Wall -Wextra)
 
 # rc2 B2: debug verbs, compiled out unless ON: memory_probe, resolve_global,
-# inject_mouse_click, select_observe_default, execute_console_command,
-# set_cb_selector_override (their registry entries AND handler bodies), plus
+# inject_mouse_click, select_observe_default, set_cb_selector_override
+# (their registry entries AND handler bodies), plus
 # every process VA in a reply. Default OFF; research builds pass
 # -DCK3_BRIDGE_DEBUG_VERBS=ON. test_debug_verbs pins the set; the
 # raw_pointer_inputs / no_va_output censuses below walk the handlers.
@@ -804,16 +838,6 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_json_helpers PRIVATE Threads::Threads)
     target_compile_options(test_json_helpers PRIVATE -O2 -Wall -Wextra)
 
-    # ck-zvu5l.3: parser for `<effect> = { <key>=<val> ... }` blocks.
-    add_executable(test_script_block_parser
-        test/test_script_block_parser.cpp
-        src/script_block_parser.cpp
-    )
-    target_include_directories(test_script_block_parser PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-    )
-    target_compile_options(test_script_block_parser PRIVATE -O2 -Wall -Wextra)
-
     # ck-qn03 (R12): the instance naming rules, compiled standalone. The test
     # is a CROSS-CHECK, not a second opinion: `scripts/test_multi_instance.py`
     # runs this binary and compares its answers, key for key, against the
@@ -828,6 +852,16 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_instance_paths PRIVATE -O2 -Wall -Wextra)
 
+    # Lane l6: a ruler's direct vassals read from its vassal contracts.
+    add_executable(test_vassal_roster
+        test/test_vassal_roster.cpp
+    )
+    target_include_directories(test_vassal_roster PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+    )
+    target_compile_options(test_vassal_roster PRIVATE -O2 -Wall -Wextra)
+
     # ck-05mg: CK3's real calendar (no twelve-30-day-month rendering).
     add_executable(test_game_date
         test/test_game_date.cpp
@@ -837,6 +871,66 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
     )
     target_compile_options(test_game_date PRIVATE -O2 -Wall -Wextra)
+
+    # lane l5 (F8): which war a siege belongs to (siege_attribution.h, header-only).
+    add_executable(test_siege_attribution
+        test/test_siege_attribution.cpp
+    )
+    target_include_directories(test_siege_attribution PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_options(test_siege_attribution PRIVATE -O2 -Wall -Wextra)
+
+    # L15 A2: a liege walk that cannot finish is 0, never the character's own id
+    # (liege_walk.h, header-only; get_top_realm_ruler_id runs it on the game).
+    add_executable(test_liege_walk
+        test/test_liege_walk.cpp
+    )
+    target_include_directories(test_liege_walk PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_options(test_liege_walk PRIVATE -O2 -Wall -Wextra)
+
+    # cleanup 2026.11 F16: a faction's war as the game reads it (faction_war.h).
+    # HEADER-ONLY and engine-free: WAR_DB is a stand-in, so the rule (the whole
+    # handle decides; the id given out is the war's own) is checked on a host.
+    add_executable(test_faction_war
+        test/test_faction_war.cpp
+    )
+    target_include_directories(test_faction_war PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_options(test_faction_war PRIVATE -O2 -Wall -Wextra)
+
+    # cleanup final fix (witness #8 minor 8): an unreadable death date is not
+    # "alive" (game_state.cpp's char_is_alive, compiled into the test).
+    add_executable(test_char_is_alive
+        test/test_char_is_alive.cpp
+    )
+    target_include_directories(test_char_is_alive PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+    )
+    target_compile_options(test_char_is_alive PRIVATE -O2 -Wall -Wextra)
+
+    # L14 S3 (surface-eval finding 14): a game function declared `bool` is read by
+    # its AL only (engine_bool.h). The control reads the same stubs the pre-fix way
+    # (all 64 bits of RAX) and must fail.
+    add_executable(test_engine_bool
+        test/test_engine_bool.cpp
+    )
+    target_include_directories(test_engine_bool PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_options(test_engine_bool PRIVATE -O2 -Wall -Wextra)
+    add_executable(test_engine_bool_prefix_control
+        test/test_engine_bool.cpp
+    )
+    target_include_directories(test_engine_bool_prefix_control PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_definitions(test_engine_bool_prefix_control PRIVATE ENGINE_BOOL_PREFIX_CONTROL)
+    target_compile_options(test_engine_bool_prefix_control PRIVATE -O2 -Wall -Wextra)
 
     # ck-k57a: the typed speed read. HEADER-ONLY and engine-free, so the memory
     # fault that used to present as a legal "speed 1" is reachable host-side.
@@ -870,32 +964,6 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_definitions(speed_read_probe_prefix_control PRIVATE
         CK3_SPEED_PREFIX_CONTROL=1)
     target_compile_options(speed_read_probe_prefix_control PRIVATE -O2 -Wall -Wextra)
-
-    # ck-cyhr: the FIRST coverage bridge/src/deferred_drain.cpp has ever had.
-    # The probe links the REAL coordinator against a fake engine (the engine
-    # surface it needs is six symbols), so what is exercised is the shipping
-    # pause-transparency pulse and not a model of it. Driven by
-    # `scripts/acceptance_pulse_restore.py`, which ALSO compiles it a second
-    # time against the PRE-FIX deferred_drain.cpp staged from a pinned blob sha
-    # — that second build is the acceptance's negative control and is deliberately
-    # NOT a CMake target, because a control pinned by a ref rather than a blob
-    # would grade the fix against the fix the moment this branch merges.
-    add_executable(pulse_restore_probe
-        test/pulse_restore_probe.cpp
-        src/deferred_drain.cpp
-        # ck-p2sb: deferred_drain.cpp INCREMENTS the two refusal counters and no
-        # longer DEFINES them (they are a leaf TU so that host targets compiling
-        # dispatch_router.cpp can link without dragging in engine symbols). Any
-        # target that compiles deferred_drain.cpp OR dispatch_router.cpp needs
-        # this file.
-        src/deferred_counters.cpp
-    )
-    target_include_directories(pulse_restore_probe PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
-    )
-    target_link_libraries(pulse_restore_probe PRIVATE Threads::Threads)
-    target_compile_options(pulse_restore_probe PRIVATE -O1 -Wall -Wextra)
 
     # ck-nkyc leg (e). The strictness witness's fixtures come from the BRIDGE's
     # own code, not from a python model of it — and the negative control is the
@@ -957,6 +1025,31 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_link_libraries(add_claim_probe PRIVATE Threads::Threads)
     target_compile_options(add_claim_probe PRIVATE -O2 -Wall -Wextra)
+
+    # F12 (cleanup 2026.11): the TLS guard/context offsets the bridge reads are the
+    # ones AI_INTERACTION_CORE's own prologue uses (tls_prologue_scan.h), and
+    # ck3_offsets.h agrees with them. Decodes real bytes with the bridge's Zydis.
+    add_executable(tls_prologue_scan_probe test/tls_prologue_scan_probe.cpp)
+    target_include_directories(tls_prologue_scan_probe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+    )
+    if(TARGET Zydis)
+        target_link_libraries(tls_prologue_scan_probe PRIVATE Zydis)
+    else()
+        target_include_directories(tls_prologue_scan_probe PRIVATE ${ZYDIS_PREFIX}/include)
+        target_link_libraries(tls_prologue_scan_probe PRIVATE
+            ${ZYDIS_PREFIX}/lib64/libZydis.a ${ZYDIS_PREFIX}/lib64/libZycore.a)
+    endif()
+    target_compile_options(tls_prologue_scan_probe PRIVATE -O2 -Wall -Wextra)
+
+    # lane l6 (witness #3): construction_check's list arms the fake random scope
+    # once per row; a row that trips the scope latch leaves the later rows unarmed.
+    add_executable(latch_guarded_rows_probe test/latch_guarded_rows_probe.cpp)
+    target_include_directories(latch_guarded_rows_probe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_options(latch_guarded_rows_probe PRIVATE -O2 -Wall -Wextra)
 
     # ck-handoff-swap: the succession handoff at a full roster — the case that
     # spun check_controlled_handoff 2,574 times because claim-then-release cannot
@@ -1376,6 +1469,21 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_debug_verbs_negative_control PRIVATE Threads::Threads)
     target_compile_options(test_debug_verbs_negative_control PRIVATE -O2 -Wall -Wextra)
 
+    # ff3 N1: a read that faulted on an inline path is answered (memory_access_fault,
+    # or degraded), never a silent 0. Same sources as test_release_handler (the
+    # REAL dispatch_router.cpp) against a synthetic image whose PLAYER_CHAR_ID
+    # page is PROT_NONE. ff4 P1: plus the REAL personality.cpp (set_ai_personality:
+    # a fault before its store refuses, one after it is said); the test supplies
+    # its three engine-bound neighbours (install_hook, the pipeline's episode-open
+    # note, the reader's world reconcile).
+    set(FAULT_REPLY_SOURCES ${RELEASE_HANDLER_SOURCES})
+    list(REMOVE_ITEM FAULT_REPLY_SOURCES test/test_release_handler.cpp)
+    list(APPEND FAULT_REPLY_SOURCES test/test_fault_reply.cpp src/personality.cpp)
+    add_executable(test_fault_reply ${FAULT_REPLY_SOURCES})
+    target_include_directories(test_fault_reply PRIVATE ${RELEASE_HANDLER_INCLUDES})
+    target_link_libraries(test_fault_reply PRIVATE Threads::Threads)
+    target_compile_options(test_fault_reply PRIVATE -O2 -Wall -Wextra)
+
     # lane-namekey: a name-cache MISS is answered as PENDING (`name_key` +
     # `name_pending: true`, no `name`), never with the localization key
     # presented as the name. Same sources as test_release_handler (the REAL
@@ -1426,6 +1534,92 @@ if(BUILD_BRIDGE_TESTS)
     endif()
     target_link_libraries(test_ipc_wiring PRIVATE Threads::Threads)
     target_compile_options(test_ipc_wiring PRIVATE -O2 -Wall -Wextra)
+
+    # L13 (live proof l13f-gl10l-r): the SLOW REQUEST line's host PSI figures.
+    if(NOT WIN32)
+        add_executable(test_host_pressure test/test_host_pressure.cpp)
+        target_include_directories(test_host_pressure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(test_host_pressure PRIVATE -O2 -Wall -Wextra)
+        add_test(NAME test_host_pressure COMMAND test_host_pressure)
+    endif()
+
+    # L13 FF2 (witness R3): the REAL IntentQueue — a reader never finds an
+    # intent in neither the live queue nor the completed ring.
+    add_executable(test_intent_lookup
+        test/test_intent_lookup.cpp
+        src/intent_queue.cpp
+    )
+    target_include_directories(test_intent_lookup PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+    )
+    target_link_libraries(test_intent_lookup PRIVATE Threads::Threads)
+    target_compile_options(test_intent_lookup PRIVATE -O2 -Wall -Wextra)
+    # L13 FF3 (witness X3): the same test under ThreadSanitizer and
+    # AddressSanitizer (GCC/Clang on Linux). A race or a use-after-free the
+    # sanitizer reports exits non-zero, so the ctest row reds. A toolchain
+    # without the sanitizer runtime (libtsan / libasan not installed) gets the
+    # row as SKIPPED (exit 77): "could not look", never a pass.
+    if(NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        include(CheckCXXSourceCompiles)
+        foreach(_san thread address)
+            set(_t test_intent_lookup_${_san})
+            set(CMAKE_REQUIRED_FLAGS "-fsanitize=${_san}")
+            set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=${_san}")
+            check_cxx_source_compiles("int main(){return 0;}" CK3_HAVE_SANITIZER_${_san})
+            unset(CMAKE_REQUIRED_FLAGS)
+            unset(CMAKE_REQUIRED_LINK_OPTIONS)
+            if(CK3_HAVE_SANITIZER_${_san})
+                add_executable(${_t} test/test_intent_lookup.cpp src/intent_queue.cpp)
+                target_include_directories(${_t} PRIVATE
+                    ${CMAKE_CURRENT_SOURCE_DIR}/include
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+                    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+                )
+                target_link_libraries(${_t} PRIVATE Threads::Threads -fsanitize=${_san})
+                target_compile_options(${_t} PRIVATE -O1 -g -fno-omit-frame-pointer
+                                       -fsanitize=${_san} -Wall -Wextra)
+                add_test(NAME ${_t} COMMAND ${_t})
+            else()
+                add_test(NAME ${_t} COMMAND sh -c
+                         "echo 'SKIPPED: -fsanitize=${_san} does not link (no runtime installed)'; exit 77")
+            endif()
+            set_tests_properties(${_t} PROPERTIES SKIP_RETURN_CODE 77)
+        endforeach()
+        set_property(TEST test_intent_lookup_thread APPEND PROPERTY
+            ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1:exitcode=66:second_deadlock_stack=1")
+        set_property(TEST test_intent_lookup_address APPEND PROPERTY
+            ENVIRONMENT "ASAN_OPTIONS=halt_on_error=1:detect_leaks=0")
+    endif()
+
+    # L13 D1/D2: the REAL reader serves a game-state read through the
+    # game-thread drain (run_on_game_thread / run_game_thread_jobs) with the
+    # same bytes paused or running, times out typed with no drain, and the
+    # bridge goes ACTIVE on the first drain without a tick.
+    add_executable(test_game_thread_reads
+        test/test_game_thread_reads.cpp
+        src/ipc_server.cpp
+        ${SESSION_HOST_SOURCES}
+        src/instance_paths.cpp
+        src/pipeline_mode.cpp
+        src/json_helpers.cpp
+        src/client_slot.cpp
+        src/log_archive.cpp
+        src/build_id_witness.cpp
+    )
+    add_dependencies(test_game_thread_reads gen_provenance)
+    target_include_directories(test_game_thread_reads PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+        ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    if(_ck3_bridge_defs)
+        target_compile_definitions(test_game_thread_reads PRIVATE ${_ck3_bridge_defs})
+    endif()
+    target_link_libraries(test_game_thread_reads PRIVATE Threads::Threads)
+    target_compile_options(test_game_thread_reads PRIVATE -O2 -Wall -Wextra)
 
     # rc2 B6: the succession handoff never binds the human player.
     add_executable(test_handoff_player
@@ -1806,17 +2000,22 @@ endif()
 
     # Engine-free tests that run standalone and exit 0; `ctest` runs them.
     enable_testing()
-    foreach(_t test_json_helpers test_script_block_parser test_instance_paths
-               test_game_date test_war_history test_clock_rate
+    foreach(_t test_json_helpers test_instance_paths
+               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_liege_walk test_engine_bool
                test_flush_scheduler test_pipeline
-               test_debug_verbs test_ipc_wiring test_handoff_player
-               add_claim_probe name_pending_probe)
+               test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_intent_lookup test_handoff_player
+               add_claim_probe name_pending_probe tls_prologue_scan_probe
+               latch_guarded_rows_probe)
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
     # rc2 B2: the ON build must fail the same assertions.
     add_test(NAME test_debug_verbs_negative_control
              COMMAND test_debug_verbs_negative_control)
     set_tests_properties(test_debug_verbs_negative_control PROPERTIES WILL_FAIL TRUE)
+    # L14 S3: the pre-fix 64-bit read of a bool must fail the same checks.
+    add_test(NAME test_engine_bool_prefix_control
+             COMMAND test_engine_bool_prefix_control)
+    set_tests_properties(test_engine_bool_prefix_control PROPERTIES WILL_FAIL TRUE)
     # lane-namekey: the pre-fix reader must fail the same probe.
     add_test(NAME name_pending_probe_negative_control
              COMMAND name_pending_probe_negative_control)

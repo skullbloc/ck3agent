@@ -23,7 +23,7 @@ redesign = pytest.importorskip("redesign")
 
 DECLINED = {"request_id": "r1", "tick": 5, "game_date": "867.1.1",
             "success": False, "action": "query_character"}
-BOUND = {"request_id": "r2", "character": {"id": 30853, "name": "Seat", "alive": True}}
+BOUND = {"request_id": "r2", "id": 30853, "name": "Seat", "alive": True}
 
 
 class Gw:
@@ -36,8 +36,8 @@ class Gw:
         if sid is not None:
             self.state = type("S", (), {"_client": type("C", (), {"session_id": sid})()})()
 
-    async def multi_actor(self):
-        return False
+    async def actor_gate(self):
+        return None
 
     async def read(self, action, params=None):
         self.reads.append((action, dict(params or {})))
@@ -62,9 +62,9 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# ── observe_v2 / every actor-bearing tool through _resolve_actor ────────────
+# ── observe / every actor-bearing tool through _resolve_actor ───────────────
 
-def test_observe_v2_unbound_is_blocked_no_ruler_bound():
+def test_observe_unbound_is_blocked_no_ruler_bound():
     out = run(redesign.observe_impl(Gw(DECLINED), character_id=0))
     assert out["ok"] is False
     assert out["blocked"]["gate"] == "no_ruler_bound"
@@ -73,7 +73,7 @@ def test_observe_v2_unbound_is_blocked_no_ruler_bound():
     assert "actor" not in out, "no actor echo for nothing"
 
 
-def test_observe_v2_with_no_reply_is_unresolved_not_unbound():
+def test_observe_with_no_reply_is_unresolved_not_unbound():
     """The verifier's probe: every read returns None. That is 'looked and could
     not see', a different defect from 'nothing bound'."""
     out = run(redesign.observe_impl(Gw(None), character_id=0))
@@ -97,12 +97,12 @@ def test_set_phase_unbound_writes_nothing():
 
 def test_CONTROL_a_bound_ruler_resolves():
     """Non-discriminating control: passes before and after the fix."""
-    actor, err = run(redesign._resolve_actor(Gw(BOUND), 0, "observe_v2"))
+    actor, err = run(redesign._resolve_actor(Gw(BOUND), 0, "observe"))
     assert err is None and actor["id"] == 30853
 
 
 def test_CONTROL_an_explicit_id_is_not_judged_by_the_unbound_rule():
-    actor, err = run(redesign._resolve_actor(Gw(DECLINED), 777, "observe_v2"))
+    actor, err = run(redesign._resolve_actor(Gw(DECLINED), 777, "observe"))
     assert err is None and actor["id"] == 777
 
 
@@ -130,7 +130,7 @@ def test_whoami_seat_unknown_but_resolved_is_labelled_not_claimed():
     out = run(redesign.session_impl(Gw(BOUND), "whoami"))
     assert out["ok"] is True
     assert out["result"]["controlled"]["is_controlled"] is None
-    assert any(w.startswith("seat_unknown") for w in out["warnings"])
+    assert any(w["code"] == "seat_unknown" for w in out["warnings"])
 
 
 def test_CONTROL_whoami_bound_seat():
@@ -154,56 +154,54 @@ def test_control_without_an_id_is_refused_and_sends_nothing():
     assert gw.writes == [], "the unbind must not reach the bridge"
 
 
-# ── set_phase: the veto is process-wide, and says so ────────────────────────
+# ── L14 finding 4: no phase arms the off-goal veto ─────────────────────────
+#
+# set_phase("expansion") armed the veto process-wide although every reply about
+# it says "unvalidated". Neither the pre-registration nor
+# docs/pre-registration-conditions.md declares a phase genome or the veto, so the
+# posture tool stops arming it; the explicit set_experimental call still does.
 
-def test_set_phase_expansion_discloses_veto_scope_and_records_the_write():
+@pytest.mark.parametrize("phase", sorted(redesign.PHASE_GENOME))
+def test_no_phase_writes_the_veto(phase):
     redesign._FLAG_WRITES.clear()
-    out = run(redesign.set_phase_impl(Gw(BOUND), phase="expansion", character_id=0))
-    res = out["result"]
-    assert res["offgoal_veto_armed"] is True
-    assert "process-wide" in res["offgoal_veto_scope"]
-    flags = run(redesign.session_impl(Gw(BOUND), "experimental_flags"))["result"]["flags"]
-    veto = next(f for f in flags if f["name"] == "off_goal_veto")
-    assert veto["live"] is None
-    assert veto["last_written_here"] == {"enabled": True, "by": "set_phase('expansion')"}
-
-
-def test_veto_refusal_warning_names_no_removed_pulse():
-    out = run(redesign.set_phase_impl(
-        Gw(BOUND, write_reply={"error": "unknown_action"}), phase="expansion", character_id=0))
-    w = next(w for w in out["warnings"] if w["code"] == "offgoal_veto_unavailable")
-    assert "pulse" not in w["detail"]
-    assert out["result"]["offgoal_veto_armed"] is False
-
-
-# ── round 4: set_phase counts the veto armed only on the bridge's word ──────
-
-@pytest.mark.parametrize("reply", [
-    {"success": False, "action": "set_offgoal_veto", "reason": "not_owned_by_session",
-     "actor_id": 30853, "session_id": "s1"},          # dispatch_router.cpp ownership refusal
-    {"reason": "bridge_disconnected"},
-    {"status": "sent_no_confirmation", "action": "set_offgoal_veto"},
-    {"success": True, "action": "set_offgoal_veto", "enabled": False},   # echo disagrees
-], ids=["not_owned", "disconnected", "no_confirmation", "echo_false"])
-def test_unconfirmed_veto_is_not_armed_and_not_recorded(reply):
-    redesign._FLAG_WRITES.clear()
-    out = run(redesign.set_phase_impl(Gw(BOUND, write_reply=reply), phase="expansion",
-                                      character_id=0))
-    assert out["result"]["offgoal_veto_armed"] is False
+    gw = Gw(BOUND, write_reply={"success": True, "action": "set_offgoal_veto", "enabled": True})
+    out = run(redesign.set_phase_impl(gw, phase=phase, character_id=0))
+    assert out["verdict"] == "applied", out
+    assert "set_offgoal_veto" not in [a for a, _ in gw.writes], gw.writes
+    assert "offgoal_veto_armed" not in out["result"] and "offgoal_veto_scope" not in out["result"]
+    assert not [w for w in out["warnings"] if "offgoal" in w["code"]]
     assert "off_goal_veto" not in redesign._FLAG_WRITES
-    assert any(w["code"] == "offgoal_veto_unavailable" for w in out["warnings"])
-    flags = run(redesign.session_impl(Gw(BOUND), "experimental_flags"))["result"]["flags"]
-    assert next(f for f in flags if f["name"] == "off_goal_veto")["last_written_here"] is None
 
 
-def test_confirmed_veto_is_armed_and_flagged_experimental():
+def test_CONTROL_the_explicit_call_still_arms_it():
     redesign._FLAG_WRITES.clear()
-    out = run(redesign.set_phase_impl(
-        Gw(BOUND, write_reply={"success": True, "action": "set_offgoal_veto", "enabled": True}),
-        phase="expansion", character_id=0))
-    assert out["result"]["offgoal_veto_armed"] is True
-    assert any(w["code"] == "offgoal_veto_experimental" for w in out["warnings"])
+    gw = Gw(BOUND, write_reply={"success": True, "action": "set_offgoal_veto", "enabled": True})
+    out = run(redesign.session_impl(gw, "set_experimental", flag="off_goal_veto", enabled=True))
+    assert out["verdict"] == "applied", out
+    assert ("set_offgoal_veto", {"enabled": True}) in [(a, {k: v for k, v in p.items()
+                                                           if k == "enabled"}) for a, p in gw.writes]
     assert redesign._FLAG_WRITES["off_goal_veto"]["enabled"] is True
+
+
+@pytest.mark.parametrize("action,kw", [
+    ("set_experimental", {"flag": "off_goal_veto"}),
+])
+def test_a_switch_without_enabled_is_refused_and_writes_nothing(action, kw):
+    """L14 finding 4: set_experimental without enabled ARMED the flag (enabled
+    defaulted to true). Now the value is required."""
+    redesign._FLAG_WRITES.clear()
+    gw = Gw(BOUND)
+    out = run(redesign.session_impl(gw, action, **kw))
+    assert out["ok"] is False and out["verdict"] == "rejected", out
+    assert out["blocked"]["gate"] == "invalid_argument" and "enabled" in out["blocked"]["summary"]
+    assert gw.writes == [] and "off_goal_veto" not in redesign._FLAG_WRITES
+
+
+def test_the_registered_session_tool_has_no_default_for_enabled():
+    ms = pytest.importorskip("mcp_server")
+    tool = {t["name"]: t for t in ms.registered_tool_definitions()}["session"]
+    prop = tool["input_schema"]["properties"]["enabled"]
+    assert prop.get("default") is None, prop
 
 
 @pytest.mark.parametrize("reply", [
@@ -302,7 +300,7 @@ class _DeclineAll(Gw):
         return dict(DECLINED, action=action)
 
 
-@pytest.mark.parametrize("subject", ["war_score", "war_stance", "succession_preview",
+@pytest.mark.parametrize("subject", ["war_score", "war_stance", "council",
                                      "title", "realm", "character"])
 def test_inspect_unbound_is_blocked(subject):
     gw = _DeclineAll()
@@ -327,29 +325,20 @@ def test_CONTROL_inspect_explicit_id_is_not_judged_by_the_unbound_rule():
 
 def test_CONTROL_inspect_unknown_subject_is_unknown_not_unbound():
     out = run(redesign.inspect_impl(_DeclineAll(), subject="nonsense", character_id=0))
-    assert out["blocked"]["gate"] == "unknown"
+    assert out["blocked"]["gate"] == "unknown_subject"
 
 
-# ── round 4: no shipped text cites a console deny-list ──────────────────────
-
-def test_scripted_effect_refusal_cites_no_deny_list():
-    out = run(redesign._do_scripted_effect(Gw(BOUND), {"effect": "add_gold", "execute": True},
-                                           30853, {"id": 30853}))
-    assert out["ok"] is False
-    assert "deny-list" not in out["blocked"]["summary"]
-    src = open(redesign.__file__, encoding="utf-8").read()
-    assert "console deny-list" not in src and "execute_console_command deny-list" not in src
-
-
-# ── round 4: the docs name exactly the tools that block while unbound ───────
+# ── round 4 + L14 finding 6: ONE unbound answer, from every actor tool ─────
 #
-# One list, two readers: BLOCKS is checked against the code by DRIVING each
-# tool with nothing bound, and against each doc by reading the paragraph that
-# names them. A tool added to the MCP surface with a character_id must be
-# classified here, or the census reds.
+# One list, two readers: the blocking tools are checked against the code by
+# DRIVING each with nothing bound, and against each doc by reading the paragraph
+# that names them. A tool added to the MCP surface with a character_id must be
+# classified here, or the census reds. L14: query, discover and steer answered
+# three other ways (unmapped_refusal; ok:true with a list; errors[]); now every
+# one answers _resolve_actor's refusal, the same block.
 
 BLOCKS = {
-    "observe_v2": lambda gw: redesign.observe_impl(gw, character_id=0),
+    "observe": lambda gw: redesign.observe_impl(gw, character_id=0),
     "inspect": lambda gw: redesign.inspect_impl(gw, subject="war_score", character_id=0),
     "plan_war": lambda gw: redesign.plan_war_impl(gw, character_id=0),
     "declare_war": lambda gw: redesign.declare_war_impl(gw, character_id=0, target_id=1,
@@ -358,8 +347,14 @@ BLOCKS = {
     "succession_plan": lambda gw: redesign.succession_plan_impl(gw, character_id=0),
     "set_phase": lambda gw: redesign.set_phase_impl(gw, phase="expansion", character_id=0),
     "do": lambda gw: redesign.do_impl(gw, intent="pass", character_id=0),
+    "steer": lambda gw: redesign.steer_impl(gw, character_id=0, personality={"boldness": 1}),
 }
-UNCHECKED = {"observe", "query", "discover", "steer", "intent"}
+#: The tools whose bodies live in mcp_server, driven as registered (a fake bridge).
+MCP_BLOCKS = {
+    "query": lambda ms: ms.query(domain="realm"),
+    "discover": lambda ms: ms.discover(what="war_targets"),
+    "steer": lambda ms: ms.steer(),
+}
 # character_id there names the ruler to control or release; whoami is driven above.
 NOT_ACTOR_SCOPED = {"session"}
 
@@ -382,6 +377,12 @@ def _mcp_tools_with_an_actor_param() -> set:
     return out
 
 
+def _the_answer(out) -> dict:
+    """What a player reads in an unbound refusal (the game block aside)."""
+    b = out["blocked"]
+    return {k: b.get(k) for k in ("gate", "summary", "why", "next", "retry", "measured")}
+
+
 @pytest.mark.parametrize("tool", sorted(BLOCKS))
 def test_each_listed_tool_blocks_unbound(tool):
     gw = Gw(DECLINED)
@@ -390,39 +391,110 @@ def test_each_listed_tool_blocks_unbound(tool):
     assert gw.writes == [], tool
 
 
+@pytest.fixture
+def wired(monkeypatch):
+    ms = pytest.importorskip("mcp_server")
+    state = ms.BridgeState()
+    state.connected = True
+    sent = []
+    monkeypatch.setattr(ms, "_get_state", lambda: state)
+
+    def answer(action, params):
+        sent.append(action)
+        if action == "get_tick_info":
+            return {"paused": True, "game_speed": 1}
+        if action == "query_character":
+            return dict(DECLINED)
+        if action == "get_controlled_roster":
+            # Nothing bound, in the emitter's keys: dispatch_router.cpp
+            # do_get_controlled_roster (primary 0, an empty roster).
+            return {"action": "get_controlled_roster", "primary_character_id": 0,
+                    "roster": [], "player_character_id": 0}
+        return {"success": True, "action": action, "rows": [1, 2, 3]}
+
+    async def qb(_s, action, params, timeout=15.0):
+        return answer(action, params)
+
+    async def ab(_s, action, params, timeout=5.0):
+        return answer(action, params)
+
+    monkeypatch.setattr(ms, "_query_bridge", qb)
+    monkeypatch.setattr(ms, "_action_bridge", ab)
+    return ms, sent
+
+
+@pytest.mark.parametrize("tool", sorted(MCP_BLOCKS))
+def test_each_registered_tool_blocks_unbound(wired, tool):
+    ms, sent = wired
+    out = run(MCP_BLOCKS[tool](ms))
+    assert out["ok"] is False and out["blocked"]["gate"] == "no_ruler_bound", (tool, out)
+    assert out["blocked"]["next"] == redesign.GATE_NEXT["no_ruler_bound"], out["blocked"]
+    assert not {"query_realm", "query_valid_war_targets", "get_ai_personality"} & set(sent), sent
+
+
+def test_every_tool_answers_the_same_unbound_refusal(wired):
+    ms, _ = wired
+    answers = {t: _the_answer(run(f(Gw(DECLINED)))) for t, f in BLOCKS.items()}
+    answers.update({f"mcp:{t}": _the_answer(run(f(ms))) for t, f in MCP_BLOCKS.items()})
+    first = next(iter(answers.values()))
+    assert all(a == first for a in answers.values()), answers
+
+
+@pytest.mark.parametrize("call", [
+    lambda ms: ms.query(domain="characters", filter="ruler"),
+    lambda ms: ms.query(domain="traits"),
+    lambda ms: ms.discover(what="interactions"),
+    # L14 FF1 m-20: list_decisions ignores its params, like list_interactions, so it
+    # is a catalog too (actor_doors), whatever character_id key the server sends.
+    lambda ms: ms.discover(what="decisions"),
+    lambda ms: ms.query(domain="council_tasks"),
+], ids=["query_characters", "query_traits", "discover_interactions", "discover_decisions",
+        "query_council_tasks_feed"])
+def test_CONTROL_a_catalog_read_answers_with_no_ruler_bound(wired, call):
+    """A read that names no actor is not about the bound ruler: it answers (the
+    protocol offers rulers from query(domain='characters') before any is bound)."""
+    ms, _ = wired
+    out = run(call(ms))
+    assert out["ok"] is True, out
+
+
+def test_CONTROL_an_explicit_actor_is_not_judged_by_the_unbound_rule(wired):
+    ms, sent = wired
+    out = run(ms.query(domain="realm", character_id=777))
+    assert out["ok"] is True and "query_realm" in sent, out
+
+
 def test_every_tool_with_an_actor_param_is_classified():
     tools = _mcp_tools_with_an_actor_param()
     assert tools, "the census found no tools: the decorator regex is stale (fail OPEN)"
-    assert tools - set(BLOCKS) - UNCHECKED - NOT_ACTOR_SCOPED == set(), \
-        "classify it in BLOCKS or UNCHECKED"
-    assert (set(BLOCKS) | UNCHECKED | NOT_ACTOR_SCOPED) - tools == set(), "a listed tool is gone"
+    classified = set(BLOCKS) | set(MCP_BLOCKS) | NOT_ACTOR_SCOPED
+    assert tools - classified == set(), "classify it in BLOCKS or MCP_BLOCKS"
+    assert classified - tools == set(), "a listed tool is gone"
 
 
 def _unbound_paragraph(text: str) -> str:
-    blocks = [b for b in text.split("\n\n") if "`observe_v2`" in b and "ok: true" in b]
+    # A paragraph is a blank-line block or one "- " bullet: a rules-of-thumb list is
+    # one blank-line block, and a bullet naming `observe` (succession) must not join
+    # the bullet naming no_ruler_bound (the heir hand-off) into a second match.
+    import re
+    blocks = [b for b in re.split(r"\n\n|\n(?=- )", text)
+              if "`observe`" in b and "no_ruler_bound" in b]
     assert len(blocks) == 1, f"expected one paragraph naming the unbound behaviour, got {len(blocks)}"
     return blocks[0]
 
 
 @pytest.mark.parametrize("pair", DOCS, ids=[p[0].rsplit("/", 1)[-1] for p in DOCS])
-def test_docs_name_exactly_the_blocking_and_unchecked_tools(pair):
+def test_docs_name_exactly_the_blocking_tools(pair):
     import re
     path = next((os.path.join(ROOT, p) for p in pair if os.path.isfile(os.path.join(ROOT, p))), None)
     assert path, f"not found in the source or export layout: {pair}"
     para = _unbound_paragraph(open(path, encoding="utf-8").read())
-    known = set(BLOCKS) | UNCHECKED
-    named = set(re.findall(r"`([a-z_0-9]+)`", para)) & known
-    sentence = next(s for s in re.split(r"(?<=\.)\s", para) if "ok: true" in s)
-    unchecked = set(re.findall(r"`([a-z_0-9]+)`", sentence)) & known
-    assert unchecked == UNCHECKED, (path, sorted(unchecked ^ UNCHECKED))
-    assert named - unchecked == set(BLOCKS), (path, sorted((named - unchecked) ^ set(BLOCKS)))
-    # The blocking sentence ALONE must equal BLOCKS: a tool listed as both
-    # blocking and ok:true survives the set difference above.
-    blocking = [s for s in re.split(r"(?<=\.)\s", para)
-                if "`observe_v2`" in s and "ok: true" not in s]
+    assert "ok: true" not in para, (path, "no actor tool answers ok: true unbound any more")
+    known = set(BLOCKS) | set(MCP_BLOCKS)
+    blocking = [s for s in re.split(r"(?<=\.)\s", para) if "`observe`" in s]
     assert len(blocking) == 1, (path, "expected one sentence naming the blocking tools", blocking)
     listed = set(re.findall(r"`([a-z_0-9]+)`", blocking[0])) & known
-    assert listed == set(BLOCKS), (path, sorted(listed ^ set(BLOCKS)))
+    assert listed == known, (path, sorted(listed ^ known))
 
 
 # ── an empty unbound_reason is not evidence that no handoff happened ────────

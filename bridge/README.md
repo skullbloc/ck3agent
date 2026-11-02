@@ -16,9 +16,10 @@ Offsets come from `../re/offsets/` ([re/README.md](../re/README.md)).
 
 * **Build:** `make bridge` at the repo root. Zydis is fetched at configure time.
 * **Add a handler:** one line in `src/action_registry.inc`, the handler
-  function, and a pause-state class in `src/snapshot.cpp`. Dispatch and the
+  function, and a thread class in `src/snapshot.cpp`. Dispatch and the
   registry both expand from that line.
 * **Threads:** `src/ipc_server.cpp` reads on its own thread and queues anything
-  that touches the game. Game memory is written only on the AI tick.
+  that touches the game. Game memory is read and written only on the game's
+  command thread, in the bridge's drain after each pass, paused or running.
 * **Rules:** CONTRIBUTING sections 5 and 7. The SIGSEGV guards are a crash
   net, not a safety boundary.

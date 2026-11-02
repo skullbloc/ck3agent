@@ -2,10 +2,10 @@
 
 HOST ONLY. Pure shape over a gateway reply; no bridge, no game.
 
-MEASURED over d49+d50: `delta` is 75.5 per cent of observe_v2's BYTES. Of its
+MEASURED over d49+d50: `delta` was 75.5 per cent of observe's BYTES. Of its
 5,640 entries, 14 (0.25%) mention the actor and 100% have empty names. Every
 one is a Python-repr dict — "war: {'tick': 61, 'attacker_id': 30966, ...}" —
-because `delta_since_last` falls back to `str(rec)` when a record carries no
+because the old string delta fell back to `str(rec)` when a record carried no
 `summary` or `name`, which the bridge's war and scheme records never do.
 
 TWO FIXES, AND THE SECOND IS THE ONE THAT MATTERS. Read RECORDS so the thing
@@ -23,8 +23,6 @@ silently returns 14 asserts that 14 was all there was.
   S5  THE CONTROL ON HONESTY: a record this reader CANNOT classify is counted
       as withheld AND as `unclassified` -- "I could not tell" is never "not
       about you"
-  S6  an older gateway without the structured method still yields something,
-      labelled as the legacy shape rather than silently empty
   S7  `delta` keeps its name and is now the seat's own entries
 
 (C)1 widened "mine" from the character to the REALM. S1-S7 all passed
@@ -64,9 +62,8 @@ UNCLASSIFIABLE = {"kind": "war", "tick": 7, "note": "no id-shaped field here"}
 
 
 class _GW:
-    def __init__(self, recs, *, structured=True, realm=None, chrx=None):
+    def __init__(self, recs, *, realm=None, chrx=None):
         self._recs = recs
-        self._structured = structured
         # The ORIGINAL harness returned {} for query_realm and a character with
         # only an age, so no vassal and no liege key could ever appear. The S8+
         # rows below need those payloads to exist, and S8 needs to run the SAME
@@ -78,7 +75,7 @@ class _GW:
         out = []
         for v, _ in specs:
             if v == "query_character":
-                out.append({"character": dict(self._chr)})
+                out.append(dict(self._chr))
             elif v == "query_realm":
                 out.append(dict(self._realm))
             else:
@@ -88,8 +85,8 @@ class _GW:
     async def read(self, verb, params):
         return {}
 
-    async def delta_since_last(self):
-        return [f"{r.get('kind')}: {r}" for r in self._recs]
+    async def delta_records_since_last(self):
+        return list(self._recs)
 
     def game(self):
         return {"speed": 2}
@@ -99,26 +96,21 @@ class _GW:
         return {}
 
 
-class _GWStructured(_GW):
-    async def delta_records_since_last(self):
-        return list(self._recs)
-
-
-def _since(recs, *, structured=True, realm=None, chrx=None):
+def _since(recs, *, realm=None, chrx=None):
     async def go():
-        gw = (_GWStructured if structured else _GW)(recs, realm=realm, chrx=chrx)
-        oa, op = R._resolve_actor, R._settled_dejure_pair
+        gw = _GW(recs, realm=realm, chrx=chrx)
+        oa, op = R._resolve_actor, R._dejure_pair
 
         async def actor(_g, cid, _t):
             return ({"id": cid or SEAT}, None)
 
         async def pair(_g, _c, keys, **kw):
             return [{"total": 1, "held": 1, "title_key": k} for k in keys]
-        R._resolve_actor, R._settled_dejure_pair = actor, pair
+        R._resolve_actor, R._dejure_pair = actor, pair
         try:
             env = await R.observe_impl(gw, character_id=SEAT, depth="brief")
         finally:
-            R._resolve_actor, R._settled_dejure_pair = oa, op
+            R._resolve_actor, R._dejure_pair = oa, op
         res = (env.get("result") or {}) if isinstance(env, dict) else {}
         return res.get("since"), env.get("delta")
     return asyncio.run(go())
@@ -154,13 +146,6 @@ class ObserveSince(unittest.TestCase):
                          "'I could not tell' is never 'not about you'")
         self.assertEqual(s["withheld"]["unclassified"], 1)
         self.assertEqual(s["withheld"]["count"], 1)
-
-    def test_S6_an_older_gateway_still_yields_something_labelled(self):
-        s, _ = _since([MINE, FOREIGN_1], structured=False)
-        self.assertEqual(len(s["mine"]), 0)
-        self.assertEqual(s["withheld"]["unclassified"], 2)
-        self.assertEqual(s["withheld"]["by_kind"], {"legacy_string": 2},
-                         "the legacy shape is named, not silently empty")
 
     def test_S7_delta_keeps_its_name_and_is_now_the_seats_own(self):
         s, delta = _since([MINE, FOREIGN_1, FOREIGN_2])

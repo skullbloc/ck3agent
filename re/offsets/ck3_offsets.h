@@ -355,11 +355,30 @@ namespace globals {
     // Command dispatch manager (Round 6)
     constexpr uintptr_t COMMAND_DISPATCH_MGR = 0x0c59dd68;  // HIGH: command dispatch singleton (R26: DAT_0c69dd68 - 0x100000)
     constexpr uintptr_t COMMAND_DISPATCH_GATE = 0x0c59dfb8; // Dispatch gate flags (DAT_0c69dfb8 - 0x100000). Check (gate & 0xfd)==0 before dispatch.
+    // L13 (re/findings/re_frame_update_hook.md): COMMAND_DISPATCH_MGR is jomini's CSession
+    // (session.cpp); COMMAND_DISPATCH_GATE above is its +0x250 session-mode byte.
+    constexpr uintptr_t SESSION_THREAD_FN_SLOT = 0x0c59dde0; // HIGH: COMMAND_DISPATCH_MGR+0x78, RW .bss fn ptr re-read by pdx_thread_run_loop every pass (`call [rbx]`); holds funcs::SESSION_THREAD_LOOP (dump: img 0x0765ffb0). THE step-2 hook slot.
+    constexpr uintptr_t SESSION_EXEC_MUTEX     = 0x0c59dfc8; // HIGH: COMMAND_DISPATCH_MGR+0x260 pthread mutex held around ProcessCommandQueue (session thread trylock; main thread OnActivate/load/hot-join lock) — decompile x4 + dump (free while paused)
+    constexpr uintptr_t JOB_MANAGER            = 0x0c7644a8; // HIGH: DAT_0c8644a8 job/task manager* (PdxParallelFor target); +0xCC = worker count (dump: 7)
+    constexpr uintptr_t APP_SINGLETON          = 0x0c5cc1d8; // HIGH: DAT_0c6cc1d8 CInterfaceApplication* (FUN_07829420 returns it); == *(IDLER_SINGLETON)+0x18 in the dump
+    constexpr uintptr_t SECONDS_PER_DAY_TABLE  = 0x0c2a8210; // HIGH: DAT_0c3a8210 float* indexed by game_state::GAME_SPEED; the clock's day interval (dump {2.0,1.0,0.5,0.2,0.0})
+
+    // lane l4 (re/findings/re_interactions.md §2): the process-wide scope-name registry
+    // (DAT_0c863558, returned by FUN_081f0dd0; a thread may override it through a TLS slot,
+    // the game thread uses this default). Every `scope:<name>` / send_option `flag = <name>`
+    // is interned here as a small id; layout in namespace scope_name_registry. HIGH:
+    // FUN_081f0c80 (id -> name) and FUN_081f0a00 (name -> id, MurmurHash3 keyed) decompiled;
+    // the dump resolves 1=actor 3=recipient 4=target 0x1b=secondary_actor
+    // 0x1c=secondary_recipient 0x1d=matrilineal 0x31=hook, matching the globals the scope
+    // setup reads (DAT_0bfcd6c8=1, DAT_0bfcd6e8=3, DAT_0bfcd6f8=4, DAT_0bfcd868=0x1b, DAT_0bfcd878=0x1c).
+    constexpr uintptr_t SCOPE_NAME_REGISTRY = 0x0c763558; // HIGH: image 0xc863558
 
     // Culture/faith indexed DBs (Round 6)
     constexpr uintptr_t CULTURE_INDEXED_DB   = 0x0beda7a8;  // HIGH: culture ID -> obj indexed DB
     constexpr uintptr_t CULTURE_NULL_SENTINEL = 0x0beda7b0;  // HIGH: null culture sentinel
-    constexpr uintptr_t FAITH_INDEXED_DB     = 0x0bedadd8;  // HIGH: faith/religion indexed DB
+    constexpr uintptr_t FAITH_INDEXED_DB     = 0x0bedadd8;  // LOW: NOT a usable hash map — table 0, capacity 0 in the ivar867 dump
+                                                            //   (and live, #faith 2026-06-19). Faiths resolve through FAITH_DB (0x0bedad78),
+                                                            //   keyed at faith::FAITH_ID (+0x08): faith_lookup (dispatch_router.cpp). L14 FB M-1.
 
     // Law system (Round 6, corrected by law-change investigation)
     constexpr uintptr_t LAW_DB_NULL          = 0x0bedad58;  // HIGH: null law sentinel
@@ -371,12 +390,19 @@ namespace globals {
     constexpr uintptr_t MAA_TYPE_DB          = 0x0bedaf98;  // HIGH: MaA type DB (same layout as BUILDING_TYPE_DB)
     constexpr uintptr_t MAA_TYPE_NULL        = 0x0bedafa0;  // HIGH: null MaA type sentinel
     // MAA_TYPE_DB layout (core-dump verified, 2026 dump 0xbedaf98, 109 types):
-    //   db = read_ptr(resolve(MAA_TYPE_DB)); arr = read_ptr(db+0x88); count = read_u32(db+0x90);
+    //   db = read_ptr(resolve(MAA_TYPE_DB)); arr = read_ptr(db+0x88) is a CPdxArray
+    //   (pdx_array: data +0, capacity +8, count +0xC; the game_db container rule), so
+    //   db+0x90 is the array's CAPACITY and db+0x94 the LIVE count; count = read_u32(db+0x94);
     //   for i in 0..count: type_obj = read_ptr(arr + i*8); name = std::string @ type_obj+0x10;
     //   type DB id = read_u32(type_obj+0x8)  (sequential 0..count-1; this is what the recruit ctor
     //   reads via *(maa_type_obj+8)). Resolve-by-name mirrors action_handlers::resolve_building_obj.
     constexpr size_t    MAA_TYPE_DB_ARR_OFF  = 0x88;  // HIGH: ptr to type-obj array
-    constexpr size_t    MAA_TYPE_DB_CNT_OFF  = 0x90;  // HIGH: u32 type count
+    // Core dump ivar867 (867.01.01, image base set by hand 0x561b49cd4000): db
+    // 0x7f901e08a0e0, +0x90 = 109, +0x94 = 109, all 109 slots named (huscarl first).
+    // The array is full there, so the dump agrees with the rule but cannot tell the
+    // capacity from the count: MEDIUM. (Was MAA_TYPE_DB_CNT_OFF 0x90 "type count".)
+    constexpr size_t    MAA_TYPE_DB_CAP_OFF  = 0x90;  // MEDIUM: u32, the array's capacity (109 in the dump; no reader counts with it)
+    constexpr size_t    MAA_TYPE_DB_LIVE_CNT_OFF = 0x94;  // MEDIUM: u32, live MaA types (109 in the dump; game_db::LIVE_COUNT rule)
 
     // Secret type database (Round 6)
     constexpr uintptr_t SECRET_TYPE_DB       = 0x0bee4e50;  // HIGH: secret type hash-table DB
@@ -433,6 +459,16 @@ namespace globals {
     constexpr uintptr_t TASK_CONTRACT_NULL   = 0x0bef9360;  // HIGH: TPdxNullObject<CTaskContract>* (id @+0x8 == -1)
     constexpr uintptr_t ARTIFACT_DB          = 0x0bed8938;  // HIGH: TPdxRefDatabase<CArtifact,8> (FUN_05f73f00; re_siege_mechanics.md)
     constexpr uintptr_t ARTIFACT_NULL        = 0x0bed8940;  // HIGH: TPdxNullObject<CArtifact>* (id @+0x10 == -1)
+    // lane l3-schemes 2026-10-20 (re/findings/re_schemes.md §2): the engine's script
+    // token table (a name<->id map; trigger entries carry the id of their script key at
+    // trigger+0x8). Guard-initialised static at image 0x0c866670; the pointer slot below
+    // holds its address (core dump ivar867: *(slot) == the static). Reverse array:
+    // *(table+0x40) = std::string*[], count u32 at table+0x4C (25074 in the 867 dump);
+    // id 0x6ef -> "age", 0x48bd -> "is_imprisoned", 0x4f8 -> "not". Ids with a nonzero
+    // top byte (0x03000019, scope:target = {...}) are scope links, not tokens. HIGH:
+    // decompile FUN_08269e60 (name->id, the registration path) + core dump (9 ids read
+    // back to the script keys at the lines their triggers record).
+    constexpr uintptr_t TOKEN_TABLE_PTR      = 0x0c766660;  // HIGH: slot -> token table (image 0x0c866660)
 
     // War database (canonical war lookup)
     constexpr uintptr_t WAR_DB               = 0x0bed8888;
@@ -605,7 +641,7 @@ namespace game_state {
     // WHY HIGH AND NOT CONFIRMED FOR THE PAIR: both readable dumps are
     // 1066-START campaigns, so this is "matches the 1066 bookmark exactly on
     // every dump we can read", not "proven to track the start across
-    // bookmarks". THE TEST NOT YET RUN: read this pair in an 867 or 1178
+    // bookmarks". THE TEST NOT RUN: read this pair in an 867 or 1178
     // campaign. ONE such campaign SETTLES BOTH FIELDS OR FALSIFIES BOTH — it
     // is a single test for the pair, not two tests. The existing 867 dump
     // (ck3_20260625_152901_ivar867) CANNOT settle it: GAME_STATE_ROOT is
@@ -654,26 +690,6 @@ namespace game_state {
     constexpr uintptr_t MONTH_LENGTHS_U8_B   = 0x08d1cb3f;  // HIGH: u8[12], second copy of the same table
     constexpr uintptr_t MONTH_CUM_DAYS_I32   = 0x08e93be0;  // HIGH: i32[12] 0,31,59,...,334 == MONTH_CUM_DAYS
 
-    // Active-wars array fields written by WAR_CREATE_CORE Block K (ck-e58l.5
-    // decomp). The decomp reads/writes these at offsets 0x28/0x30/0x34/0x38 of
-    // its local `lStack_1208 = param_1`. ck-e58l.5 inferred param_1 ==
-    // *(GAME_STATE_ROOT), but ck-ltsh (2026-04-21) DISPROVED that inference:
-    // on both the 867 AD core dump and the live 1097 AD session, the field at
-    // *(GAME_STATE_ROOT)+0x20 is a small int (0x24) not a pointer, while the
-    // decomp reads *(param_1+0x20) as a pointer-arg to WAR_DB_ALLOCATE. So
-    // param_1 is some other struct (likely a CWarManager) and the offsets
-    // below are correct relative to THAT struct, not to *(GAME_STATE_ROOT).
-    // Reading them from *(GAME_STATE_ROOT) yields garbage: ptr=0xffffffff,
-    // cap=0, count=32575. Demoted to LOW until the true parent is located.
-    //
-    // Consumers (phase3_probes::read_active_wars_array) must either find the
-    // true parent struct or treat these as unresolvable. Orphan detection via
-    // probe_war_orphans is disabled until then. See bead ck-ltsh.
-    constexpr size_t ACTIVE_WARS_PTR        = 0x28;   // LOW: ptr to int32[] of war IDs — parent struct unknown
-    constexpr size_t ACTIVE_WARS_CAPACITY   = 0x30;   // LOW: int32 — parent struct unknown
-    constexpr size_t ACTIVE_WARS_COUNT      = 0x34;   // LOW: int32 — parent struct unknown
-    constexpr size_t ACTIVE_WARS_ALLOCATOR  = 0x38;   // LOW: ptr (vtable[2]=alloc, [3]=free) — parent struct unknown
-
     // WAR_DB root: WAR_CREATE_CORE reads *(game_state+0x20)+8 as the argument to
     // WAR_DB_ALLOCATE (ck-e58l.5).
     constexpr size_t WAR_DB_ALLOC_ROOT      = 0x20;   // HIGH: ptr; *(gs+0x20)+8 → WAR_DB allocator arg
@@ -686,6 +702,32 @@ namespace idler {
     constexpr size_t PAUSE_FLAG             = 0x20;   // CONFIRMED: byte, 0=unpaused 1=paused
     constexpr size_t PLAYER_ID              = 0x24;   // CONFIRMED: uint32
     constexpr size_t TIMESTAMP              = 0x28;   // CONFIRMED: int64
+    // L13 (re_frame_update_hook.md): CJominiIdler members; decompile of CJominiIdler_Update /
+    // _Activate / dtor (FUN_076fcfd0 / 076fd5a0 / 076fcc20) + core dump (idler 0x561b8b675a20).
+    constexpr size_t LOGIC_PTR              = 0x08;   // HIGH: CIngameInterfaceIdlerLogic* (vt[5] Update per frame, vt[6] OnActivate)
+    constexpr size_t GFX_PTR                = 0x10;   // HIGH: CIngameInterfaceIdlerGfx*
+    constexpr size_t APP_PTR                = 0x18;   // HIGH: CInterfaceApplication* (== globals::APP_SINGLETON)
+}
+
+// =============================================================================
+// CIngameInterfaceIdlerLogic (idler::LOGIC_PTR) — L13, re_frame_update_hook.md
+// =============================================================================
+namespace ingame_idler_logic {
+    constexpr size_t VT_UPDATE_SLOT         = 5;      // HIGH: per-frame Update (main thread), funcs::INGAME_LOGIC_UPDATE
+    constexpr size_t VT_ON_ACTIVATE_SLOT    = 6;      // HIGH: OnActivate (once per idler switch, NOT per frame)
+    constexpr size_t IDLER_PTR              = 0xB0;   // HIGH: back-pointer to the CJominiIdler (dump-verified)
+    constexpr size_t CLOCK_ACCUM            = 0xB8;   // HIGH: float seconds accumulated toward the next day (0.0 while paused, dump)
+    constexpr size_t CLOCK_BLOCK_FLAG       = 0xBD;   // MEDIUM: byte; clock does nothing while set
+    constexpr size_t MP_WAIT_FLAG           = 0xC4;   // MEDIUM: byte; MP "wait for slow peers" latch in the clock
+}
+
+// =============================================================================
+// CInterfaceApplication (globals::APP_SINGLETON) — L13, re_frame_update_hook.md
+// =============================================================================
+namespace application {
+    constexpr size_t CURRENT_IDLER          = 0x28;   // HIGH: CJominiIdler* (dump == *IDLER_SINGLETON)
+    constexpr size_t FRAME_DT               = 0x178;  // HIGH: double, last frame dt (dump 0.0166675 = 60 fps while paused); passed to the game clock
+    constexpr size_t FRAME_COUNTER          = 0x180;  // HIGH: int64, frames since start (dump 51804)
 }
 
 // =============================================================================
@@ -781,7 +823,7 @@ namespace funcs {
     // See re/findings/re_ai_interactions_dispatch_null_target.md (retraction
     // stamped above the original).
 
-    // R14: Additional dispatch functions (not yet hooked)
+    // R14: Additional dispatch functions (no bridge hook on them)
     constexpr uintptr_t AI_LIFESTYLE_DISPATCH      = 0x04c89110;  // checks +0x03,+0x04,+0x05,+0x06,+0x0E,+0x18,+0x24,+0x25
     constexpr uintptr_t AI_MARRIAGE_WAR_DISPATCH   = 0x04c89240;  // checks +0x09,+0x10,+0x12
     constexpr uintptr_t AI_WAR_COUNCIL_DISPATCH    = 0x04c892d0;  // checks +0x07,+0x0A,+0x0E,+0x21
@@ -904,25 +946,10 @@ namespace funcs {
     // (ghidra 0x6dce6d0 ↔ header 0x6cce6d0) and ai_cb_selector (ghidra 0x4e980d0 ↔ header
     // 0x4d980d0): header = ghidra_va − 0x100000, uniformly. Corrected 0x04e6→0x04d6 below.
     constexpr uintptr_t STANCE_PERWAR_SELECT       = 0x04d66550;  // HIGH: ghidra FUN_04e66550(coord_war_record, char/realm)  [was 0x04e66550 — +0x100000 bug]
-    // Per-coordinator stance-update tick — decrements re-eval cooldowns, walks the
-    // war-record list at coord+0x50, calls STANCE_PERWAR_SELECT per record. B1a
-    // re-eval entry (zero the record's cooldowns then call this so the engine
-    // re-selects now). Touches unit-stack merge/split RNG ⇒ fake-RNG scope MANDATORY.
-    constexpr uintptr_t COORD_STANCE_TICK          = 0x04d66220;  // HIGH: ghidra FUN_04e66220(coordinator, …)  [was 0x04e66220 — +0x100000 bug]
-    // Objective-sublist BOOTSTRAP seeder — FUN_04e69c70(rec). Unconditionally
-    // _Znwm(0x98)→ctor FUN_04e3da00(obj,rec)→push_back into rec+0x50, taking the
-    // objective count rec+0x5c from 0→1 (and bumps rec+0x1b50). NO +0x5c gate, so it
-    // bootstraps a record from zero — UNLIKE COORD_STANCE_TICK (which early-returns at
-    // rec+0x5c==0) and the in-tick maintainer FUN_04e669e0 (which only REFINES an
-    // existing sublist). A FRESH steered war's record has rec+0x5c==0 / rec+0x50==NULL
-    // (core-dump ground-truth, re_steered_war_offensive_root.md §7), so this MUST run
-    // before COORD_STANCE_TICK or the stance tick does nothing. Vtable method (only
-    // INDIRECTION/DATA xrefs); the engine invokes it from the realm-AI war-PLANNING
-    // phase (FUN_04dedfd0→FUN_04de8cc0→FUN_04def300→FUN_04def140) which runs BEFORE the
-    // stance tick FUN_04dedd40 in the same AI tick. Touches engine allocator only (no
-    // RNG), but call under the same fake-RNG scope + watchdog for uniform crash-net.
-    constexpr uintptr_t COORD_OBJ_BOOTSTRAP        = 0x04d69c70;  // HIGH(decomp 20260630): ghidra FUN_04e69c70(rec) seeds rec+0x50 obj sublist 0→1  [was 0x04e69c70 — +0x100000 bug → resolved to string-builder FUN_04f69c70, crash ck3_20260630_115545]
-    // In-tick objective MAINTAINER — FUN_04e669e0(rec). Reached inside COORD_STANCE_TICK
+    // COORD_STANCE_TICK (FUN_04e66220) and COORD_OBJ_BOOTSTRAP (FUN_04e69c70) were deleted
+    // with force_offensive_stance, their only reader (cleanup 2026.11;
+    // re_steered_war_offensive_root.md §7, §9 keep the decompile record).
+    // In-tick objective MAINTAINER — FUN_04e669e0(rec). Reached inside FUN_04e66220
     // at the rec+0x98<2 branch; refines/extends the EXISTING rec+0x50 sublist (gated on
     // rec+0x5c!=0). Cannot bootstrap. Listed for completeness; not called directly.
     constexpr uintptr_t COORD_OBJ_MAINTAIN         = 0x04d669e0;  // HIGH(decomp): ghidra FUN_04e669e0(rec) refines existing sublist  [was 0x04e669e0 — +0x100000 bug]
@@ -1063,6 +1090,37 @@ namespace funcs {
     constexpr uintptr_t PAUSE_TOGGLE               = 0x075fd2d0;  // CONFIRMED: debounced toggle
     constexpr uintptr_t IS_MANUALLY_PAUSED         = 0x03883f10;  // CONFIRMED: reads *(DAT_0c6b53e8 + 0x20)
 
+    // --- L13: frame / session-thread / daily-tick chain (re/findings/re_frame_update_hook.md) ---
+    // Session thread (jomini CSession, session.cpp): runs EVERY engine command, paused or not.
+    constexpr uintptr_t SESSION_THREAD_LOOP        = 0x0755ffb0;  // HIGH: FUN_0765ffb0 CSession_ThreadLoop(session): 12Hz net update; trylock(+0x260) → PROCESS_COMMAND_QUEUE(session,1) → unlock; 5ms nanosleep when 0 processed; returns 1. Live in dump (LWP 3271228). Value of globals::SESSION_THREAD_FN_SLOT.
+    constexpr uintptr_t SESSION_INIT               = 0x0755f9c0;  // HIGH: FUN_0765f9c0 CSession_Init ("Init session"): starts the thread once (+0x408 latch)
+    constexpr uintptr_t PDX_THREAD_START           = 0x0814d970;  // HIGH: FUN_0824d970(slot{fn,arg,stop,thread*}, fn, arg) → std::thread(PDX_THREAD_RUN_LOOP)
+    constexpr uintptr_t PDX_THREAD_RUN_LOOP        = 0x0814d9a0;  // HIGH: FUN_0824d9a0: while(!stop && (r=(*slot.fn)(slot.arg))&1); re-reads slot.fn each pass (disasm 0x824d9c1)
+    constexpr uintptr_t PROCESS_COMMAND_QUEUE      = 0x075639f0;  // HIGH: FUN_076639f0 (re_game_command_dispatch.md); no pause read; executes via cmd->vt[8]
+    constexpr uintptr_t SESSION_PASSES_OBSERVER_GATE = 0x07560430; // HIGH: FUN_07660430(session,cmd,bypass): dispatch_mgr::GATE_BYTE test
+    constexpr uintptr_t SET_OBSERVER_CMD_EXECUTE   = 0x0733e130;  // HIGH: FUN_0743e130 CSetObserverCommand vt[8]: sets dispatch_mgr::GATE_BYTE for the local peer
+    constexpr uintptr_t PAUSE_GAME_CMD_CTOR        = 0x064b7ab0;  // HIGH: FUN_065b7ab0(cmd, player, unpause) CPauseGameCommand ctor; flags|=8 (passes observer gate)
+    // Main (render) thread, per frame.
+    constexpr uintptr_t APP_DO_FRAME               = 0x07728ae0;  // MEDIUM: FUN_07828ae0 maybe_CGameApplication_DoFrame (frame counter, dt, app->vt[8])
+    constexpr uintptr_t IDLER_UPDATE               = 0x075fcfd0;  // HIGH: FUN_076fcfd0 CJominiIdler_Update: logic->vt[5](), gfx->vt[5]()
+    constexpr uintptr_t IDLER_ACTIVATE             = 0x075fd5a0;  // HIGH: FUN_076fd5a0 CJominiIdler_Activate: g_idler=this; logic->vt[6](); gfx->vt[6]()
+    constexpr uintptr_t INGAME_LOGIC_UPDATE        = 0x0608f7d0;  // HIGH: FUN_0618f7d0 CIngameIdlerLogic vt[5] (per frame)
+    constexpr uintptr_t INGAME_LOGIC_UPDATE_FRAME  = 0x0608f8a0;  // HIGH: FUN_0618f8a0 CIngameIdlerLogic_UpdateOneFrameInternal (profile string)
+    constexpr uintptr_t INGAME_LOGIC_GAME_CLOCK    = 0x0608d520;  // HIGH (behaviour) / name MEDIUM: FUN_0618d520(dt, logic) — THE PAUSE GATE: reads idler+0x20; when unpaused accumulates dt, dispatches CDailyTickCommand (mode 7) per day
+    constexpr uintptr_t INGAME_LOGIC_ON_ACTIVATE   = 0x06090bd0;  // HIGH: FUN_06190bd0 CIngameIdlerLogic vt[6] (OnActivate, not per frame)
+    constexpr uintptr_t MP_LOGIC_ON_ACTIVATE       = 0x07332d40;  // HIGH: FUN_07432d40 CJominiMultiplayerIngameIdlerLogic vt[6]: PCQ(session,0) + "Setting execute commands: yes"
+    constexpr uintptr_t MP_LOGIC_UPDATE            = 0x07332b50;  // HIGH: FUN_07432b50 CJominiMultiplayerIngameIdlerLogic vt[5]
+    // Daily tick (executed by PCQ on the session thread).
+    constexpr uintptr_t DAILY_TICK_PRE_EXECUTE     = 0x05fa8c80;  // HIGH: FUN_060a8c80 CDailyTickCommand::InternalPreExecute — PdxParallelForOverArray over all legacy managers (RTTI lambda names); CAIManager MainTick runs as one job
+    constexpr uintptr_t DAILY_TICK_EXECUTE         = 0x05fa87a0;  // MEDIUM: FUN_060a87a0 maybe_CDailyTickCommand_InternalExecute (serial, after PreExecute)
+    constexpr uintptr_t GAME_STATE_CMD_RUN         = 0x05edde90;  // MEDIUM: FUN_05fdde90 secondary vt[2] PreExecute → vt[1] Execute → vt[3] Post
+    constexpr uintptr_t LEGACY_MGR_DAILY_JOB       = 0x061263a0;  // MEDIUM: FUN_062263a0(mgr,seed) → mgr->vt[3] (the parallel-for job body)
+    constexpr uintptr_t LEGACY_MGR_DAILY_DEFAULT   = 0x04cf0b90;  // MEDIUM: FUN_04df0b90 CLegacyGameManagerInterface vt[3] default → vt[2] (CAIManager: MainTick thunk); in 20 vtables
+    // Vtables (address points).
+    constexpr uintptr_t INGAME_IFACE_LOGIC_VTABLE  = 0x0b732ae0;  // HIGH: CIngameInterfaceIdlerLogic; slot 5 = INGAME_LOGIC_UPDATE, 6 = INGAME_LOGIC_ON_ACTIVATE (dump: the logic object's vptr)
+    constexpr uintptr_t INGAME_IFACE_IDLER_VTABLE  = 0x0b731d88;  // HIGH: CInGameInterfaceIdler (dump: *IDLER_SINGLETON vptr)
+    constexpr uintptr_t DAILY_TICK_CMD_VTABLE      = 0x0bb50518;  // HIGH: CDailyTickCommand primary (secondary 0x0bb505d8 at cmd+0x18)
+
     // --- Round 3: Trait system functions ---
     constexpr uintptr_t ADD_TRAIT                  = 0x066c88c0;  // HIGH: CAddOrRemoveTraitCommand ctor
     constexpr uintptr_t TRAIT_GET_LIST             = 0x0664f4f0;  // HIGH: fn(char) -> struct{+0=array, +0xC=count}
@@ -1137,7 +1195,9 @@ namespace funcs {
     constexpr uintptr_t EVENT_OPTION_SELECTION     = 0x02745900;  // CONFIRMED: event option handler (7404B)
 
     // Name resolution (Round 5)
-    constexpr uintptr_t HOUSE_GET_NAME             = 0x05dba4d0;  // HIGH: house_obj → name (return param+0x10)
+    constexpr uintptr_t HOUSE_GET_NAME             = 0x05dba4d0;  // HIGH: house_obj → name: `return param_1 + 0x248` (Ghidra House_GetName,
+                                                                  //   image 0x05eba4d0) = dynasty_house_obj::NAME. Was "+0x10" here: +0x10 is the
+                                                                  //   house's masked id (hash_map::ENTRY_KEY_REF), never a string. L14 FB M-1.
     constexpr uintptr_t DYNASTY_GET_FROM_HOUSE     = 0x05dbe2f0;  // HIGH: house_obj → dynasty_id (*(obj+0x24))
     constexpr uintptr_t DYNASTY_GET_NAME           = 0x05daa120;  // HIGH: dynasty_obj → name (returns obj+0x80)
 
@@ -1205,7 +1265,7 @@ namespace funcs {
     // then Execute. Execute itself calls AddLawToCharacter(char,law,7,0); the
     // prestige cost + cooldown + powerful-vassals vote + vassal-opinion penalty are
     // applied by the engine's command pipeline (CanExecute gate + on_accept), NOT by
-    // AddLawToCharacter. Replicate the do_add_construction dispatch template with an
+    // AddLawToCharacter. Replicate the command-dispatch template (ctor, vtable[9], mode 0xe) with an
     // EXPLICIT actor (ctor sets char id @+0x20=0xffffffff, then we overwrite).
     // ── ck-84 CORRECTION (2026-06-21): ALL FIVE offsets below were recorded
     //    0x100000 TOO HIGH. The prior agent stored IMAGE VAs as header offsets, so
@@ -1214,7 +1274,7 @@ namespace funcs {
     //    ctor. Calling a hashmap insert with command-shaped args corrupted the stack
     //    = the non-SIGSEGV HARD CRASH (the sigsetjmp/SIGSEGV net can't bound a
     //    std::terminate/stack-smash). The real CAddLawCommand functions live at image
-    //    0x067cdXXX; their header offsets = image − 0x100000 = 0x066cdXXX. Verified
+    //    0x067cd000-0x067cdfff; their header offsets = image − 0x100000 = 0x066cd000-0x066cdfff. Verified
     //    via func_at (is_entry:true) + decompile + the live vtable read from the core
     //    dump (vt resolves to header 0x066cd410 / 0x066db1e0 / base-dtor 0x0755b650).
     //    This is the same +0x100000 image-VA-vs-header bug flagged in memory
@@ -1223,6 +1283,7 @@ namespace funcs {
     constexpr uintptr_t ADD_LAW_COMMAND_EXECUTE    = 0x066cd370;  // HIGH: CAddLawCommand::Execute(cmd) — reads char id @cmd+0x20 (&0xffffff), law @cmd+0x28; calls AddLawToCharacter(char,law,7,0). FUN_067cd370 (image), 77B.
     constexpr uintptr_t ADD_LAW_COMMAND_CANEXEC    = 0x06d30000;  // HIGH: CanExecute(law, char, ctx) — FUN_06e30000 (image). IsRuler(char) + law-group-level bitmask (law+0xb08<10 && (0x23d>>level)&1) + !CharacterHasLaw + cost-affordability eval FUN_06e2fd40(law,char,ctx). Returns affordability/eligibility; if !eligible+ctx!=0 it fills the ctx reject-reason. The gate; called by AI law evaluator + UI. Reached via vt[7] wrapper ADD_LAW_COMMAND_CANEXEC_VT.
     constexpr uintptr_t ADD_LAW_COMMAND_CANEXEC_VT = 0x066cd410;  // HIGH: vt[7] (vtable+0x38) CanExecute wrapper FUN_067cd410(cmd,ctx) — resolves char from cmd+0x20 via CharacterDB, then calls CANEXEC(law@+0x28, char, ctx). This is the slot the engine command pipeline invokes.
+    constexpr uintptr_t ADD_TITLE_LAW_COMMAND_CTOR = 0x066d14b0;  // HIGH: CAddTitleLawCommand ctor(cmd, title_id, actor_id, CLaw*) FUN_067d14b0 (image), 72 B — namespace add_title_law_cmd
     constexpr uintptr_t ADD_LAW_COMMAND_PREPARE_VT = 0x066db1e0;  // HIGH: vt[9] (vtable+0x48) clone/prepare FUN_067db1e0(&out,cmd) — _Znwm(0x30) + copies base + both vtables + char@+0x20 + law@+0x28. Byte-for-byte analog of construction's prepare. (Bridge reads vt[9] dynamically; recorded for reference.)
     // CAddLawCommand layout (after ctor): cmd+0x20 = u32 char id (full engine id,
     // low 24 bits = index); cmd+0x28 = CLaw* (law object ptr from REALM_LAW_DB).
@@ -1247,7 +1308,7 @@ namespace funcs {
     // 0xe and mode 7. The WORKING path: run vt[7] IsValid(cmd,NULL) gate, then on
     // PASS call CREATE_TITLE_CMD_EXECUTE (FUN_067cabf0) SYNCHRONOUSLY under a
     // transient PLAYER_CHAR_ID swap to the acting ruler (same gated+synchronous
-    // +player-swap shape as execute_raise_armies_intent). The canonical UI handler
+    // +player-swap shape the deleted execute_raise_armies_intent had). The canonical UI handler
     // FUN_04de1ac0 dispatches with mode 7 only because it has a real active player.
     // The gate (controls-de-jure-counties + not-extant + gold cost)
     // lives INSIDE the engine — routing through it is legitimate, not a memory poke.
@@ -1258,7 +1319,7 @@ namespace funcs {
     // 2nd-vtable@+0x18, u32 ruler_id@+0x20 (FULL engine id), u32 title_id@+0x24. Type-id 0x2cc0.
     constexpr uintptr_t CREATE_TITLE_CMD_VTABLE    = 0x0bc98588;  // HIGH: primary vtable @cmd[0] (image 0xbd98588 − 0x100000). vt[7]=IsValid(FUN_067cacf0), vt[9]=clone/prepare(FUN_067da3f0).
     constexpr uintptr_t CREATE_TITLE_CMD_VTABLE2   = 0x0bc98640;  // HIGH: secondary vtable @cmd+0x18 (image 0xbd98640 − 0x100000).
-    constexpr uintptr_t CREATE_TITLE_CMD_VALIDATE  = 0x066cacf0;  // HIGH: vt[7] IsValid(cmd,ctx) FUN_067cacf0 — resolves ruler@+0x20 + title@+0x24, cheat-bypass check, then calls CREATE_TITLE_GATE(ruler,title,1,reasons). Returns nonzero iff createable. ctx!=0 fills reject-reason vector.
+    constexpr uintptr_t CREATE_TITLE_CMD_VALIDATE  = 0x066cacf0;  // HIGH: vt[7] IsValid(cmd, std::string* why) FUN_067cacf0 — resolves ruler@+0x20 + title@+0x24, cheat-bypass check, then calls CREATE_TITLE_GATE(ruler,title,1,reasons) and appends each reason to *why (std::string::_M_append, as CAddLawCommand's). Returns a C++ `bool`: ONLY AL is the verdict (call it through bridge::EngineBoolFn). L14 S3 (2026-10-30): bits 8..63 of RAX are left over from CanCreateTitle's last callee, so a refused create read as valid when the bridge tested all of RAX — the UI handler FUN_04de1ac0 tests `al` (objdump 0x4ce1ae2).
     constexpr uintptr_t CREATE_TITLE_CMD_EXECUTE   = 0x066cabf0;  // HIGH: Execute(cmd) FUN_067cabf0 — reached by the command pipeline; resolves ruler+title, calls CREATE_TITLE_APPLY_CORE. (We never call directly; the engine runs it on the command-queue tick.)
     constexpr uintptr_t CREATE_TITLE_GATE          = 0x0611a500;  // HIGH: CanCreateTitle(ruler,title,flag=1,reasons_out) FUN_0621a500 (image 0x621a500 − 0x100000) — THE gate (de-jure control + not-extant + cost); shared by 5 AI scorers. Legitimate verdict. (Documentation-only; not called directly — reached via the vt[7] IsValid wrapper above.)
     // #131 (2026-06-24, re_create_title_dejure_integrity_131.md): the engine gate above
@@ -1276,6 +1337,20 @@ namespace funcs {
     constexpr uintptr_t TITLE_CREATION_BYPASS_OBJ  = 0x0bed75d0;  // HIGH: g_title_creation_bypass singleton (DAT_0bfd75d0, header = image−0x100000). +0x10 byte = bypass flag (0=off). +0x2c float 0x3f666666 confirms this is the real singleton.
     constexpr uintptr_t CREATE_TITLE_APPLY_CORE    = 0x0611b800;  // HIGH: create-title application core FUN_0621b800(ruler,title) (image 0x621b800 − 0x100000) — allocates realm-queue item + grant primitive. Do NOT call directly (bypasses the gate).
     constexpr uintptr_t CREATE_TITLE_CMD_CTOR      = 0x066cabb0;  // HIGH: real CCreateTitleCommand ctor FUN_067cabb0(cmd,ruler_id,title_id) (image 0x67cabb0 − 0x100000) — CJominiCommandBase_ctor(cmd,0)+stamp both vtables+ruler@+0x20+title@+0x24. Bridge builds the POD inline (byte-identical), but this is the canonical ctor. The canonical dispatcher is FUN_04de1ac0 (the UI "Create Title" handler): ctor → vt[7] IsValid(cmd,NULL) → vt[9] prepare → GAME_COMMAND_DISPATCH(mgr,&out,7,0).
+    // L14 S3 (2026-10-30, re_create_title_action.md "L14 S3"): the price of creating a
+    // title, as CanCreateTitle checks it and CreateTitle_Apply charges it. Both functions
+    // pick the currency the same way: Character_GetHeirTitleData (GET_HEIR_TITLE_FOR_CHAR)
+    // flag GOV_FLAG_TITLE_COST_IN_PIETY set → piety (CREATE_TITLE_PIETY_COST, the gate
+    // compares with CPietyCompareCondition); else CREATE_TITLE_PAYS_TREASURY → treasury
+    // (currency 3) else gold (currency 0), cost CREATE_TITLE_GOLD_COST, compared with
+    // CCurrencyCompareCondition<EBasicCurrencyType N> (op 0x3cb: have >= cost) on GOLD_GET.
+    // The gate skips the cost leg for one case (FUN_066682e0 && FUN_06673ff0(r,0)>0 &&
+    // FUN_066632a0(r)==2 && tier==3); the apply charges regardless.
+    constexpr uintptr_t CREATE_TITLE_GOLD_COST     = 0x06119aa0;  // HIGH: FUN_06219aa0(ruler, tier, currency, explain=NULL) → int64 fixed-point. max((CREATE_TITLE_GOLD_COST[tier] + modifier 0xb9) × (1 + modifier 0xba), CREATE_TITLE_GOLD_COST[tier] × CREATE_TITLE_MIN_COST_FACTOR). Sources: decompile; xrefs from can_create_title (objdump 0x611ad36, the CCurrencyCompare value) and CreateTitle_Apply (the amount FUN_0675df60 charges); core dump ivar867: the table at DAT_0c3ab650 = {0,0,0,250,500,1000,2000} and DAT_0c3ab6b8 = 0.2, = game/common/defines/00_defines.txt:839-840. (image 0x6219aa0 − 0x100000)
+    constexpr uintptr_t CREATE_TITLE_PIETY_COST    = 0x0611a210;  // HIGH: FUN_0621a210(ruler, tier, explain=NULL) → int64 fixed-point piety. Sources: decompile; xrefs from can_create_title (objdump 0x611ac45, the CPietyCompareCondition value) and CreateTitle_Apply (FUN_0675eab0(ruler, −cost), the piety charge). (image 0x621a210 − 0x100000)
+    constexpr uintptr_t CREATE_TITLE_PAYS_TREASURY = 0x0676eb80;  // HIGH: FUN_0686eb80(ruler) → bool: government flag 0x100000000 && FUN_0688d3b0(ruler). Sources: decompile; xrefs from can_create_title (picks CCurrencyCompare<3> over <0>) and CreateTitle_Apply (currency = 3 × this). (image 0x686eb80 − 0x100000)
+    constexpr uintptr_t GOV_DATA_HAS_FLAG          = 0x05fb8a10;  // HIGH: FUN_060b8a10(gov_data, mask) → bool ((*(gov_data+0x30) & mask) == mask). Sources: decompile; xrefs from can_create_title and CreateTitle_Apply with GET_HEIR_TITLE_FOR_CHAR's result and GOV_FLAG_TITLE_COST_IN_PIETY. (image 0x60b8a10 − 0x100000)
+    constexpr uint64_t  GOV_FLAG_TITLE_COST_IN_PIETY = 0x4000000000ull;  // HIGH: the mask both create-title functions pass to GOV_DATA_HAS_FLAG before choosing the piety cost (objdump 0x611ab27 / 0x611ac24; apply's else branch).
 
     // Title-level succession laws (TITLE-scoped, NOT realm/char-scoped) — re_title_succession_law_elective.md
     // The `title_succession_laws` group (feudal_elective_succession_law, princely_/saxon_/
@@ -1305,6 +1380,13 @@ namespace funcs {
     constexpr uintptr_t INTERACTION_CTX_SET_TERTIARY            = 0x06a3f240;  // FUN_06b3f240 - 0x100000: writes char ref to ctx+0x2E8
     constexpr uintptr_t INTERACTION_CTX_SET_RNG     = 0x06a3f500;  // R23 confirmed: FUN_06b3f500 - 0x100000 set RNG seed
     constexpr uintptr_t INTERACTION_CTX_VALIDATE    = 0x06a41880;  // R23 confirmed: FUN_06b41880 - 0x100000 validate
+    // The same check with the engine's failure text (re/findings/re_interactions.md §7):
+    // FUN_06b419f0(ctx, std::string* out) wraps out in a tooltip builder and runs
+    // FUN_06b41a50 (no duplicate pending, VALIDATE_HARDCODED, is_shown,
+    // is_valid_showing_failures_only @def+0xD80, is_valid @def+0xE60), the call the
+    // interaction menu's tooltip (FUN_067f00c0) makes. Returns the verdict; out holds
+    // the failing lines in the engine's tooltip markup. HIGH (decompile of both + caller).
+    constexpr uintptr_t INTERACTION_CTX_VALIDATE_WITH_TEXT = 0x06a419f0;
     // InteractionCtxValidate sub-functions (5-layer validation pipeline):
     constexpr uintptr_t VALIDATE_HARDCODED         = 0x06a41e70;  // FUN_06b41e70 - 0x100000: hardcoded eligibility checks — HIGH
     // FUN_06b42310 = full CanSend validation (whitelist→precond→can_interact→triggers→custom)
@@ -1322,6 +1404,13 @@ namespace funcs {
     // See re/findings/re_game_state_validation_062e5450.md.
     constexpr uintptr_t INTERACTION_HAS_NO_DUPLICATE = 0x061e5450; // HIGH: FUN_062e5450 - 0x100000: duplicate interaction guard
     constexpr uintptr_t INTERACTION_CTX_VALIDATE_SCOPES = 0x06a3dd60; // FUN_06b3dd60 - 0x100000: rebuild scope paths after manual ctx edits
+    // lane l5 (F8, re/findings/re_war.md §2): the two calls INTERACTION_CTX_SET_TARGET makes
+    // after it writes the recipient (decompile of FUN_06b3f140). SCOPE_SETUP(ctx, 1) saves
+    // actor/recipient/secondaries and, when the target scope ctx+0x2F0 is non-empty, the
+    // `target` scope; then INTERACTION_POPULATE_OPTIONS(ctx) (defined below, same function
+    // FUN_06b3e070) re-evaluates the interaction. Both are called again after the bridge
+    // writes a war into the target scope (call_ally / join_war).
+    constexpr uintptr_t INTERACTION_CTX_SCOPE_SETUP = 0x06a3f5a0;  // HIGH: FUN_06b3f5a0 (INTERACTION_FLAG_RESET_AND_SCOPE_SETUP) - 0x100000; decompile + its 3 callers (SET_TARGET, CTX_RESET, VALIDATE_SCOPES)
     constexpr uintptr_t INTERACTION_FINALIZE        = 0x04cc5ea0;  // R23 confirmed: FUN_04dc5ea0 - 0x100000 finalize before wrap
     // ck-ml3y: Ghidra rename maybe_cb_pre_send_dispatch (MEDIUM). NOT a destructor — it's a
     // pre-send dispatcher reading flags at *(ctx)+0x253c, +0x2a32, +0x2a36 to pick one of three
@@ -1336,9 +1425,9 @@ namespace funcs {
     // that hasn't yet been populated by CB_SCOPE_BUILDER.
     constexpr uintptr_t GET_AI_WILL_DO_SCORE       = 0x06a441c0;  // Ghidra-verified FUN_06b441c0 - 0x100000: GetAiWillDoScore(tls_ctx)->int64, 96B. Bytes: 41 56 53 48 81 ec...
     // Marriage/Alliance scoring functions (ck-zaal investigation)
-    constexpr uintptr_t GET_AI_ACCEPT_SCORE        = 0x06a43be0;  // HIGH: FUN_06b43be0, evaluates ai_accept CModValue at itype+0x1B30
-    constexpr uintptr_t GET_AI_ACCEPT_NEGOT_SCORE  = 0x06a43c70;  // HIGH: FUN_06b43c70, evaluates ai_accept_negotiation at itype+0x1B90
-    constexpr uintptr_t ACCEPTANCE_DECISION        = 0x06a43820;  // HIGH: FUN_06b43820, score->accept/decline decision (returns 0=accept,1=auto,2=decline)
+    constexpr uintptr_t GET_AI_ACCEPT_SCORE        = 0x06a43be0;  // HIGH: FUN_06b43be0, evaluates ai_accept CModValue at itype+0x1B30; int64 fixed point /100000. It scopes ctx+0x2E8 (the SECONDARY recipient), 10000000 (100.0) when that is -1 or the actor (decompile 2026-10-27; live l10fx5-live-1: 100.0 for every imprison target, several declined) - so it is not the recipient's answer
+    constexpr uintptr_t GET_AI_ACCEPT_NEGOT_SCORE  = 0x06a43c70;  // HIGH: FUN_06b43c70, evaluates the CModValue at itype+0x1B90 in the scope of the RECIPIENT (ctx+0x2DC; 10000000 when the recipient is the actor): the recipient's ai_accept, fixed point /100000, the score ACCEPTANCE_DECISION mode 1 decides on (InteractionTrySend_V2's recipient path). Decompile 2026-10-27 (re_imprisonment.md); read by query_interaction_check
+    constexpr uintptr_t ACCEPTANCE_DECISION        = 0x06a43820;  // HIGH: FUN_06b43820, score->accept/decline decision (ctx, mode, std::string* text). Mode 1 (the recipient, GET_AI_ACCEPT_NEGOT_SCORE): score in [1, 0x98967f] (above 0, below 100.0) with flag itype+0x2a40 -> 1 "maybe", the score being the chance in percent; else flag +0x2a3d set -> 1 "maybe" whatever the score; else the same thresholds (below 1 -> 2 "no", else 0 "yes"). imprison_interaction has +0x2a40 set and +0x2a3d clear: live l10fx5-live-2/3 answered "yes" at 237.61 and 153.5, "maybe" at 71.0 and 50.0 (a "no" is a score at or below 0, by the decompile). Mode 0 (secondary recipient, GET_AI_ACCEPT_SCORE): score in [1, 0x98967f] with the type's flag at itype+0x2a3f (MEDIUM: ai_maybe) -> 1 "maybe" (pre_answer_maybe_key, itype+0x2210); score < 1 -> 2 "no" (+0x21f0); else 0 "yes" (+0x21d0). The text is the pre-answer sentence (decompile 2026-10-27, re_imprisonment.md); read by query_interaction_check
     constexpr uintptr_t INTERACTION_TRY_SEND_V2    = 0x06a43d00;  // HIGH: FUN_06b43d00, full acceptance pipeline — Ghidra: InteractionTrySend_V2 (ck-audit-B: renamed from ACCEPTANCE_EVALUATION)
     constexpr uintptr_t CMODVALUE_EVALUATE         = 0x064713b0;  // HIGH: FUN_075713b0, evaluate CModValue (base + modifier chain) (ck-e58l.20)
     constexpr uintptr_t CMODVALUE_EVAL_INNER       = 0x06571640;  // HIGH: FUN_07571640, inner CModValue loop (accumulator + modifiers)
@@ -1350,7 +1439,8 @@ namespace funcs {
     constexpr uintptr_t CJOMINI_SCRIPTED_MODIFIER_MODIFY = 0x06572eb0; // HIGH: compound: iterate sub-modifier array
     // Round 6: Interaction option system (CB options for war, send_options for other interactions)
     // ALL interactions share the same option array at interaction_def+0x2530 (stride 0x7D0).
-    // Option entry: +0x000=is_valid, +0x0E0=is_shown, +0x1C0=starts_enabled, +0x3A8=flag_key hash
+    // Option entry: +0x000=is_valid, +0x0E0=is_shown, +0x1C0=starts_enabled, +0x3A8=flag name id
+    // (an index into globals::SCOPE_NAME_REGISTRY, not a hash: lane l4, re_interactions.md)
     // Selection state: cmd+0x300=byte_array_ptr, cmd+0x30C=count (1 byte per option, 0/1)
     // interaction_def+0x2A36: 0=multi-select (send_options), non-0=single-select (CB options)
     constexpr uintptr_t INTERACTION_SELECT_OPTION   = 0x06a40160;  // FUN_06b40160 - 0x100000: sets option_data[index]=1, calls ValidateScopes
@@ -1358,8 +1448,15 @@ namespace funcs {
     constexpr uintptr_t INTERACTION_SET_SELECTED    = 0x06a40320;  // FUN_06b40320 - 0x100000: toggles option (select if 0, deselect if 1)
     constexpr uintptr_t INTERACTION_IS_OPTION_VALID = 0x06a406e0;  // FUN_06b406e0 - 0x100000: checks is_valid/is_shown/starts_enabled triggers
     constexpr uintptr_t INTERACTION_TRY_SELECT      = 0x06a400d0;  // FUN_06b400d0 - 0x100000: evaluates option trigger at +0xE0, returns bool
-    constexpr uintptr_t INTERACTION_POPULATE_OPTIONS = 0x06a3e070; // FUN_06b3e070 - 0x100000: auto-populates options via trigger evaluation
+    constexpr uintptr_t INTERACTION_POPULATE_OPTIONS = 0x06a3e070; // HIGH: FUN_06b3e070 - 0x100000: evaluates the interaction (auto-populates options via trigger evaluation); INTERACTION_CTX_SET_TARGET's tail call (decompile of FUN_06b3f140, re_war.md §2); Windows INTERACTION_EVALUATE
     constexpr uintptr_t INTERACTION_CHECK_POPULATE  = 0x06a3def0;  // FUN_06b3def0 - 0x100000: validates war_target/claimant before populate
+    // lane l4 (re/findings/re_interactions.md §3): SetTargetObject(ctx, const SScopeValue* v, char eval)
+    // copies the 16-byte scope value into ctx+0x2F0 (interaction_ctx::TARGET_OBJECT) and, when
+    // eval != 0, re-runs INTERACTION_FLAG_RESET_AND_SCOPE_SETUP + INTERACTION_EVALUATE, which
+    // publish it as scope:target. The title-picking windows (FUN_0484ac80) call it with a
+    // title scope value (type 5). HIGH: decompile of FUN_06b3b720 + its caller + the scope
+    // setup that reads ctx+0x2F0 into scope key 4 ("target", registry-verified in the dump).
+    constexpr uintptr_t INTERACTION_CTX_SET_TARGET_OBJECT = 0x06a3b720; // HIGH: FUN_06b3b720 - 0x100000, 39 B
     // ck-e58l.6 — InteractionTrySend_Cost: cost-gate invoked during cascade
     constexpr uintptr_t INTERACTION_TRY_SEND_COST  = 0x06a8f740;  // HIGH: FUN_06b8f740 - 0x100000: CanSend cost gate (gold/prestige/piety/etc.) (ck-e58l.6) (ck-audit-B)
 
@@ -1389,7 +1486,7 @@ namespace funcs {
     //   cmd+0x28=char_id(u32, 2nd actor arg); cmd+0x2c=*(maa_type_obj+8) (the MaA-type DB id);
     //   cmd+0x30=param_5(0xffffffff, origin/loc sentinel); cmd+0x34=param_6(u8, count/flag=1).
     // Signature: void(void* cmd, u32 actor_id, u32 char_id, void* maa_type_obj, u32 origin, u8 flag)
-    // Dispatch EXACTLY like do_add_construction: prepare=(*cmd[0])[9](&out,cmd); then
+    // Dispatch through the command template: prepare=(*cmd[0])[9](&out,cmd); then
     //   GAME_COMMAND_DISPATCH(COMMAND_DISPATCH_MGR, &out, 0xe, 0). See re_maa_write_path.md.
     constexpr uintptr_t CREATE_MAA_REGIMENT        = 0x0658fce0;  // HIGH: CCreateMAARegimentCommand ctor, 102B
     // ── CCreateMAARegimentCommand full command path (re_create_maa_regiment_command.md, 2026-06-19 HIGH).
@@ -1565,11 +1662,10 @@ namespace funcs {
     // NOTE: 0x0619b410 - 0x100000 = 0x0609b410 (NOT 0x0519b410 — that was an arithmetic error).
     constexpr uintptr_t BUILD_SEND_CMD_FROM_BUF    = 0x0609b410;  // FUN_0619b410 - 0x100000
 
-    // Round 6b: Army system functions
+    // Round 6b: Army system functions. ARMY_RAISE_ALL / _INNER / _ALL_WRAPPER were
+    // deleted with raise_armies (cleanup 2026.11): RaiseAllArmiesCore is the
+    // raise-all button's availability check, not the raise (re_raise_armies.md).
     constexpr uintptr_t ARMY_DISBAND               = 0x065891b0;  // HIGH: army disband core (4248B, full validation)
-    constexpr uintptr_t ARMY_RAISE_ALL             = 0x03de3e40;  // HIGH: RaiseAllArmiesCore(msg_sink, mode); 2742B. Reads g_PlayerCharacterID ONCE at entry via GET_PLAYER_CHAR_ID, resolves char via CharacterDB, checks *(char+0x18)==full-32-bit-handle else falls to NullCharacter sentinel (safe no-op). mode==0 + msg_sink==null = full raise via ARMY_RAISE_INNER, skips all UI-message branches. A8.2 global-swap target (re_raise_armies.md)
-    constexpr uintptr_t ARMY_RAISE_INNER           = 0x03ee0210;  // HIGH: FUN_03ee0210, 305B — the actual raise-all command construction invoked by RaiseAllArmiesCore on the mode==0 path; ALSO reads g_PlayerCharacterID once at entry (same full-32-bit check), so the global swap must span the whole RaiseAllArmiesCore call. No loops/recursion — bounded. (re_raise_armies.md)
-    constexpr uintptr_t ARMY_RAISE_ALL_WRAPPER     = 0x03de4b20;  // HIGH: raise all wrapper (UI handler, 295B)
     // #96 Norse raiding (re_raid_system.md): the player-driven "toggle raiding on
     // all eligible armies" dispatch path. Header 0x03de36d0 (IMAGE 0x03ee36d0,
     // FUN_03ee36d0, 1605B). Reads g_PlayerCharacterID via GET_PLAYER_CHAR_ID,
@@ -1584,8 +1680,8 @@ namespace funcs {
     // raid INTENT index (0 = default toggle-raiding; the iStack_12c==2 branch
     // takes a different path, so pass 0). Bounded: one loop over the realm's
     // armies, validator-gated dispatch — safe no-op for an ineligible ruler.
-    // A8.3 global-swap target: swap g_PlayerCharacterID → AI handle, call(0),
-    // restore. (re_raid_system.md, #96)
+    // The deleted raise_raiders (cleanup 2026.11) called it under a
+    // g_PlayerCharacterID swap; no code reads it now. (re_raid_system.md, #96)
     constexpr uintptr_t ARMY_TOGGLE_RAIDING_DISPATCH = 0x03de36d0; // HIGH: raise-all-raiders / toggle-raiding command dispatch (player-global driven, validator-gated)
     constexpr uintptr_t ARMY_IS_RETREATING         = 0x05abe070;  // HIGH: bool(army) — return *(army+0x16c)!=0, 11B
     constexpr uintptr_t ARMY_IN_COMBAT             = 0x05ac2dd0;  // HIGH: InCombat check, 67B
@@ -1606,7 +1702,7 @@ namespace funcs {
     // #96 Norse raiding — CArmy raid-state fields + validity predicates
     // (re_raid_system.md, live-verified in core dump). Army-relative offsets
     // (ARMY_DB=0x0bed7670). The toggle dispatch (ARMY_TOGGLE_RAIDING_DISPATCH
-    // above) flips ARMY_IS_RAIDING natively; these are for handler-side readback.
+    // above) flips ARMY_IS_RAIDING natively.
     // ARMY_LOCATION_PROV (0xec) — REMOVED 2026-09-13 (ck-meu5). REFUTED.
     // 0xec is army_obj::OWNER_LINK_ID and always was: across 32 live armies in
     // william_1066_baseline.core its value is SEQUENTIAL WITH THE ARMY'S OWN DB
@@ -1634,9 +1730,10 @@ namespace funcs {
     // FUN_0687dde0 (raw 0x577df20) which builds a descriptor internally, or the
     // scripted effect CSetCouncilTaskEffect::Execute(effect_obj, scope). Native
     // assignment needs effect_obj (+0x50 councillor charref, +0x54 position int,
-    // -1=auto) + a scope object carrying the task type → object construction =
-    // crash risk; deferred (re_council_task_setter_20260612.md). Use console for
-    // claim fab (add_claim) meanwhile.
+    // -1=auto) + a scope object carrying the task type. The bridge constructs
+    // neither (object construction = crash risk, re_council_task_setter_20260612.md):
+    // set_council_task goes through CHANGE_COUNCIL_TASK below, which builds the
+    // command itself.
     // Council-task TARGET-TYPE discriminator (re_council_task_targets_20260613):
     // *(CCouncilTaskType + 0x38) int32 = 0 none / 1 CHARACTER / 2 TITLE target.
     // fabricate_claim, increase_control, conversion are all 1 (CHARACTER). The
@@ -1694,15 +1791,16 @@ namespace funcs {
     // GAME_COMMAND_DISPATCH(mgr,&out,0xe,0); validate first with ADD_CONSTRUCTION_VALIDITY.
     // Dispatch advances RNG → wrap in arm_fake_random_scope. See
     // re/findings/re_building_construction.md (DISPATCH PATH RESOLVED).
-    // ── NON-GATED construction builder (via CAddBuildingEffect apply) — RESOLVED 20260612 (DC35-40) ──
-    // The scripted-effect path the game AI uses; NO player gate (unlike the UI command).
+    // ── The scripted-effect builders (CAddBuildingEffect's apply), a record only ──
+    // The effect path the game's scripts use builds at once and for free; the bridge
+    // no longer calls it (lane l6, cleanup 2026.11: a build is the player's command
+    // above). Its leaf functions below start a construction in the slot container
+    // (province+0x1F8): the construction's state is building_slots (CONSTRUCTING 0x70
+    // and the fields after it).
     //   province = CONSTRUCTION_SCOPE_TO_PROVINCE(&{i16 type=8; u32 title_id@+8})
     //   CONSTRUCTION_START(province+0x1F8 /*slot container*/, CBuildingType*, 0)
-    // sets the holding's under-construction building at (slot_container+0x60) +
-    // registers with gamestate; building is FREE (effect path, no cost). Verify by
-    // reading *(slot_container+0x60) == the CBuildingType*. Wrap in arm_fake_random_scope.
-    // CBuildingType category @ +0x1cb58: 0=normal, 1=duchy-capital (uses CONSTRUCTION_START_DUCHY),
-    // 2=special. See re/findings/re_building_construction.md.
+    // CBuildingType category @ BUILDING_CATEGORY_OFF: 0=normal, 1=duchy-capital (uses
+    // CONSTRUCTION_START_DUCHY), 2=special, 3=great. See re/findings/re_building_construction.md.
     // ⚠ CORRECTED 20260612: these 0x611xxxx-region funcs were mis-derived as
     // Ghidra-VA − 0x100000 = 0x511xxxx (ARITHMETIC ERROR; 0x611xxxx − 0x100000 =
     // 0x601xxxx). The wrong 0x511xxxx addresses pointed at garbage mid-function →
@@ -1720,10 +1818,35 @@ namespace funcs {
     constexpr uintptr_t CONSTRUCTION_START_NORMAL  = 0x0601d9b0;  // HIGH: FUN_0611d9b0(slot,building,slot_idx,-1)→FUN_0611da40 normal starter
     constexpr uintptr_t CONSTRUCTION_ADVANCE       = 0x0601e610;  // HIGH: FUN_0611e610(slot_container, 1) — advance/place after start
     constexpr uintptr_t CONSTRUCTION_START_DUCHY   = 0x060201e0;  // HIGH: FUN_061201e0(slot,building) duchy-capital (VA 0x61201e0 - 0x100000)
-    constexpr size_t    BUILDING_CATEGORY_OFF      = 0x1cb58;     // int on CBuildingType: 0=normal,1=duchy-capital,2=special
+    constexpr size_t    BUILDING_CATEGORY_OFF      = 0x1cb58;     // int on CBuildingType: 0=normal (a slot), 1=duchy-capital, 2=special, 3=great building (the validity checks GREAT_BUILDING_RUINED for 3)
 
     constexpr uintptr_t ADD_CONSTRUCTION_CTOR      = 0x06033610;  // HIGH: FUN_06133610 CAddConstructionCommand ctor(cmd,actor,loc,slot,bt_ref)
-    constexpr uintptr_t ADD_CONSTRUCTION_VALIDITY  = 0x06033800;  // HIGH: FUN_06133800 can-build check (safe, no mutation)
+    constexpr uintptr_t ADD_CONSTRUCTION_VALIDITY  = 0x06033800;  // HIGH: FUN_06133800(cmd, std::string* why) can-build check (safe, no mutation)
+    // The command's player path, as the game runs it when the order drains
+    // (cleanup 2026.11, lane l6; decompile of image 0x6133660, xref of the start
+    // FUN_0611d9b0 next to the ctor and the validity):
+    //   province = gamestate provinces[*(u32)(cmd+0x24)]   (+0x24 is a PROVINCE id,
+    //              province_template::PROVINCE_ID, not a barony title id)
+    //   FUN_0611d9b0(province+0x1F8, building, *(cmd+0x28) slot, *(cmd+0x20) actor)
+    //   price = BUILDING_COST_COMPUTE(&cost, province, building+COST_TABLE_OFF,
+    //                                 *(building+COST_SCALE_OFF), 0, 0, 0)
+    //   FUN_06b91390(&cost, actor, 3 - (slot == 0), 0)        pays it (draws RNG)
+    // No advance: the building stays under construction for its construction days.
+    // The validity writes its reasons into a std::string, one rendered tooltip line
+    // each, with the game's markup (live l6fix2-live-1: "This Barony already contains
+    // a Holding", "Missing gold 318", the unmet innovation; it holds the price
+    // against the treasury itself). The localization keys at the decompile's
+    // addresses: HOLDING_VIEW_NOMAD_HERDER_GOVERNMENT (the bit-43 government check
+    // FUN_05c7fe70; #133 read it as a player gate, it is the herder government's),
+    // HOLDING_VIEW_UNDER_SIEGE, HOLDING_VIEW_UNDER_OCCUPATION,
+    // HOLDING_VIEW_ALREADY_HAS_PRIMARY, HOLDING_VIEW_MISSING_PRIMARY,
+    // HAS_BUILDING_TYPE, ALREADY_CONSTRUCTING, GREAT_BUILDING_RUINED.
+    constexpr uintptr_t ADD_CONSTRUCTION_EXECUTE   = 0x06033660;  // HIGH: FUN_06133660(cmd) start + pay (decompile)
+    constexpr uintptr_t CONSTRUCTION_SPEED_REFRESH = 0x0601e590;  // HIGH: FUN_0611e590(province+0x1F8): SPEED = FUN_06332640(province, 100000, ...) when a building is under construction (decompile; building_slots::CONSTRUCTING_SPEED)
+    constexpr uintptr_t BUILDING_COST_COMPUTE      = 0x062323e0;  // HIGH: FUN_063323e0(int64 out[10], province, cost_table, scale, 0,0,0); out[0] gold, [1] prestige, [2] piety, fixed /100000 (decompile)
+    constexpr size_t    BUILDING_COST_TABLE_OFF    = 0x1bfa0;     // HIGH: CBuildingType, the cost script values (gold, prestige, piety)
+    constexpr size_t    BUILDING_COST_SCALE_OFF    = 0x1bf98;     // HIGH: CBuildingType, ptr passed as the cost's 4th argument (FUN_06a3f730)
+    constexpr size_t    BUILDING_PREV_LEVEL_OFF    = 0x1bf88;     // HIGH: CBuildingType*, the level this one upgrades (validity's slot rule; dump: castle_02 -> castle_01)
     // #133 build_gate — the REAL buildability conjunction (player-gated wrapper FUN_05c7f110
     // tail-calls FUN_05c7fe70 which bit-43-gates AI actors). BUILDING_OWNERSHIP_CHECK
     // (FUN_05c7ea00) has a ctx-free success return (LAB_05c7efe9→1) and is the AI-safe owner/
@@ -1848,8 +1971,8 @@ namespace funcs {
     // +0x28) UNCONDITIONALLY (only the notification tail is GetCurrentPlayerId-gated) — so it
     // MAY apply for AI rulers (unlike the player-queue command-dispatch). cmd obj fields:
     // +0x20 = council-owner char id (ruler); +0x24 / +0x28 = the two char ids to swap between
-    // seats. MEDIUM-HIGH (live-vtable + decompile verified; NOT yet write-tested — confirm the
-    // vacant-seat field semantics + that +0x30 updates via a live write-test before trusting).
+    // seats. MEDIUM-HIGH (live-vtable + decompile verified; not write-tested: the
+    // vacant-seat field semantics and the +0x30 update are unconfirmed).
     constexpr uintptr_t SWAP_COUNCIL_POSITION_CMD_VTABLE  = 0x0bacbf78;  // MEDIUM-HIGH: primary cmd vtable_start (cmd+0x00), live raw
     constexpr uintptr_t SWAP_COUNCIL_POSITION_CMD_EXECUTE  = 0x05b827e0;  // MEDIUM-HIGH: Execute (FUN_05c827e0), unconditional seat mutator
     constexpr uintptr_t SWAP_COUNCIL_POSITION_CMD_BUILDER  = 0x05b82990;  // MEDIUM-HIGH: builder FUN_05c82990 (sets vtable + fields)
@@ -1860,7 +1983,7 @@ namespace funcs {
     // DIRECTLY instead — it does the membership add/remove + swap + notification but NOT
     // the recompute. Wrap in fake-RNG-scope+watchdog (membership writers touch RNG).
     // (FUN_0674dbe0, previously mislabeled "recompute liege-walk", is actually an
-    // RNG-scope getter — NOT the wedge. The wedge is FUN_068710e0.) MEDIUM — not yet write-tested.
+    // RNG-scope getter — NOT the wedge. The wedge is FUN_068710e0.) MEDIUM — no write test.
     constexpr uintptr_t SWAP_COUNCIL_RAW_LEAF  = 0x067b4d10;  // CORRECTED -0x100000 (was 0x068b4d10=IMAGE VA → resolved +0x310 into a logging fn → the crash). HIGH: FUN_068b4d10(council_inst_ptr, owner_char_ptr, u32 char_a_id, u32 char_b_id) — recompute-free 2-occupied seat swap (re_resolution_appoint.md)
     constexpr uintptr_t COUNCIL_AI_RECOMPUTE   = 0x067710e0;  // CORRECTED -0x100000 (was 0x068710e0=image VA): FUN_068710e0 enqueues a next-tick council recompute (array append under mutex) — NOT a hang, but not needed for the raw-leaf path
     constexpr size_t    SWAP_COUNCIL_CMD_OWNER   = 0x20;  // u32 ruler/owner char id
@@ -2019,6 +2142,32 @@ namespace funcs {
     constexpr uintptr_t VALIDATE_SCHEME_TARGET     = 0x062a86e0;  // HIGH: 291B, switch on target_type (R10-8)
     constexpr uintptr_t SCHEME_REFDB_LOOKUP        = 0x03784840;  // HIGH: 58B, cleanest RefDB accessor (R10-8)
     constexpr uintptr_t SCHEME_TYPE_NAME_ACCESSOR  = 0x05bb16e0;  // HIGH: 152B, CSchemeType name from "game_scheme_type_struct" (R10-8)
+    // lane l3-schemes 2026-10-20 (re/findings/re_schemes.md §2): the engine's own
+    // "can OWNER start scheme TYPE on TARGET", the body of the script trigger
+    // can_start_scheme (CCanStartSchemeTrigger vtable image 0x0baea1a8, slot 0xd0
+    // FUN_052d04f0 -> FUN_06cb5bc0 -> here).
+    //   bool CanStartScheme(CSchemeType*, owner_char*, SSchemeTarget* {int type; u32 ref},
+    //                       FailureSink* sink /*nullable*/, uintptr_t tag)
+    // In order: owner valid (vt owner+0x10 slot 0x10), ValidateSchemeTarget, the debug
+    // bypass (true), an owned scheme of the same type (or same category, not
+    // replaceable) on the same target -> sink entry with loc key
+    // "can_target_character_with_scheme", the target relation's scheme cooldown
+    // (GetActiveRelation + FUN_06367730; its text goes to the sink), then the type's
+    // `allow` trigger (type+0x30) and `valid` trigger (type+0x110) evaluated with
+    // root = owner, scope:owner, scope:target, scope:scheme = the null scheme.
+    // CreateActiveScheme (above) does NOT evaluate allow/valid; this does.
+    // FailureSink: vt[0] add_entry(entry*, kind) [std::string at entry+0x10 and +0x30],
+    // vt[1] open_child(desc*) -> sink* [desc[0] = the trigger being evaluated],
+    // vt[2] close(status) [1 = passed, 2 = failed, negation already applied],
+    // vt[3] wants_text() -> bool [false skips the description build]. Read from
+    // CAndTrigger's evaluate-with-sink (vt slot 0x50, FUN_0762b310) and the leaf
+    // FUN_052d0790. HIGH: decompile of the function, its trigger wrapper and both users.
+    constexpr uintptr_t CAN_START_SCHEME           = 0x06bb5bd0;  // HIGH: 1771B, FUN_06cb5bd0
+    // The value behind the script trigger scheme_success_chance (CSchemeSuccessTrigger
+    // vt slot 0x108, FUN_052d1650, calls it): int64 fixed-point /100000. For a scheme
+    // no player is party to: min(scheme+0x120 + scheme+0x1D0, scheme+0x1E0); otherwise
+    // recomputed (FUN_063aa2f0). HIGH: decompile x2.
+    constexpr uintptr_t SCHEME_GET_SUCCESS_CHANCE  = 0x062aa260;  // HIGH: 140B, FUN_063aa260
 
     // Scheme success probability (ck-1nab investigation)
     constexpr uintptr_t SCHEME_COMPUTE_SUCCESS_TRIPLE  = 0x062c64d0;  // HIGH: inner (base,growth,max) formula, 5210B (ck-e58l.20)
@@ -2478,9 +2627,9 @@ namespace war_stance {
                                                        //   FUN_04e60920 masks &0xffffff → WarDB slot, validates war+8 == rec+0x18.
     constexpr size_t REC_FLAGS              = 0x68;    // HIGH: u16 bitfield; bit2(0x4)=is-attacker side, bit4(0x10)=cond
     constexpr size_t REC_STANCE_PTR         = 0x70;    // HIGH: SAIWarStance* — the LIVE chosen stance for this war ← the slot
-    constexpr size_t REC_REEVAL_CD_1        = 0x94;    // MEDIUM: re-eval cooldown counters (decremented each tick)
-    constexpr size_t REC_REEVAL_CD_2        = 0x98;    // MEDIUM
-    constexpr size_t REC_REEVAL_CD_3        = 0x9c;    // MEDIUM
+    // Re-eval cooldown counters at rec+0x94/+0x98 (MEDIUM; their only reader,
+    // force_offensive_stance, was deleted in cleanup 2026.11).
+    constexpr size_t REC_REEVAL_CD_3        = 0x9c;    // MEDIUM: re-eval cooldown counter (decremented each tick)
 
     // CORRECTION (re_query_war_stance.md §2c/§7): the per-war coordinator RECORD
     // ARRAY lives on the AI-MANAGER root, NOT at "coord+0x50". FUN_04dedd40 walks
@@ -2492,7 +2641,8 @@ namespace war_stance {
     // province-OBJECTIVE sublist (count at rec+0x5c), iterated by FUN_04e66220.
     // Walk AIMGR_REC_ARRAY/+COUNT for enumerate-all-records (the query mirrors that).
     constexpr size_t COORD_WAR_REC_LIST     = 0x50;    // RE-COMMENT: in-record province-objective sublist, NOT war list
-    constexpr size_t REC_OBJ_COUNT          = 0x5c;    // HIGH(decomp FUN_04e66220): int32 objective-sublist count; ==0 ⇒ stance tick early-returns
+    // rec+0x5c: int32 objective-sublist count; ==0 ⇒ the stance tick early-returns (HIGH,
+    // decomp FUN_04e66220; REC_OBJ_COUNT deleted with force_offensive_stance, its reader).
     constexpr size_t AIOBJ_TO_COORD         = 0x10;    // HIGH: coordinator = *(realm_ai_obj + 0x10)
 
     // Offensive-vs-defensive condition (re_army_control.md §6, HIGH-decompile):
@@ -2508,13 +2658,14 @@ namespace war_stance {
     // participants' maintained TOTAL fieldable strength (levies+MaA potential,
     // char+0x1b8->+0x308) — NOT a count of currently-mustered regiments.
     //   attacker offensive ⟺ enemy < own AND (enemy/own) < 0.75  (single-objective war).
-    constexpr size_t REC_STRENGTH_ENEMY     = 0x1b28;  // HIGH: long, enemy-side total strength (param_2 to FUN_04e843a0)
-    constexpr size_t REC_STRENGTH_OWN       = 0x1b30;  // HIGH: long, own-side total strength  (param_3 to FUN_04e843a0)
+    // rec+0x1b28 / rec+0x1b30: enemy-side / own-side total strength, longs (HIGH; the
+    // REC_STRENGTH_ENEMY/OWN names were deleted with force_offensive_stance, their reader).
     constexpr size_t REC_SOLDIERS_OWN       = 0x1b38;  // MEDIUM: int32, own soldier count (FUN_04e63700 reads)
     // Ratio thresholds (fixed-point /100000), core-dump-verified:
     //   RATIO_HI = 0.75 (_DAT_0c16ecf0): at/above this an attacker is NOT offensive
     //   RATIO_LO = 0.50 (_DAT_0c16ed08): only relevant on the >=0.75 / defender paths
-    constexpr long OFFENSIVE_RATIO_HI       = 75000;   // HIGH: enemy/own must be < this for attacker offensive
+    // RATIO_HI = 75000: enemy/own must be < this for attacker offensive (HIGH; the
+    // OFFENSIVE_RATIO_HI name was deleted with force_offensive_stance, its reader).
     constexpr long OFFENSIVE_RATIO_LO       = 50000;   // HIGH
 }
 
@@ -2532,7 +2683,12 @@ namespace character {
     constexpr size_t BIRTH_DATE_SHORT   = 0x6C;   // HIGH: int16, birth date index (R8V-1 confirmed via FUN_0674c0c0)
     constexpr size_t CULTURE_ID_DIRECT  = 0xB0;   // HIGH: uint32, culture ID (Round 5e confirmed via SetCulture)
     constexpr size_t FAITH_ID_DIRECT    = 0xB4;   // HIGH: uint32, faith ID (Round 5f confirmed via SetFaith)
-    constexpr size_t IS_AI_FLAG         = 0x199;  // CONFIRMED: byte
+    // CORRECTED (lane l4, re_interactions.md §4): 0x199 is NOT an AI flag (query_handlers.cpp
+    // already stopped reading it as one). It is the character's sex: the engine's marry
+    // effect (FUN_0684f3b0) and the matrilinear_marriage trigger (FUN_04fd7c00) both order a
+    // couple by this byte, man (0) first; in the 867 dump it is 0 on 4,487 of 4,593 living
+    // rulers and splits 1,591 / 1,468 across married characters. HIGH.
+    constexpr size_t IS_FEMALE          = 0x199;  // HIGH: byte, 1 = female
     constexpr size_t DEAD_FLAG          = 0x19C;  // HIGH: byte, nonzero=dead (Round 5e, culture/faith setters skip)
     constexpr size_t REALM_DATA         = 0x1a8;  // CONFIRMED: ptr, realm/landed data (null if unlanded)
     constexpr size_t TITLE_REALM_DATA   = 0x1b8;  // CONFIRMED: ptr, title/realm sub-struct (null if unlanded)
@@ -2642,7 +2798,7 @@ namespace character {
     constexpr size_t FAMILY_MOTHER_ID       = 0x04;  // HIGH: uint32, mother char ID
     constexpr size_t FAMILY_REAL_FATHER_ID  = 0x08;  // HIGH: uint32, biological father
     constexpr size_t FAMILY_HOUSE_HEAD_ID   = 0x0C;  // HIGH: uint32, dynasty house head
-    constexpr size_t FAMILY_DYNASTY_ID      = 0x10;  // HIGH: uint32, dynasty ID
+    constexpr size_t FAMILY_BETROTHED_ID    = 0x10;  // HIGH: uint32, betrothed character id (family::BETROTHED_ID)
     constexpr size_t FAMILY_HOUSE_ID        = 0x18;  // HIGH: uint32, house ID
 
     // === Compatibility aliases for claim entry (offsets within each CClaim entry) ===
@@ -2664,36 +2820,14 @@ namespace character {
     constexpr size_t TITLE_DOMAIN_CNT   = 0x224;  // MEDIUM: domain count
     constexpr size_t TITLE_LIEGE_PTR    = 0x448;  // HIGH: liege ptr
 
-    // === REMOVED offsets (pre-Round 3 guesses, now known WRONG) ===
-    // These are kept as stubs returning 0 so code compiles but produces obviously
-    // wrong data, forcing the developer to update usage to correct namespaces.
-    // REALM_DOMAIN_SIZE(0x30), REALM_DOMAIN_LIMIT(0x34), REALM_SIZE(0x38),
-    // REALM_VASSAL_COUNT(0x3c), REALM_MIL_STRENGTH(0x40), REALM_PRIMARY_TITLE(0x48),
-    // REALM_VASSAL_LIST(0x58), REALM_VASSAL_LIST_COUNT(0x60), REALM_TITLE_ID(0x110),
-    // REALM_WAR_LIST(0x100), REALM_WAR_COUNT(0x108), GOLD_RESERVED(0x120),
-    // GOLD_WAR_CHEST(0x124), GOLD_LONG_TERM(0x128), GOLD_SHORT_TERM(0x12c),
-    // REALM_COUNCIL_LIST(0x150), REALM_COUNCIL_COUNT(0x158), SCHEME_LIST_PTR(0x130),
-    // SCHEME_COUNT(0x138) — all were unverified guesses, many conflict with Round 3 findings.
-    //
-    // Temporary stubs for compilation (WRONG VALUES -- must be remapped):
-    constexpr size_t REALM_DOMAIN_SIZE  = 0x30;   // WRONG: needs re-mapping via title_realm
-    constexpr size_t REALM_DOMAIN_LIMIT = 0x34;   // WRONG: needs re-mapping
-    constexpr size_t REALM_SIZE         = 0x38;   // WRONG: needs re-mapping
-    constexpr size_t REALM_VASSAL_COUNT = 0x3c;   // WRONG: use title_realm::VASSAL_COUNT
-    constexpr size_t REALM_MIL_STRENGTH = 0x40;   // WRONG: use title_realm::MIL_CURRENT
-    constexpr size_t REALM_PRIMARY_TITLE= 0x48;   // WRONG: use title_realm::PRIMARY_TITLE_PTR
-    constexpr size_t REALM_VASSAL_LIST  = 0x58;   // WRONG: use title_realm::VASSAL_LIST
-    constexpr size_t REALM_VASSAL_LIST_COUNT = 0x60; // WRONG: use title_realm::VASSAL_COUNT
-    constexpr size_t REALM_WAR_LIST     = 0x100;  // WRONG: needs re-mapping
-    constexpr size_t REALM_WAR_COUNT    = 0x108;  // WRONG: needs re-mapping
-    constexpr size_t GOLD_RESERVED      = 0x120;  // WRONG: needs re-mapping
-    constexpr size_t GOLD_WAR_CHEST     = 0x124;  // WRONG: needs re-mapping
-    constexpr size_t GOLD_LONG_TERM     = 0x128;  // WRONG: needs re-mapping
-    constexpr size_t GOLD_SHORT_TERM    = 0x12c;  // WRONG: needs re-mapping
-    constexpr size_t REALM_COUNCIL_LIST = 0x150;  // WRONG: needs re-mapping
-    constexpr size_t REALM_COUNCIL_COUNT= 0x158;  // WRONG: needs re-mapping
-    constexpr size_t SCHEME_LIST_PTR    = 0x130;  // WRONG: needs re-mapping
-    constexpr size_t SCHEME_COUNT       = 0x138;  // WRONG: needs re-mapping
+    // The pre-Round-3 guesses REALM_DOMAIN_SIZE(0x30) .. SCHEME_COUNT(0x138) are gone
+    // (cleanup 2026.11, lane l6): no bridge or script read them, the Windows layout
+    // probe graded every one `unwitnessed` (re/findings/windows/p3_probe_867_pair.json:
+    // not_a_field / type_unknown), and each has a measured home elsewhere in this file:
+    // vassals and military strength in title_realm (VASSAL_LIST, VASSAL_COUNT,
+    // MIL_CURRENT), the primary title in title_realm::PRIMARY_TITLE_PTR, gold in
+    // core_data (REALM_GOLD), wars through the war manager, schemes through the scheme
+    // manager, the council through the council manager.
 
 }
 
@@ -2706,7 +2840,14 @@ namespace family {
     constexpr size_t MOTHER_ID          = 0x04;   // HIGH: uint32, mother char ID
     constexpr size_t REAL_FATHER_ID     = 0x08;   // HIGH: uint32, biological father (may differ)
     constexpr size_t HOUSE_HEAD_ID      = 0x0C;   // HIGH: uint32, dynasty house head char ID
-    constexpr size_t DYNASTY_ID         = 0x10;   // HIGH: uint32, dynasty ID (resolve via CHARACTER_DB)
+    // CONTRADICTED (lane l4, re/findings/re_interactions.md §4b): +0x10 is the BETROTHED
+    // character's id. FUN_0674a7d0 (the betrothed getter the matrilinear_betrothal trigger
+    // calls) resolves *(family+0x10) through the CHARACTER DB, and in the 867 dump it is
+    // set on 6 characters only, all mutual pairs (12765<->16989, 13835<->15707,
+    // 15433<->15846); 17,879 families hold 0xFFFFFFFF. This was named DYNASTY_ID; the
+    // "phantom dynasty ids that resolve as living characters" of ck-vvqu were betrothed
+    // ids. Every dynasty reader reads the house's dynasty (dynasty_house_obj::DYNASTY_ID).
+    constexpr size_t BETROTHED_ID       = 0x10;   // HIGH: uint32, betrothed character id (0xFFFFFFFF = none)
     constexpr size_t HOUSE_ID           = 0x18;   // HIGH: uint32, house ID (0xFFFFFFFF=none)
 
     // R8V-1: Canonical children/spouse paths (UI accessors use these, not core_data paths)
@@ -2784,12 +2925,23 @@ namespace core_data {
     constexpr size_t INCOME_FIELD_3     = 0x2C0;  // DEPRECATED: use NET_DOMAIN_INCOME
     constexpr size_t INCOME_FIELD_4     = 0x2C8;  // DEPRECATED: use TOTAL_EXPENSES
     constexpr size_t INCOME_FIELD_5     = 0x2D0;  // DEPRECATED: use NET_GOLD_INCOME
-    constexpr size_t INCOME_ACCUMULATOR = 0x2E8;  // MEDIUM: monthly income accumulator (4 accessors)
-    constexpr size_t MONTHLY_INCOME_FP  = 0x2E8;  // ALIAS: same as INCOME_ACCUMULATOR, int64 fixed-point /100000
+    // 0x2E8 is BASE HEALTH, not income (L15 A3, 2026-10-31; re/findings/re_core_data_merit_not_income.md).
+    // It was INCOME_ACCUMULATOR / MONTHLY_INCOME_FP ("monthly income accumulator, 4 accessors",
+    // no source recorded) and emitted as `monthly_income` by query_county_details and
+    // get_ai_evaluations and as `accumulated` by query_realm. Evidence: FUN_068e2350 (the
+    // health recompute) writes core+0x2F0 (HEALTH) = core+0x2E8 + the character's modifier
+    // terms; FUN_06771ea0 lowers +0x2E8 by a constant with an age-driven probability (the
+    // age decline); FUN_06772890 adds to it, FUN_067844a0 sets it, FUN_067844d0 returns it, and
+    // all three setters re-run FUN_068e2350. Dumps ivar867 / william_1066: +0x2E8 == HEALTH
+    // for 23197/29389 and 26527/34519 living characters (the ones with no health modifier),
+    // correlation 0.88/0.89, range 2.5..9.6 for landed and landless alike.
+    constexpr size_t BASE_HEALTH        = 0x2E8;  // HIGH: int64 fp /100000, health before modifiers (decompile FUN_068e2350 + dumps)
     constexpr size_t PIETY_LEVEL        = 0x118;  // ALIAS: piety level (int32, same addr as PIETY_CURRENT)
-    constexpr size_t PIETY_CAP          = 0x120;  // ALIAS: piety cap, int64 fixed-point /100000
     constexpr size_t PRESTIGE_LEVEL     = 0x138;  // ALIAS: prestige level (int32, same addr as PRESTIGE_CURRENT)
-    constexpr size_t PRESTIGE_CAP       = 0x140;  // ALIAS: prestige cap, int64 fixed-point /100000
+    // (PIETY_CAP 0x120 / PRESTIGE_CAP 0x140 deleted in cleanup 2026.11, lane l6, F10:
+    // CK3 caps neither; both read 0 for every ruler in dump ck3_20260625_152901_ivar867
+    // and garbage in one of two live launches, so query_county_details and the
+    // observation no longer report them.)
 
     // Health (VPS MEMORY.md CONFIRMED: core_data+0x2F0 is health, int64 fixed-point /100000)
     // Previously mislabeled as BIRTH_DATE_ALT in R8V-1; corrected per VPS round 13+ analysis.
@@ -2802,9 +2954,18 @@ namespace core_data {
     constexpr size_t AGE_COUNTER        = 0x2F8;  // DEPRECATED: actually STRESS, kept for compat
     constexpr size_t DATE_TIMESTAMP     = 0x2FC;  // MEDIUM: int32 (3 accessors, set from game date)
 
-    // Income (R8V-1 NEW: FUN_0674b920 reads core_data+0x170, int64 fixed-point /100000)
-    // This is the character window's income display value, distinct from MONTHLY_INCOME at 0x2B0.
-    constexpr size_t INCOME_DISPLAY     = 0x170;  // HIGH: int64 fp /100000, monthly income (R8V-1 confirmed via FUN_0674b920)
+    // MERIT (L15 A3, 2026-10-31; re/findings/re_core_data_merit_not_income.md). Was
+    // INCOME_DISPLAY ("monthly income", R8V-1 via FUN_0674b920): the getter was right, the
+    // meaning was not, and query_character / the observation emitted it as `monthly_income`
+    // (0.0 for every ruler without merit while income_breakdown.total_monthly read 5.68).
+    // Evidence: FUN_0674b920 (project name GetIncomeDisplay) returns core+0x170 and its only
+    // formatters FUN_03edd4e0 / FUN_03edd560 render it /100000 with the loc key "TOTAL_MERIT"
+    // (0x085a3b18); character init FUN_06893920 seeds it, when 0, from the script value
+    // "starting_merit" (0x08b6b6c4); FUN_0675ece0 adds to it and walks a threshold table (the
+    // merit level). Dumps ivar867 / william_1066: 0 for 28054/29389 and 31489/34519 living
+    // characters, whole stocks up to 22147 / 24552 for the rest. The monthly gold income is
+    // MONTHLY_INCOME (+0x2B0) above.
+    constexpr size_t CORE_MERIT         = 0x170;  // HIGH: int64 fp /100000, merit stock (3 decompile sources + 2 dumps)
 
     // Personality (signed char[9], accessed via pointer chain)
     constexpr size_t PERSONALITY_PTR    = 0x308;  // HIGH: ptr to signed char[9] (10 accessor functions)
@@ -2874,7 +3035,7 @@ namespace stress_funcs {
 }
 
 namespace stress_globals {
-    // NOTE: ck-e58l.16 follow-up verified via core-dump read that these WERE Ghidra-VA.
+    // NOTE: ck-e58l.16 (second pass) verified via core-dump read that these WERE Ghidra-VA.
     // Converted to raw below. Previous values (0x0c3a92d0 / 0x0c3a92b8) were Ghidra-VA
     // and read as 1 / 0 respectively — incorrect. Raw values read 100 / 3 — correct.
     constexpr uintptr_t STRESS_PER_LEVEL          = 0x0c2a92d0;  // HIGH: int32 = 100, core-dump verified 2026-04-21
@@ -2944,7 +3105,7 @@ namespace lifestyle_perk {
 // CGameDatabase common entry access pattern (works for Perk/Lifestyle/Focus DBs)
 namespace game_db {
     constexpr size_t ENTRIES_ARRAY   = 0x088;  // HIGH: ptr to typed entry pointer array
-    constexpr size_t ENTRY_COUNT     = 0x090;  // HIGH: uint32, number of entries
+    constexpr size_t ENTRY_CAPACITY  = 0x090;  // HIGH: uint32, the array's capacity (no bridge reader; every reader counts with LIVE_COUNT)
     // lane-p5 (core, 867.01.01): on 25 script databases +0x90 is the CAPACITY and
     // +0x94 the live count (CLawDatabase 243 / 188, CFocusTypeDatabase 32 / 28, ...);
     // they are equal only when the array is full. Readers wanting "how many" use this.
@@ -3021,14 +3182,15 @@ namespace title_realm {
                                                   // vassal-inclusive county count use the top-liege walk
                                                   // (count_realm_counties) — re_realm_size_vassal_inclusive.md (ck-realmsize)
 
-    // Direct vassal array (PDX array of int32 char IDs)
-    constexpr size_t DIRECT_VASSAL_ARRAY     = 0xA8;   // HIGH: PDX array base (data at +0x00, count at +0x0C)
-    // Indirect vassal array (PDX array of int32 char IDs)
-    constexpr size_t INDIRECT_VASSAL_ARRAY   = 0xC0;   // HIGH: PDX array base (data at +0x00, count at +0x0C)
-    // Fourth vassal-like array (unknown categorization, same PDX int32 pattern)
-    constexpr size_t FOURTH_VASSAL_ARRAY     = 0xD8;   // HIGH: PDX array int32 (FUN_0674f680)
-    // Vassal contract array (PDX array of int32 contract IDs)
-    constexpr size_t VASSAL_CONTRACT_ARRAY   = 0x218;  // HIGH: PDX array base
+    // +0xA8 is NOT a vassal array: on dumps ivar867 and 1097 its 9,459 / 12,029 entries
+    // (all rulers) include no landed character and none of the rulers' vassals (the
+    // bridge's old DIRECT_VASSAL_ARRAY read listed the king's wife and unlanded characters as
+    // vassals). Direct vassals come from VASSAL_CONTRACT_ARRAY (below): vassal_roster.h.
+    // +0xC0 and +0xD8 (named INDIRECT_VASSAL_ARRAY / FOURTH_VASSAL_ARRAY until lane l6)
+    // are empty for 4,592 of the 4,593 landed characters on dump ivar867: no vassal list.
+    // Vassal contract array (PDX array of int32 contract IDs): the contracts this ruler
+    // is the LIEGE of; their SUBJECTs are its direct vassals (vassal_roster.h).
+    constexpr size_t VASSAL_CONTRACT_ARRAY   = 0x218;  // HIGH: PDX array base; dumps ivar867 + 1097: 917 / 1,089 rulers, every contract's LIEGE is the ruler and the SUBJECTs equal its PATH2 vassals
 
     // Ruler tier (1=barony..5=empire)
     constexpr size_t TIER                    = 0x1D4;  // HIGH: uint32, ruler tier
@@ -3158,6 +3320,18 @@ namespace diplomatic_data {
 //   3=war_enemy_enemy, 4=raid_on_me, 5=raid_by_me, 6=self, 7=alliance,
 //   8=tributary, 9=truce, 10=liege, 11+=other
 // =============================================================================
+// The sorted per-character relation list described above (the array behind
+// *(char + 0x1A8), searched by funcs::RELATION_BINARY_SEARCH). Lane l4 named it; the
+// layout is the one this comment block records, confirmed in the 867 dump (13173's one
+// entry is 12592, 12592's list holds 13173 at the same relation object).
+namespace relation_list {
+    constexpr size_t ARRAY        = 0x20;  // HIGH: ptr, entries sorted by other char id (on *(char+0x1A8))
+    constexpr size_t COUNT        = 0x2C;  // HIGH: int32
+    constexpr size_t ENTRY_STRIDE = 0x10;  // HIGH
+    constexpr size_t ENTRY_CHAR   = 0x00;  // HIGH: uint32, the other character's full id
+    constexpr size_t ENTRY_REL    = 0x08;  // HIGH: CDiplomaticRelation*
+}
+
 namespace diplomatic_relation {
     constexpr size_t TOTAL_SIZE         = 0x1F0;  // HIGH: CDiplomaticRelation struct size
     constexpr size_t VTABLE             = 0x00;   // HIGH: ptr, vtable/metadata
@@ -3189,6 +3363,15 @@ namespace diplomatic_relation {
     // ONLY via this field; the +0x578 "alliance list" the bridge formerly searched
     // contained WAR participants and NEVER the real ally (see re_alliance_false_positive_119.md).
     constexpr size_t HAS_ALLIANCE       = 0x94;   // HIGH: int32, alliance count/flag (!=0 == allied) — HasAllianceInRelation
+
+    // --- Matrilineal marriage flag (lane l4, re/findings/re_interactions.md §4) ---
+    // The marry effect (FUN_0684f460) gets-or-creates the husband->wife relation and sets
+    // this byte (FUN_063695f0) only for a matrilineal marriage; the matrilinear_marriage
+    // trigger (CIsMarriageTypeTrigger<1>, FUN_04fd7c00) reads it through FUN_06850990
+    // (husband, wife), the husband being the partner whose character::IS_FEMALE is 0; a
+    // patrilineal marriage has no relation, so the null relation reads as "not matrilineal".
+    // 867 dump: 34 of the 35 spouse pairs that have a relation carry it.
+    constexpr size_t MATRILINEAL_MARRIAGE = 0x188;  // HIGH: byte, 1 = matrilineal marriage
 
     // Remaining fields +0x84..+0x1EF: other diplomatic state (wars, alliances, raids)
 
@@ -3288,8 +3471,8 @@ namespace trait_entry {
     // Identity
     constexpr size_t TRAIT_ID           = 0x08;   // HIGH: uint32, numeric trait index
     constexpr size_t NAME_DESCRIPTOR    = 0x10;   // HIGH: CJominiScriptDbObject desc ptr (name at desc+0x10)
-    constexpr size_t MIN_VALUE          = 0x68;   // HIGH: int16, education trait level min
-    constexpr size_t MAX_VALUE          = 0x6C;   // HIGH: int16, education trait level max
+    // (MIN_VALUE 0x68 / MAX_VALUE 0x6C, "education level range", deleted in cleanup
+    // 2026.11 lane l6: they read 1 and 0 for all 297 traits of the ivar867 dump.)
 
     // Modifier collection (sub-object at +0x90, stores all stat bonuses)
     // Access: value_array = *(trait + 0xA8), values are 8-byte CFixedPoint, indexed by modifier slot
@@ -3336,10 +3519,22 @@ namespace trait_entry {
     constexpr size_t SAME_OPINION       = 0x388;  // HIGH: int32, same-trait opinion bonus
     constexpr size_t SAME_FAITH_OPINION = 0x38C;  // HIGH: int32, same-trait same-faith opinion
     constexpr size_t OPPOSITE_OPINION   = 0x390;  // HIGH: int32, opposite-trait opinion malus
-    constexpr size_t RULER_DESIGNER_COST = 0x394; // HIGH: int32
-    constexpr size_t MINIMUM_AGE        = 0x39C;  // HIGH: int32
-    constexpr size_t MAXIMUM_AGE        = 0x3A0;  // HIGH: int32
-    constexpr size_t VALID_SEX          = 0x3A4;  // HIGH: byte (0=all,1=male,2=female)
+    // The age limits are optional<int32>: the value, then an engaged byte. The value
+    // is meaningful only when the byte is 1 (berserker's unset value reads 32656).
+    // HIGH: all 297 traits of dump ck3_20260625_152901_ivar867 against
+    // game/common/traits/00_traits.txt (34 traits minimum_age 16, 5 childhood traits
+    // 3..15, sickly maximum_age 6; brave ruler_designer_cost 40, education_diplomacy_4
+    // 80, rowdy 5). Until cleanup 2026.11 (lane l6, F10) the header had
+    // RULER_DESIGNER_COST 0x394, MINIMUM_AGE 0x39C, MAXIMUM_AGE 0x3A0 and VALID_SEX
+    // 0x3A4: one slot off, so minimum_age showed the maximum and an unset value read
+    // whatever the allocator left (unstable between launches). VALID_SEX is deleted:
+    // 0x3A4 (int32) reads 2 for 294 traits, 0 for 2 (ids 135, 136) and 32514 for
+    // berserker (id 192), and no trait in the data sets a sex.
+    constexpr size_t MINIMUM_AGE        = 0x394;  // HIGH: int32, optional value
+    constexpr size_t MINIMUM_AGE_SET    = 0x398;  // HIGH: uint8, 1 = minimum_age is set
+    constexpr size_t MAXIMUM_AGE        = 0x39C;  // HIGH: int32, optional value
+    constexpr size_t MAXIMUM_AGE_SET    = 0x3A0;  // HIGH: uint8, 1 = maximum_age is set
+    constexpr size_t RULER_DESIGNER_COST = 0x3A8; // HIGH: int32
 
     // Name hash and AI personality
     constexpr size_t NAME_HASH          = 0x3AC;  // HIGH: uint32, string hash
@@ -3390,6 +3585,41 @@ namespace province {
     constexpr size_t HOLDER_CHAR_ID     = 0x270;  // MEDIUM: uint32
     constexpr size_t BARONY_TITLE_ID    = 0x318;  // HIGH: uint32, barony title ID (runtime-verified)
     constexpr size_t COUNTY_DATA_PTR    = 0x428;  // HIGH: CCounty* (R19 confirmed via FUN_06312be0 setter)
+}
+
+// The holding's building slots, at province + province::BUILDING_SLOT_DATA.
+// The slots: dump ivar867 (867.01.01, base 0x561b49cd4000; provinces from
+// *(*(GAME_STATE_ROOT)+0xA0)+0x118, county::PROVINCE_ARRAY/PROVINCE_COUNT): 13,269 of
+// 13,270 provinces carry a slot array; at stride 0x10 all 34,390 slots read a
+// CBuildingType (8,510 named, 25,880 the null building, whose name is empty), at
+// stride 8 14,607 of them read no building. Province 2746 (barony 1142, king 10465)
+// reads castle_01 and two empty slots, the holding live867 l6_buildings reads
+// through inspect(county) (castle_01 at 1142) and builds on.
+// The construction: FUN_0611da40 (the construction start, decompile) writes the
+// CONSTRUCTING_* fields. Dump ivar867 has no holding constructing; dump 1097 has 512
+// (the REMAINING/SPEED values below); live (l6fin2-1, l6_buildings): a build started through
+// ADD_CONSTRUCTION_EXECUTE reads back through inspect(county) with the building, its
+// slot, the order date, the ruler who ordered it and its days left, which fall day
+// by day.
+namespace building_slots {
+    constexpr size_t SLOT_ARRAY          = 0x18;   // HIGH: ptr, CBuildingType* per slot (stride SLOT_STRIDE); an empty slot holds the null building (no name). Dump ivar867 + live (above)
+    constexpr size_t SLOT_STRIDE         = 0x10;   // HIGH: dump ivar867, 34,390 slots (above)
+    constexpr size_t SLOT_COUNT          = 0x24;   // HIGH: int32, slots of the holding (FUN_0611da40 bounds the slot index by it; dump ivar867)
+    constexpr size_t CONSTRUCTING        = 0x70;   // HIGH: CBuildingType* under construction, 0 when none (decompile; live l6_buildings)
+    constexpr size_t CONSTRUCTING_SLOT   = 0x78;   // HIGH: int32, its slot (decompile; live)
+    constexpr size_t CONSTRUCTING_START  = 0x7C;   // HIGH: int32 raw game date the order was given (game_state::GAME_DATE copied; decompile; live)
+    constexpr size_t CONSTRUCTING_BY     = 0xE0;   // HIGH: uint32 full character id that ordered it (decompile; live)
+    // The construction's progress (lane l6, cleanup 2026.11). The start (FUN_0611da40) sets
+    // REMAINING to the building's construction days * 100000 and SPEED to 0. The daily
+    // advance (FUN_0611e610) subtracts 1e10 / SPEED from REMAINING, and when SPEED < 1 sets
+    // REMAINING to 0: the building is finished that day. SPEED is the construction time
+    // factor the game refreshes (FUN_0611e590 for one construction; FUN_06124460 for every
+    // active one: FUN_06332640(province, 100000, ...)). Dump 1097: 512 active
+    // constructions, every SPEED between 65000 and 160000 (90000 x100, 100000 x97).
+    // Live l6fin2-1: a 730-day hunting_grounds_01 started through ADD_CONSTRUCTION_EXECUTE
+    // stood finished two days later, so the bridge refreshes SPEED after the execute.
+    constexpr size_t CONSTRUCTING_REMAINING = 0x88; // HIGH: int64, days left * 100000 (decompile, dump 1097)
+    constexpr size_t CONSTRUCTING_SPEED  = 0xE8;   // HIGH: int64, time factor * 100000; < 1 finishes the build on the next advance (decompile, dump 1097)
 }
 
 // =============================================================================
@@ -3490,7 +3720,9 @@ namespace ai_ctrl {
     constexpr size_t EXT_WAR_TARGET_LIST = 0x98;  // CPdxArray: war targets. +0x00=data_ptr, +0x0C=count
     constexpr size_t EXT_WAR_EVAL       = 0xB8;   // war evaluation context struct
     constexpr size_t EXT_WAR_LIST       = 0x138;  // CPdxArray: current wars for character
-    // Tick counters (decremented per evaluation, 8 categories) — in extended state
+    // Tick counters (decremented per evaluation, 8 categories), relative to the extended
+    // state, NOT to ai_ctrl: read at ai_ctrl+0x268 they are pointer halves (live867
+    // l6-stab-b, two launches). No bridge reader since cleanup 2026.11 (lane l6).
     constexpr size_t TICK_COUNTER_0     = 0x268;
     constexpr size_t TICK_COUNTER_1     = 0x26c;
     constexpr size_t TICK_COUNTER_2     = 0x270;
@@ -3631,14 +3863,11 @@ namespace interaction_db_internal {
     // influence_candidacy_interaction AND sender is the current player. It does NOT
     // gate dispatch.
     //
-    // Bridge code MUST NOT write to this slot — doing so corrupts the static binding
-    // (see ck-ukox8 for cleanup of bridge/src/ai_eval_hook.cpp:1853 stamp).
+    // Bridge code MUST NOT write to this slot — doing so corrupts the static binding.
+    // No bridge code writes it (the direct-command path's old stamp is deleted).
     //
     // See re/findings/re_gate2_stamp_verification.md for full verification.
     constexpr size_t SLOT14_INFLUENCE_CANDIDACY_DEF = 0x1000;  // HIGH: slot 14 ptr@+0
-    // Deprecated alias — do NOT use. Kept temporarily to avoid breaking
-    // bridge/src/ai_eval_hook.cpp during the ck-ukox8 stamp-removal transition.
-    constexpr size_t CURRENT_INTERACTION = 0x1000;  // DEPRECATED: see SLOT14_INFLUENCE_CANDIDACY_DEF
 
     // Array metadata
     constexpr size_t ARRAY_PTR           = 0x88;    // ptr to array of interaction definition ptrs
@@ -3748,7 +3977,7 @@ namespace war_obj {
     constexpr size_t CB_TARGET          = 0xA8;   // HIGH: type tag (cb+0x10), always 0x12 across 11 wars in ck-s0qu probe — NOT a title/char ref. Use CB_TITLE_ARRAY (0x210) or PRIMARY_DEF_REF (0x22C) for actual target.
     constexpr size_t CB_WAR_ID          = 0xB0;   // HIGH: uint32, CB back-reference to owning war ID (cb+0x18)
     constexpr size_t CB_HASH            = 0xB8;   // LOW: uint32, unique per-war hash (purpose unclear, not CB-type-dependent) (cb+0x20)
-    constexpr size_t CB_TITLE_ARRAY     = 0x210;  // HIGH: uint64, title ID array ptr (cb+0x178)
+    constexpr size_t CB_TITLE_ARRAY     = 0x210;  // HIGH: ptr to uint32[] title refs (cb+0x178); 4-byte elements (dump ivar867: Saffarid-Tahirid War 0x186b,0x181d), read through read_war_target_titles
     constexpr size_t CB_TITLE_COUNT     = 0x21C;  // HIGH: int32, title count (cb+0x184)
     // R8V4 REINTERPRETATION: FUN_066b45d0 reads war+0x228 as primary defender char ref,
     // FUN_066b92e0 reads war+0x22C as primary attacker char ref. These overlap with
@@ -3936,13 +4165,37 @@ namespace active_scheme {
     // --- Timing/dates ---
     constexpr size_t START_DATE         = 0xF0;   // HIGH: int64, game date when scheme started (R10-8)
     constexpr size_t LAST_UPDATE_DATE   = 0xF8;   // HIGH: int64, last daily update date (R10-8)
-    constexpr size_t EXPOSURE_DATE      = 0x100;  // HIGH: int64, scheme exposure date (R10-8)
+    constexpr size_t EXPOSURE_DATE      = 0x100;  // HIGH: int64, date the scheme was exposed; meaningful only when IS_EXPOSED (ExposeScheme FUN_063a7bb0 stamps it, l3-schemes)
     constexpr size_t IS_FROZEN          = 0x108;  // HIGH: byte, scheme frozen flag (R10-8)
     constexpr size_t DISCOVERY_TIMER    = 0x10C;  // HIGH: int32, discovery countdown (R10-8)
     constexpr size_t EXPOSURE_TIMER     = 0x110;  // HIGH: int32, exposure countdown (R10-8)
-    constexpr size_t NEEDS_PROCESSING   = 0x114;  // LOW: byte, temporary processing flag — NOT validity (R10-8)
-    constexpr size_t SUCCESS_CHANCE     = 0x118;  // HIGH: int32, computed success chance (R10-8)
+    // l3-schemes 2026-10-20: 0x114 is the EXPOSED flag (was "NEEDS_PROCESSING, LOW").
+    // ExposeScheme (FUN_063a7bb0, the expose_scheme effect's body) sets it to 1 and
+    // stamps EXPOSURE_DATE; the is_scheme_exposed trigger's getter (FUN_052d1230)
+    // returns it. HIGH: two decompiles + the 1097 dump (secret schemes read 1 once exposed).
+    constexpr size_t IS_EXPOSED         = 0x114;  // HIGH: byte, 1 = exposed (l3-schemes)
+    // l3-schemes 2026-10-20: 0x118 is SECRECY, not success chance. The R10-8 label
+    // "SUCCESS_CHANCE (HIGH)" is REFUTED: the scheme_secrecy trigger's getter
+    // (CSchemeSecrecryTrigger vt slot 0x108, FUN_052d15b0) returns *(int*)(scheme+0x118)
+    // * 100000 and logs "Trying to get the secrecy of a scheme before getting to
+    // on_ready" when it is negative; in the 1097 dump every non-secret scheme (sway,
+    // promote, expand_power_base) reads exactly 100 here, the "always 100% secrecy" the
+    // scheme docs give non-secret types. The R10-8 reading was a single unvalidated
+    // structural guess. Success chance is the engine getter
+    // funcs::SCHEME_GET_SUCCESS_CHANCE. HIGH: decompile + dump.
+    constexpr size_t SECRECY            = 0x118;  // HIGH: int32, secrecy 0..100 (l3-schemes)
     constexpr size_t AGENT_SLOT_COUNTER = 0x128;  // HIGH: int16, agent slot counter (R10-8)
+    // l3-schemes 2026-10-20: the script triggers' getters (decompiled, one load each):
+    //   scheme_agent_charges  CSchemeAgentChargesTrigger  FUN_052d68e0 -> *(int*)(+0x130)
+    //   scheme_breaches       CSchemeBreachesTrigger      FUN_052d6b10 -> *(int*)(+0x134)
+    //   scheme_progress       CSchemeProgressTrigger      FUN_052d16c0 -> *(int*)(+0x70)
+    constexpr size_t AGENT_CHARGES      = 0x130;  // HIGH: int32 (l3-schemes)
+    // BREACHES is the high half of AGENT_CHARGES' 8-byte slot, so it is defined from
+    // it: the Windows slot map moves that slot as one (+0x8 at 867), and a literal
+    // here was left at its Linux value by gen_win_offsets.py (no run reaches +0x134).
+    constexpr size_t BREACHES           = AGENT_CHARGES + 0x4;  // HIGH: int32 (l3-schemes)
+    // The agent slots at AGENT_SLOTS_PTR are inline CSchemeAgentSlot objects, stride
+    // scheme_agent_slot::STRIDE (FUN_063caab0 walks them with that stride).
 
     // --- Freeze data (SFreezeData sub-struct at +0x138) ---
     constexpr size_t FREEZE_VTABLE      = 0x138;  // HIGH: ptr, CActiveScheme::SFreezeData vtable (R10-8)
@@ -3964,14 +4217,36 @@ namespace active_scheme {
 // CSchemeAgentSlot Struct Offsets (R8V, from scheme agent slot decompilation)
 // Agent slots are stored in CPdxArray at active_scheme + AGENT_SLOTS_PTR
 // =============================================================================
+// l3-schemes 2026-10-20: the R8V labels for +0x08 (SLOT_ID) and +0x10
+// (AGENT_CHAR_REF, "int64 agent character reference") were wrong, and +0x28/+0x30
+// (DEFAULT_VALUE, IS_EXPOSED) had no reader and no evidence; they are dropped.
+// FUN_063caab0 (the agent-contribution sum) reads the agent as *(int*)(slot+0x08)
+// (-1 = empty) and the slot TYPE as *(ptr*)(slot+0x10), whose contribution kind is at
+// type+0x110; FUN_063b5aa0 (the slot's "is valid") is *(short*)(slot+0x18) != -1. The
+// 1097 dump agrees: 37 slot types read their script key at type+0x10, filled slots
+// carry character handles at +0x08 that resolve, +0x1C holds the owning scheme's ref.
 namespace scheme_agent_slot {
-    constexpr size_t SLOT_ID         = 0x08;  // int32, init -1
-    constexpr size_t AGENT_CHAR_REF  = 0x10;  // int64, agent character reference
-    constexpr size_t SLOT_INDEX      = 0x18;  // int16, init 0xFFFF
-    constexpr size_t SCHEME_ID       = 0x1C;  // int32, init -1
-    constexpr size_t DEFAULT_VALUE   = 0x28;  // from global
-    constexpr size_t IS_EXPOSED      = 0x30;  // byte, exposed flag
-    constexpr size_t STRIDE          = 0x38;  // total slot size
+    constexpr size_t VTABLE          = 0x00;  // HIGH: CSchemeAgentSlot vtable (image 0x0bcdf2c0)
+    constexpr size_t AGENT_CHAR      = 0x08;  // HIGH: u32 agent character handle, 0xFFFFFFFF = empty
+    constexpr size_t SLOT_TYPE_PTR   = 0x10;  // HIGH: SSchemeAgentSlotType*; key std::string at +0x10
+    constexpr size_t SLOT_INDEX      = 0x18;  // HIGH: int16, -1 = no slot (FUN_063b5aa0)
+    constexpr size_t SCHEME_ID       = 0x1C;  // HIGH: u32 packed ref of the owning scheme
+    // MEDIUM: int64 fixed-point /100000, the agent's contribution as the slot type's
+    // `contribution` script value computes it (can be negative). Two sources: the value
+    // scale and sign match agent_types.txt contributions for 37 slot types in the 1097
+    // dump, and schemes whose success_chance_max slots are filled carry a higher max
+    // success than the type's base (murder: base 30, 53 of them); no decompiled writer.
+    constexpr size_t CONTRIBUTION    = 0x20;  // MEDIUM: int64 fp /100000 (l3-schemes)
+    constexpr size_t STRIDE          = 0x38;  // HIGH: total slot size (FUN_063caab0)
+}
+
+// SSchemeAgentSlotType (l3-schemes 2026-10-20): read-only script data.
+namespace scheme_agent_slot_type {
+    constexpr size_t KEY               = 0x10;  // HIGH: std::string, e.g. "agent_assassin"
+    // HIGH: int32 contribution kind; FUN_063caab0 filters on it. 37 slot types in the
+    // 1097 dump against agent_types.txt: 0 = secrecy, 3 = success_chance_max,
+    // 4 = speed. No slot type the dump holds carries 1 or 2.
+    constexpr size_t CONTRIBUTION_TYPE = 0x110;
 }
 
 // =============================================================================
@@ -4014,8 +4289,90 @@ namespace scheme_type {
     constexpr size_t MAX_CHANCE_CAP       = 0x9A0;  // HIGH: int32, max success chance cap (percentage, typically 95)
     constexpr size_t MIN_CHANCE_FLOOR     = 0x9A8;  // HIGH: int32, min success chance floor (percentage)
     constexpr size_t BASE_MAX_PROGRESS    = 0x9AC;  // HIGH: int32, base max progress (days)
-    constexpr size_t CAP_TYPE             = 0xB40;  // HIGH: int32, cap table index (0-3), indexes global cap table
-    constexpr size_t PASSIVE_FLAG         = 0xB46;  // HIGH: byte, passive/guaranteed-floor flag
+    // l3-schemes 2026-10-20: 0xB40 is the scheme CATEGORY, and it is also the cap-table
+    // index ck-1nab named CAP_TYPE: one field. CanStartScheme compares an owned
+    // scheme's category (FUN_063aab40) with *(int*)(type+0xB40), and the
+    // is_hostile_scheme getter tests category == 0. 46 non-contract types in the 867
+    // dump against their script `category`: 0 = hostile, 1 = contract, 2 = personal,
+    // 3 = political. The literal keeps the name CAP_TYPE because the Windows layout
+    // probe measured the field under it (re/findings/windows/p3_probe_867_*.json, read
+    // by gen_win_offsets.py by name); CATEGORY is defined from it, so the two names
+    // cannot carry two values on either platform.
+    constexpr size_t CAP_TYPE             = 0xB40;  // HIGH: int32, the category; indexes the global cap table (0-3)
+    constexpr size_t CATEGORY             = CAP_TYPE;  // 0 hostile, 1 contract, 2 personal, 3 political (l3-schemes)
+    constexpr size_t IS_SECRET            = 0xB44;  // HIGH: byte, is_secret (CIsTypeSecretScheme getter FUN_052d5e80; 46 types match the scripts)
+    // PASSIVE_FLAG is the script's is_basic (CIsTypeBasicScheme getter FUN_052d6000;
+    // 46 types match: sway/befriend/seduce/learn_language = 1, murder/abduct = 0).
+    // The literal keeps the probe's name, as CAP_TYPE does; IS_BASIC is defined from it.
+    constexpr size_t PASSIVE_FLAG         = 0xB46;  // HIGH: byte, is_basic (the guaranteed-floor flag ck-1nab read)
+    constexpr size_t IS_BASIC             = PASSIVE_FLAG;  // the script's is_basic (l3-schemes)
+    constexpr size_t MAX_BREACHES         = 0x9B4;  // HIGH: int32, maximum_breaches (CSchemeMaxBreachesTrigger getter FUN_052d6d40)
+    // What the scheme targets: CreateActiveScheme's first gate compares it with the
+    // target scope's type. 0 = character, 1 = title (the scheme docs' order:
+    // character/title/culture/faith/nothing). 69 of the 76 types in the 867 dump are 0.
+    constexpr size_t TARGET_TYPE          = 0x1F0;  // HIGH: int32 (decompile + dump, l3-schemes)
+    // The two script trigger blocks CanStartScheme evaluates, a CAndTrigger each, with
+    // label "<key>:allow" / "<key>:valid" at block+0x28 (trigger_struct::LABEL).
+    constexpr size_t ALLOW_TRIGGER        = 0x30;   // HIGH (l3-schemes)
+    constexpr size_t VALID_TRIGGER        = 0x110;  // HIGH (l3-schemes)
+    // The type's script key ("murder", "befriend"): a std::string. HIGH: 76 types in
+    // the 867 dump read back to common/schemes/scheme_types keys (l3-schemes).
+    constexpr size_t KEY                  = 0x10;   // HIGH: std::string (l3-schemes)
+}
+
+// =============================================================================
+// CSchemeTypeDatabase (the instance *(base + globals::SCHEME_TYPE_DB))
+// Iterated like the faction DB: the CSchemeType* array and its u32 count. HIGH:
+// the 867 dump (76 types, each key read back at scheme_type::KEY) and the
+// earlier lane-scheme walk (funcs::CREATE_ACTIVE_SCHEME's note) (l3-schemes,
+// re/findings/re_schemes.md §1).
+// =============================================================================
+namespace scheme_type_db {
+    constexpr size_t TYPES_PTR            = 0x88;   // HIGH: CSchemeType*[] (l3-schemes)
+    constexpr size_t TYPES_COUNT          = 0x94;   // HIGH: u32, 76 in the 867 dump (l3-schemes)
+}
+
+// =============================================================================
+// The script token table (the instance *(base + globals::TOKEN_TABLE_PTR))
+// Its reverse map, token id -> std::string*: a trigger's TOKEN_ID indexes it. HIGH:
+// decompile FUN_08269e60 + core dump ivar867 (25074 ids; 9 read back to the script
+// keys at the lines their triggers record) (l3-schemes, re_schemes.md §2). No bridge
+// reader since L14 S4 (the scheme refusal no longer names the script key).
+// =============================================================================
+namespace token_table {
+    constexpr size_t REVERSE_PTR          = 0x40;   // HIGH: std::string*[] (l3-schemes)
+    constexpr size_t REVERSE_COUNT        = 0x4C;   // HIGH: u32 (l3-schemes)
+}
+
+// =============================================================================
+// The failure description a trigger sink receives: the entry add_entry (vt slot
+// 0x00) gets, and the desc open_child (vt slot 0x08) gets. One struct, a stack
+// object its caller builds and frees (FUN_049aab50 after the sink call returns; the
+// sink only reads it). Sources: CanStartScheme's steps 3 and 4 (l3-schemes), the
+// identical stack init in FUN_0762b310 (CAndTrigger evaluate-with-sink) and the
+// leaf evaluate-with-sink FUN_04f1e000, and the destructor FUN_049aab50, which
+// frees +0x30, +0x10 and the +0x08 object (L14 S4, re_schemes.md §2).
+// Live (L14 S4, live867 eval_d_words_court, 2026-10-30): with the sink's wants_text()
+// true, every desc open_child got and every leaf entry add_entry got on 10 refused
+// abduct targets had an empty +0x10, an empty +0x30 and a null +0x08: a trigger's
+// words are not in it. The bridge reads TRIGGER (open_child) and TEXT (the root
+// sink's engine entries) only.
+// =============================================================================
+namespace scheme_fail_entry {
+    constexpr size_t TRIGGER              = 0x00;   // MEDIUM: CTrigger*, the trigger described (FUN_0762b310, FUN_04f1e000: param_1)
+    constexpr size_t LINES                = 0x08;   // MEDIUM: ptr, a heap object of lines, null when none (FUN_049aab50 frees it) (L14 S4)
+    constexpr size_t TEXT                 = 0x10;   // MEDIUM: std::string, the refusal text (l3-schemes; FUN_049aab50 frees it)
+    constexpr size_t KEY                  = 0x30;   // MEDIUM: std::string, the loc key, e.g. can_target_character_with_scheme (l3-schemes; FUN_049aab50)
+}
+// The lines object at scheme_fail_entry::LINES: an array of 0x78-byte lines, two
+// std::strings each. MEDIUM: one source, the destructor FUN_049aab50 (L14 S4);
+// null in every trigger description read live (above). No bridge reader.
+namespace scheme_fail_lines {
+    constexpr size_t ARRAY                = 0x00;   // MEDIUM: ptr, the lines (FUN_049aab50)
+    constexpr size_t COUNT                = 0x0C;   // MEDIUM: int32 (FUN_049aab50)
+    constexpr size_t STRIDE               = 0x78;   // MEDIUM: bytes per line (FUN_049aab50)
+    constexpr size_t LINE_A               = 0x08;   // MEDIUM: std::string (FUN_049aab50)
+    constexpr size_t LINE_B               = 0x38;   // MEDIUM: std::string (FUN_049aab50)
 }
 
 // =============================================================================
@@ -4135,10 +4492,10 @@ namespace siege_obj {
 // These offsets are on province/barony objects, NOT on CSiege.
 // =============================================================================
 namespace province_siege_link {
-    constexpr size_t SIEGE_REF_0x114     = 0x114;  // HIGH: uint32, siege ref ID (24-bit, looked up in SIEGE_DB)
+    constexpr size_t SIEGE_REF_0x114     = 0x114;  // LOW (was HIGH): uint32; links NO live siege in the 1097 dump (0 of 64) and holds 0 on 16347 baronies of the 867 dump, so not the siege link (re_siege_progress_struct.md §9)
     constexpr size_t TITLE_REF           = 0x318;  // MEDIUM: uint32, title/barony ID (→ LandedTitleDB)
     constexpr size_t SIEGE_COUNT         = 0x344;  // MEDIUM: int32, siege-related count/phase
-    constexpr size_t SIEGE_REF_0x368     = 0x368;  // HIGH: uint32, siege ref ID (alternative path, FUN_06312c00)
+    constexpr size_t SIEGE_REF_0x368     = 0x368;  // HIGH: uint32, full siege id (slot + generation; 0xFFFFFFFF = none, 0 is siege 0) on the barony's CProvince (title_obj::PROVINCE_PTR): links 64/64 live sieges of the 1097 dump and 1/1 of the 867 dump, one barony each; FUN_06312c00. query_wars places a siege by it (re_siege_progress_struct.md §9)
     constexpr size_t SIEGE_ACTION        = 0x434;  // MEDIUM: uint32, siege action/state flag
 }
 
@@ -4339,9 +4696,13 @@ namespace law_group {
     constexpr size_t GROUP_ID            = 0x08;   // HIGH: uint32, 0-26
     constexpr size_t GROUP_NAME_HASH     = 0x0C;   // HIGH: uint32, MurmurHash3
     constexpr size_t GROUP_NAME          = 0x10;   // HIGH: std::string (e.g. "crown_authority")
+    // A CPdxArray (pdx_array: the layout rule, checked below it). HIGH: dump
+    // ck3_20260625_152901_ivar867, succession_order_laws 42 at the capacity and 29 at
+    // the count with exactly 29 laws before the null slots, succession_gender_laws
+    // 6 / 5 with 5 laws. Count and capacity were swapped until cleanup 2026.11 (l6).
     constexpr size_t MEMBER_LAW_ARRAY    = 0x48;   // HIGH: CLaw** array of member laws (ordered by level)
-    constexpr size_t MEMBER_COUNT        = 0x50;   // HIGH: uint32
-    constexpr size_t MEMBER_CAPACITY     = 0x54;   // HIGH: uint32
+    constexpr size_t MEMBER_CAPACITY     = 0x50;   // HIGH: uint32
+    constexpr size_t MEMBER_COUNT        = 0x54;   // HIGH: uint32
     constexpr size_t DEFAULT_LAW_NAME    = 0x60;   // HIGH: std::string, default law for this group
 }
 
@@ -4355,9 +4716,17 @@ namespace realm_law_db {
 
 // Title realm data → active law container (on *(char+0x1B8))
 namespace title_realm_laws {
+    // A CPdxArray (pdx_array: the layout rule, checked below it). HIGH: CharacterHasLaw
+    // (image 0x68839a0) ends its search at data + count * 8, and in dump
+    // ck3_20260625_152901_ivar867 rulers 10465 and 12618 read 6 at the capacity and 5
+    // at the count, the sixth slot holding non-pointer bytes (0x41f7edbf4547504a). Count and
+    // capacity were swapped here until cleanup 2026.11 (lane l6, F10): every reader
+    // walked one slot past the end when the array had spare capacity, which made
+    // query_realm_laws' length and last group_id, and query_succession's realm-law
+    // fallback, differ between launches.
     constexpr size_t ACTIVE_LAW_ARRAY    = 0x200;  // HIGH: CLaw** (ptr array of active laws)
-    constexpr size_t ACTIVE_LAW_COUNT    = 0x208;  // HIGH: uint32
-    constexpr size_t ACTIVE_LAW_CAPACITY = 0x20C;  // HIGH: uint32
+    constexpr size_t ACTIVE_LAW_CAPACITY = 0x208;  // HIGH: uint32
+    constexpr size_t ACTIVE_LAW_COUNT    = 0x20C;  // HIGH: uint32
 }
 
 // =============================================================================
@@ -4476,8 +4845,12 @@ namespace title_obj {
     //   +0x10 uint32 internal day-count date (monotonic; chronology key)
     //   +0x14 uint32 packed date = (year<<16)|(month<<8)|day  (e.g. 0x0445020A = 1093.2.10)
     constexpr size_t TITLE_HOLDER_HISTORY_PTR   = 0x2C0;  // HIGH: ptr to CTitleHolderHistoryEntry[] (core-dump validated)
-    constexpr size_t TITLE_HOLDER_HISTORY_COUNT = 0x2C8;  // HIGH: int32, entry count
-    constexpr size_t TITLE_HOLDER_HISTORY_CAP   = 0x2CC;  // HIGH: int32, capacity
+    // A CPdxArray (pdx_array: the layout rule, checked below it); count and capacity
+    // were swapped here until cleanup 2026.11, lane l6: dump ck3_20260625_152901_ivar867
+    // title 149 reads 13 at the capacity and 10 at the count, entries 10..12 are not
+    // dated history rows; query_title_history listed them.
+    constexpr size_t TITLE_HOLDER_HISTORY_CAP   = 0x2C8;  // HIGH: int32, capacity
+    constexpr size_t TITLE_HOLDER_HISTORY_COUNT = 0x2CC;  // HIGH: int32, entry count
     constexpr size_t TITLE_HOLDER_HISTORY_ALLOC = 0x2D0;  // HIGH: ptr to CPdxAllocator
     constexpr size_t THHE_STRIDE          = 0x18;  // HIGH: CTitleHolderHistoryEntry size
     constexpr size_t THHE_TYPE            = 0x08;  // HIGH: uint32 event type (4=grant,20=succession,6=destroy)
@@ -4516,7 +4889,10 @@ namespace county {
                                                    //   read faith 23 = "catholic" via FAITH_DB(0x0bedad78)+faith::FAITH_KEY(0x98).
     constexpr size_t CULTURE_ID         = 0x20C;  // HIGH (upgraded #127, F4): uint32, culture DB ID (was MEDIUM-HIGH; deserialized
                                                    //   via FUN_05b40f90, tag 0x27f4). Core-dump validated: counties read culture
-                                                   //   229/231 varying per county; resolve via CULTURE_INDEXED_DB(0x0beda7a8)+NAME_KEY(0x10).
+                                                   //   229/231 varying per county; resolve via CULTURE_INDEXED_DB(0x0beda7a8), then
+                                                   //   culture::NAME (+0x260, display) / culture::SCRIPT_KEY (+0x1C8, key) — culture_names
+                                                   //   (dispatch_router.cpp). +0x10 is the culture's id: 0 of 242 cultures read a string
+                                                   //   there in the ivar867 dump, 242/242 at +0x260 (L14 FB M-1).
     constexpr size_t DEVELOPMENT        = 0x210;  // HIGH: int32, development level (0-100, capped at 100)
     constexpr size_t DEV_PROGRESS       = 0x218;  // HIGH: int64 fixed-point ÷ 100000, progress toward next dev level
                                                    //   threshold = 10000000 (100.0): triggers level-up, resets to 0
@@ -4532,11 +4908,12 @@ namespace county {
 namespace building_type {
     constexpr size_t NAME_PTR           = 0x10;   // HIGH: char*, e.g. "castle_01", "temple_02" (R16)
     constexpr size_t LEVEL              = 0x30;   // HIGH: int32, building level (the type IS the level) (R16)
-    constexpr size_t TYPE_CATEGORY      = 0x48;   // MEDIUM: uint32, 1095=constructible, 1825=holding/special
+    constexpr size_t CONSTRUCTION_DAYS  = 0x48;   // HIGH: int32, days to build (FUN_0611da40 stores it *100000 at the slot's +0x88; dump: castle_0N 1825, barracks_01 1095). Read as a "category" until cleanup 2026.11
     constexpr size_t MODIFIER_GROUP     = 0x60;   // MEDIUM: ptr, modifier group descriptor
-    constexpr size_t SCRIPTED_VALUE_1   = 0xC0;   // MEDIUM: uint32, global scripted value index (cost slot 1)
-    constexpr size_t SCRIPTED_VALUE_2   = 0x120;  // MEDIUM: uint32, global scripted value index (cost slot 2)
-    constexpr size_t SCRIPTED_VALUE_3   = 0x180;  // MEDIUM: uint32, global scripted value index (cost slot 3)
+    // (SCRIPTED_VALUE_1..3 at 0xC0 / 0x120 / 0x180, "cost slot" indices, deleted in
+    // cleanup 2026.11, lane l6, F10: query_building_types reported them and they
+    // differed between two launches of one save, the pattern of allocation counters,
+    // not of script indices; no reader turned them into a cost.)
     constexpr size_t SOURCE_FILE_PATH   = 0x198;  // MEDIUM: std::string, e.g. "common/buildings/..."
     constexpr size_t ENABLE_TRIGGER     = 0x1B0;  // MEDIUM: std::string, e.g. "building_01:is_enabled"
     constexpr size_t NEXT_LEVEL_PTR     = 0x1D8;  // LOW: ptr, CBuildingType* for next upgrade level
@@ -4544,13 +4921,21 @@ namespace building_type {
 
 // =============================================================================
 // Building Type Database (singleton at globals::BUILDING_TYPE_DB)
-// Access: ptr db = read_ptr(resolve(BUILDING_TYPE_DB))
-//   db+0x88 = array of CBuildingType*, db+0x90 = entry count
+// Core dump (ivar867, 867.01.01; resolves only with the image base set by hand,
+// r.base_addr = 0x561b49cd4000, see re_unstable_reads_867.md): db 0x7f8ffad4c990,
+// +0x60 "common/buildings", +0x90 = 957, +0x94 = 957, all 957 slots named
+// (capital_bureau_01 .. the_great_wall_liaodong). The array is full in this dump,
+// so it agrees with the rule but cannot tell capacity from count: MEDIUM.
+// Access: ptr db = read_ptr(resolve(BUILDING_TYPE_DB)); db+0x88 is a CPdxArray of
+// CBuildingType* (pdx_array: data +0, capacity +8, count +0xC; the game_db
+// container layout ENTRIES_ARRAY / ENTRY_CAPACITY / LIVE_COUNT):
+//   db+0x88 = array of CBuildingType*, db+0x90 = capacity, db+0x94 = live count
 // =============================================================================
 namespace building_db {
     constexpr size_t PATH_STRING        = 0x60;   // MEDIUM: std::string "common/buildings"
     constexpr size_t ENTRY_TABLE        = 0x88;   // MEDIUM: ptr, array of CBuildingType*
-    constexpr size_t ENTRY_COUNT        = 0x90;   // MEDIUM: uint32, number of building types (957)
+    constexpr size_t ENTRY_CAPACITY     = 0x90;   // MEDIUM: uint32, the array's capacity (957 in the dump; no reader counts with it)
+    constexpr size_t ENTRY_LIVE_COUNT   = 0x94;   // MEDIUM: uint32, live building types (957 in the dump; game_db::LIVE_COUNT rule)
 }
 
 // =============================================================================
@@ -4616,7 +5001,15 @@ namespace interaction_def {
     constexpr size_t OPT_STARTS_ENABLED   = 0x1C0;  // trigger block: starts_enabled (only if OPT_HAS_STARTS_ENABLED != 0)
     constexpr size_t OPT_HAS_STARTS_ENABLED = 0x21C; // int32: if 0, skip starts_enabled evaluation
     constexpr size_t OPT_FAILURES_ONLY    = 0x2A0;  // trigger block: is_valid_showing_failures_only
-    constexpr size_t OPT_FLAG_KEY_HASH    = 0x3A8;  // uint32: hashed flag name (scope name for this option)
+    // HIGH (lane l4, re_interactions.md §2): NOT a hash. It is the id of the option's
+    // `flag = <name>` in the scope-name registry (globals::SCOPE_NAME_REGISTRY): the scope
+    // setup (INTERACTION_FLAG_RESET_AND_SCOPE_SETUP, FUN_06b3f5a0) publishes each option's
+    // selection byte under this key, which is why scripts read `scope:matrilineal`. Dump
+    // (ivar867): arrange_marriage_interaction's six options read 0xd6 0x1d 0x31 0x2061
+    // 0x3f55 0x4166 = grand_wedding_promise, matrilineal, hook, piety_cost_reduction,
+    // influence_send_option, herd_send_option through the registry, in script order.
+    constexpr size_t OPT_FLAG_NAME_ID     = 0x3A8;  // uint32: scope-name id of the option's flag
+    constexpr size_t OPT_LOC_KEY          = 0x380;  // HIGH: std::string, the option's `localization` key (MATRILINEAL_OFFER, MARRIAGE_HOOK) — dump, all six arrange_marriage options
     constexpr size_t OPT_STRIDE           = 0x7D0;  // 2000 bytes per option entry
 
     // Known send_option flags for release_from_prison_interaction (index order from game scripts):
@@ -4844,8 +5237,8 @@ namespace interaction_effect_funcs {
 // CRejectedInteraction (typeinfo at 0x0bcb8f18 → "20CRejectedInteraction").
 // The corresponding "EffectHandler wrapper" with vtable 0x0bcb8e58 is
 // CPlayerPendingInteractions (typeinfo at 0x0bcb8f00). Layout in that
-// namespace remains correct; only the names are wrong. Renaming is left for
-// a follow-up audit bead. See re/findings/re_cpending_character_interaction_layout_ck-hm9w.md §7.
+// namespace remains correct; only the names are wrong (the namespace keeps
+// its historical name). See re/findings/re_cpending_character_interaction_layout_ck-hm9w.md §7.
 // =============================================================================
 namespace c_pending_character_interaction {
     // Total size and class identity (RAW addresses per canonical convention; subtract from Ghidra VA via -0x100000)
@@ -4958,8 +5351,8 @@ constexpr uintptr_t INTERACTION_SLOT_REGISTRAR   = 0x06a3d100; // HIGH: FUN_06b3
 namespace interaction_scoring {
     // CModValue blocks for AI scoring
     constexpr size_t ITYPE_AI_WILL_DO             = 0x1AD0;  // HIGH: CModValue, initiator AI desire
-    constexpr size_t ITYPE_AI_ACCEPT              = 0x1B30;  // HIGH: CModValue, target acceptance
-    constexpr size_t ITYPE_AI_ACCEPT_NEGOTIATION  = 0x1B90;  // HIGH: CModValue, recipient negotiation acceptance
+    constexpr size_t ITYPE_AI_ACCEPT              = 0x1B30;  // HIGH: CModValue, offset; NOTE (l10 witness 4, decompile of FUN_06b43be0): evaluated in the SECONDARY recipient's scope (ctx+0x2E8), not the target's
+    constexpr size_t ITYPE_AI_ACCEPT_NEGOTIATION  = 0x1B90;  // HIGH: CModValue, offset; NOTE (l10 witness 4, decompile of FUN_06b43c70): evaluated in the RECIPIENT's scope (ctx+0x2DC); the send's recipient answer (ACCEPTANCE_DECISION mode 1) decides on it
 
     // CModValue internal layout
     constexpr size_t MODVAL_BASE_VALUE            = 0x38;    // HIGH: int64, fixed-point /100000
@@ -4989,10 +5382,26 @@ namespace interaction_scoring {
 
 // =============================================================================
 // CInteractionEvalContext — TLS interaction evaluation context (~0x338 bytes)
-// Thread-local at FS_BASE - 0x3a78, guard byte at FS_BASE - 0x6e8
+// Thread-local at FS_BASE - 0x3a78, its construction guard byte at FS_BASE - 0x3740
 // Used by AI_INTERACTION_CORE, SET_TARGET, SET_SECONDARY_*, BUILD_SEND_CMD
 // =============================================================================
 namespace interaction_ctx {
+    // Where the game thread's context and its guard live, as distances below the
+    // FS base (Linux; Windows reads ck3.exe's TLS block, ck3_offsets_win.h).
+    // HIGH, three sources: AI_INTERACTION_CORE's own instructions (ELF 0x4cc4562:
+    // `cmpb $0x0,%fs:0xffffffffffffc8c0`, i.e. fs:-0x3740; 0x4cc4571: `mov %fs:0x0,%rax`
+    // then `lea -0x3a78(%rax),%rbp`, binary MD5 09ba163b...), the bridge's own
+    // runtime scan of that function (bridge log: "FS-segment ref at func+0x22:
+    // disp=0xffffffffffffc8c0"), and the decompile (`in_FS_OFFSET[-0x6e8]` with
+    // in_FS_OFFSET typed long*, so 0x6e8 * 8 = 0x3740 bytes).
+    // The guard was 0x6e8 here until cleanup 2026.11 (lane l6, F12): the decompile's
+    // element index read as a byte offset. The bridge then read and wrote an
+    // unrelated TLS byte as the guard, skipped constructing a context the engine had
+    // not built yet, and CTX_INIT faulted growing a scope list whose allocator was
+    // still null (FUN_07551a70, rdi = 0: gift_interaction 9870 -> 8834, the first
+    // direct dispatch on a freshly loaded 867 save).
+    constexpr size_t TLS_GUARD_FS_OFFSET    = 0x3740;  // HIGH: uint8 guard, 0 = context not constructed on this thread
+    constexpr size_t TLS_CONTEXT_FS_OFFSET  = 0x3a78;  // HIGH: the CInteractionEvalContext itself (not a pointer to it)
     constexpr size_t INTERACTION_TYPE_PTR   = 0x000;  // ptr: CCharacterInteractionType
     constexpr size_t SCOPE_LIST             = 0x008;  // SSavedEventTarget-based scope
     constexpr size_t ACTOR_CHAR_REF         = 0x2D8;  // uint32: actor character packed ref (param_1[0x5b])
@@ -5007,12 +5416,23 @@ namespace interaction_ctx {
     constexpr size_t SECONDARY_RECIPIENT_REF = 0x2E4; // uint32: CLAIMANT char ref (scope key "claimant") — for marriage: secondary recipient
     constexpr size_t CLAIMANT_REF           = 0x2E4;  // alias: same offset, used for declare_war (who holds the claim)
     constexpr size_t TERTIARY_REF           = 0x2E8;  // uint32: tertiary character ref
-    constexpr size_t EVAL_FLAGS_PTR         = 0x2F0;  // ptr: bool array for target slots
+    // 0x2F0 is the interaction's TARGET SCOPE OBJECT (16 bytes: u16 scope type at +0x2F0,
+    // u64 value at +0x2F8), not a pointer (lane l5, re/findings/re_war.md §2): FUN_06b3f270
+    // returns ctx+0x2F0 as the target; SET_TARGET clears it (FUN_0758aed0); SCOPE_SETUP saves
+    // it as scope:target (scope-name id 4) when its type is non-zero; the deep copy FUN_06b3d770
+    // copies +0x2F0..+0x2FF; the CEndWar*InteractionData scope hook writes a war there as type 0x10.
+    // Lane l4 (re_interactions.md §3) reached the same layout independently: title-target
+    // interactions (revoke_title, grant_titles: `target_type = title`) carry the title here
+    // (type scope_value_type::TITLE, value = the title's full id), written after the recipient
+    // through funcs::INTERACTION_CTX_SET_TARGET_OBJECT. These reads refute the earlier reading
+    // of 0x2F0 as EVAL_FLAGS_PTR (a bool array); the Windows layout map keys on
+    // INTERACTION_CTX_TARGET_SCOPE_TYPE, so that name is gone.
+    constexpr size_t TARGET_SCOPE_TYPE      = 0x2F0;  // HIGH: u16 scope type (0 = no target, 4 = character, 5 = title (scope_value_type::TITLE), 0x10 = war)
+    constexpr size_t TARGET_SCOPE_VALUE     = 0x2F8;  // HIGH: u64 value (war: the full war id, generation in the top byte; title: the title's full id)
+    constexpr uint16_t SCOPE_TYPE_WAR       = 0x10;   // HIGH: FUN_05f0efd0 tags the war scope 0x10 (FUN_0758ae90(scope, 0x10))
     // Send_option / CB option selection state:
     constexpr size_t OPTION_SELECTION_PTR   = 0x300;  // ptr: byte array (1 byte per option, 0=off 1=on)
-    constexpr size_t EVAL_FLAGS_2           = 0x300;  // alias: same as OPTION_SELECTION_PTR (legacy name)
     constexpr size_t OPTION_SELECTION_COUNT = 0x30C;  // int32: number of options in selection array
-    constexpr size_t EVAL_SLOT_COUNT        = 0x30C;  // alias: same as OPTION_SELECTION_COUNT (legacy name)
     constexpr size_t OPTION_SELECTION_CAP   = 0x308;  // int32: capacity of selection array (param_1[0x61])
     constexpr size_t EVAL_SLOT_CAPACITY     = 0x310;  // int32: slot capacity (allocator ptr at 0x310)
     constexpr size_t SCRIPTED_DATA_PTR      = 0x330;  // CCasusBelli sub-object for war commands (filled by WAR_ATTACH_STATE + WAR_ATTACH_CB)
@@ -5025,6 +5445,71 @@ namespace interaction_ctx {
     //   +0x20: ptr    allocator
     //   +0x28: uint32 claimant_ref      — claimant char ref for claim_cb (written by WAR_ATTACH_CB from source[0])
     // CRITICAL: PopulateOptions/SelectOption do NOT write here. Must call WAR_ATTACH_STATE + WAR_ATTACH_CB explicitly.
+}
+
+// =============================================================================
+// Scope values (CScopeValue, 16 bytes): {u16 type @+0x00, u64 value @+0x08}; the type
+// tags are namespace scope_value_type. FUN_0758ae90 writes the type, FUN_0758aef0 the
+// value (lane l4, re_interactions.md §3).
+// =============================================================================
+namespace scope_value {
+    constexpr size_t TYPE  = 0x00;  // HIGH: uint16, a scope_value_type tag
+    constexpr size_t VALUE = 0x08;  // HIGH: uint64 (an id zero-extended, or a bool)
+    constexpr size_t SIZE  = 0x10;  // HIGH
+}
+
+// =============================================================================
+// Scope-name registry (globals::SCOPE_NAME_REGISTRY, lane l4, re_interactions.md §2)
+// id -> name is a plain vector read (FUN_081f0c80): names[id & 0xFFFFFF], an
+// std::string (libstdc++, 0x20 bytes) per id; ids past NAMES_COUNT are invalid.
+// =============================================================================
+namespace scope_name_registry {
+    constexpr size_t NAMES_ARRAY = 0x28;  // HIGH: ptr, std::string[count]
+    constexpr size_t NAMES_COUNT = 0x34;  // HIGH: int32 (51,458 in the 867 dump)
+    constexpr size_t NAME_STRIDE = 0x20;  // HIGH: sizeof(std::string)
+}
+
+// =============================================================================
+// The interaction's special data (ctx + interaction_ctx::SCRIPTED_DATA_PTR, a pointer
+// to an object FUN_064a1100 creates from the interaction's special_interaction kind,
+// interaction_def+0x2A10; the scope setup calls its vt[7]/vt[8]). Lane l4,
+// re/findings/re_interactions.md §3b. The title the player picks for these two lives
+// here, not only in the target object:
+//   grant_titles (kind 7/8): CGrantTitlesOffer, 0x20 B, made by FUN_047c0280: a PDX
+//     array of u32 title ids {data @+0x08, capacity @+0x10, count @+0x14, allocator
+//     @+0x18}; its dtor frees data through allocator vt[3] (+0x18)(alloc, ptr, 4), and
+//     its save writes count ids under tag 0x27d5. HIGH (ctor, dtor, save decompiled).
+//   revoke_title (kind 9): CRevokeTitle, 0x10 B, made by FUN_048578e0: u32 title id
+//     @+0x08, 0xFFFFFFFF when none; its save writes it under tag 0x6ce. HIGH.
+// =============================================================================
+namespace special_data {
+    constexpr uintptr_t GRANT_TITLES_OFFER_VTABLE = 0x0bb566c0;  // HIGH: image 0xbc566c0 (typeinfo 17CGrantTitlesOffer)
+    constexpr uintptr_t REVOKE_TITLE_VTABLE       = 0x0bbd3550;  // HIGH: image 0xbcd3550 (typeinfo 12CRevokeTitle)
+    constexpr size_t OFFER_DATA       = 0x08;  // HIGH: u32* title ids
+    constexpr size_t OFFER_CAPACITY   = 0x10;  // HIGH: int32
+    constexpr size_t OFFER_COUNT      = 0x14;  // HIGH: int32
+    constexpr size_t OFFER_ALLOCATOR  = 0x18;  // HIGH: allocator object*
+    constexpr size_t ALLOCATOR_VT_ALLOC = 0x10;  // HIGH: (alloc, count, elem_size) -> ptr (SELECT_OPTION's resize)
+    constexpr size_t REVOKE_TITLE_ID  = 0x08;  // HIGH: u32 title id
+}
+
+// =============================================================================
+// CAddTitleLawCommand (0x30 bytes): the title-law window's command (lane l4,
+// re_interactions.md §5). ctor(cmd, title_id, actor_id, CLaw*) stores the full title id
+// @+0x20, the actor's full id @+0x24 and the law's index (CLaw+0x08) @+0x28. vt[7]
+// IsValid(cmd, std::string* why) resolves all three and runs the law's can-change check
+// (FUN_06e30270), writing the engine's refusal text into *why; vt[9] clones (0x30 B);
+// vt[19] Execute adds the law to the title (FUN_061d14f0(title, law, 0, 0)). The UI
+// (FUN_04be03d0) calls IsValid with a std::string for the tooltip. HIGH: decompile of the
+// ctor, IsValid, clone, save/load (tags 0x6ce title, 0x6ec character, 0x2ff2 law) and Execute.
+// =============================================================================
+namespace add_title_law_cmd {
+    constexpr size_t TITLE_ID   = 0x20;  // HIGH: uint32 full title id
+    constexpr size_t ACTOR_ID   = 0x24;  // HIGH: uint32 full character id
+    constexpr size_t LAW_INDEX  = 0x28;  // HIGH: int32, index into REALM_LAW_DB (CLaw+0x08)
+    constexpr size_t SIZE       = 0x30;  // HIGH: clone allocates 0x30
+    constexpr size_t VT_IS_VALID = 7;    // HIGH: vtable slot
+    constexpr size_t VT_CLONE    = 9;    // HIGH: vtable slot
 }
 
 // =============================================================================
@@ -5081,7 +5566,6 @@ namespace cb_type {
     constexpr size_t FLAGS_1700         = 0x1700; // HIGH: byte, flags (bit 6 = vassal-only when VASSAL_CB_FLAG==0) (Phase 9)
     // Note: `*(int16_t*)(cb+0x1700) < 0` is read by WAR_CREATE_CORE Block L to gate
     // ally-enlistment. The sign bit corresponds to bit 7 of FLAGS_1701 (high byte of i16).
-    // Semantic name for that bit pending further RE (ck-e58l.5).
     constexpr size_t FLAGS_1702         = 0x1702; // HIGH: byte, flags (bit 4 = title_required) (R11-25)
     constexpr size_t FLAGS_1703         = 0x1703; // HIGH: byte, flags (bit 0 = AI-allowed, checked only under CB_CASCADE mode=2) (ck-e58l.3)
 
@@ -5124,7 +5608,7 @@ namespace cb_group {
     constexpr size_t STAGE2_FLAG   = 0x20A;  // MEDIUM: byte — second outer-trigger gate paired with DISABLED_FLAG
                                               // in AI_CB_EVALUATE_ALL Stage 2 (line 359 of decomp:
                                               // *(char *)(group + 0x20a) == '\0'). Distinct from AI_ALLOWED;
-                                              // exact semantics deferred to follow-up RE (ck-39e1 Stage 1+2 mirror).
+                                              // exact semantics unknown (ck-39e1 Stage 1+2 mirror).
 }
 
 // =============================================================================
@@ -5204,18 +5688,18 @@ namespace faction_v2 {
     constexpr size_t COUNTY_MEMBERS_PTR = 0x58;   // HIGH: ptr, CPdxArray<SFactionCountyMember> data
     constexpr size_t COUNTY_MEMBERS_COUNT = 0x64; // HIGH: int32, county member count (stride=0x18)
     constexpr size_t TICK_SLOT          = 0x70;   // HIGH: int32, monthly tick slot index (0-29)
-    constexpr size_t COOLDOWN_DATE      = 0x74;   // HIGH: int64, cooldown after demand press (game date)
-    constexpr size_t PREV_ULT_DATE      = 0x7C;   // MEDIUM: int64, previous ultimatum date (copied to +0xB0)
-    constexpr size_t WAR_REF            = 0x84;   // HIGH: uint32, linked war ref (CWar DB, 0xFFFFFFFF = none)
+    constexpr size_t COOLDOWN_DATE      = 0x74;   // HIGH: CDate (8 bytes: int32 ticks, then cached d/m/y; compare the int32 only), cooldown after demand press (press body FUN_05f8d900 writes now + cooldown); "never" = SENTINEL_DATE
+    constexpr size_t PREV_ULT_DATE      = 0x7C;   // HIGH: CDate, the saved ultimatum date: the save writer (FUN_05f8a580) serializes it, FactionTick copies it to +0xB0 each tick, and in play only the ctor and the tick commit (FUN_05f8d3e0, the "never" date) write it (objdump of 0x05e80000-0x05eb0000); so +0xB0 is re-armed every tick (re_factions.md §7)
+    constexpr size_t WAR_REF            = 0x84;   // HIGH: uint32, the faction's war: the war's full handle (generation byte | WAR_DB slot), 0xFFFFFFFF = none. The game's "faction is in war" (CAN_FIRE_ULTIMATUM FUN_05f8ca90, FactionTick FUN_05f8c910): slot = WAR_DB[ref & 0xFFFFFF], the war only when its WAR_ID == ref (else the null war), at war = its IsValid. A war that ended leaves the ref until the tick commit (FUN_05f8d3e0) clears it. One reading: bridge faction_war.h (re_factions.md section 8)
     constexpr size_t BASE_DISCONTENT    = 0x90;   // HIGH: int64, fp/100k, clamped discontent [0, threshold]
     constexpr size_t POWER_RATIO_CACHED = 0x98;   // HIGH: int64, fp/100k, CalcPowerRatio result (set in tick)
     constexpr size_t SCRIPT_VALUE_A0    = 0xA0;   // HIGH: int64, fp/100k, eval of CFactionType+0xF38 (set in tick)
-    constexpr size_t ULTIMATUM_PROGRESS = 0xA8;   // HIGH: int64, fp/100k, 0=none, 10000000=ready to fire (100.0)
-    constexpr size_t ULTIMATUM_FIRE_DATE = 0xB0;  // HIGH: int64, game date when ultimatum fires (sentinel=no ultimatum)
-    constexpr size_t WAR_INACTIVE_FLAG  = 0xB8;   // HIGH: bool, linked war is inactive/ended
-    constexpr size_t SHOULD_PRESS_DEMAND = 0xB9;  // MEDIUM: bool, faction should auto-press demand
+    constexpr size_t ULTIMATUM_PROGRESS = 0xA8;   // HIGH: int64, fp/100k, 0=none, 10000000=100.0; the AI leader presses at the tick commit (FUN_05f8d3e0) when rand%100 < this/100000: his chance per faction tick (re_factions.md §7)
+    constexpr size_t ULTIMATUM_FIRE_DATE = 0xB0;  // HIGH: CDate (8 bytes: int32 ticks, then cached d/m/y; FactionTick compares the int32 only), written each tick: tomorrow + ULTIMATUM_DELAY_DAYS while discontent is full and CAN_FIRE_ULTIMATUM holds, else "never" = SENTINEL_DATE (core ivar867: all 36 factions); no due date, the next tick writes it again from PREV_ULT_DATE (re_factions.md §7)
+    constexpr size_t WAR_INACTIVE_FLAG  = 0xB8;   // HIGH: bool, FactionTick (FUN_05f8c910): WAR_REF set and its war no longer valid (the null war); the commit (FUN_05f8d3e0) then writes WAR_REF = 0xFFFFFFFF. A per-tick scratch value, not read by the bridge (faction_war.h reads the war itself)
+    constexpr size_t SHOULD_PRESS_DEMAND = 0xB9;  // MEDIUM: bool, NOT "should press": FactionTick stores FUN_05fa42a0 here, true when a player is concerned (the target, the leader or the character at +0x88 is a player, or a player's realm step is the target; FUN_06884e80 = the game state's player list); the tick commit copies it to +0xC1. Name kept for the Windows layout mapping (ck3_offsets_win.h names it). Not read by the bridge (decompile 2026-10-27, re_factions.md section 8)
     constexpr size_t DISABLED_FLAG      = 0xC0;   // HIGH: bool, skip tick processing if set
-    constexpr size_t AT_WAR_FLAG        = 0xC1;   // HIGH: bool, faction currently at war
+    constexpr size_t AT_WAR_FLAG        = 0xC1;   // MEDIUM: bool, NOT at war (was graded HIGH "faction currently at war"): the tick commit (FUN_05f8d3e0) copies +0xB9 here, the "a player is concerned" flag; core ivar867 (observer, no player): 0 on all 36 factions; live w-l10-factions-5: 0 for faction 95 at war (war 51) while the game refused its press "while the faction is in war". Name kept for the Windows layout mapping (ck3_offsets_win.h names it); the bridge does not read it: a faction's war is WAR_REF resolved (faction_war.h, re_factions.md section 8)
 
     // SFactionCharMember offsets (stride = 0x20)
     namespace char_member {
@@ -5242,6 +5726,10 @@ namespace faction_v2 {
         // re_faction_join_create.md — write side
         constexpr size_t CREATABLE_FLAG            = 0xFEB; // HIGH: bool, ruler-creatable (gated in FACTION_CAN_CREATE)
         constexpr size_t CREATE_TRIGGER_BLOCK      = 0x790; // HIGH: can_create script trigger block (eval'd by FACTION_CAN_CREATE)
+        // The casus belli key the faction's war uses when its demand is refused
+        // ("independence_faction_war" on independence_faction): std::string, core
+        // dump 867 (re_factions.md §4), next to the CB object pointer at +0xFE0.
+        constexpr size_t WAR_CB_KEY                = 0xFC0; // MEDIUM: std::string (one dump, 12 types read)
     }
 }
 
@@ -5260,9 +5748,26 @@ namespace faction_write {
     // (or NULL_FACTION_SENTINEL on rejection). Models CCreateFactionCommand.
     constexpr uintptr_t GET_OR_CREATE_AND_JOIN  = 0x05e9c920; // HIGH: CFaction*(FactionMgr*, CFactionType*, CChar* actor, CChar* liege) (FUN_05f9c920)
     constexpr uintptr_t GET_FACTION_MANAGER     = 0x05f60240; // HIGH: FactionMgr*(GameState* gsr) → *(gsr+0xa0)+0x17918 (FUN_06060240)
-    constexpr uintptr_t FACTION_CAN_CREATE      = 0x06dfed90; // HIGH: bool(CFactionType*, CChar* liege, CChar* actor, void* reason_out_or_0) (FUN_06efed90)
-    constexpr uintptr_t FACTION_CAN_JOIN        = 0x05ea3640; // HIGH: bool(CChar* actor, CFaction*, void* ctx, void* reason_out_or_0) (FUN_05fa3640)
-    constexpr uintptr_t FACTION_IS_MEMBER       = 0x05e8c4d0; // HIGH: member*(CFaction*, CChar*) — walks +0x40/+0x4c member array (FUN_05f8c4d0)
+    // FACTION_CAN_CREATE argument order corrected 2026-10-20 (lane l10-factions): the
+    // call site in GET_OR_CREATE_AND_JOIN (FUN_05f9c920) passes (type, actor, liege,
+    // &reason) — its own args are (mgr, type, actor, liege) and the liege is the one it
+    // initialises the faction's target from (FACTION_INIT target_ref = liege+0x18).
+    // reason_out is a libstdc++ std::string* the engine appends localized text to
+    // (FUN_0763e250 → FUN_081f95c0 = basic_string::_M_append).
+    constexpr uintptr_t FACTION_CAN_CREATE      = 0x06dfed90; // HIGH: bool(CFactionType*, CChar* actor, CChar* liege, std::string* reason_or_0) (FUN_06efed90)
+    // The PLAYER's create check: CCreateFactionCommand's CanExecute (FUN_05f99d40:
+    // cmd+0x20 type index, +0x24 actor, +0x28 target) calls it with flags
+    // {1,1,1,1,1} and no reason; it runs the join-eligibility core (FUN_05fa2fd0,
+    // shared with FACTION_CAN_JOIN), FUN_05fa3530 (flags[0]) and FACTION_CAN_CREATE
+    // (flags[1]). A std::string* reason gets the engine's text (re_factions.md §1).
+    constexpr uintptr_t FACTION_CAN_CREATE_AS_COMMAND = 0x05ea3460; // HIGH: bool(CChar* actor, CChar* liege, CFactionType*, const uint8_t flags[5], std::string* reason_or_0) (FUN_05fa3460)
+    // ctx is a 5-byte check-flags block; the join_faction effect (FUN_05065360)
+    // passes {1,1,1,1,1}. reason_out: std::string* (same append path).
+    constexpr uintptr_t FACTION_CAN_JOIN        = 0x05ea3640; // HIGH: bool(CChar* actor, CFaction*, const uint8_t flags[5], std::string* reason_or_0) (FUN_05fa3640)
+    // Corrected 2026-10-20 (re_factions.md §1): the return is a BOOL in the low byte
+    // (`found != end`); the upper bytes are the array end pointer's, so a caller that
+    // reads it as a pointer sees every character as a member (run l10-dev4).
+    constexpr uintptr_t FACTION_IS_MEMBER       = 0x05e8c4d0; // HIGH: bool(CFaction*, CChar*) — matches char+0x18 against the +0x40/+0x4c member array (FUN_05f8c4d0)
     constexpr uintptr_t FACTION_ALLOC           = 0x05e9e690; // MEDIUM: {CFaction*,tickslot}(mgr+0x20+8) — empty alloc (FUN_05f9e690)
     constexpr uintptr_t FACTION_INIT            = 0x05e8a480; // MEDIUM: void(CFaction*, CFactionType*, u32 target_ref, int slot) (FUN_05f8a480)
 
@@ -5279,8 +5784,26 @@ namespace faction_write {
     // skip_validate=1 forces (CJoinFactionForcedEffect); =0 runs FACTION_CAN_JOIN.
     // title_or_neg1 != -1 → claimant_data ({title_idx, gs_title_ptr}) copied to member+0x14.
 
-    // LEAVE: CLeaveFactionCommand/CLeaveFactionEffect exist (RTTI) but the
-    // function address is NOT yet pinned — see re_faction_join_create.md §6.
+    // Default claimant data the join_faction effect passes to JOIN_FACTION
+    // (FUN_05065360: Faction_AddMember(f, char_ref, -1, 0xc1e95b8, 0)).
+    constexpr uintptr_t JOIN_DEFAULT_CLAIMANT_DATA = 0x0c0e95b8; // HIGH: address passed as arg 4 (image 0x0c1e95b8)
+
+    // LEAVE (re_factions.md §2, 2026-10-20). CLeaveFactionCommand vtable (image
+    // 0x0bc17b50; typeinfo 0x0bc17ef8): slot 7 (CanExecute, FUN_05f99820) resolves the
+    // faction (cmd+0x20) and the character (cmd+0x24) and returns
+    // FACTION_CAN_LEAVE(f, char, 0); Execute (FUN_05f99720) calls
+    // FACTION_REMOVE_MEMBER(GET_FACTION_MANAGER(gsr), f, char_ref, *LEAVE_REASON_VALUE, 0).
+    constexpr uintptr_t FACTION_CAN_LEAVE       = 0x05e8c6a0; // HIGH: bool(CFaction*, CChar*, std::string* reason_or_0) (FUN_05f8c6a0)
+    constexpr uintptr_t FACTION_REMOVE_MEMBER   = 0x05e9bfd0; // HIGH: void(FactionMgr*, CFaction*, u32 char_ref, u64 reason_value, bool* destroyed_or_0) (FUN_05f9bfd0); destroys the faction when it empties
+    constexpr uintptr_t LEAVE_REASON_VALUE      = 0x0bed8830; // HIGH: the 8-byte VALUE at this global is arg 4 (Execute and GetOrCreate's destroy path both pass _DAT_0bfd8830)
+
+    // PRESS DEMAND (re_factions.md §3). CFactionPressDemandCommand vtable (image
+    // 0x0bc17e08; typeinfo 0x0bc17f40): CanExecute (FUN_05f9a0f0) is
+    // faction_funcs::CAN_FIRE_ULTIMATUM(f, 0); Execute (FUN_05f9a030) calls
+    // FACTION_PRESS_DEMAND(f), which re-checks CAN_FIRE_ULTIMATUM and then runs the
+    // demand (FUN_05f8d900). CAN_FIRE_ULTIMATUM's second argument is a std::string*
+    // reason (same append path as CAN_CREATE).
+    constexpr uintptr_t FACTION_PRESS_DEMAND    = 0x05e8d8e0; // HIGH: void(CFaction*) (FUN_05f8d8e0), self-gating
 }
 
 // Faction power/ultimatum functions (ck-bf34)
@@ -5306,7 +5829,7 @@ namespace faction_funcs {
 // Faction global constants
 namespace faction_globals {
     constexpr uintptr_t ULTIMATUM_DELAY_DAYS = 0x0c2aca08;  // HIGH: int32=90, days before ultimatum fires
-    constexpr uintptr_t SENTINEL_DATE        = 0x0c293778;  // HIGH: int64, "never" date sentinel for cooldown/ultimatum
+    constexpr uintptr_t SENTINEL_DATE        = 0x0c293778;  // HIGH: CDate, int32 43808760 (0001.01.01) then 0x00010000; "never" date for cooldown/ultimatum. Compare the int32: the 8 bytes as int64 never equal a field (FactionTick FUN_05f8c910; core ivar867)
 }
 
 // Decision Hash Table (at *(DECISION_DB + 0x1b0)) -- same layout as interaction HT
@@ -5420,6 +5943,15 @@ namespace diag_record {
 // Confirmed via core dump RTTI-guided traversal (ck-ysls, ck-vqth)
 namespace trigger_struct {
     constexpr size_t VTABLE            = 0x00;   // HIGH: vtable ptr (RTTI: 11CAndTrigger, etc.)
+    // l3-schemes 2026-10-20: every trigger, leaf or block, carries where the script
+    // wrote it. +0x08 u32 = the token id of its script key (globals::TOKEN_TABLE_PTR),
+    // +0x10 char* file (+0x18 its length), +0x20 int32 the 1-based line. murder's
+    // allow children read 26/27/28 = age / is_imprisoned / any_held_title, the lines
+    // murder_scheme.txt has them on. HIGH: core dump (52 children over 3 types) + the
+    // script files.
+    constexpr size_t TOKEN_ID          = 0x08;   // HIGH: u32 (l3-schemes)
+    constexpr size_t SOURCE_FILE_LEN   = 0x18;   // HIGH: u64 (l3-schemes)
+    constexpr size_t SOURCE_LINE       = 0x20;   // HIGH: int32 (l3-schemes)
     constexpr size_t SOURCE_FILE       = 0x10;   // HIGH: char*, debug source file path
     constexpr size_t LABEL             = 0x28;   // HIGH: char*, debug trigger label (e.g., "declare_war_interaction:is_shown")
     constexpr size_t TRIGGER_ID        = 0x40;   // MEDIUM: uint64, unique trigger identifier
@@ -5531,6 +6063,29 @@ namespace event_sys {
     // CONFIRMED (Round 3): AI event evaluator helper
     constexpr uintptr_t AI_CHANCE_COMPUTE     = 0x07445820;  // HIGH: fn(option_ptr) → int64 weight (CORRECTED from 0x07445820) (ck-e58l.20)
     constexpr uintptr_t PENDING_EVENT_ENUM    = 0x05e5ace0;  // fn enumerating pending events (365B)
+
+    // ── The AI's event-option pick (re_factions.md §5, lane l10-factions 2026-10-20) ──
+    // CoreEventQueue (image 0x05f5cab0) resolves the event's root character from the
+    // scope context (FUN_05f72a60: tag at +0, char ref at +8 when tag==4), and for a
+    // character the AI answers it calls AI_PICK_EVENT_OPTION(event, ctx, rng, flag) —
+    // its ONLY caller — then executes the returned option index (FUN_07536e40). The
+    // picker walks event+0x1b0/+0x1bc, gates each option on EVENT_OPTION_IS_AVAILABLE,
+    // weighs it with AI_CHANCE_COMPUTE and returns a weighted-random index, or -1.
+    constexpr uintptr_t AI_PICK_EVENT_OPTION  = 0x074378d0;  // HIGH: u32(CEvent*, scope_ctx*, int rng, u32 flag) → option index or 0xFFFFFFFF (FUN_075378d0, decompiled)
+    constexpr uintptr_t EVENT_OPTION_IS_AVAILABLE = 0x07445ac0; // HIGH: bool(option*, scope_ctx*, u32 flag) (FUN_07545ac0, the picker's own gate)
+    constexpr size_t SCOPE_CTX_TYPE           = 0x0;    // HIGH: int16, 4 = character (FUN_05f72a60)
+    constexpr size_t SCOPE_CTX_REF            = 0x8;    // HIGH: u32 character ref when SCOPE_CTX_TYPE == 4
+    constexpr int16_t SCOPE_CTX_CHARACTER     = 4;      // HIGH: the character tag
+    // An option's `name = KEY` loc key: key = std::string at
+    // *(*(*(option + OPTION_DESC_HOLDER)) + OPTION_DESC_FIRST_ENTRY) + OPTION_ENTRY_KEY.
+    // option+0x10 → holder; *holder = CJominiEventOption::CEventOptionDesc (vtable
+    // image 0x0bf06888); desc+0x20 → the first CDynamicDescription entry; entry+0x30
+    // = std::string key. Core dump 867: 9 of 9 options on faction_demand.0001/.0101/
+    // .2001 read FACTION_DEMAND_ACCEPT, FACTION_DEMAND_BRIBE_CO_EMPEROR,
+    // FACTION_DEMAND_REFUSE in file order.
+    constexpr size_t OPTION_DESC_HOLDER       = 0x10;   // MEDIUM (one dump, 9 options)
+    constexpr size_t OPTION_DESC_FIRST_ENTRY  = 0x20;   // MEDIUM
+    constexpr size_t OPTION_ENTRY_KEY         = 0x30;   // MEDIUM: std::string
     constexpr uintptr_t AVAILABLE_OPT_COUNT   = 0x05ecf3f0;  // fn(event) -> available option count (883B)
 
     // CONFIRMED (Round 3): CSelectEventOptionCommand
@@ -5597,13 +6152,12 @@ namespace alliance {
     // directly to CCharacter::IsAlive. Do NOT pass scope objects; pass what
     // lookup_character(id & 0xFFFFFF) yields (the same _g_CharacterDB_root walk the
     // engine's FUN_05f72a60 unwrap does). Path B (direct gated cmd) needs NO
-    // scope_ctx frame, NO recipient saved-target. The literal break is IMPLEMENTED
-    // behind the DEFAULT-OFF g_enable_break_alliance flag (IntentType::BREAK_ALLIANCE,
-    // game-thread drain under fake-RNG + watchdog + sigsetjmp). It stays
-    // observer-save-GATED: not agent-reachable until the FINAL §5 disposable-save
-    // smoke confirms live dissolve behaviour (the ABI is HIGH; live behaviour is
-    // the remaining MEDIUM). The safe-now ally-call-refusal posture lever remains
-    // the `conqueror`-variable scripted-effect (character-root, no recipient).
+    // scope_ctx frame, NO recipient saved-target. The bridge has no caller of
+    // these addresses: the default-off break_alliance write path (flag, intent
+    // and game-thread drain case) was deleted in cleanup 2026.11 (D6) because the
+    // §5 disposable-save smoke that would have confirmed live dissolve behaviour
+    // was never run, so the path never became agent-reachable. The offsets stay
+    // as RE record: the ABI is HIGH; live dissolve behaviour was never observed.
     constexpr uintptr_t BREAK_ALLIANCE_EFFECT_APPLY_LB1 = 0x04ec8d10; // HIGH: CBreakAllowAllianceEffect<true>::Execute (vt[23]); gated, force=0
     constexpr uintptr_t BREAK_ALLIANCE_EFFECT_APPLY_LB0 = 0x04ec89f0; // HIGH: CBreakAllowAllianceEffect<false>::Execute (vt[23]); force=1
     constexpr uintptr_t BREAK_ALLIANCE_CMD              = 0x06750ef0; // HIGH: break_alliance_cmd(actor, ally, force) — alive+relation gated; adjacent to IsAlliedTo
@@ -5630,7 +6184,20 @@ namespace interaction_cmd {
 // Accessed via DAT_0c69dd68; engine calls FUN_07660390(&mgr, &clone, 7, 0)
 // =============================================================================
 namespace dispatch_mgr {
+    // L13 (re_frame_update_hook.md): GATE_BYTE is "local peer is an observer". It is written only by
+    // CSetObserverCommand::Execute (funcs::SET_OBSERVER_CMD_EXECUTE) for the local peer; dump = 1
+    // in an observer game. When set, GameCommandDispatch WITHOUT flag bit0 destroys any command
+    // lacking flags 6/8 and returns 0.
     constexpr size_t GATE_BYTE              = 0x25A;  // HIGH: uint8, dispatch gate field
+    constexpr size_t THREAD_FN              = 0x78;   // HIGH: session-thread loop fn ptr (globals::SESSION_THREAD_FN_SLOT)
+    constexpr size_t THREAD_ARG             = 0x80;   // HIGH: its argument (= the session; dump)
+    constexpr size_t THREAD_STOP            = 0x88;   // HIGH: u8, loop exits when bit0 set
+    constexpr size_t MODE_BYTE              = 0x250;  // HIGH: u8 session mode (0 local; globals::COMMAND_DISPATCH_GATE)
+    constexpr size_t EXEC_MUTEX             = 0x260;  // HIGH: pthread_mutex_t around ProcessCommandQueue
+    constexpr size_t LOCAL_PEER_ID          = 0x404;  // MEDIUM: u32 stamped into cmd+0x0C by GameCommandDispatch (re_game_command_dispatch.md: "seq_counter")
+    constexpr size_t THREAD_STARTED         = 0x408;  // HIGH: u8 latch set by CSession_Init
+    constexpr size_t REPLAY_COMMANDS        = 0x40A;  // MEDIUM: u8 replay-recorded-commands phase
+    constexpr size_t EXECUTE_COMMANDS       = 0x40B;  // HIGH: u8, 1 = execute queued commands ("Setting execute commands: yes"); dump 1
     constexpr size_t QUEUE_PTR              = 0x3E8;  // HIGH: ptr, command queue
     constexpr size_t RECORDER_PTR           = 0x3F0;  // HIGH: ptr, command recorder (null to bypass replay log)
 }
@@ -5858,7 +6425,7 @@ namespace innovation_instance {
     constexpr size_t MODIFIER_DATA       = 0x70;   // MEDIUM: modifier/effect data block
     constexpr size_t MODIFIER_CONTAINER  = 0xD8;   // MEDIUM: modifier container
     constexpr size_t STRIDE              = 0x210;  // HIGH: stride between instances (528 bytes)
-    constexpr size_t ARRAY_COUNT         = 110;    // HIGH: total innovation instances per culture (R15 core verified)
+    // (ARRAY_COUNT 110 deleted, cleanup 2026.11 l6: the count is per culture and read from culture::INNOVATION_COUNT; Franconian holds 108)
 }
 
 // =============================================================================
@@ -5903,7 +6470,15 @@ namespace culture {
     constexpr size_t RESEARCH_SPEED_MOD = 0x5AC;  // HIGH: int32, research speed modifier (fixed-point /100000) (R15 verified)
     constexpr size_t ERA_ENTRIES_PTR    = 0x5B8;  // HIGH: ptr, CultureEraEntry array (stride=0x58)
     constexpr size_t ERA_ENTRIES_COUNT  = 0x5C4;  // HIGH: int32, number of era entries (= 4) (R15 verified)
-    constexpr size_t INNOVATION_ARRAY   = 0x5D0;  // HIGH: ptr, CCultureInnovation flat array base (stride=0x210, 110 entries)
+    constexpr size_t INNOVATION_ARRAY   = 0x5D0;  // HIGH: ptr, CCultureInnovation flat array base (stride=0x210)
+    // The instance array is a CPdxArray (pdx_array: the layout rule, checked below it).
+    // HIGH: dump ck3_20260625_152901_ivar867, Franconian (39): 141 at the capacity
+    // (+0x5D8, no constant: no reader), 108 at the count, and
+    // slots 0..107 carry the instance vtable while slot 108 on holds float bytes.
+    // query_innovation_progress / query_fascination_progress walked up to 200 slots
+    // until a page was unmapped, so their lists took rows from whatever followed the
+    // array and differed between launches (cleanup 2026.11, lane l6, F10).
+    constexpr size_t INNOVATION_COUNT   = 0x5DC;  // HIGH: int32, number of instances
     // Known innovations array: CPdxArray<CCultureInnovationType*>
     // Confirmed via decompilation of FUN_05d208c0 (8 bytes):
     //   LEA RAX,[RDI + 0x5e8]; RET
@@ -5941,13 +6516,15 @@ namespace culture {
 namespace faith {
     constexpr size_t VTABLE             = 0x00;   // HIGH: vtable pointer (RTTI: 6CFaith)
     constexpr size_t FAITH_ID           = 0x08;   // HIGH: uint32, sequential faith ID (0-139, R14 core dump verified)
-    constexpr size_t NAME_KEY           = 0x10;   // HIGH: std::string, faith key name (db_object name)
+    constexpr size_t NAME_KEY           = 0x10;   // LOW (was HIGH): NOT a string on a CFaith — an image pointer in all 140 faiths of the
+                                                   //   ivar867 dump (0 read as a string). The key is FAITH_KEY (+0x98); the faith's id is
+                                                   //   FAITH_ID (+0x08), which FAITH_DB's lookup checks (faith_lookup). Unread. L14 FB M-1.
     constexpr size_t RELIGION_TEMPLATE_REF = 0x1c; // HIGH: uint32, religion template DB ref — used in SetCountyFaith (ck-pj01)
     constexpr size_t FAITH_TEMPLATE     = 0x20;   // HIGH: ptr to CFaithTemplate (R14 RTTI verified: 14CFaithTemplate)
 
     // Round 14: Comprehensive struct layout from core dump + decompilation
     constexpr size_t FAITH_KEY          = 0x98;   // HIGH: std::string, faith key ("catholic", "theravada", etc.)
-    constexpr size_t DISPLAY_NAME       = 0xC0;   // HIGH: std::string, localized display name ("Catholicism")
+    constexpr size_t DISPLAY_NAME       = 0xC0;   // HIGH: std::string, localized display name ("Catholicism"; ivar867 dump: 140/140)
     constexpr size_t DISPLAY_NAME_ALT   = 0xF0;   // MED: std::string, alternate display name
     constexpr size_t ADHERENT_NAME      = 0x120;  // HIGH: std::string, adherent singular ("Catholic")
     constexpr size_t ADHERENT_PLURAL    = 0x150;  // HIGH: std::string, adherent plural ("Catholics")
@@ -6329,12 +6906,12 @@ namespace hook_type_db {
 // RTTI vtable at 0x0a6df628. NOT in a global ref DB -- stored per-character.
 // One hook per owner-target pair. Strong hooks survive use (go on cooldown),
 // weak hooks are consumed on use.
-// Exact offsets TBD -- decompile funcs::HOOK_STRENGTH_STATE etc. to confirm.
+// Field offsets are unknown: only the field types below are recovered.
 // =============================================================================
 namespace active_hook {
     // --- RTTI ---
     constexpr uintptr_t VTABLE_ADDR     = 0x0a6df628; // HIGH: CActiveHook RTTI vtable (adjusted)
-    // --- Inferred fields (types confirmed, offsets need decompilation) ---
+    // --- Inferred fields (types confirmed, offsets unknown) ---
     // hook_type:       SHookType*   (from has_hook_of_type trigger, add_hook { type = X })
     // target_char:     uint32       (from add_hook { target = Y })
     // owner_char:      uint32       (implied by per-character storage)
@@ -6434,6 +7011,15 @@ namespace aiwatch_struct {
 // CPdxArray Generic Layout (Round 12)
 // Used throughout CK3 for dynamic arrays. Documented here for reference.
 // =============================================================================
+// THE CPdxArray RULE, the one statement of it: a CPdxArray's element pointer at +0,
+// its capacity (uint32, the elements allocated) at +8, its count (uint32, the
+// elements in use) at +0xC. A reader counts with COUNT; slots from the count up to
+// the capacity hold whatever was there before (lane l6, F10: four arrays below had
+// the two swapped and read past their last element). An array field elsewhere in
+// this file names its count and capacity as literals (the Windows generator,
+// re/scripts/windows/gen_win_offsets.py, maps literals and copies expressions
+// without mapping them) and is checked against this rule by the static_asserts
+// after this namespace.
 namespace pdx_array {
     constexpr size_t DATA_PTR                    = 0x00;   // HIGH: pointer to element data
     constexpr size_t CAPACITY                    = 0x08;   // HIGH: uint32, allocated element count
@@ -6446,6 +7032,32 @@ namespace pdx_array {
     constexpr uintptr_t CB_OPTION_ALLOCATOR_VTABLE = 0x0a9a24a0;  // HIGH: allocator vtable for CB option CDynArray
 }
 
+// Each named count/capacity pair follows the CPdxArray rule above.
+static_assert(ck3::title_realm_laws::ACTIVE_LAW_COUNT - ck3::title_realm_laws::ACTIVE_LAW_ARRAY == pdx_array::COUNT,
+              "title_realm_laws: a CPdxArray's count is at +0xC");
+static_assert(ck3::title_realm_laws::ACTIVE_LAW_CAPACITY - ck3::title_realm_laws::ACTIVE_LAW_ARRAY == pdx_array::CAPACITY,
+              "title_realm_laws: a CPdxArray's capacity is at +8");
+static_assert(ck3::law_group::MEMBER_COUNT - ck3::law_group::MEMBER_LAW_ARRAY == pdx_array::COUNT,
+              "law_group: a CPdxArray's count is at +0xC");
+static_assert(ck3::law_group::MEMBER_CAPACITY - ck3::law_group::MEMBER_LAW_ARRAY == pdx_array::CAPACITY,
+              "law_group: a CPdxArray's capacity is at +8");
+static_assert(ck3::title_obj::TITLE_HOLDER_HISTORY_COUNT - ck3::title_obj::TITLE_HOLDER_HISTORY_PTR == pdx_array::COUNT,
+              "title_obj holder history: a CPdxArray's count is at +0xC");
+static_assert(ck3::title_obj::TITLE_HOLDER_HISTORY_CAP - ck3::title_obj::TITLE_HOLDER_HISTORY_PTR == pdx_array::CAPACITY,
+              "title_obj holder history: a CPdxArray's capacity is at +8");
+static_assert(culture::INNOVATION_COUNT - culture::INNOVATION_ARRAY == pdx_array::COUNT,
+              "culture innovations: a CPdxArray's count is at +0xC");
+static_assert(ck3::building_db::ENTRY_LIVE_COUNT - ck3::building_db::ENTRY_TABLE == pdx_array::COUNT,
+              "building_db: a CPdxArray's count is at +0xC");
+static_assert(ck3::building_db::ENTRY_CAPACITY - ck3::building_db::ENTRY_TABLE == pdx_array::CAPACITY,
+              "building_db: a CPdxArray's capacity is at +8");
+static_assert(ck3::globals::MAA_TYPE_DB_LIVE_CNT_OFF - ck3::globals::MAA_TYPE_DB_ARR_OFF == pdx_array::COUNT,
+              "MAA_TYPE_DB: a CPdxArray's count is at +0xC");
+static_assert(ck3::globals::MAA_TYPE_DB_CAP_OFF - ck3::globals::MAA_TYPE_DB_ARR_OFF == pdx_array::CAPACITY,
+              "MAA_TYPE_DB: a CPdxArray's capacity is at +8");
+static_assert(ck3::funcs::FRONT_BUF_COUNT - ck3::funcs::FRONT_BUF_BEGIN == pdx_array::COUNT,
+              "war_data front buffer: a CPdxArray's count is at +0xC");
+
 // =============================================================================
 // CDynasty Struct Offsets (from Dynasty_GetName, prestige level, legacy perk accessors)
 // =============================================================================
@@ -6453,10 +7065,14 @@ namespace dynasty_obj {
     constexpr size_t ID                  = 0x10;   // HIGH: uint32, dynasty ID (DB lookup validates *(obj+0x10)==id)
     constexpr size_t NAME                = 0x80;   // HIGH: std::string, dynasty name (Dynasty_GetName returns obj+0x80)
     constexpr size_t HEAD_CHAR_ID        = 0xCC;   // MEDIUM-HIGH: uint32, dynasty head character ID
-    constexpr size_t CUSTOM_NAME         = 0x110;  // MEDIUM: std::string, custom dynasty name (when HAS_CUSTOM_NAME set)
+    constexpr size_t CUSTOM_NAME         = 0x110;  // LOW (was MEDIUM): NOT a std::string here — a 0x20-byte string at +0x110 would
+                                                   //   overlap HOUSES_ARRAY (+0x118) and HOUSES_COUNT (+0x124); in the ivar867 dump all
+                                                   //   12,025 dynasties hold an image pointer at +0x110 and a heap pointer at +0x118, and
+                                                   //   none reads as a string. No bridge code reads it (L14 FB M-2).
     constexpr size_t HOUSES_ARRAY        = 0x118;  // MEDIUM-HIGH: ptr, array of dynasty house objects
     constexpr size_t HOUSES_COUNT        = 0x124;  // MEDIUM-HIGH: int32, number of houses in dynasty
-    constexpr size_t HAS_CUSTOM_NAME     = 0x130;  // MEDIUM: bool, if set use CUSTOM_NAME instead of NAME
+    constexpr size_t HAS_CUSTOM_NAME     = 0x130;  // LOW (was MEDIUM): its pairing with CUSTOM_NAME is refuted (above); 0 in all 12,025
+                                                   //   dynasties of the ivar867 dump. No bridge code reads it (L14 FB M-2).
     constexpr size_t PRESTIGE            = 0x158;  // HIGH: int64, fixed-point /100000, dynasty prestige (renown)
     constexpr size_t PRESTIGE_LEVEL      = 0x160;  // HIGH: uint32, dynasty prestige level (0-10)
     constexpr size_t LEGACY_PERKS_ARRAY  = 0x168;  // MEDIUM-HIGH: ptr, array of CDynastyLegacyPerk* (8-byte ptrs)
@@ -6478,6 +7094,9 @@ namespace dynasty_legacy_perk {
 namespace dynasty_house_obj {
     constexpr size_t ID                  = 0x10;   // HIGH: uint32, house ID (DB lookup validates *(obj+0x10)==id)
     constexpr size_t DYNASTY_ID          = 0x24;   // HIGH: uint32, parent dynasty ID (House_GetDynastyID returns *(obj+0x24))
+    constexpr size_t NAME                = 0x248;  // HIGH: std::string, house name ("Ivaring"). House_GetName (image 0x05eba4d0) is
+                                                   //   `return param_1 + 0x248`; the ivar867 dump reads a string there for 12,576 of 12,576
+                                                   //   houses (+0x10: 0 of 12,576). Reader: house_name (dispatch_router.cpp). L14 FB M-1.
 }
 
 // =============================================================================
@@ -6494,8 +7113,14 @@ namespace subject_contract {
     constexpr size_t VTABLE_SECONDARY    = 0x10;   // HIGH: ptr, secondary MI vtable
 
     // --- Contract parties ---
-    constexpr size_t LIEGE               = 0x20;   // HIGH: CCharacter*, liege (serializer tag 0x29ae)
-    constexpr size_t SUBJECT             = 0x28;   // HIGH: CCharacter*, subject/vassal (serializer tag 0x292d)
+    // Corrected (lane l6, cleanup 2026.11): +0x20 is the SUBJECT and +0x28 the LIEGE. The
+    // earlier reading (liege +0x20) named the two serializer tags without a dump check.
+    // Dumps ivar867 and 1097: for all 917 / 1,089 rulers holding contracts, every contract
+    // in the ruler's VASSAL_CONTRACT_ARRAY has +0x28 == the ruler and the +0x20 set equals
+    // the rulers whose realm parent (title_realm+0x1C0 -> +0x28, get_liege_id_from_addr
+    // PATH2) is that ruler; the contract's own key is at REF_KEY (+0x08), 0 misses.
+    constexpr size_t SUBJECT             = 0x20;   // HIGH: CCharacter*, subject/vassal (two dumps, above)
+    constexpr size_t LIEGE               = 0x28;   // HIGH: CCharacter*, liege (two dumps, above)
     constexpr size_t TAX_SLOT            = 0x30;   // HIGH: TPdxNullObject<CTaxSlot>* (RTTI confirmed)
 
     // --- Obligation types (array of CSubjectContractType*) ---
@@ -6666,7 +7291,7 @@ namespace event_weight {
     //   The declare_war interaction has enable_effects=0 (ck-1ps.7), so its
     //   script effect pipeline is bypassed entirely. Actual CWar creation
     //   happens via this dedicated handler, invoked indirectly by the
-    //   engine's interaction-type registry (table address not yet pinned
+    //   engine's interaction-type registry (table address unpinned
     //   statically — candidate mechanism is a map inside the CB/interaction
     //   DB at global _DAT_0bfe39f8 whose interaction_ht offsets match).
     //   Handler signature: void(WarRequest* req, InteractionContext* ctx)
@@ -7346,7 +7971,8 @@ namespace char_memory {
 
     // CCharacterMemoryTypeDatabase singleton global — HIGH (core dump pinned + VERIFIED).
     // *(g_base+MEMORY_TYPE_DB) -> db (game_db layout); db+game_db::ENTRIES_ARRAY(0x88)
-    // -> CCharacterMemoryType*[]; db+game_db::ENTRY_COUNT(0x90) = 382 types live.
+    // -> CCharacterMemoryType*[]; db+game_db::LIVE_COUNT(0x94) = 382 types live (the
+    // array is full: ENTRY_CAPACITY 0x90 also reads 382, dump ivar867).
     // entries[idx]->TYPE_NAME_KEY(0x10) resolves index->name. VERIFIED: entries[77]=
     // "relative_died", entries[150]="married". For a read handler, prefer the direct
     // memory type-ptr -> name; the DB is needed for index->name / category enumeration.

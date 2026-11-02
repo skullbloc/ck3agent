@@ -41,8 +41,8 @@ class Gateway:
         self._raise = raise_on_stance
         self.health = {"ok": True}
 
-    async def multi_actor(self):
-        return False
+    async def actor_gate(self):
+        return None
 
     async def read(self, action, params=None):
         self.reads.append((action, dict(params or {})))
@@ -56,7 +56,7 @@ class Gateway:
         if action == "query_character":
             # a BOUND ruler: since rc2 B6 whoami blocks no_ruler_bound when
             # character_id=0 resolves to nothing, and carries no agency then.
-            return {"character": {"id": 30853, "alive": True}}
+            return {"id": 30853, "alive": True}
         return {}
 
     async def write(self, action, params=None):

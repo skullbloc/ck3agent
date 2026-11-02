@@ -4,7 +4,7 @@
 //
 //   1. CENSUS FROM THE CODE. The debug set is what CK3_BRIDGE_DEBUG_VERBS adds
 //      to action_registry.inc: the table is expanded here with and without the
-//      define and the difference taken. It must equal the six pinned names, so
+//      define and the difference taken. It must equal the five pinned names, so
 //      a verb moved out of the #ifdef, or a new one added to it, reds here.
 //      (A NEW ungated verb of the raw-pointer class is caught by
 //      check_raw_pointer_inputs.py, which walks the handlers.)
@@ -45,7 +45,6 @@ std::vector<uint32_t>    g_controlled_chars;
 std::atomic<uint32_t>    g_controlled_primary{0};
 std::atomic<uint32_t>    g_controlled_heir{0};
 std::atomic<bool>        g_agent_mode{false};
-std::atomic<bool>        g_auto_respond_events{false};
 std::atomic<uint64_t>    g_tick_id{0};
 std::atomic<uint64_t>    g_cb_query_busy_count{0};
 std::atomic<bool>        g_war_stance_record_walk_enabled{false};
@@ -56,14 +55,11 @@ bool pipeline_owns_clock()       { return false; }
 bool is_clock_verb(const char*)  { return false; }
 uint64_t pipeline_current_flush_id() { return 0; }
 PipelineMode pipeline_mode() { return PipelineMode::Legacy; }
-void game_pause()   {}
-void game_unpause() {}
+void clock_write(ClockWrite, ClockOrigin, int) {}
 const char* session_state_string() { return "test"; }
 std::string get_cached_character_name(uint32_t) { return "(test)"; }
 std::string enumerate_interactions() { return "[]"; }
 std::string enumerate_decisions()    { return "[]"; }
-bool set_character_subsystems(uint32_t, const char*) { return false; }
-bool get_character_subsystems(uint32_t, std::string*) { return false; }
 bool get_client_lock_info(ClientLockInfo*) { return false; }
 bool is_game_state_query(const char*) { return false; }
 const char* offset_validation_group_name(int) { return ""; }
@@ -117,13 +113,13 @@ int main() {
     std::set<std::string> debug;
     for (const char* n : kDebugTable)
         if (!rel.count(n)) debug.insert(n);
-    const std::set<std::string> pinned = {"execute_console_command", "inject_mouse_click",
+    const std::set<std::string> pinned = {"inject_mouse_click",
                                           "memory_probe", "resolve_global",
                                           "select_observe_default",
                                           "set_cb_selector_override"};
     std::string got;
     for (const auto& n : debug) got += n + " ";
-    check(debug == pinned, "debug set from action_registry.inc = the six pinned verbs: " + got);
+    check(debug == pinned, "debug set from action_registry.inc = the five pinned verbs: " + got);
 
     Session* s = g_session_registry.create("debug-verbs-test");
     Scoped scope(s);

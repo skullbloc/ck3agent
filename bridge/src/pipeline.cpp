@@ -84,7 +84,6 @@ bool is_clock_verb(const char* action_type) {
     return strcmp(action_type, "pause_game") == 0 ||
            strcmp(action_type, "unpause_game") == 0 ||
            strcmp(action_type, "set_speed") == 0 ||
-           strcmp(action_type, "pause") == 0 ||
            strcmp(action_type, "set_pause") == 0;
 }
 
@@ -113,51 +112,84 @@ void pipeline_init_from_env() {
 // THE POLARITY AUTHORITY (§2.2)
 // ============================================================================
 //
-// Derived from the bridge's own classifiers, in the order the reader thread
-// already resolves them. The gateway's copy (mcp_server.py:129-178) becomes a
-// cached timeout hint that must AGREE with this; `get_action_polarity` below
-// publishes the table so a disagreement is a loud error rather than a silent
-// mis-route. They already disagree in one place today — query_conquest_targets
-// is an is_deferred_drain_action here and sits in the gateway's
-// _UNPAUSED_READS — which is exactly how a new handler ends up mis-routed.
+// Derived from the bridge's own classifiers. Pipeline mode only (L13 D6): it
+// partitions a flush, and its names are the `polarity` field of the ack and
+// check frames — pre-registered vocabulary, kept byte for byte. Outside
+// pipeline mode nothing routes by polarity: the reader routes by thread class
+// (snapshot.cpp). ck3agent/server/test_polarity_bridge_table.py compiles this
+// function and its classifiers out of the sources and checks the table.
+// query_conquest_targets is a deferred-drain action, so it is TICK_READ.
 //
 // The ORDER is load-bearing:
 //   1. deferred-drain  -> TICK_READ   (needs a live tick for an ENGINE VERDICT)
-//   2. game-thread     -> TICK_WRITE  (tier-3 mutation, drains in on_tick)
-//   3. other mutation  -> TICK_WRITE  (declare_war/send_interaction/... enqueue
+//   2. game-thread     -> TICK_WRITE  (tier-3 mutation, drains in on_tick);
+//                         its reads (is_game_thread_read) -> TICK_READ
+//   3. game-state      -> PAUSED      (live object-graph reads)
+//   4. other mutation  -> TICK_WRITE  (declare_war/send_interaction/... enqueue
 //                                      an intent that only executes on a tick)
-//   4. bridge-internal -> ANY         (tempo, liveness, identity, rosters)
-//   5. game-state      -> PAUSED      (live object-graph reads)
+//   5. bridge-internal -> ANY         (tempo, liveness, identity, rosters)
 //   6. otherwise       -> UNKNOWN     (resolves to PAUSED, and is COUNTED)
 //
-// Step 3 is why is_bridge_internal_query alone is not the ANY set: the bridge
+// Step 3 comes before step 4 because the reader thread serves an
+// is_game_state_query read inline while paused and refuses it while running,
+// whatever action_is_readonly says: search_characters,
+// list_pending_interactions and `query` are reads that the
+// readonly table does not list, and as "mutations" they used to publish
+// TICK_WRITE, which told the gateway to UNPAUSE for a read the reader then
+// refused (cleanup 2026.11).
+//
+// Step 4 is why is_bridge_internal_query alone is not the ANY set: the bridge
 // classifies declare_war as "safe to call from the IPC thread", which is true,
 // but the intent it enqueues does not execute until a tick runs.
 Polarity classify_polarity(const char* action_type) {
     if (!action_type || !action_type[0]) return Polarity::UNKNOWN;
+    // THE PRE-REGISTERED POLARITY OF THE ACTIONS L13 RE-CLASSIFIED. Pipeline
+    // mode's flush plan and its ack/check `polarity` field are pre-registered
+    // (L13 contract D3: wire bytes unchanged). L13 D1 moved these between thread
+    // classes; derived from the new classes they would publish a different
+    // polarity, so these rows keep what each published before L13 (439ab5a6).
+    // They are the only place the pipeline departs from the thread classes.
+    // (Inline here, not a helper: ck3agent/server/test_polarity_bridge_table.py
+    // lifts this function's body out of the source.) The deferred-slot
+    // submitters and query_council_tasks / query_debug_flags derive their old
+    // polarity from the classes below unchanged and need no row.
+    if (strcmp(action_type, "query_conquest_targets") == 0) return Polarity::TICK_READ;
+    if (strcmp(action_type, "query_war_declarations") == 0) return Polarity::PAUSED;
+    // pre_validate_war is a bridge management verb (dispatch_router.cpp), so at
+    // 439ab5a6 it skipped the mutation rule and published any, like the two reads.
+    if (strcmp(action_type, "pre_validate_war") == 0 ||
+        strcmp(action_type, "query_war_score_breakdown") == 0 ||
+        strcmp(action_type, "get_active_wars") == 0 ||
+        strcmp(action_type, "get_ai_personality") == 0) return Polarity::ANY;
     if (is_deferred_drain_action(action_type)) return Polarity::TICK_READ;
-    if (is_game_thread_action(action_type))    return Polarity::TICK_WRITE;
-    if (strcmp(action_type, "respond_event") == 0) return Polarity::TICK_WRITE;
+    if (is_game_thread_action(action_type))
+        return is_game_thread_read(action_type) ? Polarity::TICK_READ : Polarity::TICK_WRITE;
+    if (is_game_state_query(action_type))      return Polarity::PAUSED;
     if (action_is_mutation(action_type) && !is_bridge_management_verb(action_type))
         return Polarity::TICK_WRITE;
     if (is_bridge_internal_query(action_type)) return Polarity::ANY;
-    if (is_game_state_query(action_type))      return Polarity::PAUSED;
     return Polarity::UNKNOWN;
 }
 
 bool action_routes_to_drain(const char* action_type) {
     if (!action_type || !action_type[0]) return false;
-    // The reader thread's existing carve-out, reproduced exactly: a call whose
-    // real work happens on the game thread but whose HANDLER is IPC-thread-safe
-    // (the bounded-poll deferred queries — is_bridge_internal_query) is served
-    // inline; everything else that needs a tick goes to g_msg_queue. The
-    // graph-walkers (query_dejure_progress, query_conquest_targets) are NOT
-    // IPC-thread-safe while unpaused, and the tick phase is unpaused by
-    // construction, so they route to the drain.
-    if (is_deferred_drain_action(action_type))
-        return !is_bridge_internal_query(action_type);
+    // 439ab5a6's carve-out, kept as wire behaviour: the bounded-poll deferred
+    // queries were served in the flush (0); everything else that needed a tick
+    // went to g_msg_queue, the graph-walkers (query_dejure_progress,
+    // query_conquest_targets) among them (1).
+    // PRE-REGISTERED ANSWERS (L13 D3): which call is ticketed for the drain and
+    // which is served in the flush is pipeline wire behaviour, so the rows L13's
+    // reclassification would change keep their 439ab5a6 answer:
+    //   - the deferred-slot submitters were bridge-internal then (served in the
+    //     flush, 0); they are game-state reads now, and serve() still runs them
+    //     on the game thread (run_on_game_thread), so the result stays inline;
+    //   - set_ai_personality was bridge-internal then (0); it is a game-thread
+    //     write now, and serve() runs it on the game thread the same way;
+    //   - query_conquest_targets was a non-internal deferred read then (1).
+    if (is_deferred_drain_action(action_type)) return false;
+    if (strcmp(action_type, "set_ai_personality") == 0) return false;
+    if (strcmp(action_type, "query_conquest_targets") == 0) return true;
     if (is_game_thread_action(action_type)) return true;
-    if (strcmp(action_type, "respond_event") == 0) return true;
     return false;   // inline-dispatchable mutation (queue_intent, declare_war, ...)
 }
 
@@ -629,12 +661,12 @@ namespace {
 
 class BridgeFlushEffects : public FlushEffects {
 public:
-    bool pause() override   { return do_pause_game("{}"); }
-    bool unpause() override { return do_unpause_game("{}"); }
+    bool pause() override   { return clock_verb_pause(ClockOrigin::Pipeline, "{}"); }
+    bool unpause() override { return clock_verb_unpause(ClockOrigin::Pipeline, "{}"); }
     bool set_speed(int spd) override {
         char p[64];
         snprintf(p, sizeof(p), "{\"speed\":%d}", spd);
-        return do_set_speed(p);
+        return clock_verb_speed(ClockOrigin::Pipeline, p);
     }
 
     uint64_t now_ms() const override { return mono_ms(); }
@@ -649,32 +681,48 @@ public:
             return "{\"success\":false,\"reason\":\"ticket_payload_lost\",\"phase\":\"serve\"}";
         }
 
-        // Reinstall the submitting session so ownership / observe-mode checks
-        // at the dispatch choke point see the SAME context they would have seen
-        // on the reader thread.
-        ClientContext ctx;
-        ctx.session = g_session_registry.find(pc.session_id);
-        ClientContextGuard guard(&ctx);
-
-        // ck-6kvq.12: publish the applying flush to the handler. serve_one()
-        // has already called mark_running(ticket, flush_id), so the ticket
-        // carries the authoritative id — the conductor does not have to be
-        // trusted to pass it down a second path.
+        // The run below reinstalls the submitting session, so ownership /
+        // observe-mode checks at the dispatch choke point see the SAME context
+        // they would have seen on the reader thread, and publishes the applying
+        // flush to the handler (ck-6kvq.12: serve_one() has already called
+        // mark_running(ticket, flush_id), so the ticket carries the
+        // authoritative id). L13 D1: a game-state read, or a game-thread write
+        // the pre-registered routing still serves here (set_ai_personality),
+        // runs on the GAME thread (the session-pass drain) and the conductor
+        // waits for it; anything else served here (ANY-polarity calls) runs on
+        // this thread as before. Both are installed on whichever thread runs it.
         Ticket tk;
-        ScopedFlushId flush_guard(C().tickets.find(call.ticket, &tk) ? tk.flush_id : 0);
-
+        const uint64_t flush_id = C().tickets.find(call.ticket, &tk) ? tk.flush_id : 0;
+        const uint64_t ticket = call.ticket;
+        auto run = [pc, flush_id, ticket](std::string* response) {
+            ClientContext c2;
+            c2.session = g_session_registry.find(pc.session_id);
+            ClientContextGuard guard2(&c2);
+            ScopedFlushId flush_guard2(flush_id);
+            g_in_protected_region = true;
+            if (sigsetjmp(g_recovery_point, 1) == 0) {
+                dispatch_action_with_response(pc.action.c_str(), pc.inner_json.c_str(), response);
+            } else {
+                *response = "{\"success\":false,\"reason\":\"memory_access_fault\","
+                            "\"phase\":\"serve\"}";
+                if (g_logfile) fprintf(g_logfile,
+                    "[CK3-Bridge][pipeline] SIGSEGV serving %s (ticket=%llu)\n",
+                    pc.action.c_str(), (unsigned long long)ticket);
+            }
+            g_in_protected_region = false;
+        };
         std::string response;
-        g_in_protected_region = true;
-        if (sigsetjmp(g_recovery_point, 1) == 0) {
-            dispatch_action_with_response(pc.action.c_str(), pc.inner_json.c_str(), &response);
+        if (is_game_state_query(pc.action.c_str()) || is_game_thread_action(pc.action.c_str())) {
+            if (!run_on_game_thread(run, kGameThreadReadWaitMs, &response)) {
+                response = "{\"success\":false,\"reason\":\"game_thread_timeout\","
+                           "\"phase\":\"serve\"}";
+                if (g_logfile) fprintf(g_logfile,
+                    "[CK3-Bridge][pipeline] game-thread read NOT RUN within %d ms: %s (ticket=%llu)\n",
+                    kGameThreadReadWaitMs, pc.action.c_str(), (unsigned long long)ticket);
+            }
         } else {
-            response = "{\"success\":false,\"reason\":\"memory_access_fault\","
-                       "\"phase\":\"serve\"}";
-            if (g_logfile) fprintf(g_logfile,
-                "[CK3-Bridge][pipeline] SIGSEGV serving %s (ticket=%llu)\n",
-                pc.action.c_str(), (unsigned long long)call.ticket);
+            run(&response);
         }
-        g_in_protected_region = false;
         return response;
     }
 
@@ -842,7 +890,7 @@ void emit_refusal(const std::string& request_id, const char* action,
 //
 // ck-6kvq.18 — WHAT THAT DOES AND DOES NOT BUY. The asymmetry protects exactly
 // one kind of client: one that routes STRICTLY by request_id and discards
-// anything else (mcp_server.py, bridge/harness/client.py:196,
+// anything else (mcp_server.py, ck3agent/server/harness_client.py,
 // scripts/overlay_poller.py:1079 — all verified clean). It does NOT protect a
 // client that returns the first frame that is not a known push, or that treats
 // "no request_id" as "close enough". Three shipped clients did exactly that and
@@ -1011,57 +1059,6 @@ void handle_cancel(const rapidjson::Value& inner, const std::string& request_id)
     send_observation(frame.c_str(), frame.size());
 }
 
-// ---- `get_action_polarity` — THE polarity authority, published -------------
-//
-// Mode-independent on purpose: the gateway must be able to sync its table (and
-// detect a disagreement) BEFORE anyone flips the mode. It reads no game memory
-// and takes no lock, so it is safe in any clock state and in any mode.
-void handle_get_action_polarity(const rapidjson::Value& inner,
-                                const std::string& request_id) {
-    std::string frame = "{";
-    if (!request_id.empty()) {
-        frame += "\"request_id\":\"";
-        frame += json_escape(request_id);
-        frame += "\",";
-    }
-    frame += build_envelope_clock_fragment();
-    frame += ",\"action\":\"get_action_polarity\",\"success\":true,\"authority\":\"bridge\"";
-
-    // Single-action form.
-    if (inner.HasMember("action_name") && inner["action_name"].IsString()) {
-        const char* a = inner["action_name"].GetString();
-        frame += ",\"action_name\":\"";
-        frame += json_escape(a);
-        frame += "\",\"registered\":";
-        frame += is_registered_action(a) ? "true" : "false";
-        frame += ",\"polarity\":\"";
-        frame += polarity_name(resolve_polarity(classify_polarity(a)));
-        frame += "\",\"routes_to_drain\":";
-        frame += action_routes_to_drain(a) ? "true" : "false";
-        frame += "}";
-        send_observation(frame.c_str(), frame.size());
-        return;
-    }
-
-    // Whole-table form, generated from the SAME action_registry.inc table that
-    // generates the dispatch chain, so the published table cannot drift from
-    // the surface it describes.
-    frame += ",\"polarity\":{";
-    bool first = true;
-#define BRIDGE_ACTION(NAME, HANDLER)                                     \
-    do {                                                                 \
-        if (!first) frame += ",";                                        \
-        first = false;                                                   \
-        frame += "\"" NAME "\":\"";                                      \
-        frame += polarity_name(resolve_polarity(classify_polarity(NAME))); \
-        frame += "\"";                                                   \
-    } while (0);
-#include "action_registry.inc"
-#undef BRIDGE_ACTION
-    frame += "}}";
-    send_observation(frame.c_str(), frame.size());
-}
-
 }  // namespace
 
 // ============================================================================
@@ -1070,11 +1067,14 @@ void handle_get_action_polarity(const rapidjson::Value& inner,
 bool pipeline_handle_envelope(const std::string& line, Session* session) {
     const bool active = pipeline_active();
 
-    // LEGACY FAST EXIT. One relaxed atomic load plus a substring test, and the
-    // reader thread's ladder runs with no extra JSON parse. `legacy` is the
-    // default (G11) and must be indistinguishable from the pre-change bridge in
-    // cost as well as in behaviour.
-    if (!active && line.find("get_action_polarity") == std::string::npos) return false;
+    // LEGACY FAST EXIT. One relaxed atomic load, and the reader thread's ladder
+    // runs with no extra JSON parse. `legacy` is the default (G11) and must be
+    // indistinguishable from the pre-change bridge in cost as well as in
+    // behaviour. (L13 D6: the mode-independent `get_action_polarity`
+    // introspection verb that used to be answered here is deleted — its only
+    // reader was the gateway's polarity table, and no pre-registered script
+    // reads it.)
+    if (!active) return false;
 
     rapidjson::Document env;
     env.Parse(line.c_str());
@@ -1082,33 +1082,6 @@ bool pipeline_handle_envelope(const std::string& line, Session* session) {
     if (!env.HasMember("actions") || !env["actions"].IsArray()) return false;
     const rapidjson::Value& actions = env["actions"];
     if (actions.Empty()) return false;
-
-    // --- Mode-independent introspection ------------------------------------
-    // Only `get_action_polarity` is answered in legacy mode; every other
-    // pipeline verb is a pipeline-mode frame and falls through to the legacy
-    // ladder (where it gets the usual typed unknown_action).
-    bool all_introspection = true;
-    for (rapidjson::SizeType i = 0; i < actions.Size(); ++i) {
-        const rapidjson::Value& in = actions[i];
-        if (!in.IsObject() || !in.HasMember("action") || !in["action"].IsString()) {
-            all_introspection = false; break;
-        }
-        if (strcmp(in["action"].GetString(), "get_action_polarity") != 0) {
-            all_introspection = false; break;
-        }
-    }
-    if (all_introspection) {
-        for (rapidjson::SizeType i = 0; i < actions.Size(); ++i) {
-            const rapidjson::Value& in = actions[i];
-            std::string rid;
-            if (in.HasMember("request_id") && in["request_id"].IsString())
-                rid = in["request_id"].GetString();
-            handle_get_action_polarity(in, rid);
-        }
-        return true;
-    }
-
-    if (!active) return false;   // LEGACY: the ladder below runs untouched.
 
     // SYNCHRONOUS FAST PATH (§2.4). An envelope whose every member is
     // ANY-polarity does not need the clock and is served inline by the existing
@@ -1684,7 +1657,7 @@ void conductor_loop() {
             C().sched.config().hold_clock_until_observer &&
             C().sched.config().privileged_reader.empty()) {
             observer_gate_paused_once = true;
-            game_pause();
+            clock_write(ClockWrite::Pause, ClockOrigin::Pipeline);
             if (g_logfile) {
                 fprintf(g_logfile,
                     "[CK3-Bridge][pipeline] world ACTIVE and no episode observer "
@@ -1721,7 +1694,7 @@ void conductor_loop() {
             // resting speed (its armed branch emits SetSpeed while holding the
             // pause), so unpausing here resumes AT THE PIN.
             const int resting = C().sched.config().resting_speed;
-            game_unpause();
+            clock_write(ClockWrite::Unpause, ClockOrigin::Pipeline);
             if (g_logfile) {
                 fprintf(g_logfile,
                     "[CK3-Bridge][pipeline] episode begun: STARTING "

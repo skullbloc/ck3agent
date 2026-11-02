@@ -32,6 +32,10 @@ import redesign  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE_SRC = ROOT / "bridge" / "src"
 
+# L13 FF3 (witness X4): the one C++ tokenizer (bridge/scripts/cpp_strip.py).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "scripts"))
+import cpp_strip  # noqa: E402
+
 
 def _doc() -> str:
     for rel in ("release/overlay/docs/research.md", "docs/research.md"):
@@ -42,26 +46,8 @@ def _doc() -> str:
 
 
 def _strip_c_comments(src: str) -> str:
-    """Drop // and /* */ comments, leaving string literals intact."""
-    out, i, n = [], 0, len(src)
-    while i < n:
-        c = src[i]
-        if c == '"':
-            j = i + 1
-            while j < n and src[j] != '"':
-                j += 2 if src[j] == "\\" else 1
-            out.append(src[i:j + 1])
-            i = j + 1
-        elif src.startswith("//", i):
-            j = src.find("\n", i)
-            i = n if j < 0 else j
-        elif src.startswith("/*", i):
-            j = src.find("*/", i + 2)
-            i = n if j < 0 else j + 2
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
+    """Comments blanked, string literals intact (cpp_strip)."""
+    return cpp_strip.strip(src, keep_strings=True)
 
 
 def _function_body(src: str, signature_re: str) -> str:
@@ -69,15 +55,9 @@ def _function_body(src: str, signature_re: str) -> str:
     m = re.search(signature_re, src)
     assert m, f"function not found: {signature_re}"
     i = src.index("{", m.end() - 1)
-    depth = 0
-    for j in range(i, len(src)):
-        if src[j] == "{":
-            depth += 1
-        elif src[j] == "}":
-            depth -= 1
-            if depth == 0:
-                return src[i:j + 1]
-    raise AssertionError(f"unbalanced body: {signature_re}")
+    j = cpp_strip.match_close(src, i)           # braces in literals do not count
+    assert j >= 0, f"unbalanced body: {signature_re}"
+    return src[i:j + 1]
 
 
 def _gate_list_from_bridge() -> list:
@@ -85,7 +65,12 @@ def _gate_list_from_bridge() -> list:
     m = re.search(r"kExperimental\[\]\s*=\s*\{(.*?)\};", src, re.S)
     assert m, "kExperimental[] not found in dispatch_router.cpp"
     names = re.findall(r'"([^"]+)"', m.group(1))
-    assert names, "kExperimental[] parsed empty; the parser, not the gate, is broken"
+    # An empty gate is spelled with the explicit `nullptr` marker (a zero-length
+    # array is not C++). A block with neither names nor the marker is a parser
+    # failure, not an empty gate.
+    if not names:
+        assert re.fullmatch(r"\s*nullptr\s*,?\s*", m.group(1)), \
+            "kExperimental[] has no names and no nullptr marker; the parser, not the gate, is broken"
     return names
 
 
@@ -95,7 +80,9 @@ def _gate_list_from_doc() -> list:
     assert m, "docs/research.md has no '## Default-off writes' section"
     rows = [ln for ln in m.group(1).splitlines() if ln.startswith("| `")]
     names = [re.match(r"\| `([^`]+)`", ln).group(1) for ln in rows]
-    assert names, "the Default-off writes table has no rows"
+    if not names:
+        assert "No bridge write is off by default" in m.group(1), \
+            "the Default-off writes table has no rows and the section does not say none are gated"
     return names
 
 
@@ -126,11 +113,11 @@ def test_the_refusal_carries_the_path_the_bridge_sent():
     """The persona's reply said 'enabled_writes_file in this reply' and did not
     carry it. The envelope's fix now holds the bridge's own path."""
     raw = {"success": False, "reason": "experimental_write_disabled",
-           "enabled_writes_file": "/run/user/1000/ck3agent/ck3-enabled-writes"}
-    b = redesign.experimental_gate_blocked(raw, "faction_action")
+           "enabled_writes_file": "/run/user/4242/ck3agent/ck3-enabled-writes"}
+    b = redesign.experimental_gate_blocked(raw, "a_gated_write")
     assert b["gate"] == "experimental_write_disabled"
     assert b["fix"]["enabled_writes_file"] == raw["enabled_writes_file"]
-    assert b["fix"]["add_line"] == "faction_action"
+    assert b["fix"]["add_line"] == "a_gated_write"
     assert b["fix"]["who"] == "operator"
     assert raw["enabled_writes_file"] in b["summary"]
     assert b["retryable"] is False
@@ -138,7 +125,7 @@ def test_the_refusal_carries_the_path_the_bridge_sent():
 
 def test_a_refusal_without_a_path_says_so_rather_than_inventing_one():
     b = redesign.experimental_gate_blocked({"reason": "experimental_write_disabled"},
-                                           "faction_action")
+                                           "a_gated_write")
     assert b["fix"]["enabled_writes_file"] == ""
     assert "/tmp" not in b["summary"]
 
@@ -177,7 +164,7 @@ def test_the_enumeration_sees_the_reasons_it_must():
     """Guard against a vacuous green: the parser must find the codes known to
     be there (a regex that matched nothing would pass the test below)."""
     r = _scheme_reasons()
-    for must in ("game_paused", "engine_refused_scheme_null_sentinel",
+    for must in ("engine_refused_scheme_null_sentinel",
                  "intent_timeout_cancelled_not_executed", "scheme_call_crashed",
                  "not_scheme_owner"):
         assert must in r, (must, sorted(r))
@@ -199,7 +186,6 @@ def test_every_scheme_refusal_resolves_to_a_typed_gate():
     # "timeout" is a code too; the timeout reasons must not fall to it.
     ("intent_timeout_no_result", "confirmation_pending"),
     ("intent_timeout_cancelled_not_executed", "drain_timeout"),
-    ("game_paused", "requires_unpaused"),
 ])
 def test_prefixed_and_timeout_codes_map_on_the_code(raw, gate):
     assert redesign.map_raw_reason(raw)["gate"] == gate
@@ -224,13 +210,13 @@ class _Gateway:
         self.writes = []
         self.health = {"ok": True}
 
-    async def multi_actor(self):
-        return False
+    async def actor_gate(self):
+        return None
 
     async def read(self, action, params=None):
         if action == "query_character":
-            return {"character": {"id": 12491, "alive": True, "is_player": False,
-                                  "name": "Halfdan"}}
+            return {"id": 12491, "alive": True,
+                                  "name": "Halfdan"}
         return {}
 
     async def read_many(self, specs):
@@ -246,7 +232,7 @@ class _Gateway:
 
 def _do_scheme(reply, character_id=0, **args):
     gw = _Gateway(reply)
-    a = {"scheme_type": "murder", "target_id": 12037}
+    a = {"scheme": "murder", "target_id": 12037}
     a.update(args)
     env = asyncio.run(redesign.do_impl(gw, intent="scheme", character_id=character_id,
                                        args=a))
@@ -292,15 +278,35 @@ def test_the_explicit_actor_intents_are_exactly_the_handlers_without_a_fallback(
     """The mirror, checked: an intent belongs in _EXPLICIT_ACTOR_INTENTS iff its
     bridge handler refuses actor_id <= 0 instead of resolving the controlled
     primary. Read from the handler bodies."""
-    src = _strip_c_comments((BRIDGE_SRC / "action_handlers.cpp").read_text(encoding="utf-8"))
-    handlers = {"scheme": r"bool\s+do_dispatch_scheme_intent\s*\([^)]*\)\s*\{",
-                "faction": r"bool\s+do_dispatch_faction_intent\s*\([^)]*\)\s*\{"}
-    for intent, sig in handlers.items():
+    handlers = {"scheme": ("action_handlers.cpp", r"bool\s+do_dispatch_scheme_intent\s*\([^)]*\)\s*\{"),
+                "faction": ("factions.cpp", r"bool\s+do_dispatch_faction_intent\s*\([^)]*\)\s*\{")}
+    for intent, (fname, sig) in handlers.items():
+        src = _strip_c_comments((BRIDGE_SRC / fname).read_text(encoding="utf-8"))
         body = _function_body(src, sig)
         assert re.search(r'actor_raw\s*<=\s*0\)\s*\{\s*short_error\("actor_id_required"\)',
                          body), intent
         assert "resolve_actor(" not in body, intent
-    assert set(handlers) == set(redesign._EXPLICIT_ACTOR_INTENTS)
+    # faction has its own path (factions.do_faction), which always sends the
+    # resolved actor; only the generic dispatch path consults the set.
+    assert set(redesign._EXPLICIT_ACTOR_INTENTS) == {"scheme"}
+    assert redesign._FACTION_INTENT not in redesign.INTENT_TO_ACT
+
+
+def test_a_faction_write_with_no_character_id_dispatches_the_bound_ruler():
+    gw = _Gateway({"success": True, "action": "faction_action",
+                   "result": {"faction_id": 7, "liege_id": 500, "is_member": True}})
+    asyncio.run(redesign.do_impl(gw, intent="faction",
+                                 args={"action": "create", "faction_type": "liberty_faction"}))
+    assert gw.writes and gw.writes[0][0] == "faction_action"
+    assert gw.writes[0][1]["actor_id"] == 12491, gw.writes
+
+
+def test_faction_action_is_on_by_default_since_its_live_validation():
+    """2026-10-21, lane l10-factions: create / join / leave / press_demand and the
+    liege's demand answer proven on the 867 save from both seats."""
+    assert "faction_action" not in redesign.EXPERIMENTAL_WRITES
+    assert "faction_action" not in _gate_list_from_bridge()
+    assert "faction_action" not in _gate_list_from_doc()
 
 
 def test_scheme_action_is_on_by_default_since_its_live_validation():

@@ -45,14 +45,14 @@ class RecordingGateway:
         self._cid = cid
         self.health = {"ok": True}
 
-    async def multi_actor(self):
-        return False
+    async def actor_gate(self):
+        return None
 
     async def read(self, action, params=None):
         self.reads.append((action, dict(params or {})))
         if action == "query_character":
-            return {"character": {"id": self._cid, "alive": True, "is_player": False,
-                                  "name": "seat", "martial": 20, "traits": []}}
+            return {"id": self._cid, "alive": True,
+                    "name": "seat", "skills": {"martial": 20}, "traits": []}
         return {}
 
     async def write(self, action, params=None):
@@ -105,23 +105,78 @@ def test_TWO_SEATS_WITH_OPPOSITE_PHASES_leave_the_global_byte_untouched():
         assert not foreign, f"seat {cid} wrote about another character: {foreign}"
 
 
-def test_the_PER_CHARACTER_bookkeeping_write_IS_STILL_MADE():
-    """The ruling was explicit that the per-character map stays as it is. A fix
-    that removed BOTH writes would be a different change — and would make the
-    phase a no-op rather than a per-seat one."""
-    gw, _ = _run("expansion")
-    assert "set_character_subsystems" in [a for a, _ in gw.writes]
-
-
-def test_the_RESULT_does_not_claim_a_global_write_and_is_HONEST_about_the_map():
-    """A result that still reported `declare_war_global_byte` would describe a
-    write that no longer happens — the shape of defect item (3) is about."""
-    _, env = _run("expansion")
+def test_the_phase_writes_the_genome_for_this_seat_and_no_toggle():
+    """cleanup 2026.11: the per-character subsystem mask (a record the engine
+    never read) is deleted. The phase is still per-seat, not a no-op: it writes
+    this seat's genome."""
+    gw, env = _run("expansion")
+    actions = [a for a, _ in gw.writes]
+    assert "set_ai_personality" in actions
+    assert not [a for a in actions if "subsystem" in a], actions
     res = (env or {}).get("result") or {}
-    assert "declare_war_global_byte" not in res
-    note = str(res.get("declare_war_note", ""))
-    assert "WORLD-WIDE" not in note.upper()
-    assert "this character only" in note and "does not" in note, (
-        "the note must say the engine does not enforce the recorded value, "
-        "because it does not: the per-char map is engine_enforced:false")
-    assert "declare_war" in note, "it should name the call that DOES start a war"
+    assert not [k for k in res if "subsystem" in k or k.startswith("declare_war_")], res
+
+
+# ── overrides go through the same check steer uses ───────────────────────────
+
+@pytest.mark.parametrize("overrides,needle", [
+    ({"CallAllies": False}, "CallAllies"),
+    ({"bravery": 50}, "bravery"),
+    ({"boldness": "high"}, "boldness='high'"),
+    ({"boldness": True}, "boldness=True"),
+    ({"boldness": 500}, "boldness=500"),
+    ({"greed": -101}, "greed=-101"),
+])
+def test_bad_overrides_are_refused_and_nothing_is_written(overrides, needle):
+    gw = RecordingGateway()
+    env = asyncio.run(redesign.set_phase_impl(gw, phase="expansion", character_id=30853,
+                                              overrides=overrides))
+    assert env["ok"] is False and env["blocked"]["gate"] == "invalid_argument"
+    assert needle in env["blocked"]["summary"]
+    assert gw.writes == [], gw.writes
+    # the same words steer refuses with: one check, two callers
+    assert redesign.personality_refusal(overrides) in env["blocked"]["summary"]
+
+
+def test_control_good_overrides_are_written_over_the_phase():
+    gw = RecordingGateway()
+    env = asyncio.run(redesign.set_phase_impl(gw, phase="expansion", character_id=30853,
+                                              overrides={"boldness": 100, "greed": -100}))
+    assert env["ok"] is True
+    (_, p), = [w for w in gw.writes if w[0] == "set_ai_personality"]
+    assert p["boldness"] == 100 and p["greed"] == -100
+
+
+class FaultingGateway(RecordingGateway):
+    """set_ai_personality answers in a shape the bridge really sends for a write
+    that did not run: MEMORY_ACCESS_FAULT_REPLY {"error":"memory_access_fault"}
+    (bridge/include/bridge.h; answer_memory_access_fault in the personality
+    handlers), or the client's {"status":"sent_no_confirmation"} on a timeout
+    (mcp_server.py _action_bridge)."""
+
+    def __init__(self, reply, cid=30853):
+        super().__init__(cid)
+        self.reply = reply
+
+    async def write(self, action, params=None):
+        self.writes.append((action, dict(params or {})))
+        if action == "set_ai_personality":
+            return dict(self.reply)
+        return {"success": True, "applied": True, "ai_enabled": True}
+
+
+def test_a_faulted_personality_write_blocks_the_phase():
+    """L14 FF2 N-MAJ-1: the personality write IS the phase. Its fault used to
+    become a `personality_write_warning` beside verdict applied. RED on b84e3634."""
+    gw = FaultingGateway({"error": "memory_access_fault"})
+    env = asyncio.run(redesign.set_phase_impl(gw, phase="expansion", character_id=30853))
+    assert env.get("verdict") == "rejected" and env.get("ok") is False, env
+    assert env["blocked"]["raw_reason"] == "memory_access_fault", env["blocked"]
+    assert [a for a, _ in gw.writes] == ["set_ai_personality"], "nothing more is written"
+
+
+def test_an_unconfirmed_personality_write_is_not_applied():
+    gw = FaultingGateway({"status": "sent_no_confirmation", "action": "set_ai_personality"})
+    env = asyncio.run(redesign.set_phase_impl(gw, phase="expansion", character_id=30853))
+    assert env.get("verdict") != "applied", env
+    assert env["blocked"]["gate"] == "confirmation_pending", env["blocked"]

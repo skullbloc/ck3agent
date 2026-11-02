@@ -77,7 +77,7 @@ Run Claude unattended with a goal and a stopping rule, and keep a record.
 | `--play-dir DIR` | another play directory, for example one per condition. Create it with `ck3agent setup --play-dir DIR`; note that setup also makes it the default play directory in `config.toml`, so pass `--play-dir` to every run |
 | `--quiet` | do not echo the session to the terminal |
 | `--no-game-check` | start even if the bridge socket is not up |
-| `--dangerously-skip-permissions` | no allow-list: Claude may run any tool. Only in a disposable VM; see [SECURITY.md](../SECURITY.md). The default allows `mcp__ck3` and `Bash(sleep:*)`. |
+| `--dangerously-skip-permissions` | no allow-list: Claude may run any tool. Only in a disposable VM; see [SECURITY.md](../SECURITY.md). The default allows the `ck3` tools (`mcp__ck3`) and nothing else. |
 | `-- ARGS` | passed to `claude` unchanged |
 
 A stop by `--until-date` or `--wall-seconds` exits 0. Ctrl-C exits 130,
@@ -116,9 +116,8 @@ when two runs start in the same second):
 - No ruler bound: put the ruler's name in `--goal`, or bind one interactively first.
 - `teardown release: N still held by session ...` while another `ck3agent run`
   is still going in the same game: that run's ruler, not yours. Two runs in one
-  game share the clock and the teardown pause, and `set_phase("expansion")`
-  arms a process-wide war veto for both; one run per game is the supported
-  shape. The final run's teardown is the one that proves no ruler is bound.
+  game share the clock and the teardown pause (and an experimental flag
+  either arms is process-wide); one run per game is the supported shape. The final run's teardown is the one that proves no ruler is bound.
 - `teardown release: N still held by session ...`: neither the MCP server nor
   the resumed session released it, for example after `kill -9` to
   `ck3agent`. The manifest's `resumed_release.error` says why. Quit the game.

@@ -1,6 +1,6 @@
 """ck-43u3 — the episode-observer declaration must COMPOSE, not merely exist.
 
-WHAT BROKE. `bridge/harness/client.py` has built `hs_kwargs["episode_observer"]`
+WHAT BROKE. `ck3agent/server/harness_client.py` has built `hs_kwargs["episode_observer"]`
 since ck-zi99 and handed it to `BridgeClient.handshake`, which did not accept
 it. Every attempt died with:
 
@@ -119,15 +119,15 @@ def test_a_plain_handshake_carries_NO_observer_field():
 def test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it():
     """THE COMPOSITION TEST — the one the greps structurally could not be.
 
-    Reads the caller's kwarg name out of harness/client.py and requires the
+    Reads the caller's kwarg name out of harness_client.py and requires the
     callee to accept that exact name. A rename on either side reds this.
     """
     import pathlib
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "bridge" / "harness" / "client.py").read_text(encoding="utf-8")
+    src = (pathlib.Path(__file__).resolve().parent
+           / "harness_client.py").read_text(encoding="utf-8")
     assert 'hs_kwargs["episode_observer"]' in src, (
         "the harness client no longer forwards episode_observer — if that is "
         "deliberate this test should change with it")
     assert "episode_observer" in inspect.signature(BridgeClient.handshake).parameters, (
-        "harness/client.py forwards a kwarg BridgeClient.handshake cannot take "
+        "harness_client.py forwards a kwarg BridgeClient.handshake cannot take "
         "— exactly the TypeError that killed ep-20260921T0611 (ck-43u3)")

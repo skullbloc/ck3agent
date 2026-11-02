@@ -17,7 +17,6 @@ None. `ck3agent config` prints the paths in use; `ck3agent doctor` checks them.
 | Piece | Location | Written by |
 |-------|----------|------------|
 | `libck3_bridge.so` | `DATA/lib/` | `install.sh` |
-| `trigger_subclasses.csv`, the trigger catalogue | `DATA/share/`, also inside the package | `install.sh` |
 | `ck3agent` command | a pipx venv, or `DATA/venv`, a link to `DATA/venv.<version>.<random>` that each install replaces; linked into `~/.local/bin/` | `install.sh` |
 | `config.toml` | `${XDG_CONFIG_HOME:-~/.config}/ck3agent/`, or `CK3AGENT_CONFIG` | `ck3agent setup` |
 | play directory: `.mcp.json`, `CLAUDE.md`, `.claude/settings.json`, `runs/` | `~/ck3agent-play` | `ck3agent setup`, `ck3agent run` |
@@ -47,7 +46,6 @@ python3 -m venv ~/.local/share/ck3agent/venv
 ~/.local/share/ck3agent/venv/bin/pip install wheels/ck3agent-*.whl
 mkdir -p ~/.local/bin && ln -sf ~/.local/share/ck3agent/venv/bin/ck3agent ~/.local/bin/ck3agent
 install -D -m 0755 lib/libck3_bridge.so ~/.local/share/ck3agent/lib/libck3_bridge.so
-install -D -m 0644 share/trigger_subclasses.csv ~/.local/share/ck3agent/share/trigger_subclasses.csv
 ck3agent setup        # --ck3 PATH and --bridge PATH override discovery
 ```
 
@@ -69,7 +67,6 @@ Variables read only by the bridge are in
 | `CK3_BINARY` | path to the `ck3` binary; overrides Steam discovery |
 | `CK3AGENT_BRIDGE` | path to `libck3_bridge.so` |
 | `CK3AGENT_CONFIG` | path to `config.toml` |
-| `CK3_TRIGGER_CATALOGUE_CSV` | trigger catalogue path. `launch` sets it for the bridge from the resolved catalogue. |
 | `CK3_BRIDGE_SOCKET` | bridge socket path |
 | `CK3_BRIDGE_LOG` | bridge log path |
 | `CK3_TELE` | telemetry directory, which holds `action_log.jsonl` |

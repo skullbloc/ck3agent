@@ -20,7 +20,7 @@
 //
 // The predicate lives in a header so the acceptance can DRIVE it. Deliberately
 // permissive about everything else — inner actions, request_ids and params have
-// their own typed refusals (unknown_action, game_paused) further down. This
+// their own typed refusals (unknown_action, the handlers' refusals) further down. This
 // closes only the case where the line was never a request.
 #include "rapidjson/document.h"
 

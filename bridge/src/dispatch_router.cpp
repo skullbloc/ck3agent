@@ -16,6 +16,7 @@
 #include "episode_policy.h"
 #include "budget_ledger.h"
 #include "board.h"
+#include "vassal_roster.h"
 #ifdef _WIN32
 #include "windows/ck3_offsets_win.h"   // ck3_win::globals::AI_TOGGLE (P6)
 #endif
@@ -305,17 +306,20 @@ void* resolve_actor(const char* params_json) {
     return get_controlled_character();
 }
 
+// These three and the two table lookups below sit on nearly every Tier-2
+// query's path (served inline on the IPC reader thread), so they read through
+// safe_read like the handlers do (bridge/scripts/inline_safety_static.py).
 bool is_sentinel(void* ptr) {
     return ptr == reinterpret_cast<void*>(
-        read_offset<uintptr_t>(ck3::globals::CHAR_DB_SENTINEL));
+        safe_read_offset<uintptr_t>(ck3::globals::CHAR_DB_SENTINEL));
 }
 
 uint32_t char_get_id(void* character) {
-    return read<uint32_t>(reinterpret_cast<uintptr_t>(character) + ck3::character::ID);
+    return safe_read<uint32_t>(reinterpret_cast<uintptr_t>(character) + ck3::character::ID);
 }
 
 void* char_get_realm(void* character) {
-    return read<void*>(reinterpret_cast<uintptr_t>(character) + ck3::character::REALM_DATA);
+    return safe_read<void*>(reinterpret_cast<uintptr_t>(character) + ck3::character::REALM_DATA);
 }
 
 // =============================================================================
@@ -323,29 +327,29 @@ void* char_get_realm(void* character) {
 // =============================================================================
 
 void* lookup_interaction(const char* interaction_type) {
-    uintptr_t db = read_offset<uintptr_t>(ck3::globals::INTERACTION_DB);
+    uintptr_t db = safe_read_offset<uintptr_t>(ck3::globals::INTERACTION_DB);
     if (!db) return nullptr;
 
     uint32_t hash = game_string_hash(interaction_type, static_cast<uint32_t>(strlen(interaction_type)));
-    uintptr_t table_base = read<uintptr_t>(db + ck3::interaction_ht::TABLE_OFFSET);
-    uint32_t capacity_mask = read<uint32_t>(db + ck3::interaction_ht::CAPACITY_OFFSET);
+    uintptr_t table_base = safe_read<uintptr_t>(db + ck3::interaction_ht::TABLE_OFFSET);
+    uint32_t capacity_mask = safe_read<uint32_t>(db + ck3::interaction_ht::CAPACITY_OFFSET);
     if (!table_base) return nullptr;
 
     int32_t idx = static_cast<int32_t>(capacity_mask & hash);
     uintptr_t entry = table_base + static_cast<uintptr_t>(idx) * ck3::interaction_ht::ENTRY_SIZE;
 
-    if (read<uint8_t>(entry + 4) != 0) {
+    if (safe_read<uint8_t>(entry + 4) != 0) {
         uint8_t probe = 1;
         uintptr_t cur = entry;
         do {
-            uint32_t entry_hash = read<uint32_t>(cur + 8);
+            uint32_t entry_hash = safe_read<uint32_t>(cur + 8);
             if (entry_hash == hash) {
-                if (read<int8_t>(cur + 4) == -1) break;
-                return read<void*>(cur + 0x10);
+                if (safe_read<int8_t>(cur + 4) == -1) break;
+                return safe_read<void*>(cur + 0x10);
             }
             probe++;
             cur += ck3::interaction_ht::ENTRY_SIZE;
-        } while (probe <= read<uint8_t>(cur + 0x1c - ck3::interaction_ht::ENTRY_SIZE));
+        } while (probe <= safe_read<uint8_t>(cur + 0x1c - ck3::interaction_ht::ENTRY_SIZE));
     }
 
     if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] lookup_interaction('%s'): NOT FOUND (hash=0x%08x)\n",
@@ -354,28 +358,28 @@ void* lookup_interaction(const char* interaction_type) {
 }
 
 void* lookup_decision(const char* decision_type) {
-    uintptr_t db = read_offset<uintptr_t>(ck3::globals::DECISION_DB);
+    uintptr_t db = safe_read_offset<uintptr_t>(ck3::globals::DECISION_DB);
     if (!db) return nullptr;
 
     uint32_t hash = game_string_hash(decision_type, static_cast<uint32_t>(strlen(decision_type)));
-    uintptr_t table_base = read<uintptr_t>(db + ck3::decision_ht::TABLE_OFFSET);
-    uint32_t capacity_mask = read<uint32_t>(db + ck3::decision_ht::CAPACITY_OFFSET);
+    uintptr_t table_base = safe_read<uintptr_t>(db + ck3::decision_ht::TABLE_OFFSET);
+    uint32_t capacity_mask = safe_read<uint32_t>(db + ck3::decision_ht::CAPACITY_OFFSET);
     if (!table_base) return nullptr;
 
     int32_t idx = static_cast<int32_t>(capacity_mask & hash);
     uintptr_t entry = table_base + static_cast<uintptr_t>(idx) * ck3::decision_ht::ENTRY_SIZE;
 
-    if (read<uint8_t>(entry + 4) != 0) {
+    if (safe_read<uint8_t>(entry + 4) != 0) {
         uint8_t probe = 1;
         uintptr_t cur = entry;
         do {
-            if (read<uint32_t>(cur + 8) == hash) {
-                if (read<int8_t>(cur + 4) == -1) break;
-                return read<void*>(cur + 0x10);
+            if (safe_read<uint32_t>(cur + 8) == hash) {
+                if (safe_read<int8_t>(cur + 4) == -1) break;
+                return safe_read<void*>(cur + 0x10);
             }
             probe++;
             cur += ck3::decision_ht::ENTRY_SIZE;
-        } while (probe <= read<uint8_t>(cur + 0x1c - ck3::decision_ht::ENTRY_SIZE));
+        } while (probe <= safe_read<uint8_t>(cur + 0x1c - ck3::decision_ht::ENTRY_SIZE));
     }
 
     return nullptr;
@@ -431,6 +435,12 @@ std::string ad_read_std_string(uintptr_t str_addr) {
 }
 
 uintptr_t ad_db_lookup(uintptr_t db_global, uint32_t id) {
+    return ad_db_lookup_keyed(db_global, id, ck3::hash_map::ENTRY_KEY_REF);
+}
+
+// The DB entry for `id`, its key read at entry+key_offset (most DB objects carry
+// it at ENTRY_KEY_REF; a CSubjectContract at subject_contract::REF_KEY).
+uintptr_t ad_db_lookup_keyed(uintptr_t db_global, uint32_t id, size_t key_offset) {
     uintptr_t db = safe_read<uintptr_t>(g_base_addr + db_global);
     if (!db) return 0;
     uintptr_t table = safe_read<uintptr_t>(db + ck3::hash_map::TABLE_PTR);
@@ -441,8 +451,90 @@ uintptr_t ad_db_lookup(uintptr_t db_global, uint32_t id) {
     uintptr_t entry = safe_read<uintptr_t>(table + ck3::hash_map::ENTRY_HEADER_SIZE
                                            + static_cast<uintptr_t>(masked) * ck3::hash_map::ENTRY_STRIDE);
     if (!entry) return 0;
-    if ((safe_read<uint32_t>(entry + ck3::hash_map::ENTRY_KEY_REF) & 0xFFFFFF) != masked) return 0;
+    if ((safe_read<uint32_t>(entry + key_offset) & 0xFFFFFF) != masked) return 0;
     return entry;
+}
+
+namespace {
+// The bridge's memory for vassal_roster.h: safe reads, VASSAL_CONTRACT_DB keyed at
+// the contract's REF_KEY, and only live DB characters.
+struct RosterMem {
+    uint32_t  u32(uintptr_t a) const { return safe_read<uint32_t>(a); }
+    uintptr_t ptr(uintptr_t a) const { return safe_read<uintptr_t>(a); }
+    bool      mapped(uintptr_t a) const { return is_mapped(a); }
+    uintptr_t contract(uint32_t ref) const {
+        return ad_db_lookup_keyed(ck3::globals::VASSAL_CONTRACT_DB, ref,
+                                  ::subject_contract::REF_KEY);
+    }
+    uint32_t char_id(uintptr_t ch) const {
+        if (!ch || !is_mapped(ch)) return 0;
+        const uint32_t id = safe_read<uint32_t>(ch + ck3::character::ID) & 0xFFFFFF;
+        void* db = lookup_character(id);
+        if (!db || is_sentinel(db) || reinterpret_cast<uintptr_t>(db) != ch) return 0;
+        if (g_char_is_alive && !g_char_is_alive(db)) return 0;
+        return id;
+    }
+};
+}  // namespace
+
+// A ruler's direct vassals: the subjects of its vassal contracts (vassal_roster.h).
+std::vector<uint32_t> direct_vassal_ids(uintptr_t title_realm, uint32_t ruler_id) {
+    return bridge::vassal_roster::direct_vassal_ids(RosterMem{}, title_realm, ruler_id);
+}
+
+// The ruler's contract with one of its vassals, or 0 (vassal_roster.h).
+uintptr_t vassal_contract_with(uintptr_t title_realm, uint32_t ruler_id, uint32_t vassal_id) {
+    return bridge::vassal_roster::contract_with(RosterMem{}, title_realm, ruler_id, vassal_id);
+}
+
+// Every contract the ruler is the liege of: (vassal id, contract) (vassal_roster.h).
+std::vector<std::pair<uint32_t, uintptr_t>> vassal_contracts(uintptr_t title_realm, uint32_t ruler_id) {
+    std::vector<std::pair<uint32_t, uintptr_t>> out;
+    for (const auto& lc : bridge::vassal_roster::liege_contracts(RosterMem{}, title_realm, ruler_id))
+        out.emplace_back(lc.subject_id, lc.contract);
+    return out;
+}
+
+// A construction's progress, for every reader (inspect(county), construct_building):
+// `days_left` (building_slots::CONSTRUCTING_REMAINING) and `progress_per_day`, the
+// construction days the game takes off it each day. The game's daily advance
+// subtracts 1 / time factor days (building_slots::CONSTRUCTING_SPEED), so a factor
+// of 1.1 builds at 0.91 days a day; `time_factor` is that raw factor. A factor
+// below 1e-5 (the execute's 0) finishes the build on the next advance, so the rate
+// is reported as null there.
+void emit_construction_progress(ResponseBuilder& r, uintptr_t slot_container) {
+    const double left = static_cast<double>(
+        safe_read<int64_t>(slot_container + ck3::building_slots::CONSTRUCTING_REMAINING)) / 100000.0;
+    const double factor = static_cast<double>(
+        safe_read<int64_t>(slot_container + ck3::building_slots::CONSTRUCTING_SPEED)) / 100000.0;
+    r.key("days_left"); r.value_float(left);
+    r.key("progress_per_day");
+    if (factor >= 1e-5) r.value_float(1.0 / factor); else r.value_null();
+    r.key("time_factor"); r.value_float(factor);
+}
+
+// A contract's obligations: each obligation type's key (subject_contract_type, its
+// std::string at KEY_NAME_PTR) and its level, the uint8 at the same index of the
+// parallel levels array. Empty when the arrays do not read as a contract's.
+std::vector<ContractObligation> contract_obligations(uintptr_t contract) {
+    std::vector<ContractObligation> out;
+    if (!contract || !is_mapped(contract)) return out;
+    const uintptr_t types  = safe_read<uintptr_t>(contract + ::subject_contract::OBL_TYPES_PTR);
+    const int32_t   tcount = safe_read<int32_t>(contract + ::subject_contract::OBL_TYPES_COUNT);
+    const uintptr_t levels = safe_read<uintptr_t>(contract + ::subject_contract::OBL_LEVELS_PTR);
+    const int32_t   lcount = safe_read<int32_t>(contract + ::subject_contract::OBL_LEVELS_COUNT);
+    if (!types || !is_mapped(types) || tcount <= 0 || tcount > 64 ||
+        !levels || !is_mapped(levels) || lcount != tcount) return out;
+    for (int32_t i = 0; i < tcount; i++) {
+        const uintptr_t tp = safe_read<uintptr_t>(types + static_cast<uintptr_t>(i) * 8);
+        if (!tp || !is_mapped(tp)) continue;
+        ContractObligation o;
+        o.key = ad_read_std_string(tp + ::subject_contract_type::KEY_NAME_PTR);
+        o.level_addr = levels + static_cast<uintptr_t>(i);
+        o.level = safe_read<uint8_t>(o.level_addr);
+        if (!o.key.empty()) out.push_back(std::move(o));
+    }
+    return out;
 }
 
 // FIX #culture_name: emit culture_id + culture (display name, +0x260) + culture_key
@@ -452,12 +544,9 @@ uintptr_t ad_db_lookup(uintptr_t db_global, uint32_t id) {
 void emit_culture_fields(ResponseBuilder& r, uintptr_t culture_obj, uint32_t culture_id,
                          const char* id_key, const char* name_key, const char* script_key) {
     r.key(id_key); r.value_uint(culture_id & 0xFFFFFF);
-    if (culture_obj && is_mapped(culture_obj)) {
-        std::string disp = ad_read_std_string(culture_obj + culture::NAME);       // +0x260
-        std::string key  = ad_read_std_string(culture_obj + culture::SCRIPT_KEY); // +0x1C8
-        if (!disp.empty()) { r.key(name_key);   r.value_string(disp.c_str(), disp.size()); }
-        if (!key.empty())  { r.key(script_key); r.value_string(key.c_str(),  key.size()); }
-    }
+    const NamePair n = culture_obj_names(culture_obj);
+    if (!n.name.empty()) { r.key(name_key);   r.value_string(n.name.c_str(), n.name.size()); }
+    if (!n.key.empty())  { r.key(script_key); r.value_string(n.key.c_str(),  n.key.size()); }
 }
 
 void emit_culture_fields_by_id(ResponseBuilder& r, uint32_t culture_id,
@@ -526,6 +615,110 @@ void emit_char_name(ResponseBuilder& r, uintptr_t c) {
     }
 }
 
+// A dynasty's name: NAME (+0x80, Dynasty_GetName). "" when the object is null or
+// the name does not read. THE dynasty-name reader (L14 S4): char_dynasty_name,
+// the observation feed (observation.cpp) and query_dynasty all call it. There is
+// no custom-name branch: CUSTOM_NAME (+0x110) as a std::string would overlap
+// HOUSES_ARRAY (+0x118) and HOUSES_COUNT (+0x124), and in the ivar867 dump all
+// 12,025 dynasties hold an image pointer at +0x110 and a heap pointer at +0x118
+// (L14 FB, M-2; the header marks both LOW).
+std::string dynasty_name(uintptr_t dyn_obj) {
+    if (!dyn_obj) return {};
+    return ad_read_std_string(dyn_obj + dynasty_obj::NAME);
+}
+
+// A house's name: NAME (+0x248; House_GetName @ image 0x05eba4d0 is
+// `return param_1 + 0x248`). "" when the object is null or the name does not
+// read. THE house-name reader (L14 FB, M-1): the observation feed and
+// emit_char_names call it through char_house_name. +0x10 on a house is its
+// masked id (hash_map::ENTRY_KEY_REF), never a string.
+std::string house_name(uintptr_t house_obj) {
+    if (!house_obj) return {};
+    return ad_read_std_string(house_obj + dynasty_house_obj::NAME);
+}
+
+// A character's house name (char+0x150 -> HOUSE_DB -> house_name). "" when it
+// does not resolve.
+std::string char_house_name(uintptr_t c) {
+    if (!c || !is_mapped(c)) return {};
+    const uint32_t house_id = safe_read<uint32_t>(c + ck3::character::HOUSE_ID_DIRECT);
+    if (house_id == 0 || house_id == 0xFFFFFFFF) return {};
+    uintptr_t hobj = ad_db_lookup(ck3::globals::HOUSE_DB, house_id & 0xFFFFFF);
+    if (!hobj || !is_mapped(hobj)) return {};
+    return house_name(hobj);
+}
+
+// A CFaith* by faith id. FAITH_DB is a TPdxRefDatabase<CFaith,8>: its entry's
+// id is at faith::FAITH_ID (+0x08, full 32-bit), not at hash_map::ENTRY_KEY_REF
+// (+0x10, a pointer on a faith), so ad_db_lookup answers 0 for every faith (the
+// ivar867 dump: 140 of 140 faiths carry their id at +0x08, 0 at +0x10).
+// FAITH_INDEXED_DB has no table (table 0, capacity 0 in the same dump).
+// THE faith lookup (L14 FB, M-1): every faith name and do_set_doctrine /
+// do_set_character_faith go through it.
+uintptr_t faith_lookup(uint32_t faith_id) {
+    uintptr_t db = safe_read<uintptr_t>(g_base_addr + ck3::globals::FAITH_DB);
+    if (!db) return 0;
+    uint32_t cap = safe_read<uint32_t>(db + ck3::hash_map::CAPACITY);
+    uint32_t idx = faith_id & 0xFFFFFF;
+    if (idx >= cap) return 0;
+    uintptr_t table = safe_read<uintptr_t>(db + ck3::hash_map::TABLE_PTR);
+    if (!table) return 0;
+    uintptr_t entry = safe_read<uintptr_t>(table + ck3::hash_map::ENTRY_HEADER_SIZE
+                                           + static_cast<uintptr_t>(idx) * ck3::hash_map::ENTRY_STRIDE);
+    if (!entry || !is_mapped(entry)) return 0;
+    if (safe_read<uint32_t>(entry + faith::FAITH_ID) != faith_id) return 0;
+    return entry;
+}
+
+// A faith's names: the localized DISPLAY_NAME (+0xC0, "Ásatrú") and the scripted
+// FAITH_KEY (+0x98, "norse_pagan"). Both empty when the id does not resolve.
+NamePair faith_names(uint32_t faith_id) {
+    NamePair out;
+    if (faith_id == 0 || faith_id == 0xFFFFFFFF) return out;
+    uintptr_t fo = faith_lookup(faith_id);
+    if (!fo) return out;
+    out.name = ad_read_std_string(fo + faith::DISPLAY_NAME);
+    out.key  = ad_read_std_string(fo + faith::FAITH_KEY);
+    return out;
+}
+
+// A culture's names: the localized NAME (+0x260, GetCultureNameString) and the
+// scripted SCRIPT_KEY (+0x1C8). +0x10 is the culture's id, never a string.
+NamePair culture_obj_names(uintptr_t culture_obj) {
+    NamePair out;
+    if (!culture_obj || !is_mapped(culture_obj)) return out;
+    out.name = ad_read_std_string(culture_obj + culture::NAME);
+    out.key  = ad_read_std_string(culture_obj + culture::SCRIPT_KEY);
+    return out;
+}
+
+NamePair culture_names(uint32_t culture_id) {
+    if (culture_id == 0 || culture_id == 0xFFFFFFFF) return {};
+    return culture_obj_names(ad_db_lookup(ck3::globals::CULTURE_INDEXED_DB, culture_id));
+}
+
+void emit_faith_fields(ResponseBuilder& r, uint32_t faith_id,
+                       const char* name_key, const char* script_key) {
+    const NamePair n = faith_names(faith_id);
+    if (!n.name.empty()) { r.key(name_key);   r.value_string(n.name.c_str(), n.name.size()); }
+    if (!n.key.empty())  { r.key(script_key); r.value_string(n.key.c_str(),  n.key.size()); }
+}
+
+// A character's dynasty name: the dynasty is the house's (char+0x150 ->
+// HOUSE_DB -> +0x24; family+0x10 is the betrothed character's id,
+// re_interactions.md §4b, not a dynasty), named by dynasty_name. "" when it does
+// not resolve.
+std::string char_dynasty_name(uintptr_t c) {
+    if (!c || !is_mapped(c)) return {};
+    const uint32_t house_id = safe_read<uint32_t>(c + ck3::character::HOUSE_ID_DIRECT);
+    if (house_id == 0 || house_id == 0xFFFFFFFF) return {};
+    uintptr_t hobj = ad_db_lookup(ck3::globals::HOUSE_DB, house_id & 0xFFFFFF);
+    if (!hobj || !is_mapped(hobj)) return {};
+    const uint32_t d = safe_read<uint32_t>(hobj + dynasty_house_obj::DYNASTY_ID);
+    if (d == 0 || d == 0xFFFFFFFF) return {};
+    return dynasty_name(ad_db_lookup(ck3::globals::DYNASTY_DB, d & 0xFFFFFF));
+}
+
 void emit_char_names(ResponseBuilder& r, uintptr_t c) {
     // ck-86ue.1: early-return if c is not in mapped memory. All downstream
     // safe_read calls would return 0 on bad c (so no crash), but we'd emit
@@ -546,68 +739,27 @@ void emit_char_names(ResponseBuilder& r, uintptr_t c) {
                 cid, (void*)safe_read<uintptr_t>(c + ck3::character::OVERRIDE_FLAG));
         fflush(g_logfile);
     }
-    // House name
-    uint32_t house_id = safe_read<uint32_t>(c + ck3::character::HOUSE_ID_DIRECT);
-    if (house_id != 0 && house_id != 0xFFFFFFFF) {
-        uintptr_t house_obj = ad_db_lookup(ck3::globals::HOUSE_DB, house_id);
-        if (house_obj) {
-            std::string hn = ad_read_std_string(house_obj + 0x10);
-            if (!hn.empty()) { r.key("house_name"); r.value_string(hn.c_str(), hn.size()); }
-        }
-    }
-    // Dynasty name
-    // FIX I12 (#dynasty_fallback): family+0x10 is 0/0xFFFFFFFF for landed rulers, so
-    // derive dynasty_id from the house (char+0x150 -> HOUSE_DB -> +0x24) as a fallback.
-    uint32_t dynasty_id = 0;
-    uintptr_t family = safe_read<uintptr_t>(c + ck3::character::FAMILY_DATA);
-    if (family && is_mapped(family)) {
-        uint32_t d = safe_read<uint32_t>(family + ck3::family::DYNASTY_ID);
-        if (d != 0 && d != 0xFFFFFFFF) dynasty_id = d & 0xFFFFFF;
-    }
-    if (dynasty_id == 0 && house_id != 0 && house_id != 0xFFFFFFFF) {
-        uintptr_t hobj = ad_db_lookup(ck3::globals::HOUSE_DB, house_id & 0xFFFFFF);
-        if (hobj && is_mapped(hobj)) {
-            uint32_t d = safe_read<uint32_t>(hobj + dynasty_house_obj::DYNASTY_ID);
-            if (d != 0 && d != 0xFFFFFFFF) dynasty_id = d & 0xFFFFFF;
-        }
-    }
-    if (dynasty_id != 0) {
-        uintptr_t dyn_obj = ad_db_lookup(ck3::globals::DYNASTY_DB, dynasty_id);
-        if (dyn_obj) {
-            // FIX #is_kin side-fix D: dynasty NAME is at +0x80 (Dynasty_GetName), NOT
-            // +0x10 (which is the dynasty ID). Prefer CUSTOM_NAME (+0x110) when set.
-            std::string dn = ad_read_std_string(dyn_obj + dynasty_obj::CUSTOM_NAME);
-            if (dn.empty()) dn = ad_read_std_string(dyn_obj + dynasty_obj::NAME);
-            if (!dn.empty()) { r.key("dynasty_name"); r.value_string(dn.c_str(), dn.size()); }
-        }
-    }
-    // Round 6: culture name — FIX #culture_name: was reading +0x10 (the uint32 culture ID)
-    // as a std::string (always failed → empty). Route through emit_culture_fields which reads
-    // NAME (+0x260) + SCRIPT_KEY (+0x1C8). Emits culture (display) + culture_key (scripted).
-    // Note: emit_char_names already emitted culture_id elsewhere? It did not — but query_character
-    // emits culture_id in its own block; here we use a distinct helper-emitted culture/culture_key
-    // only (skip re-emitting culture_id to avoid a duplicate key in profiles that already emit it).
+    // House name (char_house_name: the one reader, NAME +0x248).
     {
-        uint32_t culture_id = safe_read<uint32_t>(c + ck3::character::CULTURE_ID_DIRECT);
-        if (culture_id != 0 && culture_id != 0xFFFFFFFF) {
-            uintptr_t culture_obj = ad_db_lookup(ck3::globals::CULTURE_INDEXED_DB, culture_id);
-            if (culture_obj && is_mapped(culture_obj)) {
-                std::string cn = ad_read_std_string(culture_obj + culture::NAME);
-                std::string ck = ad_read_std_string(culture_obj + culture::SCRIPT_KEY);
-                if (!cn.empty()) { r.key("culture");     r.value_string(cn.c_str(), cn.size()); }
-                if (!ck.empty()) { r.key("culture_key"); r.value_string(ck.c_str(), ck.size()); }
-            }
-        }
+        std::string hn = char_house_name(c);
+        if (!hn.empty()) { r.key("house_name"); r.value_string(hn.c_str(), hn.size()); }
     }
-    // Round 6: faith name
-    uint32_t faith_id = safe_read<uint32_t>(c + ck3::character::FAITH_ID_DIRECT);
-    if (faith_id != 0 && faith_id != 0xFFFFFFFF) {
-        uintptr_t faith_obj = ad_db_lookup(ck3::globals::FAITH_INDEXED_DB, faith_id);
-        if (faith_obj) {
-            std::string fn = ad_read_std_string(faith_obj + ck3::db_object::NAME_KEY);
-            if (!fn.empty()) { r.key("faith"); r.value_string(fn.c_str(), fn.size()); }
-        }
+    // Dynasty name (char_dynasty_name: the one reader; the court row uses it too).
+    {
+        std::string dn = char_dynasty_name(c);
+        if (!dn.empty()) { r.key("dynasty_name"); r.value_string(dn.c_str(), dn.size()); }
     }
+    // Culture: culture (display, NAME +0x260) + culture_key (SCRIPT_KEY +0x1C8),
+    // through culture_names. No culture_id here: query_character emits it in its
+    // own block.
+    {
+        const NamePair cn = culture_names(safe_read<uint32_t>(c + ck3::character::CULTURE_ID_DIRECT));
+        if (!cn.name.empty()) { r.key("culture");     r.value_string(cn.name.c_str(), cn.name.size()); }
+        if (!cn.key.empty())  { r.key("culture_key"); r.value_string(cn.key.c_str(),  cn.key.size()); }
+    }
+    // Faith: faith (display, DISPLAY_NAME +0xC0) + faith_key (FAITH_KEY +0x98),
+    // through faith_lookup (FAITH_DB keyed at +0x08).
+    emit_faith_fields(r, safe_read<uint32_t>(c + ck3::character::FAITH_ID_DIRECT));
 }
 
 // Helper: look up a title object by ID from the landed title DB
@@ -771,8 +923,12 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
     // to set the controlled character to the player (the player has no AI brain
     // to steer; controlling them = hijacking the human). The player stays a
     // valid target for the agent's AI character, never the agent's identity.
+    safe_read_clear();
     if (reject_player_actor(char_id, "set_controlled_character", out)) return false;
     void* ctrl = lookup_character(char_id);
+    // Before the claim: a player id that could not be read guards nothing (the
+    // player would be taken), and a lookup that faulted found nothing.
+    if (safe_read_had_fault()) return answer_memory_access_fault("set_controlled_character", out);
     if (!ctrl || is_sentinel(ctrl)) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] set_controlled_character: character %u not found\n", char_id);
         if (out) {
@@ -1073,6 +1229,9 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
               r.value_string("native AI disabled: offensive wars will NOT siege "
                              "(occupation stays 0) until control is released or "
                              "re-taken with disable_native_ai=false");
+        // After the commit the take stands: a read that faulted since (the
+        // ai_enabled witness) is said, not refused.
+        if (safe_read_had_fault()) emit_degraded(r, "set_controlled_character");
         r.end_object();
         *out = r.take();
     }
@@ -1080,6 +1239,7 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
 }
 
 bool do_release_character(const char* params_json, std::string* out) {
+    safe_read_clear();
     int cid = json_get_int(params_json, "character_id");
     if (cid <= 0) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] release_character: missing character_id\n");
@@ -1341,12 +1501,13 @@ bool do_release_character(const char* params_json, std::string* out) {
     council_lock_remove(char_id);
 
     // Re-enable native AI by direct memory reads + write.
+    bool native_ai_reenabled = false;
     void* ctrl = lookup_character(char_id);
     if (ctrl && !is_sentinel(ctrl)) {
         uintptr_t c = reinterpret_cast<uintptr_t>(ctrl);
-        uintptr_t core_data = read<uintptr_t>(c + ck3::character::REALM_DATA);
+        uintptr_t core_data = safe_read<uintptr_t>(c + ck3::character::REALM_DATA);
         if (core_data) {
-            uintptr_t ai_ctrl = read<uintptr_t>(core_data + ck3::core_data::AI_CONTROLLER);
+            uintptr_t ai_ctrl = safe_read<uintptr_t>(core_data + ck3::core_data::AI_CONTROLLER);
             if (ai_ctrl) {
                 // R3 (ck-6kvq.10, design §2.7) — the half of R3 that SURVIVED
                 // the 2026-09-12 G3' reversal: `ai_ctrl+0x28` is NEVER
@@ -1365,8 +1526,15 @@ bool do_release_character(const char* params_json, std::string* out) {
                         "[CK3-Bridge] release_character: NOT re-enabling native AI for %u "
                         "— experiment mode; ai_ctrl+0x28 stays disabled for the "
                         "life of the episode (R3, §2.7)\n", char_id);
+                } else if (safe_read_had_fault()) {
+                    // No store after a read that faulted: an address from a
+                    // faulted read is not an address. The reply says degraded.
+                    if (g_logfile) fprintf(g_logfile,
+                        "[CK3-Bridge] release_character: NOT re-enabling native AI for %u "
+                        "— a read on the way faulted\n", char_id);
                 } else {
                     *reinterpret_cast<uint8_t*>(ai_ctrl + ck3::ai_ctrl::AI_ENABLED) = 1;
+                    native_ai_reenabled = true;
                     if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] release_character: re-enabled native AI for %u (pure memory path)\n", char_id);
                 }
             } else {
@@ -1431,35 +1599,19 @@ bool do_release_character(const char* params_json, std::string* out) {
         r.key("session_id"); r.value_string(session ? session->session_id.c_str() : "");
         r.key("agent_mode"); r.value_bool(g_agent_mode.load(std::memory_order_relaxed));
         r.key("roster_size"); r.value_uint(static_cast<uint32_t>(roster_size));
-        r.end_object();
-        *out = r.take();
-    }
-    return true;
-}
-
-bool do_list_watchlist(const char* /*params_json*/, std::string* out) {
-    std::vector<uint32_t> roster;
-    {
-        std::lock_guard<std::mutex> lk(g_controlled_mutex);
-        roster = g_controlled_chars;
-    }
-    uint32_t primary = g_controlled_primary.load(std::memory_order_relaxed);
-
-    if (out) {
-        ResponseBuilder r; r.begin_object();
-        r.key("action"); r.value_string("list_watchlist");
-        r.key("controlled_primary"); r.value_uint(primary);
-        r.key("roster_size"); r.value_uint(static_cast<uint32_t>(roster.size()));
-        r.key("characters"); r.begin_array();
-        for (uint32_t cid : roster) {
-            r.value_uint(cid);
+        // The claim is released whatever the memory said: a read that faulted
+        // (and the native-AI store it then skipped) is said, not refused, and
+        // so is whether the character's native AI was handed back.
+        if (safe_read_had_fault()) {
+            r.key("native_ai_reenabled"); r.value_bool(native_ai_reenabled);
+            emit_degraded(r, "release_character");
         }
-        r.end_array();
         r.end_object();
         *out = r.take();
     }
     return true;
 }
+
 
 // =============================================================================
 // Bridge State Recovery Query
@@ -1492,6 +1644,7 @@ bool do_who_holds_the_lock(const char* /* params_json */, std::string* out) {
 }
 
 bool do_get_bridge_state(const char* /* params_json */, std::string* out) {
+    FaultScope fault_scope("get_bridge_state", out);
     ResponseBuilder r;
     r.begin_object();
     r.key("action"); r.value_string("get_bridge_state");
@@ -1515,20 +1668,6 @@ bool do_get_bridge_state(const char* /* params_json */, std::string* out) {
     }
     r.end_array();
 
-    // Subsystem mask per character
-    r.key("subsystem_masks"); r.begin_object();
-    for (uint32_t cid : chars_snapshot) {
-        std::string sub_json;
-        get_character_subsystems(cid, &sub_json);
-        char key_buf[16];
-        snprintf(key_buf, sizeof(key_buf), "%u", cid);
-        // FIX I11: splice the pre-formed subsystem object verbatim instead of
-        // double-encoding it as a quoted string. get_character_subsystems always
-        // returns a complete {...} object (known-valid invariant holds here).
-        r.key(key_buf); r.value_raw(sub_json);
-    }
-    r.end_object();
-
     // Current tick_id
     r.key("tick_id"); r.value_uint(g_tick_id.load(std::memory_order_relaxed));
 
@@ -1546,16 +1685,15 @@ bool do_get_bridge_state(const char* /* params_json */, std::string* out) {
     r.key("cb_query_busy_count");
     r.value_uint(static_cast<uint32_t>(g_cb_query_busy_count.load(std::memory_order_relaxed)));
 
-    // ck-p2sb: the deferred coordinator's two typed refusals. Reported HERE,
+    // ck-p2sb: the deferred single-flight lock's typed refusal. Reported HERE,
     // beside cb_query_busy_count, because that is the counter this is modelled
     // on and a reader looking for "did the bridge refuse anything" should find
-    // them together rather than in two surfaces. 0 is a real statement —
-    // the bridge looked and neither fired; the keys being ABSENT means an older
-    // bridge that could not say.
+    // them together rather than in two surfaces. 0 is a real statement — the
+    // bridge looked and it never fired; the key being ABSENT means an older
+    // bridge that could not say. (drain_unavailable_count went with the pause
+    // pulse that was its only source, L13 D3.)
     r.key("busy_deferred_count");
     r.value_uint(static_cast<uint32_t>(g_busy_deferred_count.load(std::memory_order_relaxed)));
-    r.key("drain_unavailable_count");
-    r.value_uint(static_cast<uint32_t>(g_drain_unavailable_count.load(std::memory_order_relaxed)));
 
     // FIX I05: agent-control mode (matches set_controlled_character / release_character)
     r.key("agent_mode"); r.value_bool(g_agent_mode.load(std::memory_order_relaxed));
@@ -1633,7 +1771,10 @@ bool do_get_bridge_state(const char* /* params_json */, std::string* out) {
 // =============================================================================
 
 bool do_get_player_character(const char* /*params_json*/, std::string* out) {
-    uint32_t player_id = read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
+    safe_read_clear();
+    uint32_t player_id = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
+    // The id IS the reply: an unreadable one is a fault, not player 0.
+    if (safe_read_had_fault()) return answer_memory_access_fault("get_player_character", out);
     if (!out) return true;
     ResponseBuilder r;
     r.begin_object();
@@ -1662,7 +1803,9 @@ bool do_get_controlled_roster(const char* /*params_json*/, std::string* out) {
     }
     r.end_array();
 
-    uint32_t player_id = read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
+    safe_read_clear();
+    uint32_t player_id = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
+    if (safe_read_had_fault()) return answer_memory_access_fault("get_controlled_roster", out);
     r.key("player_character_id"); r.value_uint(player_id & 0xFFFFFF);
 
     r.end_object();
@@ -1689,11 +1832,9 @@ static bool experimental_write_enabled(const char* action) {
     static const char* kExperimental[] = {
         // hire_mercenary REMOVED 2026-06-18 — VALIDATED working (live: company 17
         // hired for ruler 13043, gold charged 1051.73→820.2; non-queue hire effect
-        // applies). set_title_law REMOVED 2026-06-19 — goes through the real
-        // add_title_law engine path (FUN_061d14f0, non-queue); success mirrors the
-        // engine's own SResult verdict (honest rejects return the real "Couldn't add
-        // law" tooltip — no false-success risk), so it applies when the engine allows.
-        // Both now permanently enabled.
+        // applies). set_title_law is not gated: it queues the title-law
+        // window's own CAddTitleLawCommand after the engine's IsValid says yes, and a
+        // refusal carries the engine's text (lane l4). Both permanently enabled.
         // maa_recruit REMOVED 2026-06-19 — VALIDATED working via the full
         // CCreateMAARegimentCommand ctor→Execute→base_dtor path. re_create_maa_regiment_command.md.
         //
@@ -1701,7 +1842,7 @@ static bool experimental_write_enabled(const char* action) {
         //  - appoint_councillor ENABLED — SWAP_COUNCIL_RAW_LEAF corrected 0x068b4d10→0x067b4d10
         //    (was an IMAGE VA; +0x100000 bug) + 4-arg sig (council,owner,char_a,char_b). Live:
         //    ruler 11515 swapped seats 7315<->7316, applied=1, no crash. Occupied-swap only
-        //    (vacant gated as vacant_fill_unsupported). re_resolution_appoint.md.
+        //    (a vacant seat is refused: vacant_seat_fill_unsupported). re_resolution_appoint.md.
         //  - set_doctrine ENABLED — faith_lookup fixed + arg order corrected to [doctrine,faith]
         //    (was reversed → always "Invalid doctrine"). Live: faith 23 (Catholicism) added
         //    tenet_communion/doctrine_pluralism_fundamentalist/etc, engine "Added ... doctrine".
@@ -1714,7 +1855,16 @@ static bool experimental_write_enabled(const char* action) {
         //    set origin→province#1; both CHANGED, no crash. re_resolution_maa_station.md.
         //    NOTE: agent needs province-index discovery (a query exposing realm province
         //    indices) for optimal stationing; unstation needs only regiment_id.
-        "faction_action",
+        // faction_action REMOVED 2026-10-21 (lane l10-factions, F16) — validated live
+        // on the 867 save from both seats (live867 runs l10-p6, l10-p7): create /
+        // join / leave / press_demand run through the engine's own create-command
+        // check, CAN_JOIN / CAN_LEAVE / CAN_FIRE_ULTIMATUM with their reason text,
+        // and each is read back (re/findings/re_factions.md,
+        // scripts/live867/scenarios/l10_factions_*.py).
+        //
+        // No write is gated now. nullptr marks the list as deliberately empty (a
+        // zero-length array is not C++); the loop below skips it.
+        nullptr,
         // scheme_action REMOVED 2026-10-18 — VALIDATED live (lane-scheme,
         // re/sessions/lane-scheme-2026-10-18, re/findings/re_scheme_start_args.md):
         // CreateActiveScheme's p5/p6 are the CTaskContract/CArtifact DB null objects
@@ -1722,23 +1872,13 @@ static bool experimental_write_enabled(const char* action) {
         // not the sentinel, cancel reachable. Murders created and owned for four
         // rulers across four timed runs (867.02→06, 04→08, ...), no fault line, ticks
         // kept flowing. Engine refusals come back typed (scheme_start_refused,
-        // target_ineligible, scheme_type_unsupported, game_paused). Not exercised:
+        // target_ineligible, scheme_type_unsupported). Not exercised:
         // a dead target; a human player as TARGET (the game allows it; the bridge
         // refuses only a player as actor). Still wrapped in the fake-RNG + watchdog +
         // sigsetjmp crash-net like every other write.
-        // break_alliance — the literal CBreakAllowAllianceEffect break. OFFSETS
-        // PINNED (alliance::BREAK_ALLIANCE_*) + chain HIGH-confidence, but the
-        // handler is observer-save-GATED: it makes NO engine call yet (drain path
-        // + direct-cmd arg ABI unverified — re_break_alliance_impl.md §6). Listed
-        // here so that, once the observer-save smoke confirms the arg unwrap and
-        // the game-thread drain path lands, the real break is double-gated behind
-        // /tmp/ck3-enabled-writes for controlled validation rather than reachable
-        // by default. The safe-now ally-call-refusal lever is the `conqueror`-var
-        // scripted-effect via execute_scripted_effect.
-        "break_alliance",
     };
     bool is_exp = false;
-    for (const char* e : kExperimental) if (strcmp(action, e) == 0) { is_exp = true; break; }
+    for (const char* e : kExperimental) if (e && strcmp(action, e) == 0) { is_exp = true; break; }
     if (!is_exp) return true;  // not gated
     FILE* f = bridge::instance_state_fopen(kEnabledWritesName, "r");
     if (!f) return false;
@@ -1801,23 +1941,23 @@ static std::string format_action_log_game_date() {
 bool is_bridge_management_verb(const char* action_type) {
     static const char* mgmt[] = {
         // pause/speed
-        "pause_game", "unpause_game", "set_speed", "pause", "set_pause",
-        // AI subsystem toggles (bridge-local bookkeeping)
-        "toggle_all_ai", "enable_all_ai", "toggle_ai_subsystem",
-        "set_character_ai", "set_character_subsystems",
+        "pause_game", "unpause_game", "set_speed", "set_pause",
+        // the native AI's switches: toggle_all_ai and toggle_ai_subsystem write
+        // engine-enforced PROCESS-WIDE flag bytes (every AI ruler);
+        // set_character_ai writes one character's AI gate
+        "toggle_all_ai", "toggle_ai_subsystem",
+        "set_character_ai",
         // bridge automation / observer
-        "set_auto_respond_events", "set_controlled_character", "release_character",
+        "set_controlled_character", "release_character",
         "select_observe_default", "enter_observe_mode", "inject_mouse_click",
         // steering overrides (bridge-local flags consumed by hooks)
         "set_cb_selector_override", "set_offgoal_veto",
-        "set_break_alliance_enabled", "set_vacant_fill_enabled",
-        "set_force_offensive_stance", "set_war_stance_record_walk",
+        "set_war_stance_record_walk",
+        "set_faction_demand_response",
         // diagnostics / meta
         "who_holds_the_lock", "get_bridge_state", "get_offset_validation", "get_tick_info",
         // misc reads mis-routed as actions
-        "evaluate_named_trigger", "tick_diff",
-        "pending_events", "notifications", "query_pending_events", "event_probabilities",
-        "memory_probe", "resolve_global",
+        "tick_diff", "memory_probe", "resolve_global",
         // validation helpers (reads, not writes)
         "pre_validate_war", "construction_check",
         // ck-6kvq.13 (R6): the budget governor's own surface. Bridge-local
@@ -1929,6 +2069,7 @@ void budget_emit_state(ResponseBuilder& r) {
 // session may only report for ITSELF when a session context exists, so one
 // agent cannot spend another's allowance.
 bool do_report_usage(const char* params_json, std::string* out) {
+    FaultScope fault_scope("report_usage", out);
     Session* session = current_session();
     std::string sid = session ? session->session_id : std::string();
     const char* explicit_sid = json_get_string(params_json, "session_id");
@@ -2008,6 +2149,7 @@ bool do_set_budget_config(const char* params_json, std::string* out) {
 
 // get_budget_state — the bundle payload, read-only, safe in every state.
 bool do_get_budget_state(const char* /* params_json */, std::string* out) {
+    FaultScope fault_scope("get_budget_state", out);
     budget_observe_engine_clock();
     ResponseBuilder r; r.begin_object();
     r.key("action");  r.value_string("get_budget_state");
@@ -2063,6 +2205,7 @@ BoardAttribution mint_board_attribution() {
 // The frozen shape, per R4 "design frozen before episode one" as corrected by
 // the 2026-09-12 vocabulary ruling (window_id -> flush_id).
 bool do_board_post(const char* params_json, std::string* out) {
+    FaultScope fault_scope("board_post", out);
     const BoardAttribution who = mint_board_attribution();
     const BoardPostResult res = board().post(params_json, who);
 
@@ -2184,9 +2327,10 @@ bool do_board_admin(const char* params_json, std::string* out) {
 static const char* action_log_kind(const char* action_type) {
     if (!action_type || !action_type[0]) return nullptr;
     static const char* const kLoggedMgmt[] = {
-        "pause_game", "unpause_game", "pause", "set_pause", "set_speed",
-        "set_character_ai", "set_character_subsystems",
-        "set_offgoal_veto", "set_force_offensive_stance",
+        "pause_game", "unpause_game", "set_pause", "set_speed",
+        "set_character_ai",
+        "set_offgoal_veto",
+        "set_faction_demand_response",
     };
     for (const char* m : kLoggedMgmt)
         if (strcmp(action_type, m) == 0) return "management";
@@ -2288,39 +2432,108 @@ static bool case_toggle_all_ai(const char* params_json, std::string* response_ou
         return false;
     }
     if (enabled) enable_all_ai(); else disable_all_ai();
+    // The byte as read back after the store, beside the request (as
+    // toggle_ai_subsystem does): what the game holds, not what was asked. The
+    // store has landed whatever the read-back does, so a read-back that faulted
+    // is said (degraded, verified:false, the byte written), never a refusal.
+    safe_read_clear();
+    const int byte_after = safe_read_offset<uint8_t>(ck3::globals::AI_GLOBAL_TOGGLE);
     if (response_out) {
         ResponseBuilder r; r.begin_object();
         r.key("success");        r.value_bool(true);
         r.key("action");         r.value_string("toggle_all_ai");
         r.key("all_ai_enabled"); r.value_bool(enabled);
+        if (safe_read_had_fault()) {
+            r.key("byte_after");   r.value_null();
+            r.key("byte_written"); r.value_int(enabled ? 1 : 0);
+            r.key("verified");     r.value_bool(false);
+            emit_degraded(r, "toggle_all_ai");
+        } else {
+            r.key("byte_after");   r.value_int(byte_after);
+        }
         r.end_object();
         *response_out = r.take();
     }
     return true;
 }
 
-static bool case_enable_all_ai(const char* /*params_json*/, std::string* /*response_out*/) {
-    enable_all_ai();
-    return true;
+// The clock verbs: clock_write's primitives write nothing after a read that
+// faulted (event_handler.cpp) and leave the fault counted, so
+// a fault answers memory_access_fault here, never a synthesized success.
+static bool case_pause_game(const char* params_json, std::string* response_out) {
+    safe_read_clear();
+    const bool ok = do_pause_game(params_json);
+    if (safe_read_had_fault()) return answer_memory_access_fault("pause_game", response_out);
+    return ok;
 }
 
-static bool case_pause_game(const char* params_json, std::string* /*response_out*/) {
-    return do_pause_game(params_json);
+static bool case_unpause_game(const char* params_json, std::string* response_out) {
+    safe_read_clear();
+    const bool ok = do_unpause_game(params_json);
+    if (safe_read_had_fault()) return answer_memory_access_fault("unpause_game", response_out);
+    return ok;
 }
 
-static bool case_unpause_game(const char* params_json, std::string* /*response_out*/) {
-    return do_unpause_game(params_json);
+static bool case_set_speed(const char* params_json, std::string* response_out) {
+    safe_read_clear();
+    const bool ok = do_set_speed(params_json);
+    if (safe_read_had_fault()) return answer_memory_access_fault("set_speed", response_out);
+    return ok;
 }
 
-static bool case_set_speed(const char* params_json, std::string* /*response_out*/) {
-    return do_set_speed(params_json);
-}
-
+// The flag store is an image global (no read decides it). The byte read back
+// after it is the reply's witness; the store has landed whatever that read does,
+// so a read-back that faulted is said (degraded, verified:false, the byte
+// written), never a refusal.
 static bool case_toggle_ai_subsystem(const char* params_json, std::string* response_out) {
-    return do_toggle_ai_subsystem(params_json, response_out);
+    const char* subsystem = json_get_string(params_json, "subsystem");
+    if (!subsystem) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] toggle_ai_subsystem: missing subsystem name\n");
+        return false;
+    }
+
+    bool enabled = json_get_bool(params_json, "enabled", true);
+
+    for (size_t i = 0; i < g_subsystem_toggle_count; i++) {
+        if (strcmp(g_subsystem_toggles[i].name, subsystem) == 0) {
+            auto* flag = reinterpret_cast<volatile uint8_t*>(g_base_addr + g_subsystem_toggles[i].offset);
+            *flag = enabled ? 1 : 0;
+            // The byte as read back after the store: a witness beside the request
+            // (ADR 0001 P6 checks the write landed on each build's address).
+            safe_read_clear();
+            const int after = safe_read<uint8_t>(g_base_addr + g_subsystem_toggles[i].offset);
+            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] AI subsystem '%s' %s (byte now %d)\n",
+                    subsystem, enabled ? "enabled" : "disabled", after);
+            if (response_out) {
+                ResponseBuilder r; r.begin_object();
+                r.key("success"); r.value_bool(true);
+                r.key("action"); r.value_string("toggle_ai_subsystem");
+                r.key("subsystem"); r.value_string(g_subsystem_toggles[i].name);
+                r.key("enabled"); r.value_bool(enabled);
+                if (safe_read_had_fault()) {
+                    r.key("byte_after");   r.value_null();
+                    r.key("byte_written"); r.value_int(enabled ? 1 : 0);
+                    r.key("verified");     r.value_bool(false);
+                    emit_degraded(r, "toggle_ai_subsystem");
+                } else {
+                    r.key("byte_after");   r.value_int(after);
+                }
+                r.end_object();
+                *response_out = r.take();
+            }
+            return true;
+        }
+    }
+
+    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] toggle_ai_subsystem: unknown subsystem '%s'\n", subsystem);
+    return false;
 }
 
 static bool case_set_character_ai(const char* params_json, std::string* response_out) {
+    // do_set_character_ai stores only through a controller whose field it read
+    // (an unreadable one is refused as ai_controller_unreadable, a fault it
+    // names); the reply below says degraded when any read faulted.
+    FaultScope fault_scope("set_character_ai", response_out);
     bool ok = do_set_character_ai(params_json);
     if (response_out) {
         bool enabled = json_get_bool(params_json, "enabled", true);
@@ -2336,7 +2549,21 @@ static bool case_set_character_ai(const char* params_json, std::string* response
         // ai_enabled:true, and the action log carried that pair. On failure the
         // state is UNREAD: null, plus the reason the handler refused.
         if (ok) {
-            rb.key("ai_enabled"); rb.value_bool(enabled);
+            // F11 (cleanup 2026.11, lane l6): the byte as it reads after the
+            // write (ai_ctrl::AI_ENABLED), not the value requested. A store
+            // that did not take answers success with the byte it left.
+            void* ch = lookup_character(static_cast<uint32_t>(cid));
+            void* ctl = (ch && !is_sentinel(ch) && g_get_ai_ctrl) ? g_get_ai_ctrl(ch) : nullptr;
+            uint8_t now = 0;
+            if (ctl && safe_read_bytes(reinterpret_cast<uintptr_t>(ctl) + ck3::ai_ctrl::AI_ENABLED, &now, 1)) {
+                rb.key("ai_enabled"); rb.value_bool(now != 0);
+                rb.key("requested"); rb.value_bool(enabled);
+                rb.key("applied"); rb.value_bool((now != 0) == enabled);
+            } else {
+                rb.key("ai_enabled"); rb.value_null();
+                rb.key("requested"); rb.value_bool(enabled);
+                rb.key("applied"); rb.value_null();
+            }
         } else {
             rb.key("ai_enabled"); rb.value_null();
             const char* reason = "no_ai_controller";
@@ -2355,65 +2582,8 @@ static bool case_set_character_ai(const char* params_json, std::string* response
     return ok;
 }
 
-static bool case_set_character_subsystems(const char* params_json, std::string* response_out) {
-    int cid = json_get_int(params_json, "character_id");
-    // Resolve char_id=0 to controlled character (no PLAYER_CHAR_ID fallback)
-    if (cid <= 0) {
-        uint32_t resolved = g_controlled_primary.load(std::memory_order_relaxed);
-        if (resolved == 0 || resolved == 0xFFFFFFFF) {
-            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] set_character_subsystems: no controlled character\n");
-            if (response_out) *response_out = R"({"success":false,"action":"set_character_subsystems","reason":"no_controlled_character"})";
-            return false;
-        }
-        cid = static_cast<int>(resolved);
-    }
-    if (reject_player_actor(static_cast<uint32_t>(cid), "set_character_subsystems", response_out))
-        return true;  // response written; action refused
-    // Pass full params_json -- handler searches for subsystem name keys directly
-    bool ok = set_character_subsystems(static_cast<uint32_t>(cid), params_json);
-    // Bug B fix: construct response JSON
-    if (response_out) {
-        ResponseBuilder rb;
-        rb.begin_object();
-        rb.key("success"); rb.value_bool(ok);
-        rb.key("action"); rb.value_string("set_character_subsystems");
-        rb.key("character_id"); rb.value_uint(static_cast<uint32_t>(cid));
-        // HONESTY (#125): the mask is bookkeeping only — no dispatch hook
-        // consumes it, so toggling a subsystem off does NOT gate engine
-        // behaviour. Most importantly CallAllies=false does NOT prevent the
-        // engine's call-to-arms auto-join. Surface this so the agent stops
-        // relying on a dead lever and uses alliance hygiene instead.
-        rb.key("engine_enforced"); rb.value_bool(false);
-        if (strstr(params_json, "\"CallAllies\"")) {
-            rb.key("warning"); rb.value_string(
-                "CallAllies toggle is bookkeeping only and does NOT suppress "
-                "the engine's ally call-to-arms auto-join. To stay out of ally "
-                "offensive wars: never form/renew liability alliances (#122), "
-                "monitor query(domain=call_to_arms), and bias defensive when an "
-                "offensive call lands. See re_alliance_hygiene_125.md.");
-        }
-        rb.end_object();
-        *response_out = rb.take();
-    }
-    return ok;
-}
-
-static bool case_get_character_subsystems(const char* params_json, std::string* response_out) {
-    int cid = json_get_int(params_json, "character_id");
-    // Resolve char_id=0 to controlled character (no PLAYER_CHAR_ID fallback)
-    if (cid <= 0) {
-        uint32_t resolved = g_controlled_primary.load(std::memory_order_relaxed);
-        if (resolved == 0 || resolved == 0xFFFFFFFF) {
-            if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] get_character_subsystems: no controlled character\n");
-            if (response_out) *response_out = R"({"success":false,"action":"get_character_subsystems","reason":"no_controlled_character"})";
-            return false;
-        }
-        cid = static_cast<int>(resolved);
-    }
-    return get_character_subsystems(static_cast<uint32_t>(cid), response_out);
-}
-
 static bool case_get_offset_validation(const char* /*params_json*/, std::string* response_out) {
+    FaultScope fault_scope("get_offset_validation", response_out);
     ResponseBuilder r;
     r.begin_object();
     r.key("action"); r.value_string("get_offset_validation");
@@ -2426,7 +2596,10 @@ static bool case_get_offset_validation(const char* /*params_json*/, std::string*
     r.key("checks_passed"); r.value_int(result.checks_passed);
     r.key("checks_failed"); r.value_int(result.checks_failed);
     r.key("failure_pct"); r.value_double(static_cast<double>(result.failure_pct));
-    r.key("degraded"); r.value_bool(result.degraded);
+    // The offset table's own verdict, named apart from the fault marker
+    // ("degraded", a read under this reply that faulted), which the FaultScope
+    // adds and a key of the same name would suppress (witness #10 R1(b)).
+    r.key("offsets_degraded"); r.value_bool(result.degraded);
     r.key("groups"); r.begin_array();
     for (int i = 0; i < result.total_groups; i++) {
         r.begin_object();
@@ -2465,6 +2638,7 @@ static bool case_set_war_stance_record_walk(const char* params_json, std::string
 }
 
 static bool case_list_interactions(const char* /*params_json*/, std::string* response_out) {
+    FaultScope fault_scope("list_interactions", response_out);
     if (response_out) {
         static std::string int_result;
         int_result = enumerate_interactions();
@@ -2482,6 +2656,7 @@ static bool case_list_interactions(const char* /*params_json*/, std::string* res
 // routes mitigate via bounded list-mode + culprit skip-list + self-heal, not a
 // thread move. See re_decision_eval_64_NEXTBATCH.md.
 static bool case_list_decisions(const char* /*params_json*/, std::string* response_out) {
+    FaultScope fault_scope("list_decisions", response_out);
     if (response_out) {
         static std::string dec_result;
         dec_result = enumerate_decisions();
@@ -2490,25 +2665,13 @@ static bool case_list_decisions(const char* /*params_json*/, std::string* respon
     return true;
 }
 
-static bool case_set_auto_respond_events(const char* params_json, std::string* response_out) {
-    bool enabled = json_get_bool(params_json, "enabled", true);
-    g_auto_respond_events.store(enabled, std::memory_order_relaxed);
-    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Auto-respond events: %s\n", enabled ? "enabled" : "disabled");
-    if (response_out) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), R"({"success":true,"auto_respond_events":%s})",
-                 enabled ? "true" : "false");
-        *response_out = buf;
-    }
-    return true;
-}
-
-// Shared by the "pause" and "set_pause" registry entries (the two dispatch
-// cases were byte-identical). Differs from pause_game/unpause_game only in
+// The "set_pause" registry entry. Differs from pause_game/unpause_game only in
 // param shape ({"paused":bool} vs none).
-static bool case_set_pause(const char* params_json, std::string* /*response_out*/) {
+static bool case_set_pause(const char* params_json, std::string* response_out) {
+    safe_read_clear();
     bool paused = json_get_bool(params_json, "paused", true);
-    if (paused) game_pause(); else game_unpause();
+    clock_write(paused ? ClockWrite::Pause : ClockWrite::Unpause, ClockOrigin::Session);
+    if (safe_read_had_fault()) return answer_memory_access_fault("set_pause", response_out);
     return true;
 }
 
@@ -2516,6 +2679,7 @@ static bool refuse_debug_verb(const char* verb, std::string* response_out);
 
 // --- Query dispatch (new tool schema names): the `query` meta-router ---
 static bool case_query_meta(const char* params_json, std::string* response_out) {
+    FaultScope fault_scope("query", response_out);
     const char* query_type = json_get_string(params_json, "type");
     if (!query_type) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] query: missing 'type'\n");
@@ -2549,20 +2713,6 @@ static bool case_query_meta(const char* params_json, std::string* response_out) 
             int_result = enumerate_interactions();
             *response_out = int_result.c_str();
         }
-        return true;
-    }
-    if (strcmp(query_type, "notifications") == 0 || strcmp(query_type, "pending_events") == 0) {
-        return do_query_pending_events(params_json, response_out);
-    }
-    if (strcmp(query_type, "event_probabilities") == 0) {
-        return do_query_event_probabilities(params_json, response_out);
-    }
-    if (strcmp(query_type, "war_details") == 0) {
-        if (response_out) *response_out = "{\"note\":\"war detail offsets not yet mapped\"}";
-        return true;
-    }
-    if (strcmp(query_type, "scheme_details") == 0) {
-        if (response_out) *response_out = "{\"note\":\"scheme detail offsets not yet mapped\"}";
         return true;
     }
     if (strcmp(query_type, "succession") == 0) {
@@ -2614,17 +2764,15 @@ static bool fail_if_no_context(const char* action_name, std::string* response_ou
 }
 
 // rc2 B2: raw memory reads (memory_probe, resolve_global), X/uinput input
-// injection (inject_mouse_click, select_observe_default), the debug console
-// (execute_console_command) and raw client pointers handed to the engine
-// (set_cb_selector_override) are COMPILED OUT unless built with
+// injection (inject_mouse_click, select_observe_default) and raw client
+// pointers handed to the engine (set_cb_selector_override) are COMPILED OUT unless built with
 // CK3_BRIDGE_DEBUG_VERBS (CMake option, OFF): their action_registry.inc lines
 // and handler bodies are #ifdef'd, so a default build does not link them.
 // This list only words the refusal; test_debug_verbs checks it equals the set
 // the define adds to action_registry.inc.
 static const char* const kDebugVerbs[] = {
     "memory_probe", "resolve_global", "inject_mouse_click",
-    "select_observe_default", "execute_console_command",
-    "set_cb_selector_override",
+    "select_observe_default", "set_cb_selector_override",
 };
 
 bool debug_verb_compiled_out(const char* verb) {
@@ -2915,6 +3063,11 @@ bool is_registered_action(const char* action_type) {
 // Wrapper that auto-generates response for handlers that don't set one
 bool dispatch_action_with_response(const char* action_type, const char* params_json,
                                     std::string* response_out) {
+    // The fault flag counts this dispatch only (a flag left by an earlier call
+    // on this thread is not this reply's), so the reply made below for a
+    // handler that left none can say whether a read under it faulted: a
+    // FaultScope that saw an empty reply had nothing to mark (witness #10 R1(a)).
+    safe_read_clear();
     std::string resp;
     bool ok = dispatch_action(action_type, params_json, response_out ? response_out : &resp);
 
@@ -2929,6 +3082,7 @@ bool dispatch_action_with_response(const char* action_type, const char* params_j
             *response_out += action_type;
             *response_out += "\"}";
         }
+        if (safe_read_had_fault()) mark_reply_degraded(*response_out, safe_read_fault_count());
     }
 
     // overlay-v2 §2.2: tap executed state-mutating action verbs into the JSONL feed.

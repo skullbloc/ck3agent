@@ -83,7 +83,7 @@ bool is_bridge_internal_query(const char*) { return false; }
 bool is_deferred_drain_action(const char*) { return false; }
 bool is_game_state_query(const char*) { return false; }
 bool is_game_thread_action(const char*) { return false; }
-bool is_paused() { return true; }
+void refresh_memory_map() {}
 bool is_registered_action(const char*) { return false; }
 // rc2 B2: one stand-in debug verb, so the reader's unavailable_in_release
 // branch (ipc_server.cpp try_queue_fallthrough_rejection) is exercised. The
@@ -101,9 +101,9 @@ void pipeline_note_session_open(const Session*) {}
 void pipeline_register_session(const char*) {}
 void pipeline_unregister_session(const char*) {}
 size_t pulse_sweep_ipc() { return 0; }
-DeferredDrainStatus run_deferred_pause_transparent(
+DeferredDrainStatus run_deferred_single_flight(
         const std::function<void(std::string*)>&, std::string*) {
-    return DeferredDrainStatus::DrainUnavailable;
+    return DeferredDrainStatus::BusyDeferred;
 }
 }  // namespace bridge
 

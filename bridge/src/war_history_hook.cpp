@@ -14,6 +14,8 @@
 #include "action_dispatch_internal.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
 #include "war_history.h"
+#include "war_side.h"   // a war's participant ids: the one reader of that layout
+#include "engine_text.h"               // war names are rendered text: one cleaner
 #include "game_date.h"
 // ck-hxh7 landed: the world-reset registry is on main, so the __has_include
 // guard this file shipped with is gone and the include is unconditional.
@@ -51,15 +53,10 @@ static bool read_game_clock(int32_t* raw_out) {
     return true;
 }
 
-static void read_participants(uintptr_t container, std::vector<uint32_t>* out) {
-    uintptr_t arr = safe_read<uintptr_t>(container);
-    int32_t count = safe_read<int32_t>(container + 0x0C);
-    if (!arr || count <= 0 || count > 100) return;
-    for (int32_t i = 0; i < count && i < 32; i++) {
-        uintptr_t part = safe_read<uintptr_t>(arr + i * 8);
-        if (!part || part < 0x10000) continue;
-        out->push_back(safe_read<uint32_t>(part + ck3::war_participant::CHAR_ID) & 0xFFFFFF);
-    }
+static void read_participants(uintptr_t wp, size_t side_off, std::vector<uint32_t>* out) {
+    uint32_t ids[32];
+    const int n = war_side::ids(wp, side_off, ids, 32);
+    out->assign(ids, ids + n);
 }
 
 // Copy everything worth keeping out of a CWar that is about to be destroyed.
@@ -101,23 +98,17 @@ static bool capture_war(uintptr_t wp, int outcome, WarEndRecord* rec) {
     rec->claimant_id = (claimant == 0xFFFFFFFF || (claimant & 0xFFFFFF) == 0xFFFFFF)
                        ? 0xFFFFFFFFu : (claimant & 0xFFFFFF);
 
-    uintptr_t cb_type_ref = safe_read<uintptr_t>(wp + ck3::war_obj::CB_TYPE_REF);
-    if (cb_type_ref && is_mapped(cb_type_ref)) {
-        rec->cb_type = ad_read_std_string(cb_type_ref + ck3::db_object::NAME_KEY);
-    }
-    rec->war_name = ad_read_std_string(wp + ck3::war_obj::NAME_DATA_PTR);
+    rec->cb_type = war_cb_type_name(wp);   // the one read of a war's CB name
+    rec->war_name = clean_engine_text(ad_read_std_string(wp + ck3::war_obj::NAME_DATA_PTR));  // the rendered name, as words
 
-    uintptr_t titles = safe_read<uintptr_t>(wp + ck3::war_obj::CB_TITLE_ARRAY);
-    int32_t title_count = safe_read<int32_t>(wp + ck3::war_obj::CB_TITLE_COUNT);
-    if (titles && title_count > 0 && title_count <= 20) {
-        for (int32_t i = 0; i < title_count; i++) {
-            uint64_t t = safe_read<uint64_t>(titles + i * 8);
-            rec->target_titles.push_back(static_cast<uint32_t>(t & 0xFFFFFF));
-        }
+    {
+        uint32_t tt[20];
+        const int tn = read_war_target_titles(wp, tt, 20);
+        rec->target_titles.assign(tt, tt + tn);
     }
 
-    read_participants(wp + ck3::war_obj::ATK_PARTICIPANT, &rec->atk_participants);
-    read_participants(wp + ck3::war_obj::DEF_PARTICIPANT, &rec->def_participants);
+    read_participants(wp, ck3::war_obj::ATK_PARTICIPANT, &rec->atk_participants);
+    read_participants(wp, ck3::war_obj::DEF_PARTICIPANT, &rec->def_participants);
 
     rec->tick = g_tick_id.load(std::memory_order_relaxed);
     rec->timestamp_ms = static_cast<uint64_t>(

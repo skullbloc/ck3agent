@@ -16,12 +16,13 @@ protocol from `CLAUDE.md` in the play directory.
 | `.claude/settings.json` | the live-state hook, the tool allow-list and the `env` block |
 | `runs/` | output of `ck3agent run` |
 
-**Permissions.** Setup merges `"permissions": {"allow": ["mcp__ck3", "Bash(sleep:*)"]}`
+**Permissions.** Setup merges `"permissions": {"allow": ["mcp__ck3"]}`
 into `.claude/settings.json` and keeps your other settings. The `ck3` tools
 then run without a prompt, once you have accepted Claude Code's trust dialog
 for the play directory (it asks the first time you start `claude` there; until
-then the allow-list is ignored). Remove the entries to be asked each time, or
-run `ck3agent setup --no-allow`.
+then the allow-list is ignored). Remove the entry to be asked each time, or
+run `ck3agent setup --no-allow`. A play directory set up by 2026.10 also
+allowed `Bash(sleep:*)`; setup removes that entry.
 
 **Time passes through the server.** Between cycles Claude calls
 `session(action="wait", seconds=60)`: the server unpauses, blocks, pauses and
@@ -32,10 +33,10 @@ Claude Code otherwise moves a tool call still running after 120 seconds into a
 background task; a wait is at most 110 seconds per call.
 
 **Live-state hook.** Before each prompt, `ck3agent hook-state` adds a short
-state block. While the game is paused it covers the ruler, wars, succession,
-factions, schemes and council. While the game runs it shows the date, speed,
-the ruler's id or `none`, wars, and what it could not read. When Claude
-holds several rulers it lists each one: id, name and title (paused), at war,
+state block, the same whether the game is paused or running: the date, speed
+and pause state, the ruler, wars, succession, factions, schemes and council,
+and what it could not read. When Claude
+holds several rulers it lists each one: id, name and title, at war,
 imprisoned, dead. It reports the rulers of the session that holds the
 bridge's primary ruler, which is Claude's when one session is bound. Turn it
 off with `ck3agent setup --no-hook`.
@@ -54,10 +55,11 @@ off with `ck3agent setup --no-hook`.
 4. Claude runs cycles: observe, decide, act, narrate, wait. Press Esc to
    interrupt and redirect.
 5. **If you are playing your own character in the same game:** Claude owns
-   the clock. It pauses to read and unpauses with `session(action="wait")` to
-   let time pass, usually 60 seconds at a time. Leave the pause key alone
-   while Claude is mid-cycle; if you pause by hand, its next `wait` unpauses
-   again. Play your moves between cycles, or say "stop" first. When Claude's
+   the clock through `session` alone: it reads and acts with the game paused
+   or running, and lets time pass with `session(action="wait")`, usually 60
+   seconds at a time. No other tool pauses or unpauses. If you pause by hand,
+   Claude's tools still work, and its next `wait` unpauses again. Play your
+   moves between cycles, or say "stop" first. When Claude's
    session ends, the game stays paused or running as it was.
 6. One Claude session per game. A second `claude` in the same play directory
    also writes to the bridge, and the last write wins. For several rulers, use
@@ -65,10 +67,10 @@ off with `ck3agent setup --no-hook`.
 
 ## Time and cost
 
-| Measured 2026-10-18, claude-opus-5-5, one observe-only cycle (observe, observe_v2, health; 5 turns, no writes) | Per cycle |
+| Measured 2026-10-18, claude-opus-5-5, one observe-only cycle (two situation reads and `session(action="health")`; 5 turns, no writes) | Per cycle |
 |------|------|
 | Wall time | 10 seconds (model latency only; a play cycle adds the wait you choose) |
-| Game time at speed 3 | 4 days, during the unpause-pause gaps between reads; a play cycle adds the wait you choose |
+| Game time at speed 3 | 4 days, measured when the tools still paused and unpaused around reads (they no longer do: a cycle on a paused game now passes no game time until a `wait`); a play cycle adds the wait you choose |
 | Tokens (input / output) | 120,049 (mostly cached) / 451 |
 | Cost at API prices | $0.20; a full play cycle with writes and a `plan_war` read costs more, unmeasured |
 
@@ -95,7 +97,5 @@ sessions count against your usage limits.
 
 - No `ck3` tools: start `claude` inside the play directory, and check that
   `ck3agent` is on `PATH`.
-- `game_unpaused`: `observe`, `query` and `discover` need the game paused.
-  Ask Claude to pause first, as the protocol says.
 - Anything else: `ck3agent doctor` in another terminal, then
   [troubleshooting](troubleshooting.md).

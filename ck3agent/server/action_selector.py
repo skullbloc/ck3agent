@@ -1,5 +1,6 @@
 """
-Action selector — LLM-facing menu + pre-dispatch validation for act() calls.
+Action selector — LLM-facing menu + pre-dispatch validation of the act-shaped
+params a do() intent resolves to (redesign._intent_to_act_params).
 
 Two responsibilities (ck-3hij9.3):
 
@@ -32,20 +33,14 @@ from typing import Any
 _ACT_TYPES = {"interaction", "war", "decision", "event", "law", "lifestyle", "council_task", "building",
               # write tools — validated bridge-side (their handlers return explicit reject reasons
               # like position_id_required / maa_type_required), so they pass the pre-flight gate.
-              "appoint", "maa", "contract", "faction", "move_capital", "hire_mercenary", "faith",
+              "appoint", "maa", "contract", "move_capital", "hire_mercenary", "faith",
               # ck-#130 culture: convert the actor's OWN culture (e.g. "english"/"anglo_saxon").
               # THE convert-own-culture lever — unblocks e_britannia (culture-gated can_create).
               # Routes to set_character_culture (engine SetCultureOnCharacter); self-validates bridge-side.
               "culture",
-              # #96 raid lever: raise_armies (mobilize levies) + raid (toggle raised armies into
-              # raiding for gold/prestige/piety). Wired in tools.py + dispatch_router.cpp; the
-              # handlers self-validate (actor-must-be-AI, Norse/army-less no-op), so they pass here.
-              "raise_armies", "raid",
-              # #132 scheme: LEGITIMATELY start a hostile scheme (murder/fabricate_hook/
-              # claim_throne) owned by an AI ruler against a target character. Routes to
-              # scheme_action → CreateActiveScheme forward; the engine's own scheme-start
-              # gates run inside that call (self-gating), and the handler self-validates
-              # (actor-must-be-AI, target alive + not self), so it passes the pre-flight gate.
+              # scheme: start or cancel a scheme owned by an AI ruler. Routes to
+              # scheme_action; redesign._do_scheme refuses a start without scheme and
+              # target_id, and the game's CanStartScheme decides the rest.
               "scheme",
               # #111 create_title: create a de-jure duchy/kingdom title the AI ruler controls
               # (the k_danelaw 2nd-duchy unlock). Engine-gated (CCreateTitleCommand CanExecute:
@@ -130,7 +125,7 @@ def validate_act_params(params: dict[str, Any]) -> dict[str, Any]:
     if act_type == "building":
         return _validate_building(params)
 
-    # Write tools (appoint/maa/contract/faction/move_capital/hire_mercenary/faith):
+    # Write tools (appoint/maa/contract/move_capital/hire_mercenary/faith):
     # no dedicated pre-flight validator — they validate inside the bridge handler
     # (e.g. position_id_required, maa_type_required, company_not_found). Pass the
     # pre-flight gate so resolve_act can route them.
@@ -215,7 +210,9 @@ def _validate_interaction(params: dict, actor_id: int, target_id: int) -> dict:
             {"target_id": "<character_id>"},
         )
 
-    if target_id and actor_id and target_id == actor_id:
+    own_court = (interaction_type in _OWN_COURT_RECIPIENT_INTERACTIONS
+                 and (params.get("secondary_actor_id") or params.get("secondary_recipient_id")))
+    if target_id and actor_id and target_id == actor_id and not own_court:
         return _reject(
             "self_target",
             ["target_id", "actor_id"],
@@ -228,13 +225,22 @@ def _validate_interaction(params: dict, actor_id: int, target_id: int) -> dict:
     return {"valid": True, "type": "interaction", "interaction_type": interaction_type}
 
 
+#: Lane l4: interactions whose recipient may be the actor himself when the people
+#: they act on are the secondaries: arranging a marriage between two of your own
+#: court (the script's arrange_marriage_interaction_desc_ruler_at_own_court), or
+#: appointing a guardian to your own ward (educate_child_interaction: "recipient =
+#: ward.liege - can be same as" the actor).
+_OWN_COURT_RECIPIENT_INTERACTIONS = frozenset({
+    "arrange_marriage_interaction", "educate_child_interaction"})
+
+
 def _validate_war(params: dict, actor_id: int, target_id: int) -> dict:
     if target_id == 0:
         return _reject(
             "missing_target_id",
             ["target_id"],
-            "type=war requires target_id (the defender). Use query("
-            "domain='borders') or query(domain='neighbors') to find "
+            "type=war requires target_id (the defender). Use "
+            "query(domain='neighbors') to find "
             "candidates, then discover(what='war_validity', target_id=N).",
             {"target_id": "<defender_character_id>"},
         )
@@ -390,7 +396,7 @@ def build_action_menu(
           truncated:    dict of {category: dropped_count}
 
     Entries are ordered: targeted-first, then untargeted. Each entry's `act`
-    key is a ready-to-dispatch param dict — the LLM can copy it into act().
+    key is the act-shaped param dict a do() intent resolves to.
     """
     obs = observation or {}
     ruler = obs.get("ruler") or {}
@@ -516,8 +522,8 @@ def _build_wars_menu(
             "target_id": rid,
             "target_name": r.get("name", f"Character {rid}"),
             "hint": (
-                "Pre-validate with discover(what='war_validity', "
-                f"target_id={rid}) before act(type='war', ...)."
+                f"Pre-validate with cbs(target_id={rid}) before "
+                "declare_war(target_id=..., cb=...)."
             ),
             "act": {
                 "type": "war",
@@ -589,8 +595,8 @@ def format_action_menu(menu: dict[str, Any]) -> str:
                 line += " — " + ", ".join(tags)
             lines.append(line)
         lines.append(
-            "*Always discover(what='war_validity', target_id=N) before "
-            "act(type='war'). claim_cb (index 11) requires cb_title_id.*"
+            "*Always cbs(target_id=N) before declare_war(target_id=N, cb=...). "
+            "claim_cb and the conquest CBs need cb_title_id.*"
         )
 
     truncated = menu.get("truncated") or {}

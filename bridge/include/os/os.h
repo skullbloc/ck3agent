@@ -3,8 +3,9 @@
 // "Platform abstraction" and the P2 row of the phased plan in "Review
 // amendments").
 //
-// WHAT THIS IS TODAY: NOTHING IN THE LINUX BRIDGE CALLS IT YET.
-// libck3_bridge.so does not link this layer. bridge_init.cpp,
+// WHAT THIS IS TODAY: ONE CELL IN THE LINUX BRIDGE. libck3_bridge.so does not
+// link this layer; it compiles one cell of it, the session pass
+// (src/os/session_pass.cpp, shared with Windows since L14 m-16). Otherwise bridge_init.cpp,
 // runtime_resolver.cpp, ipc_server.cpp, launcher_bypass.cpp and
 // action_handlers.cpp still call their own Linux code directly, exactly as
 // before. Routing the bridge through it is the rest of P2, one call site at a
@@ -327,6 +328,61 @@ Result watchdog_arm(std::uint32_t ms, WatchdogFn fn, void* ctx);
 // *fired (may be null) says whether the callback ran since the last arm. After
 // disarm returns, the callback is not running and will not run.
 Result watchdog_disarm(bool* fired);
+
+// ── session-pass hook (L14; re/findings/windows/re_session_pass_hook_win.md) ─
+//
+// The game runs every engine command on one SESSION thread, whose run loop
+// calls the function pointer in a data slot of the session object on every
+// pass and re-reads the slot each time. The hook swaps that slot for the
+// layer's wrapper, which calls the original pass, then runs `work` under the
+// session's execute lock (a try-lock: skipped for that pass on contention) when
+// the session's execute-commands byte is 1, and returns the original's value
+// (the loop's continue bit). ONE implementation for Linux and Windows,
+// src/os/session_pass.cpp; libck3_bridge.so and version.dll both route through it.
+//
+// The layout is the caller's (the bridge core reads it from the offsets); the
+// layer knows no game address. `lock` names the primitive the GAME uses on
+// that lock: taking it with another primitive would corrupt the engine's own
+// lock state, so a kind this platform cannot take is refused.
+enum class SessionLock : int { none = 0, srwlock_exclusive, pthread_mutex };
+
+struct SessionPassLayout {
+    std::uintptr_t session;      // the session object (absolute)
+    std::size_t    fn_off;       // the loop fn pointer slot, re-read every pass
+    std::size_t    arg_off;      // the loop's argument: must hold `session`
+    std::size_t    started_off;  // u8 latch, 1 once the thread was started
+    std::size_t    execute_off;  // u8, 1 = the engine executes queued commands
+    std::size_t    lock_off;     // the lock the engine holds around its queue
+    SessionLock    lock;         // its primitive
+    std::uintptr_t expected_fn;  // what the slot must hold (absolute)
+};
+
+enum class SessionPassState : int {
+    not_yet = 0,  // the thread is not there yet (latch 0, slot 0, unreadable): poll again
+    installed,    // the slot now holds the wrapper
+    refused,      // a value this layout does not recognise: never retried
+};
+
+struct SessionPassReport {
+    SessionPassState state;
+    std::uintptr_t   slot;        // session + fn_off; 0 when the layout was refused unread
+    std::uintptr_t   slot_value;  // what the slot held when read (0 if unread)
+    std::uintptr_t   arg_value;   // what the argument held when read (0 if unread)
+    std::uintptr_t   wrapper;     // the wrapper's address (installed only)
+};
+
+using SessionPassWork = void (*)();
+// ok = installed. failed = not_yet or refused (report.state says which; detail
+// says why). Only one hook per process: a second install while one is in is refused.
+Result session_pass_install(const SessionPassLayout& layout, SessionPassWork work,
+                            SessionPassReport* report);
+// Restore the slot (only if it still holds the wrapper), then wait up to ~2 s for
+// passes still inside the wrapper. *inflight = passes inside when it returned.
+// ok when nothing was installed or the slot was restored with none in flight.
+Result session_pass_remove(int* inflight);
+// *live: the wrapper drains (work runs) only while this is true; set just
+// before the swap, cleared before the restore. false on every refusal.
+Result session_pass_live(bool* live);
 
 // ── needs the game binary (ADR: RTTI walk; per-hook CFG/CET planning) ──────
 

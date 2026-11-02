@@ -72,7 +72,6 @@ std::atomic<uint32_t>    g_controlled_primary{0};
 std::atomic<uint32_t>    g_controlled_heir{0};
 
 std::atomic<bool>        g_agent_mode{false};
-std::atomic<bool>        g_auto_respond_events{false};
 std::atomic<uint64_t>    g_tick_id{0};
 std::atomic<uint64_t>    g_cb_query_busy_count{0};
 std::atomic<bool>        g_war_stance_record_walk_enabled{false};
@@ -85,13 +84,10 @@ bool pipeline_owns_clock()       { return false; }
 bool is_clock_verb(const char*)  { return false; }
 uint64_t pipeline_current_flush_id() { return 0; }
 PipelineMode pipeline_mode() { return PipelineMode::Legacy; }
-void game_pause()   {}
-void game_unpause() {}
+void clock_write(ClockWrite, ClockOrigin, int) {}
 const char* session_state_string() { return "test"; }
 std::string enumerate_interactions() { return "[]"; }
 std::string enumerate_decisions()    { return "[]"; }
-bool set_character_subsystems(uint32_t, const char*) { return false; }
-bool get_character_subsystems(uint32_t, std::string*) { return false; }
 bool get_client_lock_info(ClientLockInfo*) { return false; }
 bool is_game_state_query(const char*) { return false; }
 const char* offset_validation_group_name(int) { return ""; }
@@ -308,6 +304,24 @@ void test_bad_pointer_is_silent() {
 
 }  // namespace
 
+// [6] L14 (surface-eval finding 7): a hook buffer row (query_scheme_inits,
+// query_war_declarations, query_council_tasks: query(event_log)) recorded ""
+// because the cache missed when the engine acted; the row reads the cache when
+// it is read. Runs after [2], so 13902 is cached.
+void test_hook_row_reads_the_cache() {
+    std::cout << "[6] a hook row's empty recorded name is filled from the cache\n";
+    check(recorded_or_cached_name("", 13902) == "\xC3\x86thelred",
+          "recorded_or_cached_name(\"\", 13902): the cached name");
+    check(recorded_or_cached_name("", 13902 | 0x01000000) == "\xC3\x86thelred",
+          "recorded_or_cached_name: a packed ref is masked to its 24-bit id");
+    check(recorded_or_cached_name("Ivar", 13902) == "Ivar",
+          "recorded_or_cached_name: a recorded name stands");
+    check(recorded_or_cached_name("", 0).empty() && recorded_or_cached_name("", 0xFFFFFFFF).empty(),
+          "recorded_or_cached_name: no character, no name");
+    check(recorded_or_cached_name(nullptr, 30853).empty(),
+          "recorded_or_cached_name: an unresolved id stays empty (queued, not invented)");
+}
+
 int main() {
 #ifdef CK3_NAME_LEGACY_KEY_FALLBACK
     std::cout << "=== lane-namekey NEGATIVE CONTROL "
@@ -328,6 +342,7 @@ int main() {
     test_unresolvable_stays_pending(chars[30853]);
     test_unreadable_key_is_not_pending(chars[40001]);
     test_bad_pointer_is_silent();
+    test_hook_row_reads_the_cache();
 
     set_character_name_resolver(nullptr);
 

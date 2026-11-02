@@ -134,6 +134,49 @@ def test_doctor_accepts_a_matching_or_absent_bridge_version(bridge, ack):
     assert br.handshake_report(br.socket_path()) is True
 
 
+# The two reply shapes the bridge sends, keyed as bridge/src/ipc_server.cpp emits
+# them: `bridge_version` from handshake_provenance_fields (CK3_BRIDGE_VERSION,
+# bridge/CMakeLists.txt) and build_git_* from the handshake_ack snprintf
+# (bridge_provenance::, bridge/cmake/gen_provenance.cmake).
+_PUBLIC_ACK = {"session_state": "active", "bridge_version": __version__,
+               "build_git_sha": "unknown", "build_git_branch": "unknown", "build_git_dirty": "unknown"}
+_RESEARCH_ACK = {"session_state": "active", "bridge_version": br.RESEARCH_BRIDGE_VERSION,
+                 "build_git_sha": "627af763abcd", "build_git_branch": "release-prep-2026.10",
+                 "build_git_dirty": "clean"}
+
+
+def test_doctor_names_a_research_bridge_by_its_commit(bridge, capsys):
+    bridge(ack=_RESEARCH_ACK)
+    assert br.handshake_report(br.socket_path()) is True
+    out = capsys.readouterr().out
+    assert f"research build {br.RESEARCH_BRIDGE_VERSION}" in out
+    assert "git 627af763abcd" in out
+    assert "reinstall" not in out
+
+
+def test_doctor_passes_a_public_bridge_of_its_own_version(bridge, capsys):
+    bridge(ack=_PUBLIC_ACK)
+    assert br.handshake_report(br.socket_path()) is True
+    assert "research build" not in capsys.readouterr().out
+
+
+def test_doctor_mismatch_names_both_numbers(bridge, capsys):
+    bridge(ack={**_PUBLIC_ACK, "bridge_version": "2026.9.0"})
+    assert br.handshake_report(br.socket_path()) is False
+    out = capsys.readouterr().out
+    assert "bridge 2026.9.0" in out and f"ck3agent {__version__}" in out
+
+
+def test_research_bridge_version_mirrors_the_cmake_default():
+    """One definition: the CMake default is the value; the CLI's constant mirrors it."""
+    import re
+    from pathlib import Path
+    cm = (Path(__file__).resolve().parents[1] / "bridge/CMakeLists.txt").read_text(encoding="utf-8")
+    m = re.search(r'^set\(CK3_BRIDGE_VERSION "([^"]+)"\)', cm, re.M)
+    assert m, "bridge/CMakeLists.txt: no set(CK3_BRIDGE_VERSION ...) default"
+    assert m.group(1) == br.RESEARCH_BRIDGE_VERSION
+
+
 def test_wait_for_active_returns_0_when_active(bridge):
     class Proc:
         def poll(self):

@@ -121,7 +121,7 @@ class _Gw:
 
     async def read(self, action, params):
         if action == "query_character":
-            return {"character_id": params.get("character_id"), "name": "Boris", "alive": True}
+            return {"id": params.get("character_id"), "name": "Boris", "alive": True}
         return {}
 
     def game(self):

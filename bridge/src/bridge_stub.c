@@ -5,7 +5,7 @@
  * pre-init shims (Steam's ubuntu12_32/steam-launch-wrapper, pressure-vessel
  * helpers, etc.). Without this stub, those shims emit:
  *
- *   "ld.so: object '/home/gaming/libck3_bridge.so' from LD_PRELOAD cannot
+ *   "ld.so: object '/path/to/libck3_bridge.so' from LD_PRELOAD cannot
  *    be preloaded (wrong ELF class: ELFCLASS64): ignored."
  *
  * With both libck3_bridge_stub.so (i386) and libck3_bridge.so (x86-64) on

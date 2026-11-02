@@ -12,6 +12,7 @@
 
 #include "action_dispatch_internal.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "name_tables.h"   // L14: recorded_or_cached_name
 
 #include <shared_mutex>
 #include <deque>
@@ -370,6 +371,7 @@ static void emit_live_council_seats(ResponseBuilder& r, void* character) {
 }
 
 bool do_query_council_tasks(const char* params_json, std::string* out) {
+    FaultScope fault_scope("query_council_tasks", out);
     if (!out) return false;
 
     int limit = json_get_int(params_json, "limit");
@@ -416,8 +418,10 @@ bool do_query_council_tasks(const char* params_json, std::string* out) {
             r.key("ruler_id"); r.value_uint(it->ruler_id);
             r.key("position_type_ref"); r.value_uint(it->position_type_ref);
             r.key("task_type_ref"); r.value_uint(it->task_type_ref);
-            r.key("councillor_name"); r.value_string(it->councillor_name);
-            r.key("ruler_name"); r.value_string(it->ruler_name);
+            r.key("councillor_name");
+            r.value_string(recorded_or_cached_name(it->councillor_name, it->councillor_id).c_str());
+            r.key("ruler_name");
+            r.value_string(recorded_or_cached_name(it->ruler_name, it->ruler_id).c_str());
             r.key("position_name"); r.value_string(it->position_name);
             r.key("task_name"); r.value_string(it->task_name);
             r.key("flag"); r.value_uint(it->flag);

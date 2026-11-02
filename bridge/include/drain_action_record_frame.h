@@ -31,7 +31,7 @@
 //: rows in actions.jsonl ZERO. Not truncation — a whole action class absent end
 //: to end, and every game-thread verb is in that class
 //: (`is_game_thread_action`: change_realm_law, set_lifestyle_focus,
-//: set_council_task, add_construction, construct_building, move_capital,
+//: set_council_task, construct_building, move_capital,
 //: appoint_councillor, maa_recruit, set_character_faith, ...).
 //:
 //: THE FIX IS ck-h4pn'S RULE, APPLIED ONE PATH OVER: **a record is not a reply,

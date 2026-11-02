@@ -8,11 +8,14 @@
 #include "scope_slot_policy.h"
 
 #include <atomic>
+#include <thread>
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
 #include "intent_queue.h"
 #include "ck3_offsets.h"
 #include "action_dispatch_internal.h"  // resolve_title_realm()
 #include "pipeline.h"                 // ck-6kvq.10: the pulse ledger (§2.9)
+#include "scheme_engine.h"           // l3-schemes: scheme_type_by_name, scheme_can_start
+#include "engine_bool.h"             // L14 S3: bool returns read by AL
 
 #include <cstdio>
 #include <cstring>
@@ -32,6 +35,10 @@ namespace bridge {
 
 // Global intent queue — declared extern in bridge.h
 IntentQueue g_intent_queue CK3_EARLY_INIT;
+
+static std::atomic<std::thread::id> s_game_thread{};
+void note_game_thread() { s_game_thread.store(std::this_thread::get_id(), std::memory_order_relaxed); }
+bool on_game_thread() { return s_game_thread.load(std::memory_order_relaxed) == std::this_thread::get_id(); }
 
 // =============================================================================
 // ALLOW_RANDOM_IN_SCOPE fabrication (re_claimant_is_cb_result_0x18 / random-scope
@@ -70,8 +77,8 @@ static void*    g_fake_scope[1] = { &g_fake_rng };  // scope[0] = &Y
 //   <engine call>;  if (armed) restore_fake_random_scope(saved);
 //
 // R1c (ck-6kvq.10, design §2.9): these two helpers are the ledger's single
-// biggest win. ~21 call sites go through them, and EIGHT of those
-// (action_handlers.cpp do_construction_check / do_add_construction /
+// biggest win. ~21 call sites go through them, and SEVEN of those
+// (action_handlers.cpp do_construction_check /
 // do_construct_building / do_appoint_councillor x2 / maa_recruit /
 // station_regiment / hire_mercenary) place the arm AFTER their `sigsetjmp`, so
 // their crash branch cannot call restore at all: a SIGSEGV inside the engine
@@ -163,8 +170,20 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
             if (!is_mapped(static_cast<uintptr_t>(saved))) {
                 node_mapped = false;
             } else {
-                const uint64_t node0 = read<uint64_t>(static_cast<uintptr_t>(saved));
-                node_mapped = (node0 != 0) && is_mapped(static_cast<uintptr_t>(node0));
+                // L14 (G-raw): through safe_read. This read runs with the fake
+                // scope already PUBLISHED and no sigsetjmp of its own: a raw
+                // fault here jumped to the caller's or the drain's guard, past
+                // every restore, and left the bridge's scope in the engine's
+                // slot. A measurement is not the caller's read, so its fault
+                // does not reach the caller's fault check: the counters are
+                // put back and an unreadable node reads as not mapped.
+                const int faults = g_safe_read_fault_count;
+                const uintptr_t last = g_safe_read_last_fault_addr;
+                const uint64_t node0 = safe_read<uint64_t>(static_cast<uintptr_t>(saved));
+                const bool readable = g_safe_read_fault_count == faults;
+                g_safe_read_fault_count = faults;
+                g_safe_read_last_fault_addr = last;
+                node_mapped = readable && (node0 != 0) && is_mapped(static_cast<uintptr_t>(node0));
             }
         }
         bridge::note_arm_published(st, node_mapped,
@@ -265,405 +284,11 @@ void restore_fake_random_scope(uint64_t saved) {
     bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(slot));
 }
 
-// 2026-06-09: in-flight intent tracker for outer-recovery attribution.
-thread_local std::string g_inflight_intent_rid;
+// The in-flight intent tracker for crash recovery (g_inflight_intent_seq) and
+// recover_drain_crash live in src/intent_queue.cpp (engine-free).
 
-// =============================================================================
-// scope_ctx frame helper — the PINNED effect-execution frame (#73 ck-bt9x,
-// re_scope_ctx_frame.md / re_scripted_effect_execute.md #75).
-//
-// Builds the 0x30-byte, 6-field character-ROOT scope_ctx the engine's effect AST
-// walker (EFFECT_TREE_WALK / FUN_0750b090) requires, binds it to the controlled
-// actor via AI_SCOPE_FROM_CHAR, then walks the resolved effect-tree root under
-// BOTH proven crash guards:
-//   (1) arm_fake_random_scope — neutralises the RandomScopeManager+0x20 NULL
-//       deref that random_*/random_list nodes + internal RNG draws hit from the
-//       on_tick drain thread (the steered-war crash class).
-//   (2) watchdog_arm + sigsetjmp(g_recovery_point) — converts SIGSEGV/SIGALRM
-//       into a clean rejection instead of killing the game (the walk is a FINITE
-//       AST walk, so the watchdog CAN bound it — the decision-eval freeze wall
-//       does not apply, per re_scope_ctx_frame.md §5.2).
-// Cleanup (SCOPE_OBJ_SUB_DTOR + RNG restore) runs on BOTH the normal-return and
-// the sigsetjmp-recovery paths; restore/sub-dtor happen BEFORE clearing the
-// protected-region flag so a fault during cleanup is still recoverable.
-//
-// SOURCE/RE-ONLY this session: the frame + the RNG-scope guard are each
-// independently proven (ck-rw9m frame pin + the steered-war fix), but the
-// assembled hardened walk has NOT been live-smoke-tested on an observer save
-// (re_scripted_effect_execute.md §5). Hence the Execute path stays gated behind
-// resolve_only=true (default) AND an allow-list of self-gating effects.
-//
-// Returns: 0 = walked OK; 1 = crashed (out_sig set to the signal); the caller
-// owns reporting. tpl must be a resolved effect-tree root (by-name scan result —
-// NOT a compound-key LookupTemplate, which is the live bug this bypasses).
-// =============================================================================
-extern thread_local sigjmp_buf g_recovery_point;
-extern thread_local bool g_in_protected_region;
-
-static int run_effect_tree_walk_hardened(void* tpl, uint32_t actor_packed_ref,
-                                         unsigned watchdog_secs, int* out_sig) {
-    namespace SF = scope_ctx_fns;
-
-    if (out_sig) *out_sig = 0;
-    if (!tpl) return 1;
-
-    // Resolve engine entry points (base-relative offsets → runtime VAs).
-    using ScopeFromChar = void (*)(void*, uint32_t);
-    using SavedInit     = void (*)(void*, void*);
-    using CtxInit6      = void (*)(void*, void*, void*, void*, void*, uint8_t, void*);
-    using TreeWalk      = void (*)(void* tpl, void* frame);
-    using SubDtor       = void (*)(void*);
-
-    auto ai_scope_from_char = reinterpret_cast<ScopeFromChar>(g_base_addr + SF::AI_SCOPE_FROM_CHAR_REF);
-    auto saved_targets_init = reinterpret_cast<SavedInit>(g_base_addr + SF::SAVED_TARGETS_INIT);
-    auto scope_ctx_init6    = reinterpret_cast<CtxInit6>(g_base_addr + SF::SCOPE_CTX_INIT_6);
-    auto effect_tree_walk   = reinterpret_cast<TreeWalk>(g_base_addr + SF::EFFECT_TREE_WALK);
-    auto scope_obj_sub_dtor = reinterpret_cast<SubDtor>(g_base_addr + SF::SCOPE_OBJ_SUB_DTOR);
-
-    // Frame storage — stack, zero-initialised.
-    alignas(8) uint8_t scope_obj[scope_object::SIZE]   = {};  // 0x168 CScopeObject (actor, type=char)
-    alignas(8) uint8_t saved_targets[0x3D8]            = {};  // SavedEventTargets container
-    alignas(8) uint8_t frame[scope_ctx::SIZE]          = {};  // 0x30 6-field scope_ctx
-    uint32_t rng_state[2] = { 0xe5f10afa, 0 };               // ctx[5] AST RNG seed (writable)
-
-    // volatile: read on the sigsetjmp recovery path, so must survive longjmp
-    // (defeats the -Wclobbered hazard — we MUST restore the RNG scope on a fault).
-    volatile uint64_t saved_rng = 0;
-    volatile bool rng_armed = false;
-    int sig = 0;
-
-    watchdog_arm(watchdog_secs);
-    g_in_protected_region = true;
-    sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        // Recovery: restore + cleanup FIRST (still inside the protected region),
-        // then unwind. sub-dtor is idempotent on partial state (null-checks its
-        // inner vectors), so it is safe to call after a fault.
-        if (rng_armed) restore_fake_random_scope(saved_rng);
-        scope_obj_sub_dtor(scope_obj);
-        g_in_protected_region = false;
-        watchdog_disarm();
-        if (out_sig) *out_sig = sig;
-        return 1;
-    }
-
-    // (1) CScopeObject for the controlled actor — single call builds type=char + value.
-    ai_scope_from_char(scope_obj, actor_packed_ref);
-    // (2) SavedEventTargets container, bound to the scope object.
-    saved_targets_init(saved_targets, scope_obj);
-    // (4) the 0x30-byte, 6-field frame, top-level (no parent).
-    scope_ctx_init6(frame,
-                    scope_obj,       // [0] current/this
-                    nullptr,         // [1] prev  (NULL at top level)
-                    scope_obj,       // [2] root  (== current)
-                    saved_targets,   // [3] eval-targets
-                    (uint8_t)0,      // [4] silent (no tooltip emit)
-                    rng_state);      // [5] AST RNG state
-    // ck-zgh4 scope latch. THIS SITE CANNOT EARLY-RETURN: scope_obj,
-    // saved_targets and the frame are ENGINE objects already constructed
-    // above, and scope_obj_sub_dtor below is what tears them down. A `return`
-    // here would leak an engine scope object on every latched call, so the
-    // refusal SKIPS the walk and falls through to the same cleanup the normal
-    // path uses. rc 4 is the refusal; the caller maps it.
-    //
-    // CHECKED BEFORE THE ARM, and that ordering is load-bearing. It used to
-    // arm first and test the latch after, which made this the one site that
-    // reached arm_fake_random_scope while latched — so the
-    // `arm_called_while_latched` counter was not zero-by-design, and the
-    // invariant built on it could not be read as "a site is missing its
-    // guard". Now NO site reaches the arm while latched, so any non-zero
-    // value of that counter is a defect, full stop. (Found by ck-t5bc.)
-    bool latched_skip_walk = bridge::scope_latched();
-    if (latched_skip_walk) {
-        bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
-    } else {
-        // (1b) engine-GLOBAL RandomScopeManager guard (independent of ctx[5]).
-        {
-            uint64_t saved_tmp = 0;
-            rng_armed = arm_fake_random_scope(&saved_tmp);
-            saved_rng = saved_tmp;
-        }
-        // (5) walk the effect tree DIRECTLY against the frame.
-        effect_tree_walk(tpl, frame);
-    }
-    // (6) cleanup on the normal path.
-    if (rng_armed) restore_fake_random_scope(saved_rng);
-    scope_obj_sub_dtor(scope_obj);
-
-    g_in_protected_region = false;
-    watchdog_disarm();
-    return latched_skip_walk ? 4 : 0;
-}
-
-// Allow-list of self-gating / reversible scripted effects safe to walk bare
-// (re_scripted_effect_execute.md §3 / re_scope_ctx_frame.md §6). The direct walk
-// runs an effect WITHOUT whatever trigger normally fronts it in vanilla; only
-// effects whose application is unconditional-by-design belong here. Effects that
-// vanilla only ever runs behind an is_valid/trigger gate (give title, start war,
-// imprison) must NOT be added — they would bypass that gate. Empty-prefix match
-// is intentional: these are bridge-authored helper effects + benign character
-// vars. Conservative on purpose; widen only with a documented legitimacy review.
-static bool scripted_effect_is_allow_listed(const char* name) {
-    if (!name || !name[0]) return false;
-    static const char* const kAllow[] = {
-        // The audit's recommended ally-call-refusal posture lever (character var).
-        "set_variable_conqueror",
-        // Bridge-local no-op / observability probes.
-        "noop", "bridge_noop",
-        // ── LEGITIMACY: resource-grant effects DELIBERATELY NOT allow-listed ──
-        // add_gold / add_prestige / add_piety (and the rest of the resource/state
-        // grant family) are REMOVED from this list. The Execute path here runs an
-        // effect with NO engine CanExecute gate and NO cost — minting gold/piety/
-        // prestige through it is the same console-deny-list end-run the
-        // write-action-legitimacy audit closes (execute_console_command deny-list).
-        // The bridge OWNS the Unix socket (0666, reachable by the harness / a raw
-        // direct-IPC caller / any consumer), so the deny MUST live HERE, at the
-        // library boundary — the agent-layer guard in ck3agent/server/redesign.py
-        // (_SCRIPTED_EFFECT_DENY) does not protect non-agent socket consumers.
-        // Earn resources through the gated game systems, never this trampoline.
-        // If a resource-grant ever needs validation, gate execute_scripted_effect
-        // behind /tmp/ck3-enabled-writes (kExperimental) FIRST — do not re-add here.
-    };
-    for (const char* a : kAllow) {
-        if (strcmp(name, a) == 0) return true;
-    }
-    return false;
-}
-
-// =============================================================================
-// IntentQueue Implementation
-// =============================================================================
-
-void IntentQueue::enqueue(Intent intent) {
-    intent.consumed = false;
-    intent.executed = false;
-    intent.rejected = false;
-    memset(intent.rejection_reason, 0, sizeof(intent.rejection_reason));
-
-    // M1: stamp the current session on the intent so the game-thread drain can
-    // reinstall the owning context.
-    if (intent.session_id.empty()) {
-        bridge::Session* s = bridge::current_session();
-        if (s) intent.session_id = s->session_id;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    intents_.push_back(std::move(intent));
-    pending_count_atomic_.fetch_add(1, std::memory_order_relaxed);
-    IQLOG("Enqueued: %s actor=%u target=%u request_id=%s session_id=%s\n",
-          intents_.back().interaction_name.c_str(),
-          intents_.back().actor_id & 0xFFFFFF,
-          intents_.back().target_id & 0xFFFFFF,
-          intents_.back().request_id.c_str(),
-          intents_.back().session_id.c_str());
-}
-
-Intent* IntentQueue::find_for_character(uint32_t char_id, IntentType type) {
-    uint32_t masked = char_id & 0xFFFFFF;
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& intent : intents_) {
-        if (!intent.consumed &&
-            intent.type == type &&
-            (intent.actor_id & 0xFFFFFF) == masked) {
-            return &intent;
-        }
-    }
-    return nullptr;
-}
-
-Intent* IntentQueue::find_for_character_interaction(uint32_t char_id, uint32_t interaction_hash) {
-    if (interaction_hash == 0) return nullptr;
-    uint32_t masked = char_id & 0xFFFFFF;
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& intent : intents_) {
-        // Log comparison for debugging (once per 100 ticks)
-        if (!intent.consumed &&
-            g_tick_id.load(std::memory_order_relaxed) % 100 == 0) {
-            IQLOG("find_match: looking for char=%u hash=0x%08x, intent has actor=%u(masked=%u) hash=0x%08x type=%d consumed=%d\n",
-                  masked, interaction_hash,
-                  intent.actor_id, intent.actor_id & 0xFFFFFF, intent.interaction_hash,
-                  (int)intent.type, intent.consumed ? 1 : 0);
-        }
-        if (!intent.consumed &&
-            intent.type == IntentType::INTERACTION &&
-            (intent.actor_id & 0xFFFFFF) == masked &&
-            intent.interaction_hash == interaction_hash) {
-            IQLOG("MATCH FOUND: %s actor=%u hash=0x%08x\n",
-                  intent.interaction_name.c_str(), masked, interaction_hash);
-            return &intent;
-        }
-    }
-    return nullptr;
-}
-
-std::vector<Intent> IntentQueue::snapshot() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<Intent> result;
-    for (const auto& intent : intents_) {
-        if (!intent.consumed) {
-            result.push_back(intent);
-        }
-    }
-    return result;
-}
-
-size_t IntentQueue::pending_count() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    size_t count = 0;
-    for (const auto& intent : intents_) {
-        if (!intent.consumed) count++;
-    }
-    return count;
-}
-
-void IntentQueue::tick_maintenance(uint64_t current_tick,
-                                    std::vector<Intent>& completed_out) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (!intents_.empty() &&
-        current_tick % 100 == 0) {
-        IQLOG("tick_maintenance: tick=%lu pending=%zu\n", (unsigned long)current_tick, intents_.size());
-        for (auto& i : intents_) {
-            IQLOG("  intent: %s actor=%u age=%lu ttl=%u consumed=%d\n",
-                  i.interaction_name.c_str(), i.actor_id & 0xFFFFFF,
-                  (unsigned long)(current_tick - i.queued_tick), i.ttl_ticks, i.consumed ? 1 : 0);
-        }
-    }
-
-    // Collect completed + expired intents
-    for (auto& intent : intents_) {
-        if (intent.consumed) {
-            completed_out.push_back(intent);
-            continue;
-        }
-        // Check TTL expiry
-        if (current_tick > intent.queued_tick + intent.ttl_ticks) {
-            intent.consumed = true;
-            intent.rejected = true;
-            snprintf(intent.rejection_reason, sizeof(intent.rejection_reason),
-                     "ttl_expired");
-            completed_out.push_back(intent);
-            IQLOG("Intent expired: %s actor=%u (queued=%lu ttl=%u current=%lu)\n",
-                  intent.interaction_name.c_str(),
-                  intent.actor_id & 0xFFFFFF,
-                  (unsigned long)intent.queued_tick,
-                  intent.ttl_ticks,
-                  (unsigned long)current_tick);
-        }
-    }
-
-    // Remove all consumed intents from the vector
-    intents_.erase(
-        std::remove_if(intents_.begin(), intents_.end(),
-                        [](const Intent& i) { return i.consumed; }),
-        intents_.end());
-    // Update atomic counter to reflect remaining unconsumed intents
-    size_t unconsumed = 0;
-    for (const auto& i : intents_) { if (!i.consumed) unconsumed++; }
-    pending_count_atomic_.store(unconsumed, std::memory_order_relaxed);
-}
-
-bool IntentQueue::cancel_by_request_id(const std::string& request_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (auto it = intents_.begin(); it != intents_.end(); ++it) {
-        if (!it->consumed && it->request_id == request_id) {
-            IQLOG("Intent cancelled: %s actor=%u request_id=%s\n",
-                  it->interaction_name.c_str(), it->actor_id & 0xFFFFFF, request_id.c_str());
-            intents_.erase(it);
-            if (pending_count_atomic_.load(std::memory_order_relaxed) > 0)
-                pending_count_atomic_.fetch_sub(1, std::memory_order_relaxed);
-            return true;
-        }
-    }
-    return false;
-}
-
-bool IntentQueue::retire_pending_by_request_id(const std::string& request_id,
-                                               const char* reason) {
-    if (request_id.empty()) return false;
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& it : intents_) {
-        if (!it.consumed && it.request_id == request_id) {
-            it.consumed = true;
-            it.rejected = true;
-            it.executed = false;
-            snprintf(it.rejection_reason, sizeof(it.rejection_reason), "%s",
-                     reason ? reason : "retired");
-            if (pending_count_atomic_.load(std::memory_order_relaxed) > 0)
-                pending_count_atomic_.fetch_sub(1, std::memory_order_relaxed);
-            IQLOG("Intent retired: %s actor=%u request_id=%s reason=%s\n",
-                  it.interaction_name.c_str(), it.actor_id & 0xFFFFFF,
-                  request_id.c_str(), it.rejection_reason);
-            return true;
-        }
-    }
-    return false;
-}
-
-void IntentQueue::clear() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    intents_.clear();
-    pending_count_atomic_.store(0, std::memory_order_relaxed);
-    IQLOG("All intents cleared\n");
-}
-
-void IntentQueue::store_completed(const Intent& intent) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (completed_.size() >= MAX_COMPLETED) {
-        completed_.erase(completed_.begin());
-    }
-    completed_.push_back(intent);
-}
-
-std::vector<Intent> IntentQueue::completed_snapshot(size_t max_count) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    size_t n = std::min(max_count, completed_.size());
-    return std::vector<Intent>(completed_.end() - static_cast<ptrdiff_t>(n),
-                               completed_.end());
-}
-
-bool IntentQueue::find_completed_by_request_id(const std::string& request_id,
-                                                Intent* out) {
-    if (request_id.empty()) return false;
-    std::lock_guard<std::mutex> lock(mutex_);
-    // Walk newest-to-oldest so duplicates surface the most recent result.
-    for (auto it = completed_.rbegin(); it != completed_.rend(); ++it) {
-        if (it->request_id == request_id) {
-            if (out) *out = *it;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool IntentQueue::find_pending_by_request_id(const std::string& request_id,
-                                              Intent* out) {
-    if (request_id.empty()) return false;
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& intent : intents_) {
-        if (!intent.consumed && intent.request_id == request_id) {
-            if (out) *out = intent;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool IntentQueue::mark_rejected_by_request_id(const std::string& request_id,
-                                              const char* reason) {
-    if (request_id.empty()) return false;
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& intent : intents_) {
-        if (!intent.consumed && intent.request_id == request_id) {
-            intent.rejected = true;
-            snprintf(intent.rejection_reason, sizeof(intent.rejection_reason),
-                     "%s", reason);
-            intent.consumed = true;
-            return true;
-        }
-    }
-    return false;
-}
+// IntentQueue's members live in src/intent_queue.cpp (engine-free, so a host
+// test drives the real queue: bridge/test/test_intent_lookup.cpp).
 
 // =============================================================================
 // Intent Execution Functions (called from dispatch hooks during AI tick)
@@ -914,7 +539,7 @@ bool execute_war_intent(Intent* intent) {
         // Diagnostic: check candidate count after target population
         uintptr_t wd = read<uintptr_t>(ac + 0x20);  // ai_ctrl->war_data
         if (wd) {
-            int32_t candidates = read<int32_t>(wd + 0x98 + 0x0C);  // front buffer count
+            int32_t candidates = read<int32_t>(wd + ck3::funcs::WAR_DATA_FRONT_BUF + ck3::funcs::FRONT_BUF_COUNT);  // front buffer count
             IQLOG("War intent: candidate target count = %d\n", candidates);
         }
 
@@ -1062,10 +687,10 @@ bool execute_war_intent(Intent* intent) {
         uintptr_t actor_tr = resolve_title_realm(reinterpret_cast<uintptr_t>(actor));
         int32_t wars_after = 0;
         if (actor_tr) {
-            wars_after = read<int32_t>(actor_tr + ck3::title_realm::WAR_REF_ARRAY + 0x0C);
+            wars_after = read<int32_t>(actor_tr + ck3::title_realm::WAR_REF_ARRAY + pdx_array::COUNT);
         }
         IQLOG("War intent: actor war count after = %d (candidates were %d)\n",
-              wars_after, wd ? read<int32_t>(wd + 0x98 + 0x0C) : -1);
+              wars_after, wd ? read<int32_t>(wd + ck3::funcs::WAR_DATA_FRONT_BUF + ck3::funcs::FRONT_BUF_COUNT) : -1);
 
         // Log CB type and title info from the AI war data if available
         // wd = ai_ctrl+0x20 (war eval data), candidates at wd+0x98
@@ -1077,8 +702,8 @@ bool execute_war_intent(Intent* intent) {
             IQLOG("  war_data dump: +0x00=0x%lx +0x08=0x%lx +0x10=0x%lx\n",
                   (unsigned long)wd_ptr0, (unsigned long)wd_ptr8, (unsigned long)wd_ptr10);
             // Front buffer: ptr at +0x98, count at +0x98+0x0C
-            uintptr_t front_buf_ptr = read<uintptr_t>(wd + 0x98);
-            int32_t front_buf_count = read<int32_t>(wd + 0x98 + 0x0C);
+            uintptr_t front_buf_ptr = read<uintptr_t>(wd + ck3::funcs::WAR_DATA_FRONT_BUF);
+            int32_t front_buf_count = read<int32_t>(wd + ck3::funcs::WAR_DATA_FRONT_BUF + ck3::funcs::FRONT_BUF_COUNT);
             IQLOG("  war_data front_buf: ptr=0x%lx count=%d\n",
                   (unsigned long)front_buf_ptr, front_buf_count);
         }
@@ -1296,220 +921,6 @@ bool execute_decision_intent(Intent* intent) {
     IQLOG("Decision intent REJECTED: actor=%u '%s' — %s\n",
           intent->actor_id & 0xFFFFFF, decision_name, intent->rejection_reason);
     return false;
-}
-
-// Execute a queued SCRIPTED_EFFECT intent on the game thread (drained from
-// on_tick serial section). Looks up the named scripted_effect template in the
-// CJominiScriptedEffectTemplateDatabase singleton and invokes
-// CJominiScriptedEffect::Execute on a stack-allocated dispatcher node with the
-// actor character as ROOT scope (ck-7ejs).
-//
-// Path (matching the engine's own dispatch):
-//   db        = *(.bss + scripted_template_db::SCRIPTED_EFFECT_DB)
-//   tpl       = LookupTemplate(db, &Key{name_ptr, _, name_len})
-//   node      = stack-allocated 0x100 bytes, zero-init
-//   node+0x60 = db ; node+0x88 = key
-//   Execute(node, actor)   // SCRIPTED_EFFECT_EXECUTE re-resolves via LookupTemplate
-//                          // then walks tpl's compiled child effect tree
-//
-// Wrapped in watchdog + sigsetjmp + try/catch so a crash in the engine call
-// drops back into the bridge with a structured rejection rather than killing
-// the game process.
-bool execute_scripted_effect_intent(Intent* intent) {
-    extern thread_local sigjmp_buf g_recovery_point;
-    extern thread_local bool g_in_protected_region;
-
-    const char* effect_name = intent->interaction_name.c_str();
-    IQLOG("=== execute_scripted_effect_intent ENTRY: actor=%u effect='%s' ===\n",
-          intent->actor_id & 0xFFFFFF, effect_name);
-
-    void* actor = lookup_character(intent->actor_id);
-    if (!actor) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "actor_not_found");
-        intent->consumed = true;
-        IQLOG("Scripted-effect intent rejected: actor=%u not found\n",
-              intent->actor_id & 0xFFFFFF);
-        return false;
-    }
-    if (g_char_is_alive && !g_char_is_alive(actor)) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "actor_not_alive");
-        intent->consumed = true;
-        IQLOG("Scripted-effect intent rejected: actor=%u not alive\n",
-              intent->actor_id & 0xFFFFFF);
-        return false;
-    }
-
-    size_t name_len = intent->interaction_name.size();
-    if (name_len == 0 || name_len > 200) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "invalid_effect_name_len:%zu", name_len);
-        intent->consumed = true;
-        return false;
-    }
-
-    // Resolve the user-scripted-effect template DB singleton. The .bss holder
-    // stores a heap pointer populated at static-init (re_scripted_template_dbs.md §2).
-    uintptr_t db_ptr = read_offset<uintptr_t>(scripted_template_db::SCRIPTED_EFFECT_DB);
-    if (!db_ptr) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "template_db_null");
-        intent->consumed = true;
-        IQLOG("Scripted-effect intent rejected: template DB ptr is null\n");
-        return false;
-    }
-
-    // Resolve the template by NAME via a linear scan over the DB's templates
-    // array (re_scripted_effect_dispatch_NEXTBATCH.md §3.1). This REPLACES the
-    // old LookupTemplate({ptr,len}) call, which mis-shaped a COMPOUND key —
-    // key+0xc is a BLOCK COUNT, not a string length, so the engine walked the
-    // ASCII name bytes as an array of 0x40-byte block structs and SIGSEGV'd on
-    // every real effect name. The array is Template*[count] (8-byte stride);
-    // each template carries its name as an embedded std::string at
-    // TEMPLATE_NAME_STRING (+0x10 data, +0x18 len). Length-reject first (cheap),
-    // memcmp only on a length match. safe_read* are fault-tolerant; the watchdog
-    // bounds the loop; the sigsetjmp is belt-and-suspenders.
-    uintptr_t tpl_arr = safe_read<uintptr_t>(db_ptr + scripted_template_db::OBJ_TEMPLATES_ARRAY);
-    uint32_t  tpl_cnt = safe_read<uint32_t>(db_ptr + scripted_template_db::OBJ_TEMPLATES_COUNT);
-    if (!tpl_arr || !is_mapped(tpl_arr) || tpl_cnt == 0 || tpl_cnt > 1000000) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "template_array_invalid:cnt=%u", tpl_cnt);
-        intent->consumed = true;
-        IQLOG("Scripted-effect: template array invalid (arr=%lx cnt=%u)\n",
-              (unsigned long)tpl_arr, tpl_cnt);
-        return false;
-    }
-
-    void* tpl = nullptr;
-    int sig = 0;
-    char namebuf[256];  // name_len is bounded to <=200 above
-    watchdog_arm(3);
-    g_in_protected_region = true;
-    sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        g_in_protected_region = false;
-        watchdog_disarm();
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "template_scan_crashed:%s",
-                 (sig == 1) ? "SIGSEGV" : (sig == 2) ? "SIGALRM" : "UNKNOWN");
-        intent->consumed = true;
-        IQLOG("Scripted-effect template scan crashed: '%s'\n", effect_name);
-        return false;
-    }
-    for (uint32_t i = 0; i < tpl_cnt; i++) {
-        uintptr_t t = safe_read<uintptr_t>(tpl_arr + static_cast<uintptr_t>(i) * 8);
-        if (!t || !is_mapped(t)) continue;
-        uint32_t nlen = safe_read<uint32_t>(t + scripted_template_db::TEMPLATE_NAME_STRING + 0x8);
-        if (nlen != name_len) continue;             // cheap length reject (no string read)
-        uintptr_t ndata = safe_read<uintptr_t>(t + scripted_template_db::TEMPLATE_NAME_STRING);
-        if (!ndata || !is_mapped(ndata)) continue;
-        if (!safe_read_bytes(ndata, namebuf, name_len)) continue;
-        if (memcmp(namebuf, effect_name, name_len) == 0) { tpl = reinterpret_cast<void*>(t); break; }
-    }
-    g_in_protected_region = false;
-    watchdog_disarm();
-
-    if (!tpl) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "effect_not_found:%.80s", effect_name);
-        intent->consumed = true;
-        IQLOG("Scripted-effect intent: '%s' not in template DB (scanned %u)\n",
-              effect_name, tpl_cnt);
-        return false;
-    }
-
-    IQLOG("Scripted-effect intent: resolved '%s' to %p by name-scan\n", effect_name, tpl);
-
-    // resolve_only (DEFAULT): report the template as FOUND and STOP without
-    // calling Execute. The scope_ctx frame Execute requires is now PINNED
-    // (re_scope_ctx_frame.md / re_issue73_crack.md, #73) and the hardened walk
-    // below is built and gated; resolve_only stays the default so the handler
-    // is safe-by-default ("honestly reports whether the effect exists").
-    // resolve_only=false (observer-save-only RE) falls through to the gated,
-    // allow-listed Execute path below.
-    if (intent->resolve_only) {
-        intent->executed = true;
-        intent->consumed = true;
-        {
-            char buf[176];
-            snprintf(buf, sizeof(buf),
-                     "scripted_effect '%.80s' resolved (resolve_only) — Execute available behind allow-list (resolve_only=false)",
-                     effect_name);   // rc2 B2: no template VA in a client string
-            intent->console_output = buf;
-        }
-        IQLOG("Scripted-effect intent RESOLVED (resolve_only): '%s' template=%p\n",
-              effect_name, tpl);
-        return true;
-    }
-
-    // ── Execute path (resolve_only=false only) — PINNED-FRAME walk, ALLOW-LISTED ──
-    // The OLD code here fed SCRIPTED_EFFECT_EXECUTE a fake node with
-    // node+0x88={name_ptr,name_len} (the COMPOUND-key mistake — key+0xc is a BLOCK
-    // COUNT, not a strlen) and passed the raw `actor` (a CCharacter*) as scope_ctx,
-    // so the walker read *(uint16_t*)actor (a vptr fragment) as a scope-type tag →
-    // "Wrong scope" / out-of-bounds fault. Replaced with the pinned character-ROOT
-    // scope_ctx frame + direct EFFECT_TREE_WALK, under both proven crash guards
-    // (re_scope_ctx_frame.md §3/§5, re_scripted_effect_execute.md §2).
-    //
-    // The walk runs the effect WITHOUT whatever trigger normally fronts it, so it
-    // is gated behind an allow-list of self-gating / reversible effects
-    // (re_scripted_effect_execute.md §3). Effects vanilla only runs behind an
-    // is_valid/trigger gate (give title, war, imprison) are NOT allow-listed.
-    if (!scripted_effect_is_allow_listed(effect_name)) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "effect_not_allow_listed:%.80s", effect_name);
-        intent->consumed = true;
-        IQLOG("Scripted-effect Execute refused (not allow-listed): '%s'\n", effect_name);
-        return false;
-    }
-
-    uint32_t actor_ref = intent->actor_id & 0xFFFFFF;   // packed 24-bit char idx
-    int walk_sig = 0;
-    int walk_rc = run_effect_tree_walk_hardened(tpl, actor_ref, /*watchdog_secs=*/5, &walk_sig);
-    // ck-zgh4: rc 4 is the scope-latch refusal, and it MUST be matched before
-    // the generic branch below. That branch reports `execute_crashed:` with
-    // walk_sig, and walk_sig is 0 for a refusal — so a latched walk would have
-    // reached the seat as "execute_crashed:UNKNOWN", telling it the effect
-    // faulted when in fact nothing ran.
-    if (walk_rc == 4) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "%s", bridge::scope_latched_reason());
-        intent->consumed = true;
-        IQLOG("Scripted-effect refused (scope latched): '%s'\n", effect_name);
-        return false;
-    }
-    if (walk_rc != 0) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "execute_crashed:%s",
-                 (walk_sig == 1) ? "SIGSEGV" : (walk_sig == 2) ? "SIGALRM" : "UNKNOWN");
-        intent->consumed = true;
-        IQLOG("Scripted-effect Execute crashed (sig=%d): '%s'\n", walk_sig, effect_name);
-        return false;
-    }
-
-    intent->executed = true;
-    intent->consumed = true;
-    {
-        char buf[160];
-        snprintf(buf, sizeof(buf),
-                 "scripted_effect '%.80s' walked on actor %u",
-                 effect_name, intent->actor_id & 0xFFFFFF);   // rc2 B2: no VA
-        intent->console_output = buf;
-    }
-    IQLOG("Scripted-effect intent EXECUTED (pinned-frame walk): actor=%u effect='%s' template=%p\n",
-          intent->actor_id & 0xFFFFFF, effect_name, tpl);
-    return true;
 }
 
 // =============================================================================
@@ -1824,7 +1235,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                 if (core_data && is_mapped(core_data)) {
                     uintptr_t claims_pdx = core_data + ck3::core_data::CLAIMS_ARRAY;
                     uintptr_t claim_data_ptr = safe_read<uintptr_t>(claims_pdx + 0x00);
-                    int32_t claim_cnt = safe_read<int32_t>(claims_pdx + 0x0C);
+                    int32_t claim_cnt = safe_read<int32_t>(claims_pdx + pdx_array::COUNT);
                     if (claim_cnt < 0 || claim_cnt > 200) claim_cnt = 0;
                     if (claim_data_ptr && is_mapped(claim_data_ptr)) {
                         for (int32_t j = 0; j < claim_cnt; j++) {
@@ -2009,7 +1420,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                         uintptr_t tlist = get_truce_list(attacker);
                         if (tlist && is_mapped(tlist)) {
                             uintptr_t t_begin = safe_read<uintptr_t>(tlist + 0);
-                            int32_t   t_count = safe_read<int32_t>(tlist + 0xC);
+                            int32_t   t_count = safe_read<int32_t>(tlist + pdx_array::COUNT);
                             if (t_begin && is_mapped(t_begin) && t_count > 0 && t_count < 1000) {
                                 uintptr_t t_end = t_begin + (size_t)t_count * 8;
                                 uintptr_t hit = simd_find(t_begin, t_end, defender);
@@ -2240,8 +1651,8 @@ bool execute_war_create_core_intent(Intent* intent) {
         title_data[0] = static_cast<uint32_t>(title_id) & 0xFFFFFF;
         title_count = 1;
         *reinterpret_cast<uint64_t*>(cb_params_buf + 0x00) = reinterpret_cast<uint64_t>(title_data);
-        *reinterpret_cast<uint32_t*>(cb_params_buf + 0x08) = title_count;
-        *reinterpret_cast<uint32_t*>(cb_params_buf + 0x0c) = title_count;
+        *reinterpret_cast<uint32_t*>(cb_params_buf + pdx_array::CAPACITY) = title_count;
+        *reinterpret_cast<uint32_t*>(cb_params_buf + pdx_array::COUNT) = title_count;
     }
     // For non-title CBs (subjugation, etc.) the buffer stays zero — *(buf+0xc)
     // is read as 0 and CCasusBelli_Set takes the empty-source fast path.
@@ -2561,7 +1972,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                  "{\"war_created\":%s,\"war_id\":%u,\"is_null_sentinel\":%s,"
                  "\"wars_before\":%d,\"wars_after\":%d,\"resolved_cb\":\"%.64s\"%s}",
                  war_created ? "true" : "false",
-                 (war_created ? (war_id & 0xFFFFFF) : 0xFFFFFFFFu),
+                 (war_created ? war_id : 0xFFFFFFFFu),   // the full handle (L12), as query_wars
                  is_null_war ? "true" : "false",
                  wars_before, wars_after, resolved_cb_name,
                  validity_skipped_latched
@@ -2581,223 +1992,31 @@ bool execute_war_create_core_intent(Intent* intent) {
 }
 
 // =============================================================================
-// FACTION create/join — execute_faction_intent (re_faction_join_create.md).
+// SCHEME start — execute_scheme_intent (#132, re/findings/re_schemes.md)
 //
-// One native call GET_OR_CREATE_AND_JOIN(mgr, type_ptr, actor, liege) does
-// create-or-join in one shot. type_ptr resolved by name from FACTION_TYPE_DB_V2.
-// Mirrors the steered-war harness: arm_fake_random_scope (the leader-election
-// path touches RNG) + watchdog + sigsetjmp crash-net. faction-type key in
-// interaction_name; faction_action ("create"/"join"/"leave") in console_command;
-// target_id = liege. "leave" is not yet pinned → rejected.
-// =============================================================================
-
-// Resolve a CFactionType* by its key name via FACTION_TYPE_DB_V2:
-//   inst = *(base + FACTION_TYPE_DB_V2); array = *(inst+0x88); count = *(u32*)(inst+0x94);
-//   entries are CFactionType* (8-byte stride); name = std::string at type_ptr+0x10.
-static uintptr_t resolve_faction_type_by_name(const std::string& key) {
-    uintptr_t inst = read<uintptr_t>(g_base_addr + ck3::globals::FACTION_TYPE_DB_V2);
-    if (!inst) return 0;
-    uintptr_t arr = read<uintptr_t>(inst + 0x88);
-    uint32_t count = read<uint32_t>(inst + 0x94);
-    if (!arr || count == 0 || count > 256) return 0;
-    for (uint32_t i = 0; i < count; i++) {
-        uintptr_t type_ptr = read<uintptr_t>(arr + static_cast<uintptr_t>(i) * 8);
-        if (!type_ptr) continue;
-        // name std::string object at type_ptr+0x10 (libstdc++: data ptr @+0, len @+8).
-        const char* p = reinterpret_cast<const char*>(read<uintptr_t>(type_ptr + 0x10));
-        uint64_t len = read<uint64_t>(type_ptr + 0x18);
-        if (!p || len == 0 || len > 128) continue;
-        if (key.size() == len && memcmp(key.data(), p, len) == 0) return type_ptr;
-    }
-    return 0;
-}
-
-bool execute_faction_intent(Intent* intent) {
-    extern thread_local sigjmp_buf g_recovery_point;
-    extern thread_local bool g_in_protected_region;
-
-    const std::string& ftype_key = intent->interaction_name;     // faction-type key
-    const std::string& faction_action = intent->console_command; // create/join/leave
-    IQLOG("=== execute_faction_intent ENTRY: actor=%u type='%s' action='%s' liege=%u ===\n",
-          intent->actor_id & 0xFFFFFF, ftype_key.c_str(), faction_action.c_str(),
-          intent->target_id & 0xFFFFFF);
-
-    if (faction_action == "leave") {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "leave_not_implemented");
-        intent->consumed = true;
-        return false;
-    }
-
-    void* actor = lookup_character(intent->actor_id);
-    if (!actor) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "actor_not_found");
-        intent->consumed = true;
-        return false;
-    }
-    if (g_char_is_alive && !g_char_is_alive(actor)) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "actor_not_alive");
-        intent->consumed = true;
-        return false;
-    }
-
-    void* liege = lookup_character(intent->target_id);
-    if (!liege) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "liege_not_found");
-        intent->consumed = true;
-        return false;
-    }
-
-    uintptr_t type_ptr = resolve_faction_type_by_name(ftype_key);
-    if (!type_ptr) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "faction_type_not_found:%.64s", ftype_key.c_str());
-        intent->consumed = true;
-        return false;
-    }
-
-    uintptr_t gsr = read<uintptr_t>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-    auto get_mgr = reinterpret_cast<void*(*)(void*)>(
-        g_base_addr + ck3::faction_write::GET_FACTION_MANAGER);
-    auto get_or_create_join = reinterpret_cast<void*(*)(void*, void*, void*, void*)>(
-        g_base_addr + ck3::faction_write::GET_OR_CREATE_AND_JOIN);
-
-    uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this process,
-    // so the slot cannot be reasoned about. REFUSE rather than proceed
-    // unarmed — proceeding is what ignoring the arm's false would do.
-    if (bridge::scope_latched()) {
-        bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "%s", bridge::scope_latched_reason());
-        intent->consumed = true;
-        return false;
-    }
-    bool rng_armed = arm_fake_random_scope(&saved_rng);
-    void* faction = nullptr;
-
-    watchdog_arm(5);
-    g_in_protected_region = true;
-    int sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        g_in_protected_region = false;
-        watchdog_disarm();
-        if (rng_armed) restore_fake_random_scope(saved_rng);
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "faction_call_crashed:%s",
-                 (sig == 1) ? "SIGSEGV" : (sig == 2) ? "SIGALRM" : "UNKNOWN");
-        intent->consumed = true;
-        IQLOG("faction intent crashed in GET_OR_CREATE_AND_JOIN (sig=%d)\n", sig);
-        return false;
-    }
-    {
-        void* mgr = get_mgr(reinterpret_cast<void*>(gsr));
-        if (mgr) faction = get_or_create_join(mgr, reinterpret_cast<void*>(type_ptr), actor, liege);
-    }
-    g_in_protected_region = false;
-    watchdog_disarm();
-    if (rng_armed) restore_fake_random_scope(saved_rng);
-
-    uintptr_t sentinel = g_base_addr + ck3::faction_write::NULL_FACTION_SENTINEL;
-    bool is_null = (faction == nullptr) ||
-                   (reinterpret_cast<uintptr_t>(faction) == sentinel);
-
-    // Confirm membership (FACTION_IS_MEMBER returns a member* or null).
-    bool is_member = false;
-    uint32_t faction_id = 0;
-    if (!is_null) {
-        auto is_mem = reinterpret_cast<void*(*)(void*, void*)>(
-            g_base_addr + ck3::faction_write::FACTION_IS_MEMBER);
-        watchdog_arm(3);
-        g_in_protected_region = true;
-        int sig2 = sigsetjmp(g_recovery_point, 1);
-        if (sig2 == 0) {
-            is_member = (is_mem(faction, actor) != nullptr);
-            faction_id = read<uint32_t>(reinterpret_cast<uintptr_t>(faction) + 0x10) & 0xFFFFFF;
-        }
-        g_in_protected_region = false;
-        watchdog_disarm();
-    }
-
-    bool ok = !is_null && is_member;
-    intent->executed = ok;
-    intent->rejected = !ok;
-    intent->consumed = true;
-    {
-        char buf[160];
-        snprintf(buf, sizeof(buf),
-                 "{\"faction_action\":\"%.16s\",\"faction_type\":\"%.48s\",\"liege_id\":%u,"
-                 "\"created_or_joined\":%s,\"is_member\":%s,\"faction_id\":%u}",
-                 faction_action.c_str(), ftype_key.c_str(), intent->target_id & 0xFFFFFF,
-                 is_null ? "false" : "true", is_member ? "true" : "false", faction_id);
-        intent->console_output = buf;
-    }
-    if (!ok && intent->rejection_reason[0] == '\0') {
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 is_null ? "faction_returned_null_sentinel" : "actor_not_member_after_call");
-    }
-    IQLOG("faction intent result: ok=%d null=%d member=%d faction_id=%u\n",
-          ok ? 1 : 0, is_null ? 1 : 0, is_member ? 1 : 0, faction_id);
-    return ok;
-}
-
-// =============================================================================
-// SCHEME start — execute_scheme_intent (#132, docs/notes/hostile-intrigue-research.md)
-//
-// One native call CreateActiveScheme(mgr, type, owner, target_scope, tpl5, tpl6)
-// constructs + initializes the scheme. The ENGINE'S OWN GATES are inside that
-// call (decompile-verified, image 0x063a7dd0):
-//   - (int)scheme_type[0x3e] != (int)target_scope  → null  (target_type mismatch)
-//   - scheme_type is_shown predicate (vt at type+0x10)     → null if hidden
-//   - ValidateSchemeTarget(target_scope)                   → null if target invalid
-//   - owner IsAlive + (char-target) target IsAlive         → null if dead
-//   - HasSchemeOnTarget(type, owner, target)               → null if exists/cooldown
-//   - scheme_type can-start predicate (vt at type+0x38)    → null if disallowed
-// So calling it forward is self-gating — an illegitimate murder (dead/invalid/
-// imprisoned-by-us/cooldown target) returns the SCHEME_NULL sentinel, not a scheme.
+// Two native calls. First CanStartScheme (scheme_engine.cpp), the engine's answer
+// to "may OWNER start TYPE on TARGET": the type's `allow` and `valid` script
+// triggers, an owned scheme of the same type or category on the target, the
+// relation's scheme cooldown. A refusal comes back with the failing triggers.
+// Then CreateActiveScheme(mgr, type, owner, target_scope, tpl5, tpl6), which
+// constructs and initializes the scheme after its own gates (decompile-verified,
+// image 0x063a7dd0): the type's target type (type+0x1F0) against the scope's, the
+// owner's validity, ValidateSchemeTarget, both alive, HasSchemeOnTarget, and the
+// type's vt+0x38 predicate. It does not evaluate allow/valid, which is why the
+// check runs first. Any gate failing returns the SCHEME_NULL sentinel.
 //
 // target_scope layout (from ValidateSchemeTarget, image 0x063a86e0):
 //   low 32 bits  = target_type (0=character,1=title,2=culture,3=faith,4=none)
 //   high 32 bits = target_ref  (FULL 32-bit canonical handle, char+0x18; the
 //                  engine slot-resolves by &0xFFFFFF then verifies the full handle)
 //
-// param5/param6 are non-nullable scope objects (InitializeScheme dereferences
-// param5 via a virtual call). They are captured from real engine-initiated schemes
-// by the CREATE_ACTIVE_SCHEME observer hook (scheme_get_arg_template), keyed by
-// type name. If no template has been observed yet, we refuse rather than guess.
+// param5/param6 are the scheme's task contract and artifact; a bridge start passes
+// the two DB null objects, as the engine's start_scheme effect does without them
+// (re_scheme_start_args.md).
 //
 // Crash-net: arm_fake_random_scope (success-formula / agent-staffing touch RNG) +
-// watchdog + sigsetjmp, identical to execute_faction_intent / create-title.
+// watchdog + sigsetjmp, identical to execute_faction_intent (factions.cpp) / create-title.
 // =============================================================================
-
-// Resolve a CSchemeType* by key name via SCHEME_TYPE_DB. Same Jomini DB layout
-// as resolve_faction_type_by_name: inst = *(base+SCHEME_TYPE_DB); array @ inst+0x88;
-// count @ inst+0x94 (u32); entries are CSchemeType* (8-byte stride); name is the
-// std::string at type_ptr+0x10. Verified on the core dump: 76 types, "murder"/
-// "fabricate_hook"/"claim_throne" all present (re/findings hostile-intrigue).
-static uintptr_t resolve_scheme_type_by_name(const std::string& key) {
-    uintptr_t inst = read<uintptr_t>(g_base_addr + ck3::globals::SCHEME_TYPE_DB);
-    if (!inst) return 0;
-    uintptr_t arr = read<uintptr_t>(inst + 0x88);
-    uint32_t count = read<uint32_t>(inst + 0x94);
-    if (!arr || count == 0 || count > 512) return 0;
-    for (uint32_t i = 0; i < count; i++) {
-        uintptr_t type_ptr = read<uintptr_t>(arr + static_cast<uintptr_t>(i) * 8);
-        if (!type_ptr) continue;
-        const char* p = reinterpret_cast<const char*>(read<uintptr_t>(type_ptr + 0x10));
-        uint64_t len = read<uint64_t>(type_ptr + 0x18);
-        if (!p || len == 0 || len > 128) continue;
-        if (key.size() == len && memcmp(key.data(), p, len) == 0) return type_ptr;
-    }
-    return 0;
-}
 
 // Confirm the owner now OWNS a scheme of `type_ptr` targeting `target_id` — same
 // owned-scheme walk as do_query_schemes (core_data+0x98 ref list → SCHEME_REFDB).
@@ -2972,7 +2191,6 @@ bool execute_scheme_cancel_intent(Intent* intent) {
 bool execute_scheme_intent(Intent* intent) {
     extern thread_local sigjmp_buf g_recovery_point;
     extern thread_local bool g_in_protected_region;
-    extern int scheme_arg_template_status(const std::string&);
     extern bool scheme_null_arg_objects(uint64_t*, uint64_t*);
     extern thread_local bool g_scheme_start_from_bridge;
 
@@ -2997,11 +2215,32 @@ bool execute_scheme_intent(Intent* intent) {
     if (!target) return reject("target_not_found");
     if (g_char_is_alive && !g_char_is_alive(target)) return reject("target_not_alive");
 
-    uintptr_t type_ptr = resolve_scheme_type_by_name(scheme_key);
+    uintptr_t type_ptr = scheme_type_by_name(scheme_key);
     if (!type_ptr) {
         char buf[160];
         snprintf(buf, sizeof(buf), "scheme_type_not_found:%.64s", scheme_key.c_str());
         return reject(buf);
+    }
+
+    // The game's own question first (l3-schemes): CanStartScheme runs the scheme
+    // type's `allow` and `valid` triggers, an existing scheme and the cooldown, none
+    // of which CreateActiveScheme checks. A refusal carries the engine's reasons:
+    // the trigger that failed, its block and where the script wrote it.
+    {
+        std::string reasons;
+        int verdict = scheme_can_start(type_ptr, owner, target, true, &reasons);
+        if (verdict < 0) {
+            char buf[120];
+            snprintf(buf, sizeof(buf), "scheme_check_failed:%.80s", reasons.c_str());
+            return reject(buf);
+        }
+        if (verdict == 0) {
+            std::string out = "{\"scheme\":\"" + scheme_key + "\",\"owner_id\":" + std::to_string(actor_id)
+                + ",\"target_id\":" + std::to_string(target_id)
+                + ",\"created\":false,\"engine_reasons\":" + reasons + "}";
+            intent->console_output = out;
+            return reject("engine_refused_can_start_scheme");
+        }
     }
 
     // The 5th/6th CreateActiveScheme args are the scheme's optional task contract
@@ -3021,13 +2260,12 @@ bool execute_scheme_intent(Intent* intent) {
     if (safe_read<int32_t>(static_cast<uintptr_t>(tpl5) + 0x8) != -1 ||
         safe_read<int32_t>(static_cast<uintptr_t>(tpl6) + 0x10) != -1)
         return reject("scheme_null_args_shape_mismatch");
-    // If the engine's own last start of THIS type carried a real contract or
-    // artifact, the type is one the bridge cannot start faithfully (it would be a
-    // contract-less copy of a contract scheme). Refuse, typed.
-    if (scheme_arg_template_status(scheme_key) == 2) {
+    // A scheme the game creates from a task contract or an artifact the bridge
+    // cannot pass (scheme_bridge_refusal: the contract category, or a type the
+    // engine has only started with one). Refuse, typed; the check says the same.
+    if (const char* why = scheme_bridge_refusal(type_ptr, scheme_key)) {
         char buf[160];
-        snprintf(buf, sizeof(buf), "scheme_type_needs_contract_or_artifact:%.64s",
-                 scheme_key.c_str());
+        snprintf(buf, sizeof(buf), "%s:%.64s", why, scheme_key.c_str());
         return reject(buf);
     }
 
@@ -3141,975 +2379,6 @@ bool execute_scheme_intent(Intent* intent) {
 }
 
 // =============================================================================
-// CAIWarCoordinator offensive-stance drive — Fix B1a (re_caiwarcoordinator_FINAL.md,
-// re_steered_war_offensive_root.md)
-// =============================================================================
-// ROOT: a FORCE-DECLARED steered conquest war lands on the attacker_DEFENSIVE stance
-// (DB+0xfc0) instead of attacker_offensive (DB+0xfb0) — so the AI never marches to
-// SIEGE the war goal, occupation_score stays flat 0, and the war is unwinnable. The
-// stance lives on the attacker realm's CAIWarCoordinator per-war RECORD at rec+0x70,
-// written by the engine's per-war selector STANCE_PERWAR_SELECT (FUN_04e66550). For
-// a war the realm AI itself chose, the coordinator's natural tick selects offensive;
-// for a force-declared (steered) war the selection either never fires on the new
-// record before defaulting, or the offensive strength-condition (FUN_04e843a0) is
-// re-evaluated against stale/zero objective state.
-//
-// LEGITIMATE FIX (B1a — engine re-eval, NOT a memory poke): drive the engine's OWN
-// per-coordinator stance tick on our war's record. Decompile-confirmed flow
-// (FUN_04dedd40 → FUN_04e66220 → FUN_04e66550 → FUN_04e843a0):
-//   - The record array lives on the AI-MANAGER root: arr=*(ai_root+0x48),
-//     n=*(ai_root+0x54); each active record gated by rec+0x14 != 0 (the SAME walk
-//     do_query_war_stance ships read-only + read-validated).
-//   - COORD_STANCE_TICK (FUN_04e66220) takes the RECORD as param_1, resolves the war
-//     itself from rec+0x18 via WAR_DB (validates war+8 == rec+0x18 — the FUN_04e60920
-//     match-key invariant), decrements rec+0x94/0x98/0x9c, and WHEN rec+0x94 < 2 calls
-//     the real selector FUN_04e66550(rec, war) which runs the real strength condition
-//     FUN_04e843a0 and writes the engine's OWN chosen SAIWarStance* into rec+0x70.
-//   - So: zero rec+0x94 (force the selector branch), call COORD_STANCE_TICK(rec,&seed)
-//     ONCE. The engine re-selects. If the attacker genuinely has the upper hand it
-//     lands attacker_offensive LEGITIMATELY; if not, defensive is the CORRECT engine
-//     verdict (a useful diagnostic — the target is a cull/loss risk — never a forced
-//     fabrication). This is the engine's real AI-plan recompute, exactly what a
-//     self-declared war gets. We write NOTHING into rec+0x70 ourselves.
-//
-// The prior "single remaining live-probe" (the record↔war-id match key) is RESOLVED:
-// rec+0x18 is the gen-tagged war id, validated against WAR_DB exactly as FUN_04e60920
-// does, and the 1097-AD core dump ground-truthed 174 live records = 2 per war keyed on
-// this invariant (re_steered_war_offensive_root.md §5b). The read-side walk ships in
-// do_query_war_stance. What has NOT been exercised is DRIVING the engine tick on a
-// live coordinator — so this stays DEFAULT-OFF behind g_force_offensive_stance and is
-// validated live on attempt-25 (harness scenario strategic_force_offensive_siege).
-//
-// CRASH-HARDENING (mandatory, mirrors the steered-WCC / scripted-effect pattern):
-// COORD_STANCE_TICK rebuilds the war plan (objective sublist iteration + unit-stack
-// assignment subfns FUN_04e687b0/68b20/68e50) and draws engine RNG, so it runs under
-// (1) arm_fake_random_scope (the RandomScopeManager+0x20 null-deref class) +
-// (2) watchdog_arm + sigsetjmp(g_recovery_point), game-thread-serial only (drained
-// from the WAR_FORCE_OFFENSIVE_STANCE intent on the AI tick). A fault/hang becomes a
-// clean rejection, never a game crash.
-std::atomic<bool> g_force_offensive_stance{false};
-
-// Resolve the stance-DB instance ptr from the process-global (pure safe_read — no
-// engine call). Returns 0 if the DB is not yet constructed / not mapped.
-static uintptr_t resolve_stance_db() {
-    uintptr_t db_global = g_base_addr + ck3::globals::STANCE_DB_GLOBAL;
-    if (!is_mapped(db_global)) return 0;
-    uintptr_t db = safe_read<uintptr_t>(db_global);          // *(global) = DB instance
-    if (!db || db < 0x10000 || !is_mapped(db)) return 0;
-    return db;
-}
-
-// Read one of the 7 engine-singleton SAIWarStance* slots out of the DB instance.
-static uintptr_t stance_slot(uintptr_t db, size_t off) {
-    if (!db) return 0;
-    uintptr_t slot = db + off;
-    if (!is_mapped(slot)) return 0;
-    uintptr_t s = safe_read<uintptr_t>(slot);
-    return (s && s >= 0x10000) ? s : 0;
-}
-
-// Resolve a CWar* from WAR_DB by gen-tagged war id, mirroring the engine's own
-// FUN_04e66220 inner resolve: idx = id & 0xFFFFFF; slot = *(table + 8 + idx*0x10);
-// validate *(war+8) == id. Returns 0 on any mismatch (so a wrong key never yields a
-// garbage war). Inline (resolve_war_by_id is static to query_handlers.cpp).
-static uintptr_t resolve_war_ptr_by_id(uint32_t war_id) {
-    if (war_id == 0 || war_id == ck3::war_db::WAR_ID_INVALID) return 0;
-    uintptr_t db = safe_read<uintptr_t>(g_base_addr + ck3::globals::WAR_DB);
-    if (!db || !is_mapped(db)) return 0;
-    uint32_t idx = war_id & ck3::war_db::WAR_ID_IDX_MASK;
-    uint32_t cap = safe_read<uint32_t>(db + ck3::war_db::CAPACITY);
-    if (idx >= cap) return 0;
-    uintptr_t table = safe_read<uintptr_t>(db + ck3::war_db::TABLE_PTR);
-    if (!table || !is_mapped(table)) return 0;
-    uintptr_t slot = table + ck3::war_db::SLOT_WAR_PTR
-                     + static_cast<uintptr_t>(idx) * ck3::war_db::SLOT_STRIDE;
-    if (!is_mapped(slot)) return 0;
-    uintptr_t war = safe_read<uintptr_t>(slot);
-    if (!war || !is_mapped(war)) return 0;
-    if (safe_read<uint32_t>(war + ck3::war_obj::WAR_ID) != war_id) return 0;  // gen check
-    return war;
-}
-
-// Find the attacker realm's CAIWarCoordinator per-war RECORD for `war_id` by walking
-// the AI-manager record array (the FUN_04dedd40 walk; same as do_query_war_stance).
-// A record matches when it is active (rec+0x14 != 0), its rec+0x18 resolves to a real
-// CWar via the WAR_DB gen-check, and (rec+0x18 & 0xFFFFFF) == (war_id & 0xFFFFFF).
-// Returns the record ptr, or 0 if not found. Pure reads.
-static uintptr_t find_coord_record_for_war(uint32_t war_id, int* out_scanned) {
-    if (out_scanned) *out_scanned = 0;
-    void* mgr = get_ai_manager();
-    uintptr_t ai_root = reinterpret_cast<uintptr_t>(mgr);
-    if (!ai_root || !is_mapped(ai_root)) return 0;
-    uint32_t n   = safe_read<uint32_t>(ai_root + ck3::war_stance::AIMGR_REC_COUNT);
-    uintptr_t arr = safe_read<uintptr_t>(ai_root + ck3::war_stance::AIMGR_REC_ARRAY);
-    if (n == 0 || n >= 65536 || !arr || !is_mapped(arr)) return 0;
-    uint32_t want_idx = war_id & ck3::war_db::WAR_ID_IDX_MASK;
-    int scanned = 0;
-    for (uint32_t i = 0; i < n && i < 4096; ++i) {
-        uintptr_t rec = safe_read<uintptr_t>(arr + static_cast<uintptr_t>(i) * 8);
-        if (!rec || !is_mapped(rec)) continue;
-        if (safe_read<uint8_t>(rec + ck3::war_stance::REC_ACTIVE_FLAG) == 0) continue;
-        scanned++;
-        uint32_t rec_war_id = safe_read<uint32_t>(rec + ck3::war_stance::REC_WAR_ID);
-        if ((rec_war_id & ck3::war_db::WAR_ID_IDX_MASK) != want_idx) continue;
-        // Cross-validate via WAR_DB (war+8 == rec+0x18) — never trust idx alone.
-        uintptr_t war = resolve_war_ptr_by_id(rec_war_id);
-        if (!war) continue;
-        if (out_scanned) *out_scanned = scanned;
-        return rec;
-    }
-    if (out_scanned) *out_scanned = scanned;
-    return 0;
-}
-
-// Reverse-map a stance ptr (rec+0x70) to a short name, for the result/verdict.
-static const char* stance_name_for_ptr(uintptr_t db, uintptr_t sp) {
-    if (!db || !sp) return "unknown";
-    struct S { size_t off; const char* name; };
-    static const S slots[] = {
-        { ck3::war_stance::OFF_ATK_OFFENSIVE, "attacker_offensive" },
-        { ck3::war_stance::OFF_ATK_DEFENSIVE, "attacker_defensive" },
-        { ck3::war_stance::OFF_DEF_OFFENSIVE, "defender_offensive" },
-        { ck3::war_stance::OFF_DEF_DEFENSIVE, "defender_defensive" },
-        { ck3::war_stance::OFF_DEF_DESPERATE, "defender_desperate" },
-        { ck3::war_stance::OFF_GHW_ATTACKER,  "great_holy_war_attacker" },
-        { ck3::war_stance::OFF_GHW_DEFENDER,  "great_holy_war_defender" },
-    };
-    for (const auto& s : slots) {
-        if (stance_slot(db, s.off) == sp) return s.name;
-    }
-    return "unknown";
-}
-
-// =============================================================================
-// execute_war_force_offensive_stance_intent — Fix B1a, game-thread executor.
-// Drained from WAR_FORCE_OFFENSIVE_STANCE on the AI tick. actor_id = the AI
-// attacker; title_id (reused) = the gen-tagged war_id of the steered war.
-// DEFAULT-OFF behind g_force_offensive_stance. Writes a structured result into
-// intent->console_output (matching the WCC handler's contract) and sets
-// intent->executed / intent->rejected. NEVER writes rec+0x70 itself — it only zeros
-// the engine's re-eval cooldown and calls the engine's own stance tick, so the
-// engine selects the stance via its real logic.
-// =============================================================================
-extern thread_local sigjmp_buf g_recovery_point;
-
-bool execute_war_force_offensive_stance_intent(Intent* intent) {
-    intent->consumed = true;
-    intent->executed = false;
-
-    uint32_t attacker_id = intent->actor_id & 0xFFFFFF;
-    uint32_t war_id      = static_cast<uint32_t>(intent->title_id);  // gen-tagged
-
-    auto reject = [&](const char* reason) -> bool {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "%s", reason);
-        return false;
-    };
-
-    if (!g_force_offensive_stance.load(std::memory_order_relaxed))
-        return reject("disabled_flag_off");
-
-    uintptr_t db = resolve_stance_db();
-    if (!db) return reject("stance_db_not_constructed_or_unmapped");
-    uintptr_t want_offensive = stance_slot(db, ck3::war_stance::OFF_ATK_OFFENSIVE);
-    if (!want_offensive) return reject("attacker_offensive_slot_unmapped");
-
-    // Validate the war still exists + the attacker is still its primary attacker
-    // (steered-war-target-legality: the war can be culled the tick after creation).
-    uintptr_t war = resolve_war_ptr_by_id(war_id);
-    if (!war) return reject("war_not_found_or_culled");
-
-    // -------------------------------------------------------------------------
-    // CB-TYPE ALLOW-LIST GUARD (CRASH-FIX 20260630, crash ck3_20260630_115545).
-    // -------------------------------------------------------------------------
-    // force_offensive_stance FAULTED on a GHA `sons_of_lothbrok_invasion_cb` war:
-    // the bridge log ends at "executing WAR_FORCE_OFFENSIVE_STANCE actor=14859
-    // war=0x3" with NO completion — the fault landed INSIDE the engine call (the
-    // objective bootstrap or the stance tick), where a mid-engine-call SIGSEGV is
-    // not reliably recoverable even under watchdog_arm+sigsetjmp (the engine may
-    // leave its own locks/allocator in a torn state, or fault on a non-faulting
-    // signal path). The ONLY validated-safe shape is a steered SINGLE-TARGET
-    // conquest (county_conquest_cb; duchy_conquest_cb by the same single-de-jure
-    // -title objective model). The seeder COORD_OBJ_BOOTSTRAP (FUN_04e69c70) +
-    // objective ctor FUN_04e3da00 allocate ONE SAIProvinceObjective shaped around
-    // a single de-jure title goal; an *invasion* / multi-target objective CB
-    // (sons_of_lothbrok_invasion and the invasion family carry a target-province
-    // LIST and a different objective struct) drives the seeder/stance-tick down a
-    // layout whose invariants don't hold for our force-declared record.
-    //
-    // FIX (pre-call validation — MUST be before any engine call, since a SIGSEGV
-    // mid-call may not be cleanly recoverable): resolve the war's CB name (same
-    // war+0xA0 → read_db_obj_name read the steered-war path and query_war use) and
-    // REJECT cleanly for anything outside the validated allow-list. No engine call
-    // is made for unsupported CBs — typed verdict force_offensive_stance_unsupported_cb.
-    {
-        uintptr_t cb_type_ref = safe_read<uintptr_t>(war + ck3::war_obj::CB_TYPE_REF);
-        char war_cb_name[128] = {};
-        if (cb_type_ref && is_mapped(cb_type_ref)) {
-            const char* nptr = nullptr; size_t nlen = 0;
-            if (read_db_obj_name(cb_type_ref, nptr, nlen) && nptr && nlen > 0) {
-                size_t copy = nlen < sizeof(war_cb_name) - 1 ? nlen : sizeof(war_cb_name) - 1;
-                memcpy(war_cb_name, nptr, copy);
-            }
-        }
-        // Validated-safe single-target conquest objectives ONLY. Everything else —
-        // and especially *invasion* / multi-target objective CBs — is rejected.
-        const bool cb_supported =
-            strcmp(war_cb_name, "county_conquest_cb") == 0 ||
-            strcmp(war_cb_name, "duchy_conquest_cb")  == 0;
-        if (!cb_supported) {
-            char buf[200];
-            snprintf(buf, sizeof(buf), "force_offensive_stance_unsupported_cb:%s",
-                     war_cb_name[0] ? war_cb_name : "unresolved");
-            IQLOG("WAR_FORCE_OFFENSIVE_STANCE: REJECT unsupported CB '%s' war=0x%x — "
-                  "only county_conquest_cb/duchy_conquest_cb are objective-seed-safe; "
-                  "invasion/multi-target objective CBs fault the seeder/stance-tick\n",
-                  war_cb_name[0] ? war_cb_name : "unresolved", war_id);
-            return reject(buf);
-        }
-        IQLOG("WAR_FORCE_OFFENSIVE_STANCE: CB '%s' in validated allow-list — proceeding\n",
-              war_cb_name);
-    }
-
-    // Find the coordinator record for THIS war (pure reads).
-    int scanned = 0;
-    uintptr_t rec = find_coord_record_for_war(war_id, &scanned);
-    if (!rec) {
-        // No record yet: the coordinator may not have ingested the new war into its
-        // record array this tick. This is the documented timing case — retry next
-        // tick (the intent TTL allows redrains). Report it precisely.
-        char buf[200];
-        snprintf(buf, sizeof(buf), "coord_record_not_found_scanned_%d", scanned);
-        return reject(buf);
-    }
-
-    // Snapshot the pre-tick stance for the verdict.
-    uintptr_t pre_sp  = safe_read<uintptr_t>(rec + ck3::war_stance::REC_STANCE_PTR);
-    const char* pre_name = stance_name_for_ptr(db, pre_sp);
-
-    // CRITICAL (re_steered_war_offensive_root.md §7, decompile-confirmed 20260630):
-    // COORD_STANCE_TICK (FUN_04e66220) early-returns IMMEDIATELY when the objective
-    // sublist is empty:  `iVar1 = *(int*)(rec+0x5c); if (iVar1 == 0) return;`. A FRESH
-    // steered war's record has rec+0x5c==0 / rec+0x50==NULL (core-dump ground-truth:
-    // 22/174 live records, incl. fresh attacker wars). So on a fresh steered war the
-    // stance tick alone does NOTHING — it reaches neither the selector FUN_04e66550 nor
-    // the maintainer FUN_04e669e0. The objective sublist is NOT built lazily inside the
-    // tick: the in-tick maintainer FUN_04e669e0 is itself gated behind rec+0x5c!=0 (it
-    // only REFINES an existing plan). The BOOTSTRAP seeder is the separate engine
-    // function COORD_OBJ_BOOTSTRAP (FUN_04e69c70) — normally invoked by the realm-AI
-    // war-PLANNING phase (FUN_04def140) that runs BEFORE the stance tick in the same AI
-    // tick — which unconditionally allocates one SAIProvinceObjective and appends it to
-    // rec+0x50, taking rec+0x5c 0→1, with NO +0x5c gate. So: if the sublist is empty,
-    // drive the engine's OWN bootstrap seeder FIRST (legitimate — it is the planner's
-    // own pre-tick step, not a poke), THEN the stance tick has a non-empty plan to
-    // select+refine over. We write NOTHING into the sublist ourselves.
-    using ObjBootstrapFn = void (*)(void* rec);
-    auto obj_bootstrap = reinterpret_cast<ObjBootstrapFn>(
-        bridge::game_fn(ck3::funcs::COORD_OBJ_BOOTSTRAP));
-
-    // B1a: zero the re-eval cooldowns so COORD_STANCE_TICK takes BOTH gated branches:
-    //   rec+0x94<2 → selector FUN_04e66550 (writes the stance to rec+0x70)
-    //   rec+0x98<2 → maintainer FUN_04e669e0 (refines the seeded objective sublist)
-    // These are benign cooldown counters the engine itself resets after the tick — NOT
-    // the stance. Then call the engine's own tick.
-    using StanceTickFn = void (*)(void* rec, void* seed);
-    auto stance_tick = reinterpret_cast<StanceTickFn>(
-        bridge::game_fn(ck3::funcs::COORD_STANCE_TICK));
-
-    // Build the seed struct the engine's caller (FUN_04dedd40) passes as param_2.
-    // FUN_04e66220 does not read param_2, but mirror the ABI: {game_date_qword, seed}.
-    // game_date = *(GameStateRoot_deref + 8) (re_war_create_core / current_date_ptr).
-    alignas(8) uint8_t seed_buf[0x18] = {};
-    uintptr_t gs_root = safe_read<uintptr_t>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-    if (gs_root && is_mapped(gs_root + 8)) {
-        uint64_t date_val = safe_read<uint64_t>(gs_root + 8);
-        std::memcpy(seed_buf, &date_val, sizeof(date_val));
-    }
-
-    volatile uint64_t saved_rng = 0;
-    volatile bool rng_armed = false;
-    int sig = 0;
-
-    watchdog_arm(4);  // generous: the plan rebuild walks the objective sublist
-    g_in_protected_region = true;
-    sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        if (rng_armed) restore_fake_random_scope(saved_rng);
-        g_in_protected_region = false;
-        watchdog_disarm();
-        return reject("crashed_in_stance_tick");
-    }
-
-    // Arm the fake-RNG scope BEFORE any engine call (the seeder's ctor + the stance
-    // tick's plan rebuild can draw RNG / touch the RandomScopeManager).
-    {
-        uint64_t saved_tmp = 0;
-        // ck-zgh4 scope latch: a restore was refused earlier in this process,
-        // so the slot cannot be reasoned about. REFUSE rather than proceed
-        // unarmed — proceeding is what ignoring the arm's false would do.
-        if (bridge::scope_latched()) {
-            bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
-        // The arm here sits INSIDE the protected region (after the
-        // sigsetjmp), and reject() does not unwind it, so clear the
-        // flag and disarm the watchdog before returning.
-        g_in_protected_region = false;
-        watchdog_disarm();
-        return reject(bridge::scope_latched_reason());
-        }
-        rng_armed = arm_fake_random_scope(&saved_tmp);
-        saved_rng = saved_tmp;
-    }
-
-    // STEP 1 — bootstrap the objective sublist if empty, else COORD_STANCE_TICK
-    // early-returns at rec+0x5c==0 and does nothing (the fresh-steered-war case).
-    int obj_count_before = static_cast<int>(
-        safe_read<int32_t>(rec + ck3::war_stance::REC_OBJ_COUNT));
-    bool seeded = false;
-    if (obj_count_before == 0) {
-        obj_bootstrap(reinterpret_cast<void*>(rec));   // engine's own planner seeder
-        seeded = true;
-    }
-
-    // STEP 2 — zero both re-eval cooldowns so this tick runs the selector (rec+0x94<2 →
-    // FUN_04e66550, writes rec+0x70) AND the objective maintainer (rec+0x98<2 →
-    // FUN_04e669e0, refines the seeded sublist). Benign counters the engine resets.
-    {
-        volatile uint32_t* cd1 = reinterpret_cast<volatile uint32_t*>(
-            rec + ck3::war_stance::REC_REEVAL_CD_1);
-        if (is_mapped(reinterpret_cast<uintptr_t>(cd1))) *cd1 = 0;
-        volatile uint32_t* cd2 = reinterpret_cast<volatile uint32_t*>(
-            rec + ck3::war_stance::REC_REEVAL_CD_2);
-        if (is_mapped(reinterpret_cast<uintptr_t>(cd2))) *cd2 = 0;
-    }
-    // STEP 3 — the engine's own per-coordinator stance tick: re-selects the stance via
-    // the real selector + real strength condition, refines the objective plan, writes
-    // rec+0x70 itself.
-    stance_tick(reinterpret_cast<void*>(rec), seed_buf);
-
-    if (rng_armed) restore_fake_random_scope(saved_rng);
-    g_in_protected_region = false;
-    watchdog_disarm();
-
-    // Verify handler-side (no external probe — races): read the post-tick stance.
-    uintptr_t post_sp = safe_read<uintptr_t>(rec + ck3::war_stance::REC_STANCE_PTR);
-    const char* post_name = stance_name_for_ptr(db, post_sp);
-    bool now_offensive = (post_sp == want_offensive);
-    int obj_count_after = static_cast<int>(
-        safe_read<int32_t>(rec + ck3::war_stance::REC_OBJ_COUNT));
-
-    // STRENGTH-GATE DIAGNOSTIC (re_offensive_strength_gate.md — pure reads).
-    // The offensive decline is a LEGIT engine strength gate, NOT a bridge bug:
-    // FUN_04e843a0 declines offensive unless the attacker side is stronger AND
-    // enemy/own strength ratio < 0.75 (single-objective conquest path). The
-    // selector reads these two totals off the SAME coordinator record. Surface
-    // them so the agent gets the actual ratio + shortfall instead of guessing.
-    int64_t str_enemy = safe_read<int64_t>(rec + ck3::war_stance::REC_STRENGTH_ENEMY);
-    int64_t str_own   = safe_read<int64_t>(rec + ck3::war_stance::REC_STRENGTH_OWN);
-    // ratio = enemy/own in fixed-point /100000 (matches OFFENSIVE_RATIO_HI=75000).
-    long ratio_fp = (str_own > 0) ? static_cast<long>((str_enemy * 100000) / str_own) : -1;
-    bool strength_ok = (str_own > 0) && (str_enemy < str_own) &&
-                       (ratio_fp >= 0 && ratio_fp < ck3::war_stance::OFFENSIVE_RATIO_HI);
-
-    intent->executed = now_offensive;
-    if (!now_offensive) {
-        // The engine re-evaluated and chose NOT offensive. With the strength readout
-        // we can say WHY: a legit strength-gate decline (own not > ~1.33x enemy) vs a
-        // genuine anomaly (gate says strong-enough yet stance != offensive). Either
-        // way it is a real diagnostic for the agent, not a bridge failure.
-        if (!strength_ok) {
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "engine_chose_%s_strength_gate_enemy/own_ratio_%ld/100000_need_lt_75000",
-                     post_name, ratio_fp);
-        } else {
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "engine_chose_%s_not_offensive_despite_strength_ok", post_name);
-        }
-        intent->rejected = true;
-    }
-
-    char buf[560];
-    snprintf(buf, sizeof(buf),
-             "{\"action\":\"force_offensive_stance\",\"war_id\":%u,\"attacker_id\":%u,"
-             "\"stance_before\":\"%s\",\"stance_after\":\"%s\","
-             "\"now_offensive\":%s,\"records_scanned\":%d,"
-             "\"obj_seeded\":%s,\"obj_count_before\":%d,\"obj_count_after\":%d,"
-             "\"strength_enemy\":%lld,\"strength_own\":%lld,"
-             "\"enemy_over_own_ratio_fp\":%ld,\"ratio_threshold_fp\":%ld,"
-             "\"strength_gate_pass\":%s}",
-             war_id & 0xFFFFFF, attacker_id, pre_name, post_name,
-             now_offensive ? "true" : "false", scanned,
-             seeded ? "true" : "false", obj_count_before, obj_count_after,
-             static_cast<long long>(str_enemy), static_cast<long long>(str_own),
-             ratio_fp, static_cast<long>(ck3::war_stance::OFFENSIVE_RATIO_HI),
-             strength_ok ? "true" : "false");
-    intent->console_output = buf;
-
-    IQLOG("WAR_FORCE_OFFENSIVE_STANCE: war=0x%x atk=%u %s→%s offensive=%d "
-          "obj=%d→%d seeded=%d\n",
-          war_id, attacker_id, pre_name, post_name, now_offensive ? 1 : 0,
-          obj_count_before, obj_count_after, seeded ? 1 : 0);
-    return now_offensive;
-}
-
-// IPC setter — set_force_offensive_stance {enabled:bool}.
-bool do_set_force_offensive_stance(const char* params_json, std::string* out) {
-    bool enabled = json_get_bool(params_json, "enabled", false);
-    g_force_offensive_stance.store(enabled, std::memory_order_relaxed);
-    IQLOG("set_force_offensive_stance: %s\n", enabled ? "ENABLED" : "disabled");
-    if (out) {
-        ResponseBuilder r; r.begin_object();
-        r.key("success"); r.value_bool(true);
-        r.key("action");  r.value_string("set_force_offensive_stance");
-        r.key("enabled"); r.value_bool(enabled);
-        r.key("note");    r.value_string("Fix B1a: engine-re-eval stance drive, DEFAULT-OFF; NEEDS-LIVE-VALIDATION attempt-25");
-        r.end_object();
-        *out = r.take();
-    }
-    return true;
-}
-
-// =============================================================================
-// break-alliance — execute_break_alliance_intent (re_break_alliance_FINAL.md, Path B)
-// =============================================================================
-// The literal CBreakAllowAllianceEffect break via the gated break_alliance_cmd.
-// ARG-ABI (FINAL §0, HIGH): break_alliance_cmd(CCharacter* actor, CCharacter* ally,
-// char force) — both args go straight to CCharacter::IsAlive. We resolve BOTH via
-// lookup_character (== the engine's FUN_05f72a60 _g_CharacterDB_root walk). force=0
-// ⇒ Lb1 gated semantics: only dissolves a LIVE alliance, bails cleanly otherwise.
-//
-// CRASH-HARDENING (FINAL §4 — mirror the steered-war / scheme harness verbatim):
-// the dissolve leaf (relation_dissolve, 494B) + its notification builder construct
-// scope objects and can draw engine RNG, so BOTH vectors apply:
-//   (1) arm_fake_random_scope — neutralise the RandomScopeManager+0x20 NULL deref
-//       on the on_tick drain thread (the steered-war crash class).
-//   (2) watchdog_arm + sigsetjmp(g_recovery_point) — the cmd is BOUNDED (two alive
-//       checks + one relation lookup + a finite reasons-vector clear) so the
-//       watchdog CAN bound it (the masked-SIGALRM decision-eval wall does NOT apply).
-// RNG armed INSIDE the protected region; restored on BOTH the normal return AND the
-// sigsetjmp recovery path. Path B has no scope objects to sub-dtor — cleanup is just
-// the RNG restore + watchdog disarm.
-//
-// LEGITIMACY (FINAL §6): this is the engine's own CanExecute→command→consequences
-// pipeline (alive gate → relation lookup → virtual breakable gate → relation_dissolve
-// with full notifications) — NOT a memory poke of the relation bytes. Every native
-// break_alliance routes through this exact command.
-//
-// Game-thread-only (drained from on_tick). DEFAULT-OFF: do_break_alliance only
-// queues this intent when g_enable_break_alliance is true.
-bool execute_break_alliance_intent(Intent* intent) {
-    extern thread_local sigjmp_buf g_recovery_point;
-    extern thread_local bool g_in_protected_region;
-
-    uint32_t actor_id = intent->actor_id  & 0xFFFFFF;
-    uint32_t ally_id  = intent->target_id & 0xFFFFFF;
-    IQLOG("=== execute_break_alliance_intent ENTRY: actor=%u ally=%u ===\n",
-          actor_id, ally_id);
-
-    auto reject = [&](const char* reason) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "%s", reason);
-        intent->consumed = true;
-        return false;
-    };
-
-    if (actor_id == 0 || ally_id == 0)  return reject("actor_or_ally_id_zero");
-    if (actor_id == ally_id)            return reject("cannot_break_with_self");
-
-    // (1) Resolve BOTH characters to live CCharacter* via the SAME DB walk the
-    //     engine's FUN_05f72a60 unwrap does (lookup_character is that walk).
-    void* actor_char = lookup_character(actor_id);
-    if (!actor_char || is_sentinel(actor_char)) return reject("actor_unresolved");
-    if (g_char_is_alive && !g_char_is_alive(actor_char)) return reject("actor_not_alive");
-    void* ally_char = lookup_character(ally_id);
-    if (!ally_char || is_sentinel(ally_char)) return reject("ally_unresolved");
-    if (g_char_is_alive && !g_char_is_alive(ally_char)) return reject("ally_not_alive");
-
-    // (2) Pre-gate: only proceed if actually allied — mirrors the cmd's own
-    //     relation gate, but gives a clean "not_allied" rejection instead of a
-    //     silent no-op dissolve. IsAlliedTo(actor, ally) → bool.
-    auto is_allied_to = reinterpret_cast<bool(*)(void*, void*)>(
-        bridge::game_fn(ck3::funcs::ALLIANCE_IS_ALLIED_TO));
-    bool allied_before = false;
-    {
-        // The read is a small binary-search + flag check; guard it lightly under
-        // the watchdog (no RNG draw here) so a bogus relation pointer can't wedge.
-        watchdog_arm(2);
-        g_in_protected_region = true;
-        int sig = sigsetjmp(g_recovery_point, 1);
-        if (sig != 0) {
-            g_in_protected_region = false; watchdog_disarm();
-            return reject("is_allied_to_probe_crashed");
-        }
-        allied_before = is_allied_to(actor_char, ally_char);
-        g_in_protected_region = false; watchdog_disarm();
-    }
-    if (!allied_before) return reject("not_allied");
-
-    // (3) Call the gated cmd under the FINAL §4 crash guards. force=0 ⇒ Lb1.
-    auto break_alliance_cmd = reinterpret_cast<void(*)(void*, void*, char)>(
-        g_base_addr + ck3::alliance::BREAK_ALLIANCE_CMD);
-
-    uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this process,
-    // so the slot cannot be reasoned about. REFUSE rather than proceed
-    // unarmed — proceeding is what ignoring the arm's false would do.
-    if (bridge::scope_latched()) {
-        bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
-        return reject(bridge::scope_latched_reason());
-    }
-    bool rng_armed = arm_fake_random_scope(&saved_rng);
-
-    watchdog_arm(5);
-    g_in_protected_region = true;
-    int sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        g_in_protected_region = false;
-        watchdog_disarm();
-        if (rng_armed) restore_fake_random_scope(saved_rng);
-        char buf[96];
-        snprintf(buf, sizeof(buf), "break_alliance_cmd_crashed:%s",
-                 (sig == 1) ? "SIGSEGV" : (sig == 2) ? "SIGALRM" : "UNKNOWN");
-        IQLOG("break_alliance intent crashed in break_alliance_cmd (sig=%d)\n", sig);
-        return reject(buf);
-    }
-    break_alliance_cmd(actor_char, ally_char, /*force=*/0);
-    g_in_protected_region = false;
-    watchdog_disarm();
-    if (rng_armed) restore_fake_random_scope(saved_rng);
-
-    // (4) Handler-side readback (not external probe — races): the alliance should
-    //     now be GONE in both directions.
-    bool allied_after = true;
-    {
-        watchdog_arm(2);
-        g_in_protected_region = true;
-        int sig2 = sigsetjmp(g_recovery_point, 1);
-        if (sig2 != 0) {
-            g_in_protected_region = false; watchdog_disarm();
-            // The dissolve already ran; a readback fault is non-fatal — report it
-            // but treat the call as having executed (verify externally).
-            allied_after = false;  // assume success; can't re-read
-        } else {
-            allied_after = is_allied_to(actor_char, ally_char);
-            g_in_protected_region = false; watchdog_disarm();
-        }
-    }
-
-    bool ok = !allied_after;
-    intent->executed = ok;
-    intent->rejected = !ok;
-    intent->consumed = true;
-    {
-        char buf[200];
-        snprintf(buf, sizeof(buf),
-                 "{\"actor_id\":%u,\"ally_id\":%u,\"allied_before\":true,"
-                 "\"allied_after\":%s,\"broken\":%s}",
-                 actor_id, ally_id,
-                 allied_after ? "true" : "false",
-                 ok ? "true" : "false");
-        intent->console_output = buf;
-    }
-    if (!ok && intent->rejection_reason[0] == '\0')
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "still_allied_after_break");
-    IQLOG("break_alliance intent result: ok=%d allied_after=%d\n",
-          ok ? 1 : 0, allied_after ? 1 : 0);
-    return ok;
-}
-
-// =============================================================================
-// A8.2 — execute_raise_armies_intent (re/findings/re_raise_armies.md)
-// =============================================================================
-//
-// SYMPTOM: a steered AI accumulates ticking war score but never raises levies/
-// sieges, so claim wars never reach the real war-score threshold.
-//
-// ROOT (RE-verified): RaiseAllArmiesCore (ck3::funcs::ARMY_RAISE_ALL,
-// IMAGE 0x03ee3e40) takes (msg_sink, mode) and is HARD-WIRED to the global
-// g_PlayerCharacterID (ck3::globals::PLAYER_CHAR_ID = 0x0bead8c0) — there is no
-// character argument. The decompile shows the global is read EXACTLY ONCE at
-// function entry through the 7-byte GET_PLAYER_CHAR_ID accessor
-// (`return _g_PlayerCharacterID;`), then resolved via CharacterDB with the
-// check `*(char+0x18) == handle` (full 32-bit; a masked 24-bit value resolves
-// to the NullCharacter sentinel → safe no-op that does nothing). The inner
-// raise core (ARMY_RAISE_INNER = 0x03ee0210, invoked on the mode==0 path) ALSO
-// reads the same global once at its own entry, so the swap must remain in place
-// across the WHOLE RaiseAllArmiesCore call (which is the case — we restore only
-// after raise_all returns).
-//
-// PRIMITIVE: temporarily swap g_PlayerCharacterID to the chosen AI's full
-// 32-bit handle, call raise_all(nullptr, 0) (msg_sink=null skips every
-// UI-message branch; mode=0 = full raise), then restore the global IMMEDIATELY.
-// The global drives input/camera/UI/is-player checks engine-wide, so the swap
-// window is kept MINIMAL (paused, game-thread serial section only) and the
-// global is restored on EVERY path: fault (sigsetjmp longjmp), C++ exception,
-// and success — plus a final defensive re-check after the protected region.
-//
-// CRASH-SAFETY: game-thread only (drained here from on_tick), watchdog-bounded,
-// sigsetjmp recovery, fake-RNG scope (RaiseAllArmiesCore / its callees may touch
-// RandomScopeManager — same insurance as the steered-war fix), and total global
-// restore. Bounded work: the only loop in RaiseAllArmiesCore is over the realm's
-// holdings array; the msg-string branches are skipped when msg_sink=null; no
-// recursion/waits — it will not wedge the tick (#64).
-//
-// STATUS: NEEDS-LIVE-HARNESS-VALIDATION. The global swap + indirect raise are
-// untestable on a core dump (no function calls, no write-test). This lands
-// behind the intent/drain gate; validate live (harness scenario
-// strategic_raise_levies) before relying on it in a campaign.
-bool execute_raise_armies_intent(Intent* intent) {
-    extern thread_local sigjmp_buf g_recovery_point;
-    extern thread_local bool g_in_protected_region;
-
-    IQLOG("=== execute_raise_armies_intent ENTRY: actor=%u ===\n",
-          intent->actor_id & 0xFFFFFF);
-
-    void* actor = lookup_character(intent->actor_id);
-    if (!actor) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "actor_not_found");
-        intent->consumed = true;
-        IQLOG("Raise-armies intent rejected: actor=%u not found\n",
-              intent->actor_id & 0xFFFFFF);
-        return false;
-    }
-    if (g_char_is_alive && !g_char_is_alive(actor)) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "actor_not_alive");
-        intent->consumed = true;
-        IQLOG("Raise-armies intent rejected: actor=%u not alive\n",
-              intent->actor_id & 0xFFFFFF);
-        return false;
-    }
-
-    // Swap VALUE: the FULL 32-bit canonical handle (char+0x18, incl. the
-    // generation byte). A masked 24-bit id would fail the engine's
-    // `*(resolved_char+0x18) == uVar5` check and resolve to the NullCharacter
-    // sentinel — a safe no-op, but it would do nothing.
-    uintptr_t ac = reinterpret_cast<uintptr_t>(actor);
-    uint32_t ai_handle = read<uint32_t>(ac + ck3::funcs::CHAR_CANONICAL_HANDLE);
-    if (ai_handle == 0) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "actor_handle_zero");
-        intent->consumed = true;
-        IQLOG("Raise-armies intent rejected: actor=%u handle=0\n",
-              intent->actor_id & 0xFFFFFF);
-        return false;
-    }
-
-    // The swap target: g_PlayerCharacterID global. volatile so the compiler
-    // never caches it across the engine call.
-    volatile uint32_t* pid = reinterpret_cast<volatile uint32_t*>(
-        g_base_addr + ck3::globals::PLAYER_CHAR_ID);
-    if (!is_mapped(reinterpret_cast<uintptr_t>(pid))) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "player_char_global_unmapped");
-        intent->consumed = true;
-        IQLOG("Raise-armies intent rejected: PLAYER_CHAR_ID global unmapped\n");
-        return false;
-    }
-
-    auto raise_all = reinterpret_cast<unsigned long(*)(void*, int)>(
-        bridge::game_fn(ck3::funcs::ARMY_RAISE_ALL));
-    if (!is_mapped(reinterpret_cast<uintptr_t>(raise_all))) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "raise_all_unmapped");
-        intent->consumed = true;
-        IQLOG("Raise-armies intent rejected: ARMY_RAISE_ALL unmapped\n");
-        return false;
-    }
-
-    const uint32_t saved_pid = *pid;        // restore target — captured BEFORE the swap
-    uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this process,
-    // so the slot cannot be reasoned about. REFUSE rather than proceed
-    // unarmed — proceeding is what ignoring the arm's false would do.
-    if (bridge::scope_latched()) {
-        bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "%s", bridge::scope_latched_reason());
-        intent->consumed = true;
-        return false;
-    }
-    bool rng_armed = arm_fake_random_scope(&saved_rng);  // RandomScopeManager insurance
-
-    IQLOG("Raise-armies: swapping PLAYER_CHAR_ID 0x%08x -> 0x%08x (actor=%u) rng_armed=%d\n",
-          saved_pid, ai_handle, intent->actor_id & 0xFFFFFF, rng_armed ? 1 : 0);
-
-    bool success = false;
-    watchdog_arm(3);
-    g_in_protected_region = true;
-    int sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        // FAULT PATH: restore the global FIRST (before any other work), then
-        // tear down. This guarantees the engine never observes the swapped
-        // global after we leave.
-        *pid = saved_pid;
-        bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pid));  // R1c
-        g_in_protected_region = false;
-        if (rng_armed) restore_fake_random_scope(saved_rng);
-        watchdog_disarm();
-        const char* sig_name = (sig == 1) ? "SIGSEGV" :
-                               (sig == 2) ? "SIGALRM_TIMEOUT" : "UNKNOWN";
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "raise_armies_%s", sig_name);
-        intent->consumed = true;
-        IQLOG("Raise-armies intent CRASHED: actor=%u reason=%s (global restored to 0x%08x)\n",
-              intent->actor_id & 0xFFFFFF, sig_name, saved_pid);
-        return false;
-    }
-
-    try {
-        // MINIMAL swap window: set → call → restore immediately.
-        // R1c (ck-6kvq.10, §2.9): PLAYER_CHAR_ID is the most consequential pulsed
-        // global in the bridge — leaking the swap turns an OBSERVER world into a
-        // PLAYER game for the rest of the process. Every local path here already
-        // restores; the ledger covers the one path none of them can, a siglongjmp
-        // to the OUTER recovery in bridge_init.cpp. Exit is BY ADDRESS because the
-        // restore is deliberately repeated on several paths.
-        (void)bridge::pulse_enter_global(
-            "PLAYER_CHAR_ID", "raise_intent_player_swap",
-            reinterpret_cast<uintptr_t>(pid), 4, saved_pid);
-        *pid = ai_handle;
-        raise_all(nullptr, 0);   // msg_sink=null (skip UI branches), mode=0 (full raise)
-        *pid = saved_pid;
-        bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pid));  // R1c
-        success = true;
-    } catch (...) {
-        // C++ exception path: also restore the global before propagating out.
-        *pid = saved_pid;
-        bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pid));  // R1c
-        g_in_protected_region = false;
-        if (rng_armed) restore_fake_random_scope(saved_rng);
-        watchdog_disarm();
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "raise_armies_exception");
-        intent->consumed = true;
-        IQLOG("Raise-armies intent EXCEPTION: actor=%u (global restored to 0x%08x)\n",
-              intent->actor_id & 0xFFFFFF, saved_pid);
-        return false;
-    }
-    g_in_protected_region = false;
-    if (rng_armed) restore_fake_random_scope(saved_rng);
-    watchdog_disarm();
-
-    // Final defensive re-check: if anything left the global swapped, force it
-    // back. Belt-and-suspenders on top of the success/fault/exception restores.
-    if (*pid != saved_pid) {
-        IQLOG("Raise-armies: WARNING — global was 0x%08x after region, forcing back to 0x%08x\n",
-              *pid, saved_pid);
-        *pid = saved_pid;
-        bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pid));  // R1c
-    }
-
-    if (success) {
-        intent->executed = true;
-        intent->consumed = true;
-        IQLOG("Raise-armies intent COMPLETED: actor=%u — raise_all ran (verify levy "
-              "state via a SEPARATE non-swapped read)\n", intent->actor_id & 0xFFFFFF);
-    } else {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "raise_armies_unknown_failure");
-        intent->consumed = true;
-    }
-    return success;
-}
-
-// =============================================================================
-// #96 — execute_raise_raiders_intent (re/findings/re_raid_system.md)
-// =============================================================================
-// Toggle a CHOSEN AI ruler's raised armies into RAIDING mode. This is the
-// Norse/tribal resource engine — raise → raid → loot (gold/prestige/piety, NO
-// casus belli). The toggle dispatch path (ARMY_TOGGLE_RAIDING_DISPATCH,
-// FUN_03ee36d0) is hard-wired to g_PlayerCharacterID exactly like
-// RaiseAllArmiesCore: it reads the player global ONCE at entry, resolves the
-// player's army container, iterates raid-eligible armies into a vector, builds
-// a CToggleRaidingCommand, VALIDATES it (CToggleRaidingCommand::IsValid /
-// FUN_06354e10) and ONLY-IF-VALID enqueues it via GameCommandDispatch (type
-// 0xe) → CommandQueuePush. The engine then flips army+0x1b4 natively on its own
-// validated/RNG-safe command-apply tick — the bridge never writes the raid flag
-// itself, which is what makes this safe.
-//
-// Crash-safety: identical guarded global-swap primitive as
-// execute_raise_armies_intent — swap g_PlayerCharacterID → AI full-32-bit
-// handle, call dispatch(intent=0), restore on EVERY path (success/fault/excn),
-// under watchdog + sigsetjmp + fake-RNG. The dispatch is bounded (one loop over
-// the realm's armies; non-blocking CommandQueuePush) and validator-gated (a
-// non-Norse / ineligible ruler safely no-ops). param=0 selects the default
-// toggle-raiding intent (the intent==2 branch is avoided).
-bool execute_raise_raiders_intent(Intent* intent) {
-    extern thread_local sigjmp_buf g_recovery_point;
-    extern thread_local bool g_in_protected_region;
-
-    IQLOG("=== execute_raise_raiders_intent ENTRY: actor=%u ===\n",
-          intent->actor_id & 0xFFFFFF);
-
-    void* actor = lookup_character(intent->actor_id);
-    if (!actor) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "actor_not_found");
-        intent->consumed = true;
-        IQLOG("Raise-raiders intent rejected: actor=%u not found\n",
-              intent->actor_id & 0xFFFFFF);
-        return false;
-    }
-    if (g_char_is_alive && !g_char_is_alive(actor)) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "actor_not_alive");
-        intent->consumed = true;
-        IQLOG("Raise-raiders intent rejected: actor=%u not alive\n",
-              intent->actor_id & 0xFFFFFF);
-        return false;
-    }
-
-    // Swap VALUE: the FULL 32-bit canonical handle (char+0x18). A masked id
-    // fails the engine's `*(resolved_char+0x18) == uVar5` check → NullCharacter
-    // sentinel (safe no-op, but no raid). Same as RAISE_ARMIES.
-    uintptr_t ac = reinterpret_cast<uintptr_t>(actor);
-    uint32_t ai_handle = read<uint32_t>(ac + ck3::funcs::CHAR_CANONICAL_HANDLE);
-    if (ai_handle == 0) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "actor_handle_zero");
-        intent->consumed = true;
-        IQLOG("Raise-raiders intent rejected: actor=%u handle=0\n",
-              intent->actor_id & 0xFFFFFF);
-        return false;
-    }
-
-    volatile uint32_t* pid = reinterpret_cast<volatile uint32_t*>(
-        g_base_addr + ck3::globals::PLAYER_CHAR_ID);
-    if (!is_mapped(reinterpret_cast<uintptr_t>(pid))) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "player_char_global_unmapped");
-        intent->consumed = true;
-        IQLOG("Raise-raiders intent rejected: PLAYER_CHAR_ID global unmapped\n");
-        return false;
-    }
-
-    // The toggle-raiding dispatch path: void(int intent_index). intent_index=0
-    // is the default toggle-raiding (avoids the ==2 branch).
-    auto toggle_raiding = reinterpret_cast<void(*)(int)>(
-        bridge::game_fn(ck3::funcs::ARMY_TOGGLE_RAIDING_DISPATCH));
-    if (!is_mapped(reinterpret_cast<uintptr_t>(toggle_raiding))) {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "toggle_raiding_unmapped");
-        intent->consumed = true;
-        IQLOG("Raise-raiders intent rejected: ARMY_TOGGLE_RAIDING_DISPATCH unmapped\n");
-        return false;
-    }
-
-    const uint32_t saved_pid = *pid;        // restore target — captured BEFORE the swap
-    uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this process,
-    // so the slot cannot be reasoned about. REFUSE rather than proceed
-    // unarmed — proceeding is what ignoring the arm's false would do.
-    if (bridge::scope_latched()) {
-        bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "%s", bridge::scope_latched_reason());
-        intent->consumed = true;
-        return false;
-    }
-    bool rng_armed = arm_fake_random_scope(&saved_rng);
-
-    IQLOG("Raise-raiders: swapping PLAYER_CHAR_ID 0x%08x -> 0x%08x (actor=%u) rng_armed=%d\n",
-          saved_pid, ai_handle, intent->actor_id & 0xFFFFFF, rng_armed ? 1 : 0);
-
-    bool success = false;
-    watchdog_arm(3);
-    g_in_protected_region = true;
-    int sig = sigsetjmp(g_recovery_point, 1);
-    if (sig != 0) {
-        // FAULT PATH: restore the global FIRST, then tear down.
-        *pid = saved_pid;
-        bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pid));  // R1c
-        g_in_protected_region = false;
-        if (rng_armed) restore_fake_random_scope(saved_rng);
-        watchdog_disarm();
-        const char* sig_name = (sig == 1) ? "SIGSEGV" :
-                               (sig == 2) ? "SIGALRM_TIMEOUT" : "UNKNOWN";
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "raise_raiders_%s", sig_name);
-        intent->consumed = true;
-        IQLOG("Raise-raiders intent CRASHED: actor=%u reason=%s (global restored to 0x%08x)\n",
-              intent->actor_id & 0xFFFFFF, sig_name, saved_pid);
-        return false;
-    }
-
-    try {
-        // MINIMAL swap window: set → call → restore immediately.
-        // R1c (ck-6kvq.10, §2.9): PLAYER_CHAR_ID is the most consequential pulsed
-        // global in the bridge — leaking the swap turns an OBSERVER world into a
-        // PLAYER game for the rest of the process. Every local path here already
-        // restores; the ledger covers the one path none of them can, a siglongjmp
-        // to the OUTER recovery in bridge_init.cpp. Exit is BY ADDRESS because the
-        // restore is deliberately repeated on several paths.
-        (void)bridge::pulse_enter_global(
-            "PLAYER_CHAR_ID", "raise_intent_player_swap",
-            reinterpret_cast<uintptr_t>(pid), 4, saved_pid);
-        *pid = ai_handle;
-        toggle_raiding(0);   // intent_index=0 = default toggle-raiding
-        *pid = saved_pid;
-        bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pid));  // R1c
-        success = true;
-    } catch (...) {
-        *pid = saved_pid;
-        bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pid));  // R1c
-        g_in_protected_region = false;
-        if (rng_armed) restore_fake_random_scope(saved_rng);
-        watchdog_disarm();
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "raise_raiders_exception");
-        intent->consumed = true;
-        IQLOG("Raise-raiders intent EXCEPTION: actor=%u (global restored to 0x%08x)\n",
-              intent->actor_id & 0xFFFFFF, saved_pid);
-        return false;
-    }
-    g_in_protected_region = false;
-    if (rng_armed) restore_fake_random_scope(saved_rng);
-    watchdog_disarm();
-
-    // Belt-and-suspenders: if anything left the global swapped, force it back.
-    if (*pid != saved_pid) {
-        IQLOG("Raise-raiders: WARNING — global was 0x%08x after region, forcing back to 0x%08x\n",
-              *pid, saved_pid);
-        *pid = saved_pid;
-        bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(pid));  // R1c
-    }
-
-    if (success) {
-        intent->executed = true;
-        intent->consumed = true;
-        IQLOG("Raise-raiders intent COMPLETED: actor=%u — toggle-raiding dispatched "
-              "(verify army+0x1b4 via a SEPARATE non-swapped read)\n",
-              intent->actor_id & 0xFFFFFF);
-    } else {
-        intent->rejected = true;
-        snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                 "raise_raiders_unknown_failure");
-        intent->consumed = true;
-    }
-    return success;
-}
-
-// =============================================================================
 // #131 — de-jure-control integrity gate for create_title (INTEGRITY FIX)
 // =============================================================================
 // The engine's own vt[7] CanExecute gate (FUN_067cacf0 -> FUN_0621a500 ->
@@ -4162,6 +2431,49 @@ void collect_dejure_counties(uint32_t title_id, std::vector<uint32_t>& out,
     }
 }
 
+// Does char `cid`'s liege chain reach `ruler`? (realm membership: the ruler
+// himself, or a vassal at any depth.) Pure reads; 24 hops at most.
+bool char_in_realm_of(uint32_t cid, uint32_t ruler) {
+    cid   &= 0xFFFFFF;
+    ruler &= 0xFFFFFF;
+    uint32_t cur = cid;
+    for (int hops = 0; hops < 24; hops++) {
+        if (cur == ruler) return true;
+        if (cur == 0 || cur == 0xFFFFFF) return false;
+        void* c = lookup_character(cur);
+        if (!c || is_sentinel(c)) return false;
+        uint32_t lid = get_liege_id_from_addr(reinterpret_cast<uintptr_t>(c)) & 0xFFFFFF;
+        if (lid == cur) return false;  // self-loop guard
+        cur = lid;
+    }
+    return false;
+}
+
+// THE de-jure share (L14 FB m-2): the counties under `title_id` (de jure) and
+// how many of them a character in `ruler`'s realm holds (char_in_realm_of).
+// The #131 create_title gate (dejure_control_fraction) and the meter
+// (do_query_dejure_progress) both count through it; `rows`, when given, gets
+// one entry per county for the meter's verbose list.
+DejureShare dejure_share(uint32_t title_id, uint32_t ruler, std::vector<DejureCounty>* rows) {
+    DejureShare out{0, 0};
+    std::vector<uint32_t> counties, seen;
+    collect_dejure_counties(title_id, counties, seen, 0);
+    out.total = static_cast<int>(counties.size());
+    for (uint32_t ctid : counties) {
+        DejureCounty row{ctid, 0, false};
+        if (uintptr_t co = lookup_title_obj(ctid)) {
+            uint32_t h = safe_read<uint32_t>(co + ck3::title_obj::HOLDER_CHAR_ID) & 0xFFFFFF;
+            if (h != 0 && h != 0xFFFFFF) {
+                row.holder_id = h;
+                row.in_realm = char_in_realm_of(h, ruler);
+            }
+        }
+        if (row.in_realm) out.held++;
+        if (rows) rows->push_back(row);
+    }
+    return out;
+}
+
 namespace {
 
 constexpr int    CREATE_TITLE_DEJURE_MIN_TIER   = 4;     // kingdom & empire
@@ -4175,70 +2487,103 @@ static int title_tier(uintptr_t title_obj) {
     return safe_read<int32_t>(type_ptr + ck3::title_obj::TITLE_TYPE_TIER);
 }
 
-// Does char `cid`'s top-liege chain reach `ruler`? (realm membership)
-static bool in_realm_of(uint32_t cid, uint32_t ruler) {
-    cid   &= 0xFFFFFF;
-    ruler &= 0xFFFFFF;
-    uint32_t cur = cid;
-    for (int hops = 0; hops < 24; hops++) {
-        if (cur == ruler) return true;
-        if (cur == 0 || cur == 0xFFFFFF) return false;
-        void* c = lookup_character(cur);
-        if (!c) return false;
-        uint32_t lid = get_liege_id_from_addr(reinterpret_cast<uintptr_t>(c)) & 0xFFFFFF;
-        if (lid == cur) return false;  // self-loop guard
-        cur = lid;
-    }
-    return false;
-}
-
-// Realm-inclusive de-jure-control fraction of `title_id` for `ruler`.
+// Realm-inclusive de-jure-control fraction of `title_id` for `ruler`, through
+// dejure_share (the one counting function the meter also uses, L14 FB m-2).
 // Returns held_counties / total_counties; total==0 => returns -1 (cannot assess).
 static double dejure_control_fraction(uint32_t title_id, uint32_t ruler,
                                       int* out_held, int* out_total) {
-    std::vector<uint32_t> counties, seen;
-    collect_dejure_counties(title_id, counties, seen, 0);
-    int total = static_cast<int>(counties.size());
-    if (out_total) *out_total = total;
-    if (total == 0) { if (out_held) *out_held = 0; return -1.0; }
-    int held = 0;
-    for (uint32_t ctid : counties) {
-        uintptr_t co = lookup_title_obj(ctid);
-        if (!co) continue;
-        uint32_t h = safe_read<uint32_t>(co + ck3::title_obj::HOLDER_CHAR_ID) & 0xFFFFFF;
-        if (h == 0 || h == 0xFFFFFF) continue;
-        if (in_realm_of(h, ruler)) held++;
-    }
-    if (out_held) *out_held = held;
-    return static_cast<double>(held) / static_cast<double>(total);
+    const DejureShare sh = dejure_share(title_id, ruler, nullptr);
+    if (out_total) *out_total = sh.total;
+    if (out_held) *out_held = sh.held;
+    if (sh.total == 0) return -1.0;
+    return static_cast<double>(sh.held) / static_cast<double>(sh.total);
 }
 
 } // anonymous namespace
 
 // =============================================================================
+// L14 S3 — the price of a title (re/findings/re_create_title_action.md "L14 S3")
+// =============================================================================
+// CanCreateTitle (FUN_0621a500) and CreateTitle_Apply (FUN_0621b800) choose the
+// currency the same way and price it with the same functions; this asks those
+// functions, never a table typed here. The gate compares have >= cost; the apply
+// charges the cost (Halfdan's d_lancaster: 214.86 -> -30.48; Murchad's k_ireland:
+// 17.85 -> -302.21, both through the pre-L14 bridge, which read the gate's bool
+// refusal as a pass — engine_bool.h).
+CreateTitlePrice create_title_price(void* ruler, uintptr_t title_obj) {
+    CreateTitlePrice p;
+    auto gov_data   = reinterpret_cast<void* (*)(void*)>(
+        bridge::game_fn(ck3::funcs::GET_HEIR_TITLE_FOR_CHAR));
+    auto has_flag   = reinterpret_cast<bridge::EngineBoolFn<void*, uint64_t>>(
+        bridge::game_fn(ck3::funcs::GOV_DATA_HAS_FLAG));
+    auto treasury   = reinterpret_cast<bridge::EngineBoolFn<void*>>(
+        bridge::game_fn(ck3::funcs::CREATE_TITLE_PAYS_TREASURY));
+    auto gold_cost  = reinterpret_cast<int64_t (*)(void*, int, int, void*)>(
+        bridge::game_fn(ck3::funcs::CREATE_TITLE_GOLD_COST));
+    auto piety_cost = reinterpret_cast<int64_t (*)(void*, int, void*)>(
+        bridge::game_fn(ck3::funcs::CREATE_TITLE_PIETY_COST));
+    auto get_tier   = reinterpret_cast<int (*)(void*)>(
+        bridge::game_fn(ck3::funcs::TITLE_GET_TIER));
+    auto get_gold   = reinterpret_cast<int64_t (*)(void*, int)>(
+        bridge::game_fn(ck3::funcs::GOLD_GET));
+    auto get_piety  = reinterpret_cast<int64_t (*)(void*)>(
+        bridge::game_fn(ck3::funcs::PIETY_GET));
+    for (uintptr_t f : {reinterpret_cast<uintptr_t>(gov_data), reinterpret_cast<uintptr_t>(has_flag),
+                        reinterpret_cast<uintptr_t>(treasury), reinterpret_cast<uintptr_t>(gold_cost),
+                        reinterpret_cast<uintptr_t>(piety_cost), reinterpret_cast<uintptr_t>(get_tier),
+                        reinterpret_cast<uintptr_t>(get_gold), reinterpret_cast<uintptr_t>(get_piety)}) {
+        if (!is_mapped(f)) { p.why = "price_fn_unmapped"; return p; }
+    }
+    if (!ruler || !title_obj) { p.why = "price_args_null"; return p; }
+    const int tier = get_tier(reinterpret_cast<void*>(title_obj));
+    if (tier < 0 || tier > 6) { p.why = "price_tier_unreadable"; return p; }
+    void* gd = gov_data(ruler);
+    if (gd && has_flag(gd, ck3::funcs::GOV_FLAG_TITLE_COST_IN_PIETY)) {
+        p.currency = "piety";
+        p.cost = piety_cost(ruler, tier, nullptr);
+        p.have = get_piety(ruler);
+    } else {
+        const int currency = treasury(ruler) ? 3 : 0;
+        p.currency = currency == 3 ? "treasury" : "gold";
+        p.cost = gold_cost(ruler, tier, 0, nullptr);
+        p.have = get_gold(ruler, currency);
+    }
+    p.known = true;
+    return p;
+}
+
+void fill_create_title_cmd(uint8_t* cmd, uint32_t ruler_handle, uint32_t title_id) {
+    auto base_ctor = reinterpret_cast<void (*)(void*, unsigned char)>(
+        bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_CTOR));
+    memset(cmd, 0, 0x28);
+    base_ctor(cmd, 0);
+    *reinterpret_cast<uintptr_t*>(cmd + 0x00) = bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_VTABLE);
+    *reinterpret_cast<uintptr_t*>(cmd + 0x18) = bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_VTABLE2);
+    *reinterpret_cast<uint32_t*>(cmd + 0x20)  = ruler_handle;
+    *reinterpret_cast<uint32_t*>(cmd + 0x24)  = title_id;
+}
+
+// =============================================================================
 // #111 — execute_create_title_intent (re/findings/re_create_title_action.md)
 // =============================================================================
 // LEGITIMATE de-jure create-title for a CHOSEN AI ruler. Builds a
-// CCreateTitleCommand (the same player command the "Create Title" UI button
-// dispatches), runs its vt[7] CanExecute gate SYNCHRONOUSLY (the engine's own
-// de-jure-control + not-extant + gold-cost check), and ONLY-IF-VALID dispatches
-// it via GAME_COMMAND_DISPATCH(mode 7 — the mode the canonical "Create Title" UI
-// handler FUN_04de1ac0 uses; #115: mode 0xe silently no-ops) onto the queue. The engine
-// then applies the gold cost and creates the title natively on its command tick.
+// CCreateTitleCommand (the command the "Create Title" UI button builds), asks its
+// IsValid (the engine's CanCreateTitle: de-jure control, not extant, the price) and
+// the price (create_title_price), applies the #131 de-jure-majority bar for
+// kingdoms and empires, and only then runs the command's Execute synchronously
+// under a PLAYER_CHAR_ID swap (#115: the deferred player-command queue is never
+// drained in observer mode). Execute applies the cost and creates the title.
 //
-// This is byte-for-byte the proven dispatch_costed_law_command shape (CAddLawCommand),
-// except the target is a u32 title_id at cmd+0x24 (not a CLaw* at +0x28) and the
-// ruler is carried IN the command (cmd+0x20) — so NO g_PlayerCharacterID global-swap
-// is needed (CanExecute/Execute resolve the ruler from the struct; the gate has no
-// player-global reference). Routing through CanExecute means an ineligible/unaffordable
-// ruler is REFUSED before Execute is ever reached — no poke, no cheat.
+// L14 S3 (surface-eval finding 14): until this lane IsValid's bool was read as a
+// 64-bit integer, so a refused create passed (engine_bool.h) and rulers minted titles
+// they could not pay for. A ruler short of the price is now refused
+// "create_title_cannot_afford", the price in console_output.
 //
 // Crash-safety: armed fake-RNG scope (the cost eval may advance the RNG → same
 // RandomScopeManager null-deref class as war/law) + watchdog + sigsetjmp protected
 // region, with RNG restore + region/watchdog teardown on EVERY path. The command POD
-// is built on the stack; the clone (vt[9]) heap-allocs the dispatched copy which the
-// engine owns. intent->title_id = target de-jure title id (resolved from key in the
-// IPC handler); intent->actor_id = the AI ruler.
+// is built on the stack. intent->title_id = target de-jure title id (resolved from
+// key in the IPC handler); intent->actor_id = the AI ruler.
 bool execute_create_title_intent(Intent* intent) {
     extern thread_local sigjmp_buf g_recovery_point;
     extern thread_local bool g_in_protected_region;
@@ -4272,12 +2617,11 @@ bool execute_create_title_intent(Intent* intent) {
     if (!title_obj) return reject("title_id_not_found");
 
     // Resolve function pointers up front (mapping-checked).
-    auto base_ctor = reinterpret_cast<void(*)(void*, unsigned char)>(
-        bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_CTOR));  // CJominiCommandBase_ctor (image 0x765b630)
     auto execute = reinterpret_cast<void(*)(void*)>(
         bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_EXECUTE));  // FUN_067cabf0(cmd)
     auto base_dtor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));  // FUN_0765b650
-    if (!is_mapped(reinterpret_cast<uintptr_t>(base_ctor)) ||
+    if (!is_mapped(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_CTOR)) ||
+        !is_mapped(bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_VALIDATE)) ||
         !is_mapped(reinterpret_cast<uintptr_t>(execute))) {
         return reject("create_title_fn_unmapped");
     }
@@ -4295,7 +2639,7 @@ bool execute_create_title_intent(Intent* intent) {
 
     // CCreateTitleCommand POD: 0x28 bytes. vtable@+0x00, base bookkeeping +0x08/+0x10,
     // 2nd-vtable@+0x18, u32 ruler@+0x20, u32 title_id@+0x24.
-    uint8_t cmd[0x28]; memset(cmd, 0, sizeof(cmd));
+    uint8_t cmd[0x28] = {};
     bool eligible = true;
 
     uint64_t saved_rng = 0;
@@ -4322,34 +2666,42 @@ bool execute_create_title_intent(Intent* intent) {
 
     bool dispatched = false;
     try {
-        // Build the command: base ctor sets the CJominiCommandBase vtable + flag +
-        // zeroes +0x0c/+0x14; then stamp both command vtables + ruler + title.
-        base_ctor(cmd, 0);
-        *reinterpret_cast<uintptr_t*>(cmd + 0x00) = bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_VTABLE);
-        *reinterpret_cast<uintptr_t*>(cmd + 0x18) = bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_VTABLE2);
-        *reinterpret_cast<uint32_t*>(cmd + 0x20)  = ruler_handle;
-        *reinterpret_cast<uint32_t*>(cmd + 0x24)  = title_id;
+        // Build the command as the engine's ctor FUN_067cabb0 does.
+        fill_create_title_cmd(cmd, ruler_handle, title_id);
 
-        void** vt = *reinterpret_cast<void***>(cmd);  // = CREATE_TITLE_CMD_VTABLE
-
-        // ── SAFETY PRE-GATE: vt[7] IsValid(cmd, ctx) with null ctx ──────────────
-        // Returns nonzero iff the ruler can legitimately create the title (controls
-        // the de-jure counties + title not extant + can afford the gold). On 0 we
-        // refuse WITHOUT dispatching, so the apply path is never reached for an
-        // ineligible create.
-        auto is_valid = reinterpret_cast<uint64_t(*)(void*, void*)>(vt[7]);  // CREATE_TITLE_CMD_VALIDATE
-        uint64_t ok = is_valid(cmd, nullptr);
-        if (!ok) {
+        // ── SAFETY PRE-GATE: IsValid(cmd, NULL), as the UI handler FUN_04de1ac0 calls it ──
+        // A C++ bool: AL only (engine_bool.h). Until L14 S3 the whole of RAX was
+        // tested here, and the garbage above AL turned every refusal that reached the
+        // end of CanCreateTitle (gold, de-jure, piety level) into a pass.
+        auto is_valid = reinterpret_cast<bridge::EngineBoolFn<void*, void*>>(
+            bridge::game_fn(ck3::funcs::CREATE_TITLE_CMD_VALIDATE));
+        const bool ok = is_valid(cmd, nullptr);
+        // The price, from the engine's own cost functions. A ruler short of it is
+        // refused with the price whatever IsValid said (the gate skips its cost leg
+        // for one duchy case; the apply charges it always). An unknown price leaves
+        // the verdict to IsValid, which now reads right.
+        const CreateTitlePrice price = create_title_price(actor, title_obj);
+        const bool short_of = price.known && price.have < price.cost;
+        if (price.known) {
+            char line[160];
+            snprintf(line, sizeof(line), "currency=%s cost=%lld have=%lld", price.currency,
+                     (long long)price.cost, (long long)price.have);
+            intent->console_output = line;
+        } else {
+            intent->console_output = std::string("price_unknown=") + price.why;
+        }
+        if (!ok || short_of) {
             eligible = false;
             base_dtor(cmd);
             *g_pid = saved_pid;
             bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(g_pid));  // R1c
             if (rng_armed) restore_fake_random_scope(saved_rng);
             g_in_protected_region = false; watchdog_disarm();
-            IQLOG("create_title: CanExecute rejected (cannot create — de-jure control / extant / gold)\n");
+            IQLOG("create_title: refused — engine IsValid=%d %s\n", ok ? 1 : 0,
+                  intent->console_output.c_str());
             intent->rejected = true;
-            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
-                     "create_title_refused_by_engine_gate");
+            snprintf(intent->rejection_reason, sizeof(intent->rejection_reason), "%s",
+                     short_of ? "create_title_cannot_afford" : "create_title_refused_by_engine_gate");
             intent->consumed = true;
             return false;
         }
@@ -4449,8 +2801,8 @@ bool execute_create_title_intent(Intent* intent) {
         // here — exactly what the engine's drain would do — under a PLAYER_CHAR_ID
         // swap to the acting ruler. Execute resolves ruler@+0x20 + title@+0x24 and
         // calls the real de-jure grant (FUN_0621b800: realm-queue grant item + gold/
-        // prestige cost). This mirrors the proven raise_armies pattern (gated +
-        // synchronous + player-swap), not a memory poke: an ineligible ruler is
+        // prestige cost). Gated + synchronous + player-swap, not a memory poke: an
+        // ineligible ruler is
         // refused by the gate above before Execute is ever reached. The swap is
         // restored immediately after the call (and on every fault/exception path).
         // R1c (ck-6kvq.10, §2.9): PLAYER_CHAR_ID is the most consequential pulsed

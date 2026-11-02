@@ -19,15 +19,14 @@
 // used to live inline in the old dispatch chain) are adapted by the case_*
 // wrappers directly above the #include site in dispatch_router.cpp.
 //
-// Aliases are separate lines sharing one handler (raid = raise_raiders, etc.).
+// Aliases are separate lines sharing one handler.
 //
 // ADDING AN ACTION: add its line here (nothing else to update — dispatch and
 // registration follow automatically) and classify it in snapshot.cpp
 // (is_bridge_internal_query / is_game_state_query / is_game_thread_action) so
-// its pause-state routing is explicit. An action left out of every classifier
-// queues to g_msg_queue and, while paused, is refused with a typed
-// `game_paused` error by the reader's fall-through guard (N1 belt-and-braces)
-// instead of hanging.
+// its thread is explicit: IPC thread, game-thread read, or game-thread write. An
+// action left out of every classifier queues to g_msg_queue and runs in the
+// game-thread drain.
 //
 // rc2 B2: DEBUG VERBS (raw memory reads, X/uinput input injection, the debug
 // console) are wrapped in #ifdef CK3_BRIDGE_DEBUG_VERBS here AND their handler
@@ -38,9 +37,10 @@
 
 // --- AI control ---
 BRIDGE_ACTION("toggle_all_ai", case_toggle_all_ai)
-BRIDGE_ACTION("enable_all_ai", case_enable_all_ai)
 
 BRIDGE_ACTION("send_interaction", do_send_interaction)
+// F16: the send pipeline's own checks for one actor against targets, nothing sent.
+BRIDGE_ACTION("query_interaction_check", do_query_interaction_check)
 
 // --- Intent Queue (AI evaluation hook) ---
 BRIDGE_ACTION("queue_intent", do_queue_intent)
@@ -66,11 +66,9 @@ BRIDGE_ACTION("set_lifestyle_focus", do_set_lifestyle_focus)
 BRIDGE_ACTION("set_education_focus", do_set_education_focus)
 BRIDGE_ACTION("set_council_task", do_set_council_task)
 BRIDGE_ACTION("construction_check", do_construction_check)
-BRIDGE_ACTION("add_construction", do_add_construction)
 BRIDGE_ACTION("construct_building", do_construct_building)
 
 BRIDGE_ACTION("declare_war", do_declare_war)
-BRIDGE_ACTION("declare_war_debug", do_declare_war_debug)
 BRIDGE_ACTION("pre_validate_war", do_pre_validate_war)
 
 // Path B' override (ck-8weg): vouch (cb, titles, target) for the next
@@ -87,75 +85,16 @@ BRIDGE_ACTION("set_cb_selector_override", do_set_cb_selector_override)
 // and every other realm are unaffected.
 BRIDGE_ACTION("set_offgoal_veto", do_set_offgoal_veto)
 
-// --- Console Command Passthrough ---
-#ifdef CK3_BRIDGE_DEBUG_VERBS
-BRIDGE_ACTION("execute_console_command", do_execute_console_command)
-#endif
-
-// ck-7fyl: invoke an arbitrary PDXScript scripted_effect by name on a
-// character scope. SCAFFOLD — returns "not_implemented_pending_re" until
-// CJominiScriptedEffectTemplateDatabase + CJominiScriptedEffect vtable
-// are pinned. See re/findings/re_scripted_effect_dispatch.md.
-BRIDGE_ACTION("execute_scripted_effect", do_execute_scripted_effect)
-
-// ck-bt9x: invoke a registered ENGINE effect (CStartWarEffect, etc.) with
-// explicit params, bypassing the user scripted_effect dispatcher. Sibling
-// to execute_scripted_effect — currently only `start_war` is in scope.
-// SCAFFOLD — returns "not_implemented_pending_re" until CStartWarEffect
-// ctor + scope-evaluator construction are pinned. See
-// re/findings/re_start_war_effect_dispatch.md.
-BRIDGE_ACTION("execute_engine_effect", do_execute_engine_effect)
-
-// break_alliance (re_break_alliance_FINAL.md, Path B): the literal
-// CBreakAllowAllianceEffect break via the gated break_alliance_cmd. The real
-// game-thread write is IMPLEMENTED (IntentType::BREAK_ALLIANCE) but stays
-// DEFAULT-OFF + observer-save-GATED: it fires only when set_break_alliance_enabled
-// is armed AND the caller passes confirm_observer_save=true. Otherwise the
-// handler returns an honest gated refusal + the safe-now `conqueror`-variable
-// scripted-effect lever.
-BRIDGE_ACTION("break_alliance", do_break_alliance)
-
-// Arm/disarm the DEFAULT-OFF real-break-alliance flag (re_break_alliance_FINAL.md
-// §5). Bridge-internal RE lever — break_alliance fires the engine call only when
-// this is armed AND the caller passes confirm_observer_save=true.
-BRIDGE_ACTION("set_break_alliance_enabled", do_set_break_alliance_enabled)
-
-// #79: arm/disarm the default-OFF vacant-seat fill path in do_appoint_councillor.
-BRIDGE_ACTION("set_vacant_fill_enabled", do_set_vacant_fill_enabled)
-
-// CAIWarCoordinator offensive-stance drive (Fix B1a, re_caiwarcoordinator_FINAL.md
-// / re_steered_war_offensive_root.md). set_force_offensive_stance arms the
-// DEFAULT-OFF flag; force_offensive_stance {war_id, attacker_id} enqueues a
-// WAR_FORCE_OFFENSIVE_STANCE intent drained on the GAME thread, which drives the
-// engine's OWN per-coordinator stance tick on our war's record (legitimate
-// engine re-eval — the engine re-selects + writes rec+0x70 via its real
-// selector). NEEDS-LIVE-VALIDATION (attempt-25); no-op while the flag is off.
-BRIDGE_ACTION("set_force_offensive_stance", do_set_force_offensive_stance)
-BRIDGE_ACTION("force_offensive_stance", do_force_offensive_stance)
-
 // ck-eyfb: direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect
-// (whose scope-evaluator construction is open RE work — ck-bt9x). Mirrors
+// (whose scope-evaluator construction is not recovered — ck-bt9x). Mirrors
 // WAR_DECLARE_SPECIAL_HANDLER (FUN_065db970): builds a minimal CB-params
 // struct and calls WAR_CREATE_CORE directly. Designed for the LLM-as-player
 // claim-war scenario (A.6 / ck-1qzw). Caller validates upstream gates.
 BRIDGE_ACTION("call_war_create_core", do_call_war_create_core)
-BRIDGE_ACTION("do_call_war_create_core", do_call_war_create_core)
 
-// A8.2 (re_raise_armies.md): raise a CHOSEN AI's levies. RaiseAllArmiesCore
-// is hard-wired to g_PlayerCharacterID, so the raise runs on the game thread
-// via the guarded global-swap primitive (execute_raise_armies_intent),
-// queued behind the intent/drain gate. NEEDS-LIVE-HARNESS-VALIDATION — see
-// re/findings/re_raise_armies.md and harness scenario strategic_raise_levies.
-BRIDGE_ACTION("raise_armies", do_raise_armies)
-
-// #96 (re_raid_system.md): toggle a CHOSEN AI's raised armies into RAIDING
-// mode (Norse/tribal loot engine — gold/prestige/piety, no casus belli).
-// Hard-wired to g_PlayerCharacterID, so it runs on the game thread via the
-// guarded global-swap primitive (execute_raise_raiders_intent), queued behind
-// the intent/drain gate. Validator-gated: ineligible/non-Norse ruler no-ops.
-// Raise armies first (raise_armies).
-BRIDGE_ACTION("raise_raiders", do_raise_raiders)
-BRIDGE_ACTION("raid", do_raise_raiders)
+// raise_armies and raise_raiders were deleted in cleanup 2026.11 (owner ruling
+// 2026-10-21): the raise primitive's engine function is the raise-all button's
+// availability check and raised nothing live (re/findings/re_raise_armies.md).
 
 // REMOVED: move_army / order_siege / siege_holding / set_move_army_enabled
 // dispatch cases deleted per design (agent does not drive army micro).
@@ -167,13 +106,6 @@ BRIDGE_ACTION("raid", do_raise_raiders)
 // under watchdog+sigsetjmp+fake-RNG. Pass actor_id + (title_id | title_key,
 // e.g. "d_northumbria"). Unlocks the negotiate_the_danelaw 2nd-duchy gate.
 BRIDGE_ACTION("create_title", do_create_title)
-
-// ck-kkaxx / ck-zvu5l.3: parse outer `<effect> = { ... }` and route known
-// effects (today: `start_war`) through existing direct-call handlers
-// (call_war_create_core). Other effects return
-// `not_implemented_pending_compiler_re` until the PDX-script compiler
-// entry point lands. See re/findings/re_script_block_compiler_quest.md.
-BRIDGE_ACTION("execute_script_block", do_execute_script_block)
 
 // --- Pause / Speed ---
 BRIDGE_ACTION("pause_game", case_pause_game)
@@ -194,10 +126,6 @@ BRIDGE_ACTION("enter_observe_mode", do_enter_observe_mode)
 // --- AI Subsystem Control ---
 BRIDGE_ACTION("toggle_ai_subsystem", case_toggle_ai_subsystem)
 BRIDGE_ACTION("set_character_ai", case_set_character_ai)
-
-// --- Per-Character Subsystem Control (Phase C) ---
-BRIDGE_ACTION("set_character_subsystems", case_set_character_subsystems)
-BRIDGE_ACTION("get_character_subsystems", case_get_character_subsystems)
 
 // --- Decision-budget governor (ck-6kvq.13, R6) ---
 BRIDGE_ACTION("report_usage", do_report_usage)
@@ -223,7 +151,6 @@ BRIDGE_ACTION("get_offset_validation", case_get_offset_validation)
 // --- Controlled Character Selection (Phase A) ---
 BRIDGE_ACTION("set_controlled_character", do_set_controlled_character)
 BRIDGE_ACTION("release_character", do_release_character)
-BRIDGE_ACTION("list_watchlist", do_list_watchlist)
 BRIDGE_ACTION("get_player_character", do_get_player_character)
 BRIDGE_ACTION("get_controlled_roster", do_get_controlled_roster)
 
@@ -239,7 +166,6 @@ BRIDGE_ACTION("query_realm", do_query_realm)
 BRIDGE_ACTION("query_dejure_progress", do_query_dejure_progress)
 
 BRIDGE_ACTION("query_succession", do_query_succession)
-BRIDGE_ACTION("query_borders", do_query_borders)
 BRIDGE_ACTION("query_claims", do_query_claims)
 BRIDGE_ACTION("query_de_jure", do_query_de_jure)
 BRIDGE_ACTION("query_county_details", do_query_county_details)
@@ -276,18 +202,20 @@ BRIDGE_ACTION("query_council_tasks", do_query_council_tasks)
 BRIDGE_ACTION("query_council", do_query_council)
 BRIDGE_ACTION("query_character_memories", do_query_character_memories)
 BRIDGE_ACTION("query_fabricate_targets", do_query_fabricate_targets)
+// L14 S3: the engine's create-title verdict and price, read on the game thread.
+BRIDGE_ACTION("query_create_title_cost", do_query_create_title_cost)
 BRIDGE_ACTION("query_factions", do_query_factions)
 BRIDGE_ACTION("query_faction_threat", do_query_faction_threat)
 BRIDGE_ACTION("query_vassal_loyalty", do_query_vassal_loyalty)
 BRIDGE_ACTION("query_schemes", do_query_schemes)
 BRIDGE_ACTION("query_incoming_schemes", do_query_incoming_schemes)
+BRIDGE_ACTION("query_scheme_types", do_query_scheme_types)
 BRIDGE_ACTION("query_armies", do_query_armies)
 BRIDGE_ACTION("query_lifestyle", do_query_lifestyle)
 BRIDGE_ACTION("query_interaction", do_query_interaction_acceptance)
 BRIDGE_ACTION("query_interaction_acceptance", do_query_interaction_acceptance)
 BRIDGE_ACTION("query_trigger_result", do_query_trigger_result)
 BRIDGE_ACTION("query_trigger_slots", do_query_trigger_slots)
-BRIDGE_ACTION("evaluate_named_trigger", do_evaluate_named_trigger)
 BRIDGE_ACTION("query_debug_flags", do_query_debug_flags)
 BRIDGE_ACTION("query_relations", do_query_relations)
 BRIDGE_ACTION("query_hooks", do_query_hooks)
@@ -318,7 +246,6 @@ BRIDGE_ACTION("probe_interaction_cascade", do_probe_interaction_cascade)
 BRIDGE_ACTION("probe_gate_4_slots", do_probe_gate_4_slots)
 BRIDGE_ACTION("list_pending_interactions", do_list_pending_interactions)
 BRIDGE_ACTION("tick_diff", do_tick_diff)
-BRIDGE_ACTION("probe_war_orphans", do_probe_war_orphans)
 
 BRIDGE_ACTION("list_interactions", case_list_interactions)
 // #64: list_decisions always serves the LIGHT name+hash list (see
@@ -359,6 +286,7 @@ BRIDGE_ACTION("query_title_succession", do_query_title_succession)
 BRIDGE_ACTION("query_title_succession_map", do_query_title_succession_map)
 BRIDGE_ACTION("query_joinable_factions", do_query_joinable_factions)
 BRIDGE_ACTION("faction_action", do_dispatch_faction_intent)
+BRIDGE_ACTION("set_faction_demand_response", do_set_faction_demand_response)
 BRIDGE_ACTION("scheme_action", do_dispatch_scheme_intent)
 BRIDGE_ACTION("move_capital", do_move_capital)
 BRIDGE_ACTION("set_obligation_level", do_set_obligation_level)
@@ -403,21 +331,7 @@ BRIDGE_ACTION("memory_probe", do_query_memory_probe)
 BRIDGE_ACTION("resolve_global", do_query_resolve_global)
 #endif
 
-// --- Event Queries ---
-BRIDGE_ACTION("pending_events", do_query_pending_events)
-BRIDGE_ACTION("notifications", do_query_pending_events)
-BRIDGE_ACTION("query_pending_events", do_query_pending_events)
-BRIDGE_ACTION("query_event_probabilities", do_query_event_probabilities)
-BRIDGE_ACTION("event_probabilities", do_query_event_probabilities)
-
-// --- Event Response ---
-BRIDGE_ACTION("respond_event", do_respond_event)
-
-// --- Auto-respond events toggle ---
-BRIDGE_ACTION("set_auto_respond_events", case_set_auto_respond_events)
-
 // --- Pause/Speed via event_handler (new protocol names) ---
-BRIDGE_ACTION("pause", case_set_pause)
 BRIDGE_ACTION("set_pause", case_set_pause)
 
 // --- Query dispatch (new tool schema names) ---

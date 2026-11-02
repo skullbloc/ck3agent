@@ -356,12 +356,10 @@ static bool landless_realm_valid(uintptr_t wp) {
     // theoretical max is bounded by holding count (typically << 50). 4096
     // is the same bound used for the battle list — generous-but-rejects-garbage.
     constexpr int32_t MAA_REFS_MAX_COUNT = 4096;
-    // title_realm+0x278 = MAA_REGIMENT_REFS CPdxArray base (data at +0x00,
-    // count at +0x0C — matches ck3::title_realm::MAA_REGIMENT_REFS). The
-    // is_landless predicate's read at title_realm+0x1F8 (CAPITAL_BARONY_ID)
-    // is implicitly covered by the title_realm mapping check below.
-    constexpr size_t TITLE_REALM_MAA_REFS = 0x278;
-    constexpr size_t CPDXARRAY_COUNT_OFF  = 0x0C;
+    // ck3::title_realm::MAA_REGIMENT_REFS is a CPdxArray (count at
+    // pdx_array::COUNT). The is_landless predicate's read at
+    // title_realm+0x1F8 (CAPITAL_BARONY_ID) is implicitly covered by the
+    // title_realm mapping check below.
 
     // (a) OWNER_LINK_DB null OR mapped + sane slot table + bounded slot count.
     {
@@ -408,8 +406,8 @@ static bool landless_realm_valid(uintptr_t wp) {
     // (d) MAA_REGIMENT_REFS CPdxArray sanity. The +0x1F8 read for the
     // is_landless predicate is implicitly covered by is_mapped(title_realm)
     // (struct is ≥0x500 bytes for any populated title_realm).
-    uintptr_t maa_arr   = title_realm + TITLE_REALM_MAA_REFS;
-    int32_t   maa_count = safe_read<int32_t>(maa_arr + CPDXARRAY_COUNT_OFF);
+    uintptr_t maa_arr   = title_realm + ck3::title_realm::MAA_REGIMENT_REFS;
+    int32_t   maa_count = safe_read<int32_t>(maa_arr + pdx_array::COUNT);
     if (maa_count < 0 || maa_count > MAA_REFS_MAX_COUNT) return false;
     if (maa_count == 0) return true;
 
@@ -467,17 +465,15 @@ static bool landless_realm_valid(uintptr_t wp) {
 // war+0x40 for atk and war+0x70 for def). Both accumulators are fp/100000
 // (100000 = 1%).
 //
-// Unit conversion (fp/100000 → fp/1000): each side is first floored to whole-
-// percentage precision (matches FUN_066b5460's magic-div * 100000 pattern),
-// then multiplied by 1000 instead of 100000. The breakdown sum below clamps
-// in fp/1000 (default ±100000 = ±100%) and divides by 1000 to get the final
-// percentage, so the ticking term must be in the same fp/1000 unit as the
-// other sub-function returns.
+// Unit: war-score points. Each side is floored to a whole point (FUN_066b5460's
+// magic-div pattern) and the net returned, the unit every other component and
+// the engine's sum (ComputeTotalWarScore) use. The earlier fp/1000 reading made
+// this term 1000x the others and the CB-bounds clamp (+0x1738/+0x173C, in
+// points) then /1000 zeroed every total (live867 l5-r2: ticking -11, total 0).
 //
-// Verified empirically across 11 wars (ck3_20260404_093841.core, 867 AD,
-// Tuscany start) and 30 wars (ck3_20260421_195552.core, 1097 AD, multi-realm
-// observer save). All enabled-byte combinations and signs covered;
-// per-side outputs match `(raw / 100000) * 1000` exactly.
+// The per-side floors were verified across 11 wars (ck3_20260404_093841.core,
+// 867 AD) and 30 wars (ck3_20260421_195552.core, 1097 AD): all enabled-byte
+// combinations and signs.
 //
 // Crash-safety: safe_read<T> uses process_vm_readv — never SIGSEGVs on
 // unmapped memory (returns T{}). This path no longer needs to live inside
@@ -488,9 +484,8 @@ static int compute_ticking_score_breakdown(uintptr_t wp) {
     uint8_t def_enabled = safe_read<uint8_t>(wp + ck3::war_obj::DEF_TICKING_ENABLED);
     if (atk_enabled) atk_raw = safe_read<int64_t>(wp + ck3::war_obj::ATK_TICKING_SCORE);
     if (def_enabled) def_raw = safe_read<int64_t>(wp + ck3::war_obj::DEF_TICKING_SCORE);
-    int64_t atk_in_1000 = (atk_raw / 100000) * 1000;
-    int64_t def_in_1000 = (def_raw / 100000) * 1000;
-    return static_cast<int>(atk_in_1000 - def_in_1000);
+    // war-score points, attacker minus defender (the accumulators are /100000)
+    return static_cast<int>(atk_raw / 100000 - def_raw / 100000);
 }
 
 // =============================================================================
@@ -610,28 +605,15 @@ static void on_war_score_update(void* war_ptr) {
         bd.landless_atk     = g_fn_landless(war_ptr, nullptr);
         bd.landless_def     = 0;  // landless penalty is attacker-only
 
-        // Sum and clamp like the game does (values are fixed-point / 1000)
-        int raw_sum = bd.imprisonment_atk + bd.imprisonment_def
-                    + bd.battle_atk + bd.battle_def
-                    + bd.occupation_atk + bd.occupation_def
-                    + bd.ticking_atk + bd.ticking_def
-                    + bd.landless_atk + bd.landless_def;
-
-        // Get min/max from CB type: *(war+0xA0) -> cb_type, +0x1738/+0x173C
-        uintptr_t cb_type = safe_read<uintptr_t>(wp + ck3::war_obj::CB_TYPE_REF);
-        int min_score = -100000;  // default -100 * 1000
-        int max_score = 100000;   // default +100 * 1000
-        if (cb_type > 0x10000 && is_mapped(cb_type)) {
-            min_score = safe_read<int32_t>(cb_type + 0x1738);
-            max_score = safe_read<int32_t>(cb_type + 0x173C);
-            if (min_score == 0 && max_score == 0) {
-                min_score = -100000;
-                max_score = 100000;
-            }
-        }
-
-        int clamped = std::max(min_score, std::min(max_score, raw_sum));
-        bd.total = clamped / 1000;  // convert to percentage points
+        // The engine's own sum and clamp (ComputeTotalWarScore, FUN_066ba0d0,
+        // re/findings/re_war.md §8): every term is in war-score points and the
+        // DEFENDER's imprisonment and occupation are SUBTRACTED. The previous sum
+        // added them and divided by 1000, so every total read 0 (live867 l5-r2:
+        // war 10 ended in an attacker victory while its war_score read 0).
+        int raw_sum = war_score_imprisonment_net(bd) + war_score_battle_net(bd)
+                    + war_score_occupation_net(bd) + war_score_ticking_net(bd)
+                    + war_score_landless_net(bd);
+        bd.total = std::max(-100, std::min(100, raw_sum));
 
         bd.cached_tick = g_tick_id.load(std::memory_order_relaxed);
 

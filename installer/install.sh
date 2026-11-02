@@ -25,7 +25,7 @@ done
 stage="checking the system" done_so_far="nothing" newvenv=""
 cleanup() {
   [ -z "$newvenv" ] || rm -rf "$newvenv"
-  rm -f "$data/.venv.$$" "$bin/.ck3agent.$$" "$data/lib/.libck3_bridge.so.$$" "$data/share/.trigger_subclasses.csv.$$"
+  rm -f "$data/.venv.$$" "$bin/.ck3agent.$$" "$data/lib/.libck3_bridge.so.$$"
 }
 trap cleanup EXIT
 trap 'echo "install failed while $stage (installed so far: $done_so_far)." >&2
@@ -86,11 +86,13 @@ drop() { bash "$here/uninstall.sh" "$1" >/dev/null 2>&1 || true; }
 # library in place, and a running game keeps the file it loaded.
 copy_bridge() {
   stage="copying the bridge library"
-  mkdir -p "$data/lib" "$data/share"
+  mkdir -p "$data/lib"
   install -m 0755 "$here/lib/libck3_bridge.so" "$data/lib/.libck3_bridge.so.$$"
-  install -m 0644 "$here/share/trigger_subclasses.csv" "$data/share/.trigger_subclasses.csv.$$"
   mv -f "$data/lib/.libck3_bridge.so.$$" "$data/lib/libck3_bridge.so"
-  mv -f "$data/share/.trigger_subclasses.csv.$$" "$data/share/trigger_subclasses.csv"
+  # 2026.10 installed a trigger catalogue here for the named-trigger evaluator,
+  # which 2026.11 removed; drop it on upgrade.
+  rm -f "$data/share/trigger_subclasses.csv"
+  rmdir "$data/share" 2>/dev/null || true
 }
 
 exe="" how=""

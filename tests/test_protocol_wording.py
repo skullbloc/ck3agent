@@ -42,8 +42,9 @@ def test_no_protocol_file_instructs_releasing_the_ruler_to_stop():
 
 
 def test_the_several_rulers_section_says_the_five_rules():
-    """lane-multi: add, pin character_id, one posture each, the process-wide veto,
-    one clock, and that only a non-last ruler can be released."""
+    """lane-multi: add, pin character_id, one posture each (writing that ruler
+    only: L14, no phase arms the process-wide veto), one clock, and that only a
+    non-last ruler can be released."""
     for name in ("CLAUDE.md", "CLAUDE-desktop.md"):
         sec = " ".join(_section((PROTOCOL / name).read_text(encoding="utf-8"),
                                 "Several rulers").split())
@@ -52,7 +53,7 @@ def test_the_several_rulers_section_says_the_five_rules():
         assert "`control`" in sec and "switches" in sec, name
         assert "my_claims" in sec and "character_id" in sec, name
         assert 'set_phase(phase=..., character_id=<id>)' in sec, name
-        assert "process-wide" in sec and "expansion" in sec, name
+        assert "no phase arms a process-wide flag" in sec and "veto" not in sec, name
         assert "one clock" in sec.lower(), name
         assert 'session(action="release", character_id=<id>)' in sec, name
         assert "one of several" in sec and "freed when the session ends" in sec, name

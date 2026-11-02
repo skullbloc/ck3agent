@@ -4,8 +4,9 @@ Prompt construction for the CK3 LLM agent.
 - build_system_prompt: assembles system prompt from SOUL + memory + traits
 - format_observation: renders bridge observation dict into readable context
 - format_event: renders an incoming game event for LLM decision
-- format_action_result: one-line summary of a bridge action result
 """
+
+from redesign import STRADDLE_AGE
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +202,7 @@ def _format_wars(wars: list[dict]) -> str:
 def _format_council(council: list[dict]) -> str:
     lines = ["\n### Council"]
     if not council:
-        lines.append("*(council data not yet available from bridge)*")
+        lines.append("*(council data unavailable from the bridge)*")
         return "\n".join(lines)
     for c in council:
         position = str(c.get("position", "?")).replace("councillor_", "").title()
@@ -332,7 +333,7 @@ def format_event(event: dict) -> str:
         title: str — event title shown in-game
         description: str — event body text
         options: list[dict] — available choices, each with:
-            id: str/int — option identifier (pass as `option` to act(type="event"))
+            id: str/int — option identifier (the game's; no tool answers an event)
             text: str — option label
             tooltip: str — effect description (optional)
         character_id: int — relevant character (optional)
@@ -364,25 +365,8 @@ def format_event(event: dict) -> str:
             line += f"  (option_id: {option_id})"
             parts.append(line)
 
-        parts.append(
-            "\nChoose an option with `act(type=\"event\", event_id=..., "
-            "instance_id=..., option=<index>)`. The game will unpause after your response."
-        )
+        parts.append("\nNo tool answers an event: the game's player answers it in the game.")
     elif event.get("requires_response"):
         parts.append("\n*This event requires your attention but has no explicit options.*")
 
     return "\n".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# Action result formatting
-# ---------------------------------------------------------------------------
-
-def format_action_result(msg: dict) -> str:
-    """One-line summary of a bridge action result for logging."""
-    status = "OK" if msg.get("success") else "FAILED"
-    action = msg.get("action", "")
-    message = msg.get("message", "")
-    if action:
-        return f"[{status}] {action}: {message}"
-    return f"[{status}] {message}"
