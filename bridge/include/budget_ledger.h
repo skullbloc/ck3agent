@@ -29,7 +29,7 @@
 // ---------------------------------
 // Everything except spend the world's state. MUTATIONS ONLY are refused, with
 // a typed reason carrying {reason:"budget_exhausted", session_id, game_date,
-// spend, ceiling, resets_at}. Reads, `board_read` and bridge-management verbs
+// spend, ceiling, resets_at}. Reads and bridge-management verbs
 // (including `report_usage` itself, and `check`/`cancel`, so a spent session
 // can still collect tickets it already has in flight) continue untouched. At
 // the game-year rollover the ledger key changes, the new year has no entry, and
@@ -239,8 +239,8 @@ BudgetLedger& budget_ledger();
 // ============================================================================
 // True when `action_type` is the kind of call a spent session must not make.
 // Deliberately NOT the same thing as `action_is_mutation` (which is simply
-// !readonly): bridge-management verbs, `check`/`cancel`, `report_usage` itself
-// and `board_read` are how a spent session keeps reading, logging and settling
+// !readonly): bridge-management verbs, `check`/`cancel` and `report_usage`
+// itself are how a spent session keeps reading, logging and settling
 // work it already has in flight (§5.3). The caller supplies the two bridge
 // classifiers so this stays engine-free and host-testable.
 bool budget_gate_applies(const char* action_type,

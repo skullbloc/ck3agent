@@ -69,9 +69,10 @@ def test_every_classified_handler_is_audited(classifier):
     b = S.Bridge(BRIDGE)
     names = b.classifier_names(classifier)
     # The fail-OPEN floor is the population pinned in the harness
-    # (CLASSIFIER_FLOOR): 46 bridge-internal handlers, 87 game-state reads and
-    # 22 game-thread actions since L16 R3 deleted the event handlers and
-    # query_pending_events (47/90/23 before). A parse that found fewer would audit fewer and pass.
+    # (CLASSIFIER_FLOOR): 43 bridge-internal handlers, 87 game-state reads and
+    # 22 game-thread actions since cleanup 2026.11 L17 deleted the board's three
+    # bridge-internal verbs (46/87/22 after L16 R3; 47/90/23 before). A parse
+    # that found fewer would audit fewer and pass.
     assert len(names) >= S.CLASSIFIER_FLOOR[classifier], (len(names), names)
     rows = [n for _, n, _ in S.run_static(BRIDGE, echo=False).rows]
     assert f"{classifier}() parsed" in rows

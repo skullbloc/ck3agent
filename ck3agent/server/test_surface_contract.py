@@ -42,7 +42,6 @@ import tools as T  # noqa: E402
 THE_13 = {"observe", "query", "discover", "inspect", "cbs", "plan_war",
           "succession_plan", "set_phase", "steer", "declare_war", "do", "session",
           "pass_turn"}
-BOARD = {"board_post", "board_read"}
 
 
 def run(coro):
@@ -64,8 +63,44 @@ def _enum(tool, param):
 # ── the surface ───────────────────────────────────────────────────────────────
 
 def test_the_registered_surface_is_the_13_tools():
-    names = set(_defs()) - BOARD
+    names = set(_defs())
     assert names == THE_13, sorted(names ^ THE_13)
+
+
+def _probe(env: dict) -> tuple[int, list, str]:
+    """A FRESH INTERPRETER's registered names under `env` (registration happens
+    at import; re-importing here would measure import caching)."""
+    import json
+    import subprocess
+    code = ("import json, mcp_server as m; "
+            "print(json.dumps(sorted(t['name'] for t in m.registered_tool_definitions())))")
+    r = subprocess.run([sys.executable, "-c", code], cwd=str(HERE), capture_output=True,
+                       text=True, timeout=180, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                                                    **env})
+    names = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else []
+    return r.returncode, names, r.stderr
+
+
+CHANNEL_DECLARED = {"CK3_EPISODE_ARM": "flat_hom", "CK3_CHANNEL_TOPOLOGY": "complete",
+                    "CK3_CHANNEL_SEATS": "K,D1,D2,D3,D4,D5", "CK3_SEAT_LABEL": "D2",
+                    "CK3_CHANNEL_QUOTA_PER_CYCLE": "2", "CK3_CHANNEL_MAX_TEXT_BYTES": "600"}
+
+
+def test_msg_send_is_registered_exactly_when_a_topology_is_declared():
+    """Pre-registration v3 section 5.1: the 13 and the one. `msg_send` is on the
+    wire only under a declared topology other than `none`; in E0, K1 and free
+    play the NAME IS ABSENT, not present-and-refused; an arm with no topology
+    key does not boot at all (channel_topology_undeclared)."""
+    rc, names, _ = _probe({})
+    assert rc == 0 and set(names) == THE_13                       # free play
+    rc, names, _ = _probe(dict(CHANNEL_DECLARED, CK3_CHANNEL_TOPOLOGY="star"))
+    assert rc == 0 and set(names) == THE_13 | {"msg_send"}
+    rc, names, _ = _probe(CHANNEL_DECLARED)
+    assert rc == 0 and set(names) == THE_13 | {"msg_send"}
+    rc, names, _ = _probe({"CK3_EPISODE_ARM": "k1", "CK3_CHANNEL_TOPOLOGY": "none"})
+    assert rc == 0 and set(names) == THE_13                       # declared off: absent
+    rc, names, err = _probe({"CK3_EPISODE_ARM": "flat_hom"})
+    assert rc == 3 and names == [] and "channel_topology_undeclared" in err
 
 
 def test_no_retired_tool_or_handler_is_left_in_the_server():

@@ -2221,6 +2221,9 @@ bool execute_scheme_intent(Intent* intent) {
         snprintf(buf, sizeof(buf), "scheme_type_not_found:%.64s", scheme_key.c_str());
         return reject(buf);
     }
+    // A title-target type (generate_claim) is refused as the check refuses it,
+    // before CanStartScheme is asked about a character target it does not take.
+    if (const char* why = scheme_target_refusal(type_ptr)) return reject(why);
 
     // The game's own question first (l3-schemes): CanStartScheme runs the scheme
     // type's `allow` and `valid` triggers, an existing scheme and the cooldown, none

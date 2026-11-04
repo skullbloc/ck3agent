@@ -238,7 +238,7 @@ static void phase_cross(std::vector<Session*>& ctrl, Session* obs) {
           std::to_string(allowed) + "/6");
 
     // (d) Read-only actions bypass ownership — the observer lane must be able to
-    //     read the whole board while owning nothing.
+    //     read the whole world while owning nothing.
     {
         ClientContext ctx;
         ctx.session = ctrl[1];

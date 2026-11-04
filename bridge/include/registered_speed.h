@@ -3,7 +3,7 @@
 // Design of record: the pre-registration's §7.3 (the speed itself) and §9.4
 // (the registered-conditions block that DECLARES it per episode, beside
 // strictness, the budget pair, the exclusion fraction, the horizon endpoints,
-// the board bounds, the start save and the tool surface).
+// the start save and the tool surface).
 //
 // WHY THIS FILE EXISTS, and it is not hygiene: the value had TWO HOMES and no
 // contract between them.

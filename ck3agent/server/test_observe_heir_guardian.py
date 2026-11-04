@@ -203,7 +203,18 @@ def test_observe_brief_is_the_one_envelope(tool):
     assert env["actor"]["id"] == RULER and env["actor"]["name"] == "Halfdan"
     assert env["game"]["date"] == "867.4.1"
     assert isinstance(env["delta"], list)
-    assert env["result"]["posture"] == {"genome": {"boldness": 40}}
+    # L18 ruling (b): a bridge reply without lock_state reads not_reported
+    assert env["result"]["posture"] == {"genome": {"boldness": 40, "lock_state": "not_reported"}}
+
+
+@pytest.mark.parametrize("state", ["live", "quarantined", "none"])
+def test_observe_posture_genome_carries_the_bridge_lock_state(tool, state):
+    """L18 ruling (b): posture.genome.lock_state is the bridge's word
+    (do_get_ai_personality's `lock_state`, L18-A), passed through."""
+    gw = Gw({**_seat("d_york"), "query_dejure_progress": _meters,
+             "get_ai_personality": {"boldness": 40, "lock_state": state, "world_epoch": 2}})
+    genome = tool(gw, "observe")["result"]["posture"]["genome"]
+    assert genome["lock_state"] == state and genome["world_epoch"] == 2, genome
 
 
 def test_observe_full_adds_its_sections_and_the_war_stance_when_at_war(tool):

@@ -79,8 +79,7 @@ Variables read only by the bridge are in
 | `CK3_TOOL_SURFACE_OUT` | the MCP server writes its registered tool list to this file |
 | `CK3_RELEASE_ON_EXIT` | `run` sets it; the MCP server releases its own claims when it stops and writes the record here |
 | `CK3_SESSION_OUT` | `run` sets it; the MCP server writes its session id and resume token here so `run` can finish the release if the server is killed first |
-| `CK3_EPISODE_ARM` | experiment arm label; arm `b` registers the board tools |
-| `CK3_BOARD_ENABLED` | overrides the arm: any value but `0` or `false` registers `board_post` and `board_read` |
+| `CK3_EPISODE_ARM` | experiment arm label, stamped into the server's tool-surface record |
 | `CK3_STRICT_BUILD_ID` | `launch --allow-unsupported-build` sets it to `0` for the bridge |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR` | base directories above; an empty value counts as unset |
 | `WAYLAND_DISPLAY`, `SDL_VIDEODRIVER` | when the first is set and the second is not, `launch` runs the game under XWayland |

@@ -143,6 +143,25 @@ def test_make_peace_sends_the_terms_interaction_to_the_enemy_leader(terms, side,
     assert not [w for w in env["warnings"] if w.get("code") == "war_ended_otherwise"]
 
 
+@pytest.mark.parametrize("terms", ["surrender", "white_peace", "enforce_demands"])
+def test_only_a_surrender_says_it_is_your_defeat(terms):
+    """L18-C: six budget-pilot seats surrendered believing it free (Eung-ryeom e2/s4
+    0869.05.30, "surrendering costs me nothing"; the reply's before/after then read
+    prestige 456.3 -> 306.3). The surrender reply says it is a defeat with a cost."""
+    outcome = {"surrender": "defender_victory", "white_peace": "white_peace",
+               "enforce_demands": "attacker_victory"}[terms]
+    ledger = {"success": True, "wars": [{"war_id": WAR, "outcome": outcome,
+                                         "war_name": "War", "end_date": "867.1.6"}]}
+    gw = WarGateway(replies={"query_wars": _active(_war_row()),
+                             "query_intent_results": {"results": [
+                                 {"intent_id": "si_100_1_1", "status": "success"}]},
+                             "query_war_history": ledger})
+    env = _run(R.do_impl(gw, intent="make_peace", character_id=ME,
+                         args={"war_id": WAR, "terms": terms}))
+    codes = [w.get("code") for w in env["warnings"]]
+    assert ("surrender_is_your_defeat" in codes) is (terms == "surrender"), codes
+
+
 def test_make_peace_is_not_applied_without_a_ledger_row():
     """A dispatched interaction is not a peace: no war-end row, war still listed ⇒ pending."""
     gw = WarGateway(replies={"query_wars": _active(_war_row()),
@@ -1030,3 +1049,36 @@ def test_declare_war_pending_is_dos_spelling_and_asserts_no_reason_it_was_not_gi
     assert env["ok"] is True and not env.get("blocked"), env
     assert "raw_reason" not in env["pending"] or env["pending"]["raw_reason"] == "queued", env
     assert "no_poll_on_game_thread" not in str(env), env
+
+
+@pytest.mark.parametrize("occupation,native,expected", [
+    (0, None, True),                                      # inferred non-sieging attacker
+    (40, None, False),                                    # inferred sieging attacker
+    (0, {"stance": "defensive", "will_siege": False}, False),  # the engine's stance read
+])
+def test_an_inferred_stalled_attack_says_no_lever_moves_it(occupation, native, expected):
+    """L18-A: the engine's offensive stance is a strength gate (1.333x, constants;
+    personality does not enter), so a war row inferred `attacker_not_sieging` carries
+    the typed `war_stalled_no_lever` limitation naming the one lever there is (allies).
+    Only the inferred row: an engine_stance_db row is the engine's own word."""
+    class GW:
+        async def read(self, verb, params):
+            if verb == "get_active_wars":
+                return {"wars": [{"war_id": WAR, "name": "W", "is_attacker": True,
+                                  "attacker_id": ME, "defender_id": ENEMY, "war_score": 0}]}
+            if verb == "query_war_score_breakdown":
+                return {"occupation_atk": occupation}
+            if verb == "query_war_stance":
+                return {"wars": [dict(native, war_id=WAR)]} if native else {}
+            return {}
+
+        def game(self):
+            return {"tick": 1}
+
+    R._WAR_STANCE_UNSERVED.clear()
+    row = asyncio.run(R._war_stance_view(GW(), ME))["wars"][0]
+    codes = [lim["code"] for lim in row["limitations"]]
+    assert ("war_stalled_no_lever" in codes) is expected, (row["stance"], codes)
+    if expected:
+        assert row["stance_source"] == "inferred_from_occupation"
+        assert "1.33" in row["limitations"][0]["detail"] and "call_ally" in row["limitations"][0]["detail"]

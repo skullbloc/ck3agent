@@ -101,11 +101,11 @@ bool pipeline_handle_envelope(const std::string& line, Session* session);
 //
 // Thread-local, set by the conductor around each `serve()` and 0 everywhere
 // else — on the reader thread in legacy mode, on the game thread, and outside
-// any flush. It exists because `board_post` must stamp the SAME flush_id as the
-// actions around it (that identity is what makes time-to-muster and reply
-// latency measurable against a real clock rather than against wall-clock
-// noise), and a handler otherwise has no way to learn which flush is applying
-// it. A 0 means "not inside a flush", which is a legitimate answer, not an
+// any flush. It exists so a handler that records can stamp the SAME flush_id as
+// the actions around it (that identity is what makes an effect measurable
+// against a real clock rather than against wall-clock noise), and a handler
+// otherwise has no way to learn which flush is applying it. A 0 means "not
+// inside a flush", which is a legitimate answer, not an
 // error: legacy and null modes have no flushes at all.
 uint64_t pipeline_current_flush_id();
 

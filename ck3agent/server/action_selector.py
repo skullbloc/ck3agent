@@ -213,13 +213,23 @@ def _validate_interaction(params: dict, actor_id: int, target_id: int) -> dict:
     own_court = (interaction_type in _OWN_COURT_RECIPIENT_INTERACTIONS
                  and (params.get("secondary_actor_id") or params.get("secondary_recipient_id")))
     if target_id and actor_id and target_id == actor_id and not own_court:
+        # L18-B (scale0 n8/s1 Cui 0867.04.25-26): this hint said "Pass target_id=0
+        # for self-scope actions" for every interaction; the seat passed 0 and the
+        # branch above answered "targets another character — pass target_id". Only a
+        # self-scope interaction is offered target_id=0; any other needs another
+        # character, and the hint says that and nothing that the next check refuses.
+        if needs_target:
+            hint = (f"target_id ({target_id}) equals actor_id — '{interaction_type}' needs "
+                    "another character as its recipient. Use observe() or "
+                    "query(domain='neighbors') to find one.")
+        else:
+            hint = (f"target_id ({target_id}) equals actor_id — '{interaction_type}' is "
+                    "self-scope: pass target_id=0.")
         return _reject(
             "self_target",
             ["target_id", "actor_id"],
-            f"target_id ({target_id}) equals actor_id — interactions cannot "
-            "target the actor. Pass target_id=0 for self-scope actions, "
-            "or pick a different character.",
-            {"target_id": "<character_id != actor_id>"},
+            hint,
+            {"target_id": "<character_id != actor_id>" if needs_target else 0},
         )
 
     return {"valid": True, "type": "interaction", "interaction_type": interaction_type}

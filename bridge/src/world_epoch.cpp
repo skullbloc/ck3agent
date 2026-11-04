@@ -92,8 +92,11 @@ bool world_fingerprint_indicates_reload(const WorldFingerprint& prev,
     if (!cur.loaded) { if (reason) *reason = ""; return false; }
 
     // We were unloaded and are now loaded: a world came into existence. This is
-    // a load by definition (it is also the first-ever sample, which is harmless
-    // to treat as a load — the caches are empty).
+    // a load by definition. It is also the first-ever sample, which is harmless
+    // to treat as a load ONLY because the first sample is taken before anything
+    // world-scoped is written: world_epoch_sample() runs at the top of the drain,
+    // before its queued actions (L18-A; see world_epoch.h — when the first sample
+    // was the first TICK, a tick-0 personality write was quarantined by it).
     if (!prev.loaded) return say("game_state_appeared");
 
     if (cur.game_state_ptr != prev.game_state_ptr) return say("game_state_ptr_changed");
@@ -169,7 +172,7 @@ void invalidate_world_caches(const char* why) {
 // ---------------------------------------------------------------------------
 // Observation
 // ---------------------------------------------------------------------------
-bool world_epoch_observe(const WorldFingerprint& fp) {
+bool world_epoch_observe(const WorldFingerprint& fp, const char* site) {
     WorldFingerprint prev;
     bool have_prev;
     {
@@ -194,9 +197,10 @@ bool world_epoch_observe(const WorldFingerprint& fp) {
     if (reload) {
         // rc2 B2: the game-state pointers go to the log line only; `why` is a
         // reason string and carries no process address.
-        wlog("[CK3-Bridge] WORLD-RELOAD fingerprint: gs=%p <- gs=%p\n",
+        wlog("[CK3-Bridge] WORLD-RELOAD fingerprint: gs=%p <- gs=%p (sampled at %s)\n",
              reinterpret_cast<void*>(fp.game_state_ptr),
-             reinterpret_cast<void*>(prev_eff.game_state_ptr));
+             reinterpret_cast<void*>(prev_eff.game_state_ptr),
+             site ? site : "test");
         char why[192];
         snprintf(why, sizeof(why),
                  "%s (start_year=%u date=%d <- start_year=%u date=%d)",
@@ -219,9 +223,9 @@ void world_epoch_reset_for_test() {
     g_have_prev = false;
 }
 
-void world_epoch_on_tick() {
+void world_epoch_sample(const char* site) {
     // All reads go through safe_read (process_vm_readv) so this is independent
-    // of refresh_memory_map() ordering inside on_tick.
+    // of refresh_memory_map() ordering inside on_tick and the drain.
     safe_read_clear();
 
     WorldFingerprint fp;
@@ -232,14 +236,14 @@ void world_epoch_on_tick() {
         uint16_t start_year = safe_read<uint16_t>(gs + ck3::game_state::START_DATE_YEAR);
         int32_t  date       = safe_read<int32_t>(gs + ck3::game_state::GAME_DATE);
         // A partial/faulted sample would look like a discontinuity and flap the
-        // caches every tick. Drop it instead; the next tick resamples.
+        // caches every tick. Drop it instead; the next sample retries.
         if (safe_read_had_fault()) return;
         fp.loaded          = true;
         fp.game_state_ptr  = gs;
         fp.start_date_year = start_year;
         fp.game_date       = date;
     }
-    world_epoch_observe(fp);
+    world_epoch_observe(fp, site);
 }
 
 }  // namespace bridge

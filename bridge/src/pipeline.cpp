@@ -12,7 +12,6 @@
 #include "thread_registry.h"
 #include "pipeline.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
-#include "board.h"
 
 #include "bridge.h"
 #include "ck3_offsets.h"
@@ -1348,13 +1347,6 @@ void pipeline_note_episode_open(const char* episode_id) {
     // the id and discard it — the same defect this bead fixes, one branch over.
     episode_policy().set_episode_id(episode_id);
 
-    // ck-2r46. THE CARRIER LEARNS ITS FILENAME HERE AND NOWHERE ELSE. It
-    // initialises from the environment before this point, when the id is still
-    // empty — which is why it used to open board-unnamed.jsonl and why a
-    // relaunch could never rehydrate. Adopting (never truncating) at the one
-    // moment the id becomes known is what makes the file per-episode.
-    board_carrier_adopt_episode_id(episode_id);
-
     // ck-y6fp: REMEMBER WHO OPENED IT, from the dispatch context the choke point
     // already installs (ipc_server.cpp and the flush path both wrap the handler
     // in a ClientContextGuard). No handler signature changes and no new
@@ -1837,18 +1829,6 @@ void pipeline_emit_state(ResponseBuilder& r) {
     // `gate_held_beyond_max` termination reason retires with it (§6.3).
     r.key("gate_state"); r.value_string("inert");
     r.key("waiting_on"); r.begin_array(); r.end_array();
-
-    // ---- R4: the board's volume, PUBLISHED ONLY WHEN THE BOARD EXISTS ------
-    // This key is absent in arms A, C and E0 and in free play, and that absence
-    // is load-bearing, not tidiness. get_tick_info is agent-reachable; a
-    // `board:{enabled:false}` block would tell an arm-A agent that a channel
-    // exists somewhere and that it has been denied one, which is exactly the
-    // third condition decision G5 rejected when it chose ABSENT over
-    // present-and-refused. The meter lane reads volume from here in arm B and
-    // records zero in arm A because there is nothing to read.
-    if (board().enabled()) {
-        r.key("board"); r.value_raw(board().stats_json());
-    }
 
     // ---- R3 as REVERSED: unavailability, the measured covariate (§2.7) ----
     const EpisodePolicy ep = episode_policy().get();

@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 using namespace bridge;
 
@@ -157,6 +158,34 @@ static void test_mixed_and_degenerate_framings() {
     CHECK(!action_has(mixed, nullptr));
 }
 
+// L18-B: the list_valid_decisions frame the MCP server put on the socket in the
+// 2026.11 pilots (budget0 e1 bridge-full.log line 143872, Bhoja 11329), and the
+// pre-fix read (top-level "decisions" only) as the negative control: it found
+// nothing, so submit_decision_eval served the light list of every decision.
+static const char* kFramedDecisions =
+    "{\"action\":\"list_valid_decisions\",\"params\":{\"character_id\":11329,"
+    "\"decisions\":[\"visit_local_shrine_decision\"]},"
+    "\"request_id\":\"2490419f-c075-4823-a738-c0df13ba7f5d\"}";
+
+static void test_decision_request_framed_and_flat() {
+    std::printf("decision_request: the framed list_valid_decisions list is read\n");
+    std::vector<uint32_t> h; std::vector<std::string> n;
+    CHECK(decision_request(kFramedDecisions, &h, &n));
+    CHECK(n.size() == 1 && n[0] == "visit_local_shrine_decision");
+    CHECK(h.empty());
+    rapidjson::Document d = parse(kFramedDecisions);
+    CHECK(legacy_lookup(d, "decisions") == false);          // the pre-fix read saw none
+
+    std::vector<uint32_t> h2; std::vector<std::string> n2;   // flat and mixed still read
+    CHECK(decision_request("{\"action\":\"list_valid_decisions\",\"decisions\":[\"a\",2728205313]}", &h2, &n2));
+    CHECK(n2.size() == 1 && h2.size() == 1 && h2[0] == 2728205313u);
+
+    std::vector<uint32_t> h3; std::vector<std::string> n3;   // absent: empty, parsed
+    CHECK(decision_request("{\"action\":\"list_valid_decisions\",\"params\":{\"character_id\":1}}", &h3, &n3));
+    CHECK(h3.empty() && n3.empty());
+    CHECK(!decision_request("{not json", &h3, &n3));
+}
+
 int main() {
     std::printf("test_action_args — ck-6kvq.15 params-fallback regression\n\n");
     test_framed_check_resolves();
@@ -165,6 +194,7 @@ int main() {
     test_cancel_and_turn_done_shapes();
     test_absence_is_distinguishable_from_empty();
     test_mixed_and_degenerate_framings();
+    test_decision_request_framed_and_flat();
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

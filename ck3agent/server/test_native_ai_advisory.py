@@ -62,19 +62,11 @@ def _uncallable_examples():
 def test_set_character_ai_IS_NOT_on_the_seat_surface():
     """The premise of the whole file, asserted rather than assumed — if this ever
     becomes callable, the rows below should be revisited, not silently kept."""
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
     tools, intents = _uncallable_examples()
     assert "set_character_ai" not in tools
     assert "set_character_ai" not in intents
-    # A TRIPWIRE THAT IS ARM-NEUTRAL. My first version asserted `len(tools) == 16`
-    # and the full suite red at 18: another test in the same run sets the board
-    # arm, so `board_post`/`board_read` register and the count is 18 in arm B and
-    # 16 everywhere else. A premise that depends on the ARM is the one thing a
-    # test in this repo must not have, because the arm IS the manipulation — so
-    # the board tools are subtracted using the producer's own authority rather
-    # than a count being pinned.
-    import registered_prompts as rp                          # noqa: PLC0415
-    board = rp.board_tool_names()
+    # Cleanup 2026.11 L17: the two arm-gated board tools are gone with the
+    # board, so the surface is the same 13 names in every process.
     # cleanup 2026.11: 13 tools. The retired act/game/control/bridge/
     # execute_console_command, the intent queue tool and observe_v2 are gone;
     # asserted BY NAME as well as by count, because a count is satisfied by any
@@ -85,9 +77,8 @@ def test_set_character_ai_IS_NOT_on_the_seat_surface():
     # bridge's execute_scripted_effect and break_alliance actions.
     for gone in ("scripted_effect", "break_alliance"):
         assert gone not in intents, f"do intent {gone} is back"
-    assert len(tools - board) == 13 and intents == set(redesign.INTENTS), (
-        f"surface moved: {len(tools - board)} non-board tools, {len(intents)} "
-        f"intents (board tools present: {sorted(tools & board) or 'none'}) — "
+    assert len(tools) == 13 and intents == set(redesign.INTENTS), (
+        f"surface moved: {len(tools)} tools, {len(intents)} intents — "
         "re-check this file's premise before trusting its rows")
 
 

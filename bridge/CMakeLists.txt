@@ -138,11 +138,6 @@ set(CK3_BRIDGE_SOURCES
     # the only honest conversion between the covariate's unit and the unit every
     # question about it is asked in. PURE, host-tested by test_clock_rate.
     src/clock_rate.cpp
-    # ck-6kvq.12 — R4: the shared append-only board. PURE (no engine deps; the
-    # calendar never appears in it) and compiled standalone by test_board and
-    # acceptance_board.
-    src/board.cpp
-    src/board_persist.cpp
     # ck-qn03 (R12): the instance naming rules — which socket to bind, which
     # telemetry dir to append to, which log to open. PURE (libc only) and
     # compiled standalone by test_instance_paths.
@@ -784,14 +779,9 @@ if(BUILD_BRIDGE_TESTS)
     # and silently fail to link — or worse, so a NEGATIVE CONTROL cannot stop
     # compiling, since a compile failure reads as "the control failed", which is
     # what the control is supposed to do.
-    # ck-81su: world_identity.cpp now resolves the BOARD's carrier on the same
-    # declaration it resolves the personality quarantine on (one judge, one
-    # decision), so every target that links it also links the board. Named here
-    # for the same reason the list exists at all: a new target must not be able
-    # to link world_identity.cpp and silently fail to link.
     #
     # THE COST OF THAT, AND THE TELL. This pulls episode_policy.cpp into targets
-    # with nothing to do with the board — acceptance_save_identity and
+    # with nothing to do with the session — acceptance_save_identity and
     # acceptance_world_reset among them. Harmless TODAY, and checked rather than
     # assumed: neither of those references episode_policy at all, so neither can
     # read what another lane left in it. What makes it worth a comment is that
@@ -807,8 +797,6 @@ if(BUILD_BRIDGE_TESTS)
         src/world_epoch.cpp
         src/personality_world_reset.cpp
         src/personality_persist.cpp
-        src/board.cpp
-        src/board_persist.cpp
         src/episode_policy.cpp
         src/action_args.cpp
     )
@@ -1752,6 +1740,16 @@ endif()
     target_link_libraries(test_war_history PRIVATE Threads::Threads)
     target_compile_options(test_war_history PRIVATE -O2 -Wall -Wextra)
 
+    # L18-A: the action log's verdict/poll fields and the drain's outcome row
+    # (include/action_log_row.h, header-only); the wiring half reads the
+    # product sources, comment-stripped, from the source dir it is given.
+    add_executable(test_action_log_row test/test_action_log_row.cpp)
+    target_include_directories(test_action_log_row PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+    )
+    target_compile_options(test_action_log_row PRIVATE -O2 -Wall -Wextra)
+
     # ck-hxh7: world-reload detection + world-scoped cache invalidation.
     # Compiles world_epoch.cpp and name_tables.cpp standalone; the engine name
     # resolver is replaced through set_character_name_resolver().
@@ -1798,8 +1796,6 @@ endif()
         test/acceptance_save_identity.cpp
         src/world_epoch.cpp
         src/world_identity.cpp
-        src/board.cpp
-        src/board_persist.cpp
         src/episode_policy.cpp
         src/action_args.cpp
         src/personality_world_reset.cpp
@@ -1829,65 +1825,6 @@ endif()
         CK3_BRIDGE_SO_PATH="$<TARGET_FILE:ck3_bridge>")
     target_compile_options(test_init_order PRIVATE -O2 -Wall -Wextra)
     add_dependencies(test_init_order ck3_bridge)
-    # ck-6kvq.12 (R4): the shared append-only board. Pure by construction — no
-    # engine, no game, no calendar — because "who wrote this post, in which
-    # flush, on which game date" must be provable without a running game, and
-    # because the arm gate is the paper's manipulation and has to be testable on
-    # any host. episode_policy.cpp rides along: the ARM is episode config.
-    add_executable(test_board
-        test/test_board.cpp
-        src/board.cpp
-        src/board_persist.cpp
-        src/episode_policy.cpp
-        src/action_args.cpp
-    )
-    target_include_directories(test_board PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        # ck-2ngg: episode_policy.cpp resolves X through exclusion_rule.h, which
-        # spans the horizon on the ENGINE's calendar (ck3::game_date). Constants
-        # only — still no engine reads, still no CK3 binary.
-        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
-    )
-    target_link_libraries(test_board PRIVATE Threads::Threads)
-    target_compile_options(test_board PRIVATE -O2 -Wall -Wextra)
-
-    # ck-6kvq.12 ACCEPTANCE: posts are attributed and ordered, a control session
-    # cannot forge an author, quota refusals are typed, and a new episode starts
-    # at seq 0. Links the REAL board.cpp AND the REAL session.cpp, so the
-    # attribution it checks is minted from the same ownership table the dispatch
-    # choke point uses. Driven by scripts/acceptance_board.py, which adds the
-    # arm-gate lane and the negative control.
-    add_executable(acceptance_board
-        test/acceptance_board.cpp
-        ${SESSION_HOST_SOURCES}
-    )
-    target_include_directories(acceptance_board PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-    )
-    target_link_libraries(acceptance_board PRIVATE Threads::Threads)
-    target_compile_options(acceptance_board PRIVATE -O2 -Wall -Wextra)
-
-    # ck-5gdx: THE BOUNDS WITNESS PROBE. Prints what board_init_from_env()
-    # resolved AND what stats_json() publishes, over whatever environment the
-    # caller set — so scripts/acceptance_board_witness.py gets its fixtures from
-    # the BRIDGE'S OWN EMISSION rather than from a JSON blob someone typed. The
-    # acceptance also compiles this against the PRE-FIX board.cpp/board.h as its
-    # negative control, which is why the probe is a separate, minimal TU.
-    add_executable(board_witness_probe
-        test/board_witness_probe.cpp
-        ${SESSION_HOST_SOURCES}
-    )
-    target_include_directories(board_witness_probe PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-    )
-    target_link_libraries(board_witness_probe PRIVATE Threads::Threads)
-    target_compile_options(board_witness_probe PRIVATE -O2 -Wall -Wextra)
-
     # ck-6kvq.5 ACCEPTANCE (R7c/R2a): a session survives a socket drop, resumes
     # with its claims INTACT, gets its steering back on the same save and NOT on
     # a different one, and the unavailability span for the gap is RECORDED, not
@@ -1943,50 +1880,6 @@ endif()
     target_compile_options(acceptance_session_resume_observer_negative_control PRIVATE
         -O2 -Wall -Wextra -DCK3_DETACH_REPORT_COUNTS_OBSERVERS)
 
-    # ck-81su ACCEPTANCE: the board survives a PROCESS RELAUNCH with its seq
-    # continuing, and only under a DECLARED and ACCEPTED save identity. Each
-    # phase is a fresh process driven by scripts/acceptance_board_continuity.py,
-    # because `begin_episode()` resetting seq on process start IS the bug and a
-    # single-process test would only be testing a simulation of it. Links the
-    # REAL board.cpp, board_persist.cpp and world_identity.cpp — one judge, one
-    # decision, no CK3.
-    set(BOARD_CONTINUITY_SOURCES
-        test/acceptance_board_continuity.cpp
-        src/board.cpp
-        src/board_persist.cpp
-        src/episode_policy.cpp
-        src/action_args.cpp
-        src/world_identity.cpp
-        src/world_epoch.cpp
-        src/personality_world_reset.cpp
-        src/personality_persist.cpp
-    )
-    add_executable(acceptance_board_continuity ${BOARD_CONTINUITY_SOURCES})
-    target_include_directories(acceptance_board_continuity PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-    )
-    target_link_libraries(acceptance_board_continuity PRIVATE Threads::Threads)
-    target_compile_options(acceptance_board_continuity PRIVATE -O2 -Wall -Wextra)
-
-    # THE NEGATIVE CONTROL. Identical source, one macro: the carrier is found and
-    # IGNORED — the pre-fix bridge. Its `resume` phase MUST FAIL, and must fail
-    # on the seq restart. An acceptance that cannot fail is not evidence.
-    add_executable(acceptance_board_continuity_negative_control
-        ${BOARD_CONTINUITY_SOURCES})
-    target_include_directories(acceptance_board_continuity_negative_control PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-    )
-    target_compile_definitions(acceptance_board_continuity_negative_control PRIVATE
-        CK3_BOARD_NO_CARRIER_RESTORE=1)
-    target_link_libraries(acceptance_board_continuity_negative_control PRIVATE
-        Threads::Threads)
-    target_compile_options(acceptance_board_continuity_negative_control PRIVATE
-        -O2 -Wall -Wextra)
-
     # ck-hxh7 grep gate: every world-scoped cache clear function must have a real
     # caller. The original bug was clear_name_cache() existing with ZERO callers.
     # Runs on every build of the test targets; a regression fails the build.
@@ -2005,9 +1898,23 @@ endif()
                test_flush_scheduler test_pipeline
                test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_intent_lookup test_handoff_player
                add_claim_probe name_pending_probe tls_prologue_scan_probe
-               latch_guarded_rows_probe)
+               latch_guarded_rows_probe
+               test_action_args)   # L18-B: built since ck-6kvq.15, never run by ctest
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
+    # L18-A: the action-log row decision and its wiring; the world-reset
+    # acceptance (incl. the first-write-before-first-tick lane) and its
+    # structural half (the drain samples the world before any queued write).
+    add_test(NAME test_action_log_row
+             COMMAND test_action_log_row ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME acceptance_world_reset COMMAND acceptance_world_reset)
+    # The structural half lives in scripts/, which the public export does not
+    # ship: registered only where it exists (the private tree).
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/acceptance_world_reset.py)
+        add_test(NAME acceptance_world_reset_structural
+                 COMMAND ${CK3_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/acceptance_world_reset.py
+                         --structural-only)
+    endif()
     # rc2 B2: the ON build must fail the same assertions.
     add_test(NAME test_debug_verbs_negative_control
              COMMAND test_debug_verbs_negative_control)

@@ -70,6 +70,18 @@ if another ruler dies, add its heir yourself.
 
 - Survive first: stress, a faction above about 80 %, and no heir come before expansion.
 - Never guess an action name; enumerate and copy the row.
+- `plan_war` offers a claim war only on a pressed claim; an unpressed claim
+  is in `excluded` (`claim_not_pressed`): press the claim first.
+- A surrender is always taken and is your defeat: the game charges the
+  casus belli's penalty (2026.11 pilots: 15 to 350 prestige and up to 590
+  gold each). A stalled war that costs nothing is cheaper left open; never
+  re-declare a war you just surrendered.
+- `attacker_not_sieging` for two cycles: this toolkit cannot move the army;
+  the AI sieges only when it is above 1.33× the enemy's strength; call allies
+  into the war, or leave it open.
+  Do not re-declare on the same target; offer white peace, else wait.
+- Fabricate a claim with `do(action_class="fabricate_targets")` and a row's
+  `do_call`; the `generate_claim` scheme targets a title and is refused.
 - `bridge_health: "hung"`: stop and tell the human.
 - `no_ruler_bound` mid-game: read `blocked.measured.unbound_reason`.
   `heir_is_player`: your ruler died with the human as heir; ask which ruler

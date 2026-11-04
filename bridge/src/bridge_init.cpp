@@ -1,6 +1,7 @@
 // Bridge DLL initialization — loaded via LD_PRELOAD into CK3 process.
 // Resolves ASLR base, installs hooks, starts IPC server.
 
+#include "action_log_row.h"   // L18-A: emit_action_outcome_log
 #include "thread_registry.h"
 #include "claim_event_log.h"   //: ck-jij9
 #include "primary_cause.h"   //: ck-6xi6 cause register
@@ -22,7 +23,6 @@
 #include "pipeline.h"
 #include "drain_action_record_frame.h"   //: ck-td8m
 #include "drain_write_verdict.h"
-#include "board.h"
 #include "instance_paths.h" // ck-qn03
 #include "budget_ledger.h"
 #include "drain_registry.h"
@@ -1287,13 +1287,6 @@ void bridge_init() {
     // refuse nothing — because the ceiling (1.5 x the pilot median, design
     // §5.3) does not exist until the pilot episodes have run.
     bridge::budget_init_from_env();
-
-    // ck-6kvq.12 (R4/G5): resolve the ARM and open this episode's board. MUST
-    // run after pipeline_episode_init_from_env() — it reads the arm the episode
-    // policy just parsed. DEFAULT ABSENT: with no CK3_EPISODE_ARM=b the board
-    // is disabled, its two verbs are not in the registry, and a free-play or
-    // arm-A bridge has no channel at all (decision G5, option A2).
-    bridge::board_init_from_env();
     // ck-6kvq.5: the steering-purge hook.  Installed HERE, explicitly, rather
     // than from a static initialiser — dll_init() runs at .init_array[1] and a
     // constructor-installed hook may not exist yet when the reader thread first
@@ -2167,6 +2160,18 @@ static void drain_game_thread_work_at(DrainSite site) {
     if (!is_game_ready()) return;
     if (!claim_drain_thread(site)) return;
 
+    // --- L18-A: the world's first sighting precedes every write the drain makes ---
+    // The drain runs paused or running and executes the queued game-thread writes
+    // (set_ai_personality among them) below. The world fingerprint used to be
+    // sampled only in on_tick, i.e. first at the first tick after unpause, and
+    // that first loaded sample reads "game_state_appeared" and fires every
+    // world reset — so a personality lock written in a tick-0 drain was
+    // quarantined as a "reload" of the world it was written in (12 of 32 pilot
+    // seats' first set_phase). Sampling here, before anything below runs, makes
+    // the first sighting find nothing to drop, and a save loaded between two
+    // drains is still caught here before the next drain writes into it.
+    world_epoch_sample("drain");
+
     // --- D2: DORMANT -> ACTIVE on the first drain (no tick needed) ---
     // Populate the memory map first so is_mapped() works for the IPC queries
     // the transition admits.
@@ -3010,6 +3015,10 @@ static void drain_game_thread_work_at(DrainSite site) {
         // ring itself, under the queue's lock (L13 FF2, witness R3).
         std::vector<Intent> completed;
         g_intent_queue.tick_maintenance(tick, completed);
+        // L18-A: the action log's receipt row for a queued write says
+        // verdict:pending; this is where the verdict exists, so this is where
+        // it is written (kind "outcome", keyed by dispatch_id). Reads skip.
+        for (const Intent& c : completed) emit_action_outcome_log(c);
     }
 
 }
@@ -3039,8 +3048,10 @@ void on_tick(void* ai_manager) {
     // Samples a world fingerprint and drops every world-scoped cache when a save
     // is loaded into this live process. DORMANT->ACTIVE (the first drain) is NOT
     // sufficient: it fires once after dlopen, and a later save load never
-    // leaves ACTIVE. See world_epoch.cpp for the full rationale.
-    world_epoch_on_tick();
+    // leaves ACTIVE. See world_epoch.cpp for the full rationale. The drain
+    // samples too, first (L18-A): this one sees a load that happens while the
+    // clock runs between two drains.
+    world_epoch_sample("ai_tick");
     // --- ck-hxh7 (END) ---
 
     // --- Every tick ---

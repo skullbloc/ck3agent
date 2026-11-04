@@ -60,6 +60,11 @@ uintptr_t scheme_type_by_name(const std::string& key) {
 
 extern int scheme_arg_template_status(const std::string& type_name);   // scheme_init_hook.cpp
 
+const char* scheme_target_refusal(uintptr_t type_ptr) {
+    return safe_read<int32_t>(type_ptr + ck3::scheme_type::TARGET_TYPE) != 0
+               ? "scheme_type_targets_a_title" : nullptr;
+}
+
 const char* scheme_bridge_refusal(uintptr_t type_ptr, const std::string& key) {
     if (safe_read<int32_t>(type_ptr + ck3::scheme_type::CATEGORY) == 1)
         return "scheme_type_needs_contract_or_artifact";
@@ -460,8 +465,7 @@ bool execute_scheme_check_intent(Intent* intent) {
         snprintf(buf, sizeof(buf), "scheme_type_not_found:%.64s", intent->interaction_name.c_str());
         return reject(buf);
     }
-    if (safe_read<int32_t>(type_ptr + ck3::scheme_type::TARGET_TYPE) != 0)
-        return reject("scheme_type_targets_a_title");
+    if (const char* why = scheme_target_refusal(type_ptr)) return reject(why);
     if (const char* why = scheme_bridge_refusal(type_ptr, intent->interaction_name)) {
         char buf[128];
         snprintf(buf, sizeof(buf), "%s:%.64s", why, intent->interaction_name.c_str());

@@ -6,7 +6,7 @@
 // regular files only, created 0600 (0644 legacy) and tightened to that mode
 // on a write open.
 //
-// Weak: several host targets compile session.cpp / board_persist.cpp without
+// Weak: several host targets compile session.cpp without
 // instance_paths.cpp; they get plain fopen. The .so always links it.
 // test/check_private_file_opens.py fails on any other write-mode fopen,
 // O_CREAT without O_NOFOLLOW, or ofstream under bridge/src and bridge/include.

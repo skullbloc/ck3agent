@@ -719,6 +719,73 @@ DISCOVER_MOVED_TO_DO = {
     "joinable_factions": "factions_to_join",
 }
 
+#: L18-B: query(domain="conquest_targets") without verbose. The pilots' replies were
+#: 187-190K characters for Cui 13191 (94 duchies, 388 counties, most of them his own
+#: vassals') and 59-63K for Charles and Bhoja: over the CLI's tool-result cap every
+#: time, read back with jq. What the seats read out of them (every jq/python line
+#: over the saved file): the counts (duchy_count, expansion_count, toward_count,
+#: conquerable_count, target_count, note), duchies[0] for the shape, and the
+#: remaining counties with conquerable_now==true as {county_id, county_key,
+#: county_name, holder_id, holder_name, holder_top_liege_id, conquerable_now_source}.
+#: The compact reply keeps those, drops counties inside the ruler's own realm
+#: (holder_top_liege_id == ruler_id: no war is declared on them), lists conquerable
+#: counties first and caps the rows; verbose=True is the bridge's reply unchanged.
+#: L18 round 2 (witness item 5): `engine_valid_cbs` stays on a row. The README
+#: promises it, it is the game's own list behind `conquerable_now` (written only
+#: when the engine ran for that holder, query_handlers.cpp do_query_conquest_targets
+#: r.key("engine_valid_cbs")), and it is one short list per row.
+CONQUEST_TARGETS_DEFAULT_ROWS = 25
+_CONQUEST_COUNTY_KEYS = ("county_id", "county_key", "county_name", "holder_id", "holder_name",
+                         "holder_top_liege_id", "is_independent", "is_allied", "is_truced",
+                         "adjacent", "conquerable_now", "conquerable_now_source",
+                         "engine_valid_cbs", "block_reason", "declare", "declare_options")
+_CONQUEST_DUCHY_KEYS = ("duchy_id", "duchy_key", "duchy_name", "de_jure_kingdom_key",
+                        "in_toward", "expansion_target", "partially_held",
+                        "held_by_ruler_count", "total_count", "remaining_count")
+_CONQUEST_TOP_KEYS = ("action", "ruler_id", "duchy_count", "expansion_count", "toward_count",
+                      "conquerable_count", "target_count", "include_expansion",
+                      "engine_checks_done", "engine_checks_truncated", "note")
+
+
+def compact_conquest_targets(reply: dict, max_results: int = 0) -> dict:
+    """The compact query(domain="conquest_targets") reply (see the comment above)."""
+    if not isinstance(reply, dict) or not isinstance(reply.get("duchies"), list):
+        return reply
+    cap = max_results if max_results and max_results > 0 else CONQUEST_TARGETS_DEFAULT_ROWS
+    ruler = reply.get("ruler_id")
+    own = 0
+    flat = []
+    for di, d in enumerate(reply["duchies"]):
+        if not isinstance(d, dict):
+            continue
+        for rc in (d.get("remaining_counties") or []):
+            if not isinstance(rc, dict):
+                continue
+            if ruler and rc.get("holder_top_liege_id") == ruler:
+                own += 1
+                continue
+            flat.append((not rc.get("conquerable_now"), di, rc))
+    flat.sort(key=lambda t: (t[0], t[1]))
+    kept, omitted = flat[:cap], flat[cap:]
+    by_duchy: dict = {}
+    for _, di, rc in kept:
+        by_duchy.setdefault(di, []).append({k: rc[k] for k in _CONQUEST_COUNTY_KEYS if k in rc})
+    duchies = []
+    for di in sorted(by_duchy):
+        d = reply["duchies"][di]
+        row = {k: d[k] for k in _CONQUEST_DUCHY_KEYS if k in d}
+        row["remaining_counties"] = by_duchy[di]
+        duchies.append(row)
+    out = {k: reply[k] for k in _CONQUEST_TOP_KEYS if k in reply}
+    out["duchies"] = duchies
+    out["compact"] = {"counties_listed": len(kept), "counties_omitted": len(omitted),
+                      "own_realm_counties_dropped": own,
+                      "how": ("conquerable_now first, then the rest in duchy order; counties "
+                              "inside your own realm are dropped. max_results=<n> lists more, "
+                              "verbose=true returns the bridge's full reply")}
+    return out
+
+
 #: Every what= value resolve_discover maps to a bridge action. test_surface_contract
 #: checks each of these resolves and that the tool's enum is exactly this list plus
 #: _DISCOVER_COMPOSED.

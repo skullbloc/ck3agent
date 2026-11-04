@@ -50,8 +50,8 @@ constexpr double kDefaultExclusionFraction = 0.05;
 // THE REGISTERED HORIZON, spelled once: the paper's twenty game-years.
 // 1066.09.15 -> 1086.09.15 is 7300 game-days EXACTLY on the engine's calendar.
 //
-// NOT 1086.01.01, which docs/e0-episode-runbook.md and docs/multi-instance.md
-// both offer as "the full paper horizon": that is 7043 game-days, 19.3
+// NOT 1086.01.01, which docs/multi-instance.md (and the deleted E0 runbook)
+// offered as "the full paper horizon": that is 7043 game-days, 19.3
 // game-years, and the rule's answer there is 352, not 365. Both spellings are
 // in live use — 1086.09.15 in scripts/test_episode_abort.sh and
 // scripts/acceptance_speed_validity.py, 1086.1.1 in the two docs.
@@ -89,18 +89,12 @@ struct EpisodePolicy {
     // the wire, so the lanes coding against the shape keep a stable key set.
     std::string episode_id;
 
-    // THE EXPERIMENTAL ARM (ck-6kvq.12 / R4, decision G5). Lower-cased, one of
-    // "e0" | "a" | "b" | "c", or "" when the episode does not declare one (free
-    // play, and every pre-R4 harness). It is carried HERE, in the episode's own
-    // config, rather than in the board, because the arm is a property of the
-    // episode that the board merely reads: the arm decides the board, never the
-    // other way round.
-    //
-    // The board exists in arm "b" and in no other arm (G5 option A2: ABSENT,
-    // not present-and-refused). An unrecognised value is kept verbatim and is
-    // not "b", so a typo produces an arm-A-shaped bridge — the conservative
-    // direction, since a missing channel is a visible null result while a
-    // channel that should not be there silently contaminates the manipulation.
+    // THE EXPERIMENTAL ARM (ck-6kvq.12 / R4). Lower-cased, or "" when the
+    // episode does not declare one (free play, and every pre-R4 harness). It is
+    // carried HERE, in the episode's own config: the arm is a property of the
+    // episode, stamped into the handshake and the launch record. An
+    // unrecognised value is kept verbatim; nothing in the bridge branches on
+    // the arm's value.
     std::string arm;
 
     // ═══════════════════════════════════════════════════════════════════════

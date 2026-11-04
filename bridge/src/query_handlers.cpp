@@ -3,6 +3,7 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "action_args.h"
 #include "scope_slot_policy.h"   // ck-zgh4: the scope latch
 #include "engine_text.h"               // war names are rendered text: one cleaner
 #include "instance_paths.h"  // ck-qn03
@@ -8649,18 +8650,8 @@ static bool submit_decision_eval(const char* params_json, bool valid_only, std::
     // culprit decision) — serve the light name+hash list instead (the safe default).
     std::vector<uint32_t>    req_hashes;
     std::vector<std::string> req_names;
-    {
-        rapidjson::Document d;
-        if (!d.Parse(params_json).HasParseError() && d.IsObject() &&
-            d.HasMember("decisions") && d["decisions"].IsArray()) {
-            for (auto& v : d["decisions"].GetArray()) {
-                if (v.IsString())      req_names.emplace_back(v.GetString(), v.GetStringLength());
-                else if (v.IsUint())   req_hashes.push_back(v.GetUint());
-                else if (v.IsInt())    req_hashes.push_back(static_cast<uint32_t>(v.GetInt()));
-                else if (v.IsUint64()) req_hashes.push_back(static_cast<uint32_t>(v.GetUint64()));
-            }
-        }
-    }
+    // L18-B: framed ({"params":{"decisions":[...]}}) or flat, through action_args.
+    bridge::decision_request(params_json, &req_hashes, &req_names);
     if (req_hashes.empty() && req_names.empty()) {
         // No specific decisions requested → safe light list (name+hash, no engine eval).
         *out = enumerate_decisions();

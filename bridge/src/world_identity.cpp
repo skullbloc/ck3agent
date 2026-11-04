@@ -11,7 +11,6 @@
 #include "world_identity.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
 
-#include "board.h"          // ck-81su: the board's carrier takes THIS decision
 #include "game_date.h"
 #include "personality_locks.h"
 #include "world_epoch.h"
@@ -212,12 +211,6 @@ std::string RestoreRecord::to_json() const {
     o += (gap_game_days < 0) ? "null" : std::to_string(gap_game_days);
     o += ",\"recorded\":" + recorded.to_json();
     o += ",\"presented\":" + presented.to_json();
-    // ck-81su: what the SAME decision did to the board's carrier. "none" when
-    // there was no carrier to resolve — which is every arm but B, every free-play
-    // bridge, and every cold start.
-    o += ",\"board\":{\"decision\":" + jstr(board_decision.empty() ? "none" : board_decision);
-    if (!board_json.empty()) o += ",\"relaunch\":" + board_json;
-    o += "}";
     o += "}";
     return o;
 }
@@ -253,44 +246,6 @@ RestoreRecord world_identity_declare(const WorldIdentity& presented) {
     const uint32_t world_year = current_start_year();
     const size_t   quarantined = personality_quarantine_count();
     std::string    why;
-
-    // ═══ ck-81su: THE BOARD'S CARRIER, judged HERE and only here ═══════════
-    // The board is arm B's treatment, and a resume that relaunched CK3 used to
-    // bring it back empty with seq restarting at 0. Its posts now survive in a
-    // carrier, and this is the one place that may adopt them — the SAME
-    // judge_same_save(), on the SAME declaration, in the SAME breath as the
-    // personality-lock restore, so there is exactly one notion of "the same
-    // save" in this bridge and the board does not get a second one.
-    //
-    // require_same_episode is TRUE, for the disk carrier's reason: two episodes
-    // may legitimately replay one save, and a second episode inheriting the
-    // first's board would be a treatment record spliced across two runs.
-    //
-    // It runs BEFORE the branching below because every path out of this function
-    // is a declaration, and the board must be resolved on all of them. Nothing
-    // here can throw and nothing here touches the personality tables.
-    {
-        WorldIdentity board_recorded;
-        if (board_carrier_pending(&board_recorded)) {
-            std::string bwhy;
-            const SameSave bv = judge_same_save(board_recorded, presented, world_year,
-                                                /*require_same_episode=*/true, &bwhy);
-            const BoardRelaunch br =
-                (bv == SameSave::YES)
-                    ? board_carrier_accept(presented, rec.epoch, bwhy)
-                    : board_carrier_reject(presented, rec.epoch,
-                                           std::string("refused_") + same_save_name(bv),
-                                           bwhy);
-            rec.board_decision = br.decision;
-            rec.board_json     = br.json();
-        }
-    }
-
-    // And stamp the carrier with the identity now declared, so the posts THIS
-    // process writes are vouched for when the NEXT one finds them. Pushed, not
-    // pulled, for the same lock-order reason as set_personality_locks_identity().
-    if (!presented.empty())
-        board_carrier_note_identity(presented, rec.epoch, board().next_seq());
 
     if (quarantined > 0) {
         // ── In-process resume: the locks are right here, in quarantine. ──

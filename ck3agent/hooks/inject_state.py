@@ -28,6 +28,26 @@ Query plan:
     get_active_wars  -> the controlled ruler's wars, by name
   With no ruler bound (controlled id 0) nothing else is read or rendered: the
   block is the date and the line that says how to bind one.
+  WHOSE ruler (L18-C): the hook is its own bridge session and holds nothing, so
+  a read with character_id 0 resolves to the bridge's GLOBAL primary
+  (dispatch_router.cpp get_controlled_character -> g_controlled_primary), which
+  is the session that claimed first (session.cpp sessions_json order). With
+  several seats on one game every seat's hook printed the first seat's ruler
+  (pilots 2026.11: Nasr n8/s7 shown Cui 13191; Boris s16 shown AEthelred).
+  resolve_seat() names this seat's ruler from the seat's own session record
+  (CK3_SESSION_OUT, which `ck3agent run` gives this process), else its declared
+  ruler (CK3_AGENT_CHARACTER_ID), else the bridge's primary when this is the
+  only seat on the game; with two or more control sessions attached and
+  neither, it shows no ruler at all (one of them may be this seat's, holding
+  nothing yet, while another seat's holds the global primary). A seat whose
+  record (CK3_SESSION_OUT set) names no session the bridge lists (not written
+  yet, a failed connect, a stale record) is shown no ruler either, however many
+  sessions are attached: the one attached session may be another seat's (L18
+  round 3, witness item 3). Not detectable: an interactive seat (setup writes
+  no record) whose own server has not attached yet while one other seat is;
+  it looks like the only seat and is shown that seat's ruler (CHANGELOG
+  2026.12.0 says so; CK3_AGENT_CHARACTER_ID closes it).
+  Every per-ruler read then names that id; none passes character_id 0.
   Tier-2 (the game-state reads), each a line that can change this turn's
   decision:
     query_character (character_id=0)  -> ruler, money, military, stress, health
@@ -38,6 +58,7 @@ Query plan:
     query_faction_threat              -> the strongest faction and its ultimatum
     query_incoming_schemes            -> the plots against you
 """
+import json
 import os
 import re
 import sys
@@ -154,6 +175,18 @@ NO_RULER_HEIR_IS_PLAYER = (
     "- Controlled ruler: none. Claude's ruler died and the human player inherited, so "
     "the bridge unbound the seat (heir_is_player). Bind another AI ruler with "
     'session(action="control", character_id=<id>).')
+#: Several seats' sessions are attached to this game and nothing tells this hook
+#: which is its own: no ruler is shown rather than another seat's.
+SEAT_UNKNOWN = ("- Ruler: not shown. %d sessions are attached to this game and this hook "
+                "cannot tell which one is yours; session(action=\"whoami\") names yours.")
+SEAT_RECORD_UNMATCHED = ("- Ruler: not shown. This seat's session record (CK3_SESSION_OUT) names no "
+                         "session the bridge lists: your server has not handshaken yet, or its "
+                         "connect failed; the attached session may be another seat's. "
+                         "session(action=\"whoami\") names yours.")
+#: The session record `ck3agent run` writes (the MCP server's handshake), and the
+#: declared rulers; both are this seat's own environment, never another seat's.
+SESSION_OUT_ENV = "CK3_SESSION_OUT"
+DECLARED_ENV = "CK3_AGENT_CHARACTER_ID"
 
 
 def clean(v, _depth=0):
@@ -395,35 +428,138 @@ def _war_count(resp):
     return len(wl) if isinstance(wl, list) else None
 
 
-def held_rulers(bstate, controlled):
-    """(this session's rulers, primary first; rulers other sessions hold).
+def _row_ids(r):
+    """A get_bridge_state.sessions row's rulers, its primary first."""
+    ids = [int(c) for c in r.get("claimed_character_ids") or [] if isinstance(c, int)]
+    prim = r.get("primary_character_id")
+    if isinstance(prim, int) and prim in ids:
+        ids = [prim] + [c for c in ids if c != prim]
+    return ids
 
-    The hook is its own bridge session and holds nothing, so "this session" is
-    the one that holds the bridge's primary (`controlled`): in one-session play,
-    the MCP server's. Rows come from get_bridge_state.sessions.
+
+def _own_session_id(env=None):
+    """The bridge session id this seat's MCP server recorded, or None.
+
+    `ck3agent run` hands the seat's claude process CK3_SESSION_OUT, the 0600
+    record the MCP server writes at its handshake; the hook inherits it. A path
+    that is unset, unreadable or not a record is None, never a guess.
+    """
+    env = os.environ if env is None else env
+    path = env.get(SESSION_OUT_ENV)
+    if not path:
+        return None
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as fh:
+            rec = json.loads(fh.read() or "{}")
+    except (OSError, ValueError):
+        return None
+    sid = rec.get("session_id") if isinstance(rec, dict) else None
+    return sid if isinstance(sid, str) and sid else None
+
+
+def _declared(env=None):
+    """CK3_AGENT_CHARACTER_ID as the server reads it, or [] when unset or unparsable."""
+    env = os.environ if env is None else env
+    raw = env.get(DECLARED_ENV) or ""
+    out = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            cid = int(part)
+        except ValueError:
+            return []
+        if cid <= 0:
+            return []
+        if cid not in out:
+            out.append(cid)
+    return out
+
+
+def seat_rows(bstate):
+    """The get_bridge_state.sessions rows that can be a seat: every row whose mode is
+    not "observe" (session.cpp Session::to_json writes `mode`). The hook itself sends
+    no handshake and has no row (ipc_server.cpp creates a session only from one); an
+    observe session can claim nothing. A row with no `mode` counts as a seat: the
+    count errs toward "unknown", never toward naming another seat's ruler."""
+    return [r for r in (bstate or {}).get("sessions") or []
+            if isinstance(r, dict) and r.get("mode") != "observe"]
+
+
+def seat_record_unmatched(bstate, env=None):
+    """True when this seat was given a session record (CK3_SESSION_OUT is set) and it
+    names no session the bridge lists: the record is not written yet (the server's
+    handshake has not landed, or its connect failed) or it is stale. One definition
+    for resolve_seat (which then answers "unknown") and build_report (which then
+    prints SEAT_RECORD_UNMATCHED): L18 round 3, witness item 3."""
+    env = os.environ if env is None else env
+    if not env.get(SESSION_OUT_ENV):
+        return False
+    sid = _own_session_id(env)
+    rows = [r for r in (bstate or {}).get("sessions") or [] if isinstance(r, dict)]
+    return not any(sid and r.get("session_id") == sid for r in rows)
+
+
+def resolve_seat(bstate, controlled, env=None):
+    """(how, this seat's rulers primary first, rulers other sessions hold).
+
+    `how` says what named the seat:
+      "session"   the seat's own session record names a session the bridge lists;
+      "declared"  the seat declared its rulers (CK3_AGENT_CHARACTER_ID);
+      "only"      at most one seat's session is attached (seat_rows) and this seat
+                  was given no record that fails to match: the bridge's primary is
+                  its own;
+      "unknown"   nothing above says which session is this seat's, and either this
+                  seat's record names no listed session (seat_record_unmatched: the
+                  one attached session may be another seat's) or two or more seats'
+                  sessions are attached: no ruler is read or shown. Counted over the
+                  attached sessions, not the ones holding rulers: a seat whose own
+                  session holds nothing yet (its record not written, or an
+                  interactive play dir) would otherwise be shown the other seat's
+                  ruler as its own.
+    `controlled` (the bridge's global primary) only ever names the seat in "only".
     """
     rows = [r for r in (bstate or {}).get("sessions") or [] if isinstance(r, dict)]
-    mine, mine_row, others = [], None, []
-    for r in rows:
-        ids = [int(c) for c in r.get("claimed_character_ids") or [] if isinstance(c, int)]
-        if controlled and int(controlled) in ids and mine_row is None:
-            mine_row = r
-            prim = r.get("primary_character_id")
-            prim = int(prim) if isinstance(prim, int) and prim in ids else int(controlled)
-            mine = [prim] + [c for c in ids if c != prim]
+    holding = [r for r in rows if _row_ids(r)]
+    sid = _own_session_id(env)
+    if sid:
+        for r in rows:
+            if r.get("session_id") == sid:
+                others = [c for o in holding if o is not r for c in _row_ids(o)]
+                return "session", _row_ids(r), others
+    declared = _declared(env)
+    if declared:
+        others = [c for o in holding for c in _row_ids(o) if c not in declared]
+        return "declared", declared, others
+    if seat_record_unmatched(bstate, env) or len(holding) >= 2 or len(seat_rows(bstate)) >= 2:
+        return "unknown", [], [c for o in holding for c in _row_ids(o)]
+    mine, others = [], []
+    for r in holding:
+        ids = _row_ids(r)
+        if controlled and int(controlled) in ids:
+            mine = ids
         else:
             others.extend(ids)
+    if not mine and controlled:
+        mine = [int(controlled)]
+    return "only", mine, others
+
+
+def held_rulers(bstate, controlled, env=None):
+    """(this seat's rulers, primary first; rulers other sessions hold): resolve_seat's."""
+    _, mine, others = resolve_seat(bstate, controlled, env)
     return mine, others
 
 
-def prefetch_rulers(puller, bstate, controlled):
+def prefetch_rulers(puller, bstate, controlled, seat=None):
     """{id: (profile, war count)} for every ruler held besides the primary.
 
     Read right after tier 1, before the long tier-2 plan: live on 2026-10-19 a
     report read late in the plan came back without the second ruler's name,
     the budget spent on lower-priority reads.
     """
-    mine, _ = held_rulers(bstate, controlled)
+    _, mine, _ = seat if seat is not None else resolve_seat(bstate, controlled)
     out = {}
     for cid in mine[1:]:
         prof = puller.query("query_character", {"character_id": cid}) or {}
@@ -432,15 +568,15 @@ def prefetch_rulers(puller, bstate, controlled):
     return out
 
 
-def rulers_block(puller, bstate, controlled, ch, active_wars, extras=None):
+def rulers_block(puller, bstate, controlled, ch, active_wars, extras=None, seat=None):
     """Lines listing every ruler this session holds when it holds more than one.
 
     One ruler: nothing (the `You:` line already says it all). Per ruler: id,
     name and primary title, at war, imprisoned, dead. `extras` is
     prefetch_rulers' result.
     """
-    mine, others = held_rulers(bstate, controlled)
-    extras = extras if extras is not None else prefetch_rulers(puller, bstate, controlled)
+    _, mine, others = seat if seat is not None else resolve_seat(bstate, controlled)
+    extras = extras if extras is not None else prefetch_rulers(puller, bstate, controlled, seat)
     out = []
     if len(mine) > 1:
         out.append("- Rulers this session holds (%d, primary first). Pass character_id on "
@@ -632,33 +768,52 @@ def build_report(puller):
     lines.append("- Date **%s** (year %s, speed %s, %s)"
                  % (date or "?", _fmt_num(year), _fmt_num(speed), pstr))
 
+    # Whose ruler: this seat's, never the bridge's global primary unless only
+    # one session holds rulers (resolve_seat; L18-C).
+    how, mine, others = resolve_seat(bstate, controlled)
+    if how == "unknown":
+        held = sum(1 for r in (bstate or {}).get("sessions") or [] if isinstance(r, dict) and _row_ids(r))
+        if seat_record_unmatched(bstate):
+            lines.append(SEAT_RECORD_UNMATCHED)
+        else:
+            lines.append(SEAT_UNKNOWN % max(len(seat_rows(bstate)), held))
+        _gap_lines(puller, gaps, lines)
+        return "\n".join(lines)
+    me = mine[0] if mine else 0
+    if controlled_alive is not None and int(controlled or 0) != me:
+        # tick's liveness flag describes the bridge's global primary, not this seat.
+        controlled_alive = None
+
     # No ruler bound: get_tick_info reports 0 (and why, when the bridge itself
-    # unbound one, rc2 B6). Every read below is about "character 0", which is
-    # nobody, so none is made and nothing about a ruler is rendered.
-    if tick and not controlled:
-        if g(tick, "controlled_unbound_reason") == "heir_is_player":
+    # unbound one, rc2 B6), or this seat's session holds none. Every read below
+    # would be about "character 0", which is nobody (or the bridge's primary,
+    # another seat's), so none is made and nothing about a ruler is rendered.
+    if (tick or how != "only") and not me:
+        if how == "only" and g(tick, "controlled_unbound_reason") == "heir_is_player":
             lines.append(NO_RULER_HEIR_IS_PLAYER)
         else:
             lines.append(NO_RULER)
         _gap_lines(puller, gaps, lines)
         return "\n".join(lines)
+    controlled = me
+    who = {"character_id": me}
 
     # The war brief (bridge-internal, the cheap read): the war signal when the
     # rich query_wars below fails.
-    active_wars = puller.query("get_active_wars", {"character_id": 0})
+    active_wars = puller.query("get_active_wars", who)
     # lane-multi: the other rulers' reads come before the long tier-2 plan.
-    extras = prefetch_rulers(puller, bstate, controlled)
+    extras = prefetch_rulers(puller, bstate, controlled, (how, mine, others))
 
     # --- Tier 2: only what changes a decision -------------------------------
-    ch = puller.query("query_character", {"character_id": 0}) or {}
+    ch = puller.query("query_character", who) or {}
     if not ch:
         gaps.append("character profile unavailable")
-    wars = puller.query("query_wars")
-    succ = puller.query("query_succession")
-    succ_sim = puller.query("query_succession_simulation")
-    succ_map = puller.query("query_title_succession_map")
-    threat = puller.query("query_faction_threat")
-    incoming = puller.query("query_incoming_schemes")  # plots AGAINST me
+    wars = puller.query("query_wars", who)
+    succ = puller.query("query_succession", who)
+    succ_sim = puller.query("query_succession_simulation", who)
+    succ_map = puller.query("query_title_succession_map", who)
+    threat = puller.query("query_faction_threat", who)
+    incoming = puller.query("query_incoming_schemes", who)  # plots AGAINST me
     for label, val in (("wars", wars), ("succession", succ),
                        ("succession simulation", succ_sim),
                        ("faction threat", threat), ("plots against you", incoming)):
@@ -700,7 +855,8 @@ def build_report(puller):
     if g(ch, "liege_id"):
         you += " · liege %s" % _fmt_num(g(ch, "liege_id"))
     lines.append(you)
-    lines.extend(rulers_block(puller, bstate, controlled, ch, active_wars, extras))
+    lines.extend(rulers_block(puller, bstate, controlled, ch, active_wars, extras,
+                              seat=(how, mine, others)))
 
     # Wars: the rich list when read, else the brief.
     warlist = _war_rows(wars) or _war_rows(active_wars)

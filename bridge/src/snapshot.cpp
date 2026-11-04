@@ -293,7 +293,6 @@ bool is_bridge_internal_query(const char* action_type) {
     //   ipc-exception get_bridge_state: scalar global reads (the player id)
     //   ipc-exception report_usage: scalar global read (the game date) for the budget ledger
     //   ipc-exception get_budget_state: scalar global read (the game date) for the budget ledger
-    //   ipc-exception board_post: scalar global read (the game date) for the post's stamp
     //   ipc-exception toggle_all_ai: single-byte AI flag stores
     //   ipc-exception toggle_ai_subsystem: single-byte AI flag stores
     //   ipc-exception get_player_character: scalar global read (the player id)
@@ -314,18 +313,6 @@ bool is_bridge_internal_query(const char* action_type) {
         "report_usage",
         "set_budget_config",
         "get_budget_state",
-        // ck-6kvq.12 (R4): the shared board. Pure bridge state — a
-        // mutex-protected vector, never a game object — so it is safe from any
-        // thread in any pause state, which is what ANY polarity means. Note
-        // that `board_post` still classifies as TICK_WRITE in
-        // classify_polarity(), because that function asks "is this a mutation?"
-        // BEFORE it asks "is it bridge-internal?": a post is buffered and
-        // executed in a flush like any other write (§3.2), and carries the same
-        // flush_id as the actions around it. What being listed here buys is the
-        // routing: it is served INLINE, never handed to the game-thread drain.
-        "board_post",
-        "board_read",
-        "board_admin",
         "query_intents",
         "query_intent_results",
         "cancel_intent",

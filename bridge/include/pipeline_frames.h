@@ -188,10 +188,10 @@ inline bool has_top_level_key(const std::string& body, const char* quoted_key) {
 // would read as attribution nobody checked must say so themselves rather than
 // attach this; see the drain in bridge_init.cpp.
 // ck-324r: a minimal JSON string escaper, HERE because this header already
-// owns frame assembly and because bridge/src has FOUR private json_escape
-// copies already (pipeline.cpp, board.cpp, event_handler.cpp,
-// budget_ledger.cpp). Adding a fifth to ipc_server.cpp to serve one new caller
-// is how there came to be four. Consolidating the existing ones is not this
+// owns frame assembly and because bridge/src has THREE private json_escape
+// copies already (pipeline.cpp, event_handler.cpp, budget_ledger.cpp).
+// Adding a fourth to ipc_server.cpp to serve one new caller
+// is how there came to be three. Consolidating the existing ones is not this
 // bead's business; not adding to them is.
 //
 // Deliberately escapes rather than trusting the inputs. The values passed are

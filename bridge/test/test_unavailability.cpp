@@ -912,7 +912,7 @@ static void test_exclusion_is_a_rule() {
              "one the ledger counts in, so 78 is the rule's answer");
 
     // ── THE OTHER 'REGISTERED HORIZON' IN THE REPO ────────────────────────
-    // docs/e0-episode-runbook.md and docs/multi-instance.md offer
+    // docs/multi-instance.md (and the deleted E0 runbook) offer
     // `--horizon 1086.1.1` as "the full paper horizon". It is 7043 game-days —
     // 257 short of twenty game-years — and the rule's answer there is 352, not
     // 365. THE RULE DID NOT CREATE THIS DISCREPANCY; IT CREATED THE ABILITY TO

@@ -169,6 +169,7 @@ def test_setup_writes_play_dir_and_config(install, supported, tmp_path, capsys):
     argv = cli.exe_argv()
     mcp = json.loads((play / ".mcp.json").read_text())["mcpServers"]["ck3"]
     assert [mcp["command"], *mcp["args"]] == argv + ["serve"]
+    assert mcp["alwaysLoad"] is True          # the 13 schemas load with the session (L18-C)
     settings = json.loads((play / ".claude/settings.json").read_text())
     hook = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
     assert hook.split() == argv + ["hook-state"]
@@ -452,6 +453,7 @@ if args == ["--version"]:
 mode = os.environ.get("FAKE_MODE", "finish")
 open(os.environ["FAKE_ARGV"] + ".pid", "w").write(str(os.getpid()))
 open(os.environ["FAKE_ARGV"], "w").write(json.dumps(args))
+open(os.environ["FAKE_ARGV"] + ".env", "w").write(json.dumps({"CK3_SESSION_OUT": os.environ.get("CK3_SESSION_OUT")}))
 if os.environ.get("FAKE_ACTION_LOG"):
     open(os.environ["FAKE_ACTION_LOG"], "a").write('{"action":"during"}\n')
 cfg = json.load(open(args[args.index("--mcp-config") + 1]))["mcpServers"]["ck3"]
@@ -524,6 +526,10 @@ ev({"type": "assistant", "message": {"content": [{"type": "text", "text": "Jórv
 sys.stdout.flush()
 sys.stdout.buffer.write(b'{"type":"assistant","message":{"content":[{"type":"text","text":"bad \xff byte"}]}}\n')
 sys.stdout.buffer.flush()
+for _ in range(int(os.environ.get("FAKE_CYCLES", "0"))):
+    for tool, inp in (("observe", {}), ("session", {"action": "wait"})):
+        ev({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t", "name": "mcp__ck3__" + tool, "input": inp}]}})
 if mode == "finish":
     ev(RESULT); stop_server(); sys.exit(0)
 if mode == "noresult":
@@ -531,6 +537,11 @@ if mode == "noresult":
 
 
 def on_int(*_):
+    for tool in [t for t in os.environ.get("FAKE_AFTER_INT", "").split(",") if t]:
+        # A call that was in flight when the run's stop fired (the race the
+        # manifest's cross-check column shows).
+        ev({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t", "name": "mcp__ck3__" + tool, "input": {}}]}})
     ev({**RESULT, "subtype": "error_during_execution", "is_error": True})
     stop_server(); sys.exit(0)
 
@@ -623,6 +634,111 @@ def test_run_records_the_session(play, tmp_path, monkeypatch):
     assert m["server_release"]["trigger"] == "SIGINT"
     assert m["server_release"]["error"].startswith("ConnectionError")
     assert m["resumed_release"] is None                   # no bridge session, so no session record
+
+
+def test_run_gives_the_hook_this_seats_session_and_loads_the_tools_eagerly(play, tmp_path):
+    """L18-C: the live-state hook (claude's child) reads its ruler from the seat's
+    own session record, so claude carries CK3_SESSION_OUT; and the run's ck3 entry
+    says alwaysLoad, so the 13 schemas are not deferred behind ToolSearch."""
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "2"]) == 0
+    m = manifest_of(play)
+    stamp = Path(m["prompt_file"]).name.split(".")[0]
+    env = json.loads((tmp_path / "argv.json.env").read_text())
+    assert env["CK3_SESSION_OUT"] == str(play / "runs" / f"{stamp}.session.json")
+    srv = json.loads((play / "runs" / f"{stamp}.mcp.json").read_text())["mcpServers"]["ck3"]
+    assert srv["alwaysLoad"] is True and srv["env"]["CK3_SESSION_OUT"] == env["CK3_SESSION_OUT"]
+    # The fake transcript makes no ck3 call: zero cycles, said, never absent (smoke16).
+    assert m["cycles_completed"] == 0 and m["cycles_met"] is False and m["cycles"] == 2
+    assert m["cycle_definition"] == cli.CYCLE_DEFINITION and m["ended_on"] is None
+    assert m["total_cost_usd_source"].startswith("claude result event")
+
+
+def test_the_run_stops_itself_at_its_cycle_count(play, monkeypatch):
+    """L18 round 2 (owner ruling): the run prompt names no cycle count; the run
+    counts cycles from the transcript and ends the session at --cycles. The fake
+    plays two cycles and then would play on (it ignores nothing, writes its result
+    on SIGINT); --wall-seconds is only the backstop that ends the base tree's run."""
+    monkeypatch.setenv("FAKE_MODE", "hang-result")
+    monkeypatch.setenv("FAKE_CYCLES", "2")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "2", "--wall-seconds", "20"]) == 0
+    m = manifest_of(play)
+    assert m["stop_reason"] == "cycles" and m["claude_stop"] == "SIGINT", m
+    assert m["cycles_completed"] == 2 and m["cycles_met"] is True and m["exit_code"] == 0
+    assert m["cycles_recounted"] == 2
+
+
+def test_the_manifests_count_is_the_counter_the_stop_read(play, monkeypatch):
+    """L18 round 3 (witness item 2): one counter. The stop read the live
+    CycleCounter at 2 closed cycles and froze it; the fake then writes one more
+    `observe` before its result (a call in flight when SIGINT landed). The
+    manifest's `cycles_completed` is the counter's reading at the stop, 2; the
+    transcript's recount, `cycles_recounted`, counts the late observe as an open
+    cycle, 3, and is the cross-check beside it. Red on db8857cc, where the
+    manifest re-read the transcript (cycles_completed 3, no cycles_recounted)."""
+    monkeypatch.setenv("FAKE_MODE", "hang-result")
+    monkeypatch.setenv("FAKE_CYCLES", "2")
+    monkeypatch.setenv("FAKE_AFTER_INT", "observe")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "2", "--wall-seconds", "20"]) == 0
+    m = manifest_of(play)
+    assert m["stop_reason"] == "cycles" and m["cycles"] == 2, m
+    assert m["cycles_completed"] == 2 and m["cycles_met"] is True
+    assert m["cycles_recounted"] == 3
+    # The late call is in the transcript (the record is whole), and ended_on is the stop's reading.
+    assert m["ended_on"] == "session:wait"
+    stamp = Path(m["prompt_file"]).name.split(".")[0]
+    stream = (play / "runs" / f"{stamp}.jsonl").read_text(encoding="utf-8")
+    assert stream.count('"name": "mcp__ck3__observe"') == 3
+
+
+def test_a_frozen_counter_keeps_the_reading_the_stop_took():
+    c = cli.CycleCounter()
+    for line in _calls("observe", "session:wait", "observe", "session:wait"):
+        c.feed(line)
+    assert c.closed == 2
+    assert c.freeze()["cycles_completed"] == 2
+    for line in _calls("observe", "pass_turn", "session:wait"):
+        c.feed(line)
+    assert c.result()["cycles_completed"] == 2 and c.result()["ended_on"] == "session:wait"
+    assert c.freeze() == c.result()        # a second freeze changes nothing
+
+
+def test_the_run_prompt_names_no_cycle_count(play):
+    """The written prompt carries no budget line for the model to count against."""
+    assert "{{cycles}}" not in (cli.PROTOCOL_DIR / "run-prompt.md").read_text(encoding="utf-8")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "7"]) == 0
+    prompt = Path(manifest_of(play)["prompt_file"]).read_text(encoding="utf-8")
+    assert "BUDGET" not in prompt and "7 cycles" not in prompt
+    assert "until the run stops you" in prompt
+
+
+def _calls(*names):
+    """stream-json assistant events, one tool_use each, in Claude Code's shape."""
+    out = []
+    for n in names:
+        tool, _, action = n.partition(":")
+        out.append(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t", "name": f"mcp__ck3__{tool}",
+             "input": {"action": action} if action else {}}]}}))
+    return out
+
+
+def test_a_cycle_is_counted_once_however_it_ends():
+    """The pilots' shapes (budget0 e1, 18 cycles asked): s1 waited after its last
+    cycle, s2 ended its last cycle in `pause` (the hand analyzer counted 17 wait
+    groups and called it "ended_early_success"), s4 observed twice in a cycle."""
+    cyc = ["observe", "plan_war", "pass_turn", "session:wait"]
+    s1 = ["session:whoami", "set_phase"] + cyc * 18 + ["session:pause"]
+    s2 = cyc * 17 + ["observe", "inspect", "do", "session:pause"]
+    s4 = ["observe", "observe", "pass_turn", "session:wait", "session:wait"] + cyc * 16 + \
+        ["observe", "pass_turn", "session:pause"]
+    for seq, waits in ((s1, 18), (s2, 17), (s4, 17)):
+        c = cli.count_cycles(_calls(*seq) + ["not json", "[]"])
+        assert c["cycles_completed"] == 18 and c["wait_groups"] == waits, (c, seq[-3:])
+        assert c["ended_on"] == "session:pause"
+    # A ToolSearch or other non-ck3 call is not a cycle; waits with no observe are not either.
+    other = [json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "ToolSearch", "input": {}}]}})]
+    assert cli.count_cycles(other + _calls("session:wait", "session:wait"))["cycles_completed"] == 0
 
 
 def test_server_releases_inside_claude_codes_stop_window(play, bridge, tmp_path, monkeypatch):

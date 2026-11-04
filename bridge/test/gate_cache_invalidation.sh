@@ -11,7 +11,7 @@
 # listed below must have at least one REAL reference — a call or a registration
 # with the world-reset registry — that is not its own definition, not its
 # declaration, and not a comment. And the detector itself must be wired into
-# on_tick, or the registry would just be a bug one level up.
+# the drain and on_tick, or the registry would just be a bug one level up.
 #
 # Usage: gate_cache_invalidation.sh <bridge-source-dir>
 set -uo pipefail
@@ -74,11 +74,15 @@ for fn in "${CLEARS[@]}"; do
     fi
 done
 
-if ! grep -q 'world_epoch_on_tick()' "$SRC/bridge_init.cpp"; then
-    bad "world_epoch_on_tick() is not called from bridge_init.cpp on_tick — nothing detects a reload."
-else
-    note "ok: world_epoch_on_tick() is wired into on_tick"
-fi
+# L18-A: two sites. The drain's sample is the one that must come first (the
+# order is checked on the preprocessed TU by scripts/acceptance_world_reset.py).
+for site in drain ai_tick; do
+    if ! grep -q "world_epoch_sample(\"$site\")" "$SRC/bridge_init.cpp"; then
+        bad "world_epoch_sample(\"$site\") is not called from bridge_init.cpp — a reload (or the first sighting) is missed there."
+    else
+        note "ok: world_epoch_sample(\"$site\") is wired"
+    fi
+done
 
 if ! grep -q 'src/world_epoch.cpp' "$BRIDGE_DIR/CMakeLists.txt"; then
     bad "src/world_epoch.cpp is not in the ck3_bridge source list."

@@ -85,9 +85,8 @@ void EpisodePolicyHolder::init_from_env() {
     const char* id = getenv("CK3_EPISODE_ID");
     if (id && *id) p.episode_id = id;
 
-    // ck-6kvq.12 (R4 / G5): CK3_EPISODE_ARM, lower-cased. Kept verbatim
-    // otherwise — an unrecognised arm is not "b", and the board is therefore
-    // absent, which is the conservative failure direction (see the header).
+    // ck-6kvq.12 (R4): CK3_EPISODE_ARM, lower-cased, kept verbatim otherwise
+    // (see the header).
     const char* arm = getenv("CK3_EPISODE_ARM");
     if (arm && *arm) {
         p.arm = arm;

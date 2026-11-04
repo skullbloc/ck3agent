@@ -36,6 +36,14 @@ RETIRED_ALLOW = ["Bash(sleep:*)"]
 # session(action="wait") blocks for up to 110 s by design, and a long read can
 # push past it. Off in the play directory and in `ck3agent run`.
 SETTINGS_ENV = {"CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "0"}
+# Claude Code defers MCP tool schemas behind ToolSearch unless the server entry
+# says `alwaysLoad: true` ("all tools from this server are always included in
+# the prompt and never deferred behind tool search"; in the stdio server schema
+# of Claude Code 2.1.241, the pilots' version, and 2.1.318). Without it every
+# pilot seat spent 1-7 turns loading the 13 schemas (90 ToolSearch calls in 34
+# seats, pilots 2026.11). Setup writes it into a new ck3 entry; `run` sets it on
+# the run's own copy of the entry, so an older play dir gets it too.
+MCP_ALWAYS_LOAD = {"alwaysLoad": True}
 RELEASES_URL = "https://github.com/skullbloc/ck3agent/blob/main/docs/supported-versions.md"
 CK3_EXAMPLE = '"$HOME/.local/share/Steam/steamapps/common/Crusader Kings III/binaries/ck3"'
 CONTINUE_WAIT = 120
@@ -151,7 +159,7 @@ def merge_mcp(d: dict, argv: list[str], force: bool) -> bool:
     servers = d.setdefault("mcpServers", {})
     if not isinstance(servers, dict):
         raise ValueError("mcpServers is not an object")
-    entry = {"command": argv[0], "args": argv[1:] + ["serve"]}
+    entry = {"command": argv[0], "args": argv[1:] + ["serve"], **MCP_ALWAYS_LOAD}
     cur = servers.get(MCP_SERVER_NAME)
     stale = isinstance(cur, dict) and not command_exists(cur.get("command"))
     if cur == entry or (MCP_SERVER_NAME in servers and not force and not stale):
@@ -605,6 +613,96 @@ def build_claude_argv(claude: str, prompt: str, mcp_config: Path, a: argparse.Na
     return argv + list(a.claude_args)
 
 
+#: One definition of a cycle, for the manifest and every reader of it (L18-C: the
+#: pilots' hand analyzers counted groups of waits, called an 18-cycle seat whose
+#: last cycle ended in `pause` "ended_early_success", and smoke16 read a
+#: `cycles_completed` the manifest never had).
+CYCLE_DEFINITION = ("a cycle is a stretch of the transcript between two `session(action=\"wait\")` "
+                    "groups (consecutive waits count once; the run's start and end bound the first "
+                    "and last stretch) that contains at least one `observe` call")
+
+
+class CycleCounter:
+    """CYCLE_DEFINITION, fed one stream-json line at a time by the transcript
+    drain. ONE counter for the run's cycle stop and the manifest (L18 round 3):
+    `_Watch` halts the run when `closed` reaches the cycles asked for and then
+    freezes this counter, and the manifest's `cycles_completed` is `result()` of
+    this same object. A line claude writes after the halt (a call that was in
+    flight when the stop fired) is in the transcript but not in the count;
+    `count_cycles` re-reads the whole transcript as the manifest's
+    `cycles_recounted` cross-check, which can exceed it by those lines."""
+
+    PREFIX = f"mcp__{MCP_SERVER_NAME}__"
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.closed = 0          # cycles a wait group has ended
+        self.groups = 0
+        self._observed = self._waiting = False
+        self.frozen: dict | None = None
+
+    def freeze(self) -> dict:
+        """Stop counting: `result()` is this reading from now on. Called by the
+        stop that read `closed`, so the recorded count is the one it acted on."""
+        if self.frozen is None:
+            self.frozen = self.result()
+        return self.frozen
+
+    def feed(self, line) -> None:
+        if self.frozen is not None:
+            return
+        try:
+            ev = json.loads(line)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(ev, dict) or ev.get("type") != "assistant":
+            return
+        for b in (ev.get("message") or {}).get("content") or []:
+            if not isinstance(b, dict) or b.get("type") != "tool_use":
+                continue
+            name = b.get("name") or ""
+            if not name.startswith(self.PREFIX):
+                continue
+            name = name[len(self.PREFIX):]
+            if name == "session":
+                name = f"session:{(b.get('input') or {}).get('action')}"
+            self._call(name)
+
+    def _call(self, name: str) -> None:
+        self.calls.append(name)
+        if name == "session:wait":
+            if not self._waiting:
+                self.groups += 1
+                self.closed += self._observed
+                self._observed = False
+            self._waiting = True
+            return
+        self._waiting = False
+        self._observed = self._observed or name == "observe"
+
+    def result(self) -> dict:
+        if self.frozen is not None:
+            return dict(self.frozen)
+        return {"cycles_completed": self.closed + self._observed,
+                "observe_calls": self.calls.count("observe"),
+                "wait_groups": self.groups, "ended_on": self.calls[-1] if self.calls else None}
+
+
+def count_cycles(lines) -> dict:
+    """The run's cycles under CYCLE_DEFINITION, re-read from its stream-json
+    transcript: a reader's recount (the manifest's `cycles_recounted`), not the
+    counter the run's stop read (CycleCounter, which the manifest records).
+
+    Returns {"cycles_completed", "observe_calls", "wait_groups", "ended_on"}:
+    `ended_on` is the last ck3 call's name ("session:pause", "session:wait",
+    ...) or None when the run made none.
+    """
+    c = CycleCounter()
+    for line in lines:
+        c.feed(line)
+    return c.result()
+
+
 def summarize_stream(lines) -> dict:
     """Pull the init and result events out of stream-json lines."""
     m: dict = {}
@@ -677,17 +775,23 @@ def _stop_claude(proc, interrupted: bool = False) -> str:
 
 
 class _Watch(threading.Thread):
-    """Stops a run at a game date or after N wall seconds: interrupt claude, pause, wait.
+    """Stops a run at its cycle count, a game date or after N wall seconds:
+    interrupt claude, pause, wait.
 
-    One control session for the whole run, not one per poll: `link`, shared
-    with `ck3agent run`, which closes it.
+    The cycle count is the harness's, not the prompt's (L18 round 2, owner
+    ruling): `counter` is the CycleCounter the transcript drain feeds, and the
+    run stops when it has closed `cycles` cycles. One control session for the
+    whole run, not one per poll: `link`, shared with `ck3agent run`, which
+    closes it.
     """
 
     POLL = 15.0
 
-    def __init__(self, proc, sock: str, until, wall: int | None, link: br.Link | None = None):
+    def __init__(self, proc, sock: str, until, wall: int | None, link: br.Link | None = None,
+                 cycles: int = 0, counter: "CycleCounter | None" = None):
         super().__init__(daemon=True)
         self.proc, self.sock, self.until = proc, sock, until
+        self.cycles, self.counter = cycles, counter
         self._own = link is None
         self.link = link or br.Link(sock, mode="control")
         self.deadline = time.monotonic() + wall if wall else None
@@ -705,6 +809,8 @@ class _Watch(threading.Thread):
     def _poll(self) -> None:
         next_date = 0.0
         while not self.done.wait(1.0):
+            if self.cycles and self.counter is not None and self.counter.closed >= self.cycles:
+                return self._halt("cycles")
             if self.deadline and time.monotonic() >= self.deadline:
                 return self._halt("wall_seconds")
             if self.until and time.monotonic() >= next_date:
@@ -717,8 +823,12 @@ class _Watch(threading.Thread):
                     pass
 
     def _halt(self, reason: str) -> None:   # not _stop: Thread.join() calls Thread._stop on 3.11/3.12
-        # SIGINT first: claude stops issuing tool calls, so the pause below holds.
+        # The count the stop acted on is the count the manifest records: freeze
+        # it before claude can write another call (L18 round 3).
         self.reason = reason
+        if self.counter is not None:
+            self.counter.freeze()
+        # SIGINT first: claude stops issuing tool calls, so the pause below holds.
         if self.proc.poll() is None:
             self.proc.send_signal(signal.SIGINT)
         self.link.call("pause_game")
@@ -728,9 +838,9 @@ class _Watch(threading.Thread):
 class _Drain(threading.Thread):
     """claude's stdout to the transcript (and the terminal), line by line."""
 
-    def __init__(self, src, fh, echo: bool):
+    def __init__(self, src, fh, echo: bool, counter: "CycleCounter | None" = None):
         super().__init__(daemon=True)
-        self.src, self.fh, self.echo = src, fh, echo
+        self.src, self.fh, self.echo, self.counter = src, fh, echo, counter
 
     def run(self) -> None:
         with contextlib.suppress(ValueError, OSError):  # fh closed under us: a grandchild kept the pipe
@@ -740,6 +850,8 @@ class _Drain(threading.Thread):
         for line in self.src:
             self.fh.write(line)
             self.fh.flush()
+            if self.counter is not None:
+                self.counter.feed(line)
             if self.echo:
                 try:
                     _echo(line)
@@ -990,6 +1102,8 @@ def cmd_run(a: argparse.Namespace) -> int:
     prompt = Path(a.prompt_file).read_text(encoding="utf-8") if a.prompt_file else \
         (PROTOCOL_DIR / "run-prompt.md").read_text(encoding="utf-8")
     prompt = prompt.replace("{{goal}}", a.goal or "Play well: survive, grow the realm, keep the succession intact.")
+    # The shipped run prompt names no cycle count: the run counts and stops
+    # (_Watch). A --prompt-file may still say {{cycles}}.
     prompt = prompt.replace("{{cycles}}", str(a.cycles))
 
     runs = play / "runs"
@@ -1001,7 +1115,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         ("tools", ".tools.json"), ("actions", ".actions.jsonl"), ("mcp", ".mcp.json"),
         ("release", ".release.json"), ("session", ".session.json"))}
     paths["prompt"].write_text(prompt, encoding="utf-8")
-    srv = dict(mcp["mcpServers"][MCP_SERVER_NAME])
+    srv = {**dict(mcp["mcpServers"][MCP_SERVER_NAME]), **MCP_ALWAYS_LOAD}
     srv["env"] = {**(srv.get("env") or {}), "CK3_TOOL_SURFACE_OUT": str(paths["tools"]),
                   "CK3_RELEASE_ON_EXIT": str(paths["release"]), "CK3_SESSION_OUT": str(paths["session"])}
     _write_json(paths["mcp"], {"mcpServers": {MCP_SERVER_NAME: srv}})
@@ -1011,7 +1125,11 @@ def cmd_run(a: argparse.Namespace) -> int:
     # (CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS); session(action="wait") blocks for up to
     # that long by design, so the run turns the hand-off off. Setup writes the same
     # variable into the play directory's settings for interactive sessions.
+    # CK3_SESSION_OUT is also this seat's identity for the live-state hook, which
+    # claude runs as its child: the hook reads its ruler from THIS session's record
+    # and never from the bridge's global primary, another seat's (L18-C).
     env = dict(os.environ, CK3_TOOL_SURFACE_OUT=str(paths["tools"]),
+               CK3_SESSION_OUT=str(paths["session"]),
                CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS="0")
     action_log = Path(br.action_log_path())
     try:
@@ -1043,6 +1161,7 @@ def cmd_run(a: argparse.Namespace) -> int:
 
     rc, stop, how = 1, None, None
     proc = watch = drain = None
+    counter = CycleCounter()
     gate = _Gate()
     fh = paths["stream"].open("w", encoding="utf-8")
     err = paths["stderr"].open("w", encoding="utf-8")
@@ -1055,10 +1174,11 @@ def cmd_run(a: argparse.Namespace) -> int:
         finally:
             gate.held = False
         gate.release()
-        drain = _Drain(proc.stdout, fh, echo=not a.quiet)
+        drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter)
         drain.start()
-        if a.until_date or a.wall_seconds:
-            watch = _Watch(proc, sock, a.until_date, a.wall_seconds, link)
+        if a.until_date or a.wall_seconds or a.cycles:
+            watch = _Watch(proc, sock, a.until_date, a.wall_seconds, link,
+                           cycles=a.cycles, counter=counter)
             watch.start()
         rc = proc.wait()
     except OSError as e:
@@ -1085,7 +1205,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 drain.join(10)
             fh.close()
             err.close()
-            if stop in ("until_date", "wall_seconds"):
+            if stop in ("cycles", "until_date", "wall_seconds"):
                 rc = 0
             try:
                 srec = _load_json(paths["session"]) or {}
@@ -1097,6 +1217,17 @@ def cmd_run(a: argparse.Namespace) -> int:
             teardown = br.teardown(sock, wait=0 if good else 5.0, link=link)
             with paths["stream"].open(encoding="utf-8", errors="replace") as f:
                 manifest.update(summarize_stream(f))
+            # The one counter: the drain fed it, the cycle stop read it (and froze
+            # it); the recount of the transcript is the cross-check beside it.
+            manifest.update(counter.result(), cycle_definition=CYCLE_DEFINITION)
+            with paths["stream"].open(encoding="utf-8", errors="replace") as f:
+                manifest["cycles_recounted"] = count_cycles(f)["cycles_completed"]
+            # Asked for, and met: one comparison, here, so no reader re-derives it.
+            manifest["cycles_met"] = manifest["cycles_completed"] >= a.cycles
+            # The cost is Claude Code's own estimate from its result event (list
+            # prices; it includes the side model in model_usage), not a bill.
+            manifest["total_cost_usd_source"] = ("claude result event (client-side estimate)"
+                                                 if manifest.get("result_event") else None)
             if not manifest.get("result_event"):
                 why = "terminated" if how not in (None, "exited") else "no result event"
                 manifest["result_event"] = False
@@ -1294,7 +1425,8 @@ def build_parser() -> argparse.ArgumentParser:
         "releases the ruler at the end."))
     s.add_argument("--goal", help="goal text for the run prompt")
     s.add_argument("--prompt-file", metavar="PATH", help="use this file as the whole prompt")
-    s.add_argument("--cycles", type=int, default=50, metavar="N", help="cycles the prompt asks for (default 50)")
+    s.add_argument("--cycles", type=int, default=50, metavar="N",
+                   help="stop the run after N cycles, counted by the run (default 50, 0 = no cycle stop)")
     s.add_argument("--max-turns", type=int, default=400, metavar="N", help="claude --max-turns (default 400, 0 = none)")
     s.add_argument("--model", help="claude --model")
     s.add_argument("--until-date", type=parse_date, metavar="Y.M.D", help="stop at this game date")

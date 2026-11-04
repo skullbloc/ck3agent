@@ -116,14 +116,6 @@ bool do_declare_save_identity(const char* params_json, std::string* out) {
         r.key("reason"); r.value_string("save_sha256_required");
     }
     r.key("decision"); r.value_string(rec.decision.c_str());
-    // ck-81su: and what the SAME decision did to the shared board's carrier.
-    // EMITTED ONLY WHEN THERE WAS A CARRIER — which can only be arm B. A `board`
-    // key in arm A would tell an arm-A harness that a channel it must not know
-    // about had been considered, and "present and refused" is exactly the third
-    // condition decision G5/A2 rejects.
-    if (!rec.board_json.empty()) {
-        r.key("board"); r.value_raw(rec.board_json.c_str());
-    }
     // Honest echo: a harness that declared a different save must be able to SEE
     // that it just cost some sessions their claims, not infer it from silence.
     r.key("sessions_erased"); r.value_int(static_cast<int64_t>(erased.size()));
@@ -195,6 +187,16 @@ bool do_get_ai_personality(const char* params_json, std::string* out) {
     if (has_lock) {
         r.key("locked"); r.value_bool(true);
     }
+    // L18-A: where the steering stands, never left to the absence of `locked`:
+    // "live" (held, re-applied every tick), "quarantined" (written, then set aside
+    // by a world reset — it is NOT being applied; a fresh set_ai_personality
+    // writes it live again) or "none" (never written in this process). The
+    // world epoch lets a reader see whether a reset fell between its write
+    // (set_ai_personality's reply carries the epoch it wrote in) and this read.
+    r.key("lock_state");
+    r.value_string(has_lock ? "live"
+                            : personality_lock_state_name(personality_lock_state(cid)));
+    r.key("world_epoch"); r.value_uint(static_cast<uint64_t>(world_epoch()));
     // The engine's own bytes, whatever the lock map says: `personality` above
     // reports a held lock's values, so it cannot show whether the writes reached
     // the game. Nine axes (dominance has no engine byte). ADR 0001 P6.
@@ -379,6 +381,13 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
     r.key("character_id"); r.value_uint(cid);
     r.key("axes_written"); r.value_int(written);
     r.key("axes_retained"); r.value_int(retained);  // prior-locked axes kept across this partial update (A11 merge)
+    // L18-A: the lock this write leaves, said rather than implied. The entry is in
+    // the live write set under the lock this function still holds, so "live" is
+    // the state at reply time; `world_epoch` is the world it was written in. A
+    // later get_ai_personality answers lock_state for the same character.
+    r.key("locked"); r.value_bool(written + retained > 0);
+    r.key("lock_state"); r.value_string(personality_set_reply_lock_state_locked(cid, written + retained));
+    r.key("world_epoch"); r.value_uint(static_cast<uint64_t>(world_epoch()));
     if (axis_faults == 0) {
         r.key("personality"); r.begin_object();
         for (int i = 0; i < 10; i++) {

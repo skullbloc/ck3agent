@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 CK3 Bridge MCP Server — 13 tools: observe, query, discover, inspect, cbs,
-plan_war, succession_plan, set_phase, steer, declare_war, do, session, pass_turn
-(plus board_post and board_read when the shared board is enabled).
+plan_war, succession_plan, set_phase, steer, declare_war, do, session, pass_turn.
 
 The model reads game state, steers the native AI (personality weights) and
 sends typed actions; the game's own AI runs everything
@@ -44,22 +43,38 @@ from pydantic import Field, StrictBool
 
 from tools import QUERY_DOMAINS, DISCOVER_WHATS
 import redesign
+import seat_lineage                      # v3 §7.5: the seat is a lineage (inert unless armed)
 import do_intent_args
 
 #: The most domains one query(domains=[...]) call reads.
 QUERY_BATCH_MAX = 5
-
-# ck-6kvq.12 (R4 / G5): the arm gate for the shared board. One authority for
-# "is there a board", read by the tool registration below.
-from arm import board_enabled as _board_enabled
 
 # ck-2r9k. §8.2 — what a pipeline-mode reply actually looks like — lives in ONE
 # module, and this file had zero occurrences of it. The three clients that got
 # this wrong got it wrong three different ways; a fourth reading of
 # `for_request_id` here would be a fourth way.
 import pipeline_correlation as _pcorr
+# Study 0 (channel lane), pre-registration v3 section 5.2: the inter-seat
+# channel. One definition of the keys, the topology rule and the ledger; this
+# file only registers the tool when the seat's arm declares a topology other
+# than `none`, and delivers inboxes inside `observe`.
+import channel as _channel
 
 log = logging.getLogger("ck3-mcp")
+
+# THE SEAT'S CHANNEL DECLARATION, READ AT BOOT. None in free play (no
+# CK3_EPISODE_ARM); a typed refusal when an arm boots without a topology, so a
+# seat whose arm has no key never runs with a guessed one. The refusal exits the
+# process: the launcher's fresh-interpreter probe reads it as an unreadable
+# surface and refuses the launch in the first second, and a seat started by
+# hand has no tools rather than a defaulted channel.
+try:
+    _CHANNEL = _channel.boot(os.environ)
+except _channel.ChannelBootRefusal as _exc:
+    sys.stderr.write(json.dumps({"refused": "channel", **_exc.as_dict()}) + "\n")
+    sys.stderr.flush()
+    raise SystemExit(3)
+_SEAT = _channel.SeatState()
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +319,7 @@ def _get_gateway() -> "BridgeGateway":
 
 async def _gateway_now() -> "BridgeGateway":
     """The gateway with a fresh clock reading. Every tool takes one at entry (the
-    goal-shaped tools, query, discover, steer, pass_turn, the board tools), so its
+    goal-shaped tools, query, discover, steer, pass_turn), so its
     envelope's game block says what get_tick_info said at the call (witness W1:
     nothing else refreshes it; m-16: no tool shows a stale reading).
 
@@ -339,6 +354,9 @@ class BridgeState:
     #: witness an unmatched record even in principle, and a zero in a bundle
     #: could not be told from "none was ever emitted".
     unhandled_frames: dict = field(default_factory=dict)
+    #: v3 §7.5 (seat_lineage): what this seat last knew of its ruler and the
+    #: title its lineage follows. None until the first armed observe.
+    seat_lineage_prior: Any = None
     #: ck-324r's management-ledger records, counted by `action`: the bridge
     #: broadcasts one on every set_controlled_character / release_character for
     #: the ARM relay, with the caller's id under `caller_request_id` and,
@@ -354,9 +372,9 @@ class BridgeState:
     #: below cannot see it and this is where it is remembered.
     #:
     #: THE ACK IS NOT THE ANSWER and is deliberately not used to resolve the
-    #: future. For a write it carries no outcome — a `board_post` refused at
-    #: flush time for being 3,831 bytes acks `accepted:true` exactly like one
-    #: that lands — so settling on it would report a refusal as a success. What
+    #: future. For a write it carries no outcome — a write refused at flush
+    #: time acks `accepted:true` exactly like one that lands — so settling on
+    #: it would report a refusal as a success. What
     #: it is good for is the DEADLINE: `flush_eta_ms` is the bridge saying how
     #: long this call will take, and the result genuinely cannot arrive before
     #: it.
@@ -421,15 +439,15 @@ async def _bridge_listener(state: BridgeState):
             # and been counted as an unhandled frame.
             #
             # ck-2r9k fixed that in agent.py. IT DID NOT REACH HERE, and this is
-            # the consumer the board tools run through: board_post ->
-            # BridgeGateway.write -> _action_bridge -> _send_and_wait, all in
-            # this file. Two clients, one protocol, one of them taught.
+            # the consumer every write tool runs through: BridgeGateway.write ->
+            # _action_bridge -> _send_and_wait, all in this file. Two clients,
+            # one protocol, one of them taught.
             #
             # THE ACK EXTENDS THE DEADLINE; IT DOES NOT SETTLE THE CALL. A
-            # write's outcome is not in the ack: an oversized or over-quota
-            # board_post is `accepted: true` here and `success: false` in the
-            # settled frame, so resolving on the ack would report a REFUSAL AS A
-            # SUCCESS. The future still settles on the real result.
+            # write's outcome is not in the ack: a write the flush refuses is
+            # `accepted: true` here and `success: false` in the settled frame,
+            # so resolving on the ack would report a REFUSAL AS A SUCCESS. The
+            # future still settles on the real result.
             #
             # BOTH CONSUMERS NOW DO THIS, and the history is worth the three
             # lines because it is the argument. ck-2r9k made agent.py resolve on
@@ -660,7 +678,55 @@ async def bridge_lifespan(server: FastMCP):
 # MCP Server
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP(
+def unknown_arguments(input_schema: dict, arguments: Any) -> list[str]:
+    """The argument names a call sent that the tool's registered schema does not
+    declare, sorted. One definition: the FastMCP refusal below and its test read it."""
+    if not isinstance(arguments, dict):
+        return []
+    declared = set((input_schema or {}).get("properties") or {})
+    return sorted(k for k in arguments if k not in declared)
+
+
+class _StrictArgumentsFastMCP(FastMCP):
+    """L18 ruling (a): every tool refuses an argument its schema does not declare.
+
+    FastMCP's argument model ignores an extra key, so a call carrying one ran as
+    if the key were absent: pass_turn(character_id=...) on 174 pilot calls (fixed
+    on that tool as the explicit case) and steer's flat axes once. Refuse rather
+    than default: the refusal is one place, before the tool runs, with the typed
+    gate `unknown_argument` naming each unknown key and the declared ones.
+
+    What this does NOT cover, said so a reader does not assume it:
+      * agent.py, the in-repo autonomous loop, is uncovered. It dispatches tool
+        calls its own way (redesign.*_impl, directly) and never reaches this
+        call_tool, so an unknown key it
+        sends is not refused here. It does not ship (release/manifest.toml
+        excludes it: "agent.py, the retired loop, which does not ship"), so the
+        product surface is all of this class's.
+      * Only top-level keys are checked. Keys nested inside a dict argument
+        (do's `args`, declare_war's `declare_args`, set_phase's `overrides`) are
+        each tool body's to read; set_phase refuses an unknown axis itself."""
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]):
+        tool = self._tool_manager.get_tool(name)
+        if tool is not None:
+            unknown = unknown_arguments(tool.parameters, arguments)
+            if unknown:
+                declared = sorted((tool.parameters or {}).get("properties") or {})
+                try:
+                    state = _get_state()
+                except ValueError:          # no request context (a direct call)
+                    state = None
+                env = _blocked(name, state, "unknown_argument",
+                               f"{name} takes no argument named {', '.join(unknown)}; "
+                               "the call was not run",
+                               fix={"rejected_fields": unknown, "accepted_fields": declared},
+                               measured={"unknown_arguments": unknown})
+                return tool.fn_metadata.convert_result(env)
+        return await super().call_tool(name, arguments)
+
+
+mcp = _StrictArgumentsFastMCP(
     "CK3 Bridge",
     instructions=(
         # ck-zgh4 deploy-51: "the LLM acts as a 'personality tuner'" told the
@@ -1328,7 +1394,7 @@ async def _await_with_ack_extension(state: BridgeState, request_id: str,
     contract it is breaking: a ticket-ignorant client "just experiences the call
     as slower, BOUNDED BY THE FLUSH PERIOD".
 
-    It is not every call, and the honest claim is narrower than "board_post
+    It is not every call, and the honest claim is narrower than "a write
     times out". `due_locked` has four early triggers besides the cadence —
     all-ANY, all-sessions-submitted, the declared reader's own submission, and
     the size bound — so a busy six-session arm flushes often and well inside
@@ -1753,7 +1819,9 @@ async def query(
             (e.g. "c_york"), instead of target_county.
         counties: For domain="map_graph", scope=explicit: comma-separated county keys.
         detail: For domain="map_graph": "brief" drops distances and the live overlay.
-        verbose: Opt-in to full detail for characters/wars/council/armies/realm/claims.
+        verbose: Opt-in to full detail for characters/wars/council/armies/realm/claims/
+            conquest_targets (whose default lists 25 counties outside your realm,
+            conquerable first, with max_results for more).
             Default False returns lean payloads (drops per-row skills, government, age,
             trait names, war participant id arrays, score_breakdown, and per-army
             secondary status fields) — all of which the agent's default formatters do not read. Set True
@@ -1846,6 +1914,9 @@ async def query(
         declined = _declined(reply, action)
         if declined is not None:
             return None, [], declined
+        if d == "conquest_targets" and not verbose:
+            from tools import compact_conquest_targets
+            reply = compact_conquest_targets(reply, max_results)
         return reply, [], None
 
     # Batch mode: every domain's reply under its own key; a domain that failed is
@@ -2327,6 +2398,12 @@ async def discover(
                         f"unknown discover target '{what}'; valid: {', '.join(DISCOVER_WHATS)}")
 
     action, bridge_params = resolved
+    if what in ("decisions_annotated", "valid_decisions") and not decisions:
+        # L18-B: without a list the bridge serves the light list, which is
+        # what="decisions"; an annotated read of nothing is a missing argument.
+        return _blocked("discover", state, "missing_required_argument",
+                        f"what='{what}' evaluates the decisions you name: pass "
+                        "decisions=[<key>, ...] (what='decisions' lists the keys)")
     unbound = await redesign.unbound_refusal(gw, "discover", action, bridge_params)
     if unbound is not None:
         return unbound
@@ -2355,6 +2432,11 @@ async def discover(
     declined = _declined(result, action)
     if declined is not None:
         return _refused("discover", state, declined)
+    if what in ("decisions_annotated", "valid_decisions"):
+        rows, refused = redesign.decision_eval_rows(result, decisions)
+        if refused is not None:
+            return _refused("discover", state, refused)
+        result = dict(result, decisions=rows)
     shaped = shape_discover_response(resolver_params, result)
     return _ok("discover", state, shaped)
 
@@ -2392,21 +2474,28 @@ async def steer(character_id: int = 0, personality: dict = None) -> dict[str, An
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def pass_turn(reason: str = "") -> dict[str, Any]:
+async def pass_turn(reason: str = "", character_id: int = 0) -> dict[str, Any]:
     """Explicitly choose not to act this cycle. Provide a reason for the decision log.
 
     Args:
         reason: Brief explanation for inaction.
+        character_id: the ruler who passes (0 = the primary). With several rulers,
+            one pass per ruler that does not act; the log and the reply name him.
     """
     state = _get_state()
     await _gateway_now()                  # the envelope's game block: a fresh clock reading
+    # L18-B: pass_turn was the one tool without character_id while the protocol
+    # says to pin it on every call; 174 pilot calls passed it and FastMCP dropped
+    # it without a word, so a several-ruler log could not say who passed.
+    who = {"character_id": int(character_id)} if character_id else {}
     state.action_log.append({
         "tick": state.tick_id,
-        "action": {"type": "pass_turn", "reason": reason},
+        "action": {"type": "pass_turn", "reason": reason, **who},
     })
     return _ok("pass_turn", state, {
         "action": "pass_turn",
         "reason": reason or "maintaining stability",
+        **who,
     })
 
 
@@ -2448,7 +2537,68 @@ async def observe(
     err = await _ensure_connected(_get_state(), "observe")
     if err:
         return err
-    return await redesign.observe_impl(await _gateway_now(), character_id=character_id, depth=depth)
+    gw = await _gateway_now()
+    # v3 §7.5: the seat is a LINEAGE. At the seat's cycle entry, witness a
+    # handoff the bridge made, make the rebind explicitly when it could not,
+    # or end the seat `lost`; rows go to CK3_SEAT_LINEAGE_OUT. INERT unless
+    # that env is set (the public product sets nothing).
+    _sink = seat_lineage.armed()
+    if _sink:
+        _st = _get_state()
+        _st.seat_lineage_prior = await seat_lineage.step(
+            gw, _st.seat_lineage_prior, sink=_sink,
+            seat_session_id=os.environ.get("CK3_SESSION_ID"),
+            registered_title=seat_lineage.registered_title_from_env(),
+            own_session_id=redesign.own_session_id, own_session_row=redesign.own_session_row)
+    env = await redesign.observe_impl(gw, character_id=character_id, depth=depth)
+    if _CHANNEL is not None and _CHANNEL.enabled:
+        env = await _deliver_inbox(gw, env)
+    return env
+
+
+async def _deliver_inbox(gw, env: dict[str, Any]) -> dict[str, Any]:
+    """Section 5.2 delivery: the inbox rides on the recipient's next observe as
+    `result.messages[]`, and this observe's clock stamps each one read. THE
+    ONLY CALLER OF channel.deliver. When the ledger cannot be reached the
+    field is ABSENT and a warning names why — never an empty list, which would
+    read as "nothing was sent"."""
+    try:
+        if _CHANNEL.seat_refusal():
+            raise RuntimeError(f"{_CHANNEL.seat_refusal()}: this process has no "
+                               f"{_channel.ENV_SEAT}, so it cannot be a recipient")
+        ledger = await _seat_ledger(gw)
+        if ledger is None:
+            raise RuntimeError("no episode id from the environment or the bridge")
+        game = gw.game()
+        env.setdefault("result", {})["messages"] = _channel.deliver(
+            _CHANNEL, ledger, game_date=game.get("date"), tick=game.get("tick"),
+            cycle=_SEAT.cycles.cycle)
+    except Exception as exc:                                    # noqa: BLE001
+        env.setdefault("warnings", []).append(
+            {"code": _channel.W_UNREAD,
+             "detail": f"the channel ledger could not be read: {type(exc).__name__}: {exc}"})
+    return env
+
+
+async def _seat_ledger(gw) -> Optional["_channel.Ledger"]:
+    """This seat's ledger for the running episode, or None when no episode id
+    can be resolved (the environment's, else get_tick_info's pipeline.episode_id,
+    the id `actions.jsonl` rows carry)."""
+    eid = _SEAT.episode_id
+    if not eid:
+        eid = _SEAT.resolve_episode_id(os.environ, await gw.read("get_tick_info", {}))
+    if not eid:
+        return None
+    return _channel.Ledger(_channel.ledger_path(eid, os.environ), episode_id=eid,
+                           instance_id=_instance_id())
+
+
+def _instance_id() -> str:
+    try:
+        import instance as _inst
+        return _inst.current_id(os.environ)
+    except Exception:                                           # noqa: BLE001
+        return ""
 
 
 @mcp.tool()
@@ -2458,11 +2608,15 @@ async def plan_war(character_id: int = 0, goal_scoped: bool = True,
     """"What is my single best next war?" Returns a RANKED list of targets that are
     ALREADY declarable, ally-free, and goal-advancing — each row carries a `declare_args`
     object you pass to declare_war VERBATIM. You never name a casus_belli string or hunt
-    a claimant. Each row passed the game's own declare-war check for that target.
+    a claimant. Each row passed the game's own declare-war check for that target. A claim
+    CB is offered only on a pressed claim (`claim_pressed: true`, with the claimed title
+    and the claimant); an unpressed claim is listed in `excluded` as claim_not_pressed.
     Empty list ⇒ `empty_reason` names the commonest
     `excluded` gate with its count (all gates in `measured.by_gate`), and in `fix` the
     parameter that would admit those rows (exclude_straddling=False with
     confirm_straddle on the declare; ally_free_only=False) when one would.
+    `empty_reason.times` counts the consecutive calls that gave this ruler the same
+    reason for the same arguments, and `unchanged_since` is the game date of the first.
 
     Each row carries `strength` (your and the target's military strength, with allies,
     and their ratio, read from the game), `score` (de-jure counties gained x that ratio,
@@ -2492,7 +2646,7 @@ async def plan_war(character_id: int = 0, goal_scoped: bool = True,
 @mcp.tool()
 async def declare_war(character_id: int = 0, declare_args: dict = None,
                       target_id: int = 0, cb: str = "", cb_title_id: int = 0,
-                      claimant_id: int = 0, confirm_straddle: bool = False) -> dict[str, Any]:
+                      claimant_id: Optional[int] = 0, confirm_straddle: bool = False) -> dict[str, Any]:
     """Declare ONE war. Pass a plan_war row's `declare_args` verbatim (or the fields
     explicitly). The only irreversible high-stakes act with its own verb so it cannot
     fire by accident. Reads the war list back after dispatch: the bridge runs the
@@ -2509,6 +2663,8 @@ async def declare_war(character_id: int = 0, declare_args: dict = None,
         character_id: aggressor (0 = controlled primary).
         declare_args: a plan_war row's declare_args dict (preferred path).
         target_id / cb / cb_title_id / claimant_id: escape-hatch fields if no declare_args.
+            claimant_id null (as a plan_war row writes it for a CB without a claimant)
+            is the same as 0: no claimant.
         confirm_straddle: HARD GUARD — refuses a near-death-straddling war unless true.
     """
     err = await _ensure_connected(_get_state(), "declare_war")
@@ -2516,7 +2672,7 @@ async def declare_war(character_id: int = 0, declare_args: dict = None,
         return err
     return await redesign.declare_war_impl(await _gateway_now(), character_id=character_id,
                                             declare_args=declare_args, target_id=target_id,
-                                            cb=cb, cb_title_id=cb_title_id, claimant_id=claimant_id,
+                                            cb=cb, cb_title_id=cb_title_id, claimant_id=claimant_id or 0,
                                             confirm_straddle=confirm_straddle)
 
 
@@ -2556,7 +2712,9 @@ async def set_phase(
     """Assert your strategic posture by NAME instead of hand-tuning nine integers.
     phase=None reads the current genome and names the phase whose genome the engine
     holds (result.phase; null when none matches). Nothing re-applies it after a succession:
-    call it again for the heir.
+    call it again for the heir. `result.lock_state` is the bridge's word on the write
+    (live: held against the AI's rewrites; quarantined or none: not held, and a
+    warning says so); observe carries the same field under posture.genome.
 
     Each call writes, for the ruler: the personality axes, and set_character_ai,
     re-enabling the native AI tick. No phase arms an experimental flag.
@@ -2616,9 +2774,12 @@ async def do(
         intent: one of the enum. The war intents, for a war's leader or an ally:
                 make_peace (args={"war_id", "terms": white_peace | surrender |
                 enforce_demands}) sends the peace from your side; the enemy's own
-                acceptance decides white peace and enforced demands, a surrender is
-                always taken; applied means the war ended, with its outcome and your
-                gold/prestige before and after. call_ally (args={"war_id", "ally_id"})
+                acceptance decides white peace and enforced demands. A surrender is
+                always taken and is your DEFEAT: the game charges the casus belli's
+                penalty (prestige, often gold; 2026.11 pilots: 15-350 prestige, up to
+                590 gold), and the reply warns surrender_is_your_defeat. A stalled war
+                that costs nothing is cheaper left open. applied means the war ended,
+                with its outcome and your gold/prestige before and after. call_ally (args={"war_id", "ally_id"})
                 calls an ally into a war you lead; join_war (args={"war_id",
                 "leader_id"}) joins an ally's war on the side he leads (leader_id
                 defaults to the ally who leads it); applied means the joiner is in the
@@ -2634,7 +2795,11 @@ async def do(
                       recruit cost and fielded_regiments; 30 rows, fielded first then
                       cheapest, or pass candidates=[types]. laws: the other laws in each
                       law group you have; whether a change is allowed now is decided when
-                      change_law runs. council_task takes args.seat optionally; a task
+                      change_law runs. fabricate_targets: the titles the court
+                      chaplain's task_fabricate_claim can take (the door for a claim on a
+                      title; the generate_claim scheme is refused); an empty list warns
+                      fabricate_targets_empty, naming the seat it used and the bridge's
+                      counts. council_task takes args.seat optionally; a task
                       belongs to ONE seat (task_fabricate_claim is the court chaplain's), a
                       seat that cannot take it is refused, and every reply names the seat
                       and councillor used. buildings: the game's building types (40
@@ -2679,7 +2844,11 @@ async def inspect(
     designate heir); guardian and projected_adult_martial read NULL because no bridge
     read exposes them. `guardian_candidates` lists in-court guardian prospects for a
     child with their martial, and the global high-martial pool to invite. `war_stance` is each war's side, stance and occupation
-    with a stall verdict. `pending` lists the writes still queued in the bridge and the
+    with a stall verdict; an attacker inferred not sieging carries the limitation
+    war_stalled_no_lever (the AI sieges only above 1.33x the enemy's strength, which no
+    axis or phase moves; calling allies is the lever), and `exit_lever.surrender_cost`
+    says a surrender is your defeat. `war_score` without war_id is your own wars
+    (get_active_wars), with war_id that one war. `pending` lists the writes still queued in the bridge and the
     outcomes of the ones that drained (match a do reply's pending.intent_id): the
     bridge keeps the verdicts of the last 128 drained writes (reads are never kept), a
     129th drops the oldest (that token is then found only by a read-back), and the
@@ -2735,7 +2904,7 @@ async def session(
     ] = "",
     character_id: int = 0, speed: int = redesign.SPEED_MAX,
     enabled: Optional[bool] = None, disable_native_ai: bool = False,
-    flag: str = "", seconds: int = 60) -> dict[str, Any]:
+    flag: str = "", seconds: int = 60, game_days: int = 0) -> dict[str, Any]:
     """Game-flow, identity, and liveness control — and the ONLY tool that changes the
     clock: no other tool pauses, unpauses or sets speed, and every other tool works with
     the game paused or running. Use it to: switch which ruler you control after a
@@ -2748,7 +2917,15 @@ async def session(
     wait: the way to let time pass between cycles. Unpauses if paused, blocks for
     `seconds` (1-110; longer waits are several calls), pauses again, and returns
     start_date/end_date. Do not use Bash `sleep` for this: Claude Code refuses sleeps
-    of 30 s or more.
+    of 30 s or more. With `game_days` > 0 the wait is measured in GAME-DAYS instead:
+    the server repeats bounded waits (each at most `seconds`, planned from the clock
+    rate it measures) until the game date has advanced that many days since the call
+    began, and reports game_days_advanced, calls and why it stopped; seconds are not
+    the unit, because the clock's rate depends on the host and the seat count. Under
+    a registered cadence (CK3_CYCLE_GAME_DAYS) an ask above it is refused
+    (cycle_game_days_over_cadence), never clamped. Under a registered horizon
+    (CK3_EPISODE_HORIZON_END) a wait made at or past it is refused (horizon_reached):
+    the episode is over; pause and report.
 
     With no ruler bound, whoami returns ok=false, blocked.gate='no_ruler_bound',
     controlled=null, and blocked.measured.unbound_reason says why ('heir_is_player':
@@ -2783,98 +2960,96 @@ async def session(
             a call without it is refused, invalid_argument).
         disable_native_ai: for control and add.
         flag: for set_experimental — one of session(action='experimental_flags').
-        seconds: for wait — how long to let the clock run, 1-110 (default 60).
+        seconds: for wait — how long to let the clock run, 1-110 (default 60); with
+            game_days, the longest single wait of the loop.
+        game_days: for wait — let the clock run until the date has advanced this many
+            game-days (0 = wait `seconds` once). Capped by the registered cycle
+            cadence when one is set.
     """
     err = await _ensure_connected(_get_state(), "session")
     if err:
         return err
-    return await redesign.session_impl(await _gateway_now(), action=action, character_id=character_id,
-                                        speed=speed, enabled=enabled, disable_native_ai=disable_native_ai,
-                                        flag=flag, seconds=seconds)
+    env = await redesign.session_impl(await _gateway_now(), action=action, character_id=character_id,
+                                      speed=speed, enabled=enabled, disable_native_ai=disable_native_ai,
+                                      flag=flag, seconds=seconds, game_days=game_days)
+    # Study 0 (channel): the seat's cycle, the unit the send quota is keyed on
+    # (cycle_cadence.CycleCounter: the registered cadence in game-days across
+    # the waits that waited, or every such wait in free play). Counted whether
+    # or not a channel is registered, so the count is the same fact in every arm.
+    _SEAT.cycles.note(action, env)
+    return env
 
 
-# ===========================================================================
-# ck-6kvq.12 (R4) — THE SHARED BOARD, ARM-GATED (decision G5, option A2)
-# ===========================================================================
-# These two tools are REGISTERED ONLY IN ARM B. In arms A, C and E0 — and in
-# free play — the decorator is never applied, `list_tools` does not mention a
-# board, and the system prompt has nothing to say about one. That is what "no
-# channel" means in ordinary language, and it is the manipulation itself: the
-# tool-surface delta between A and B is exactly these two names, named as such
-# in the pre-registration rather than hidden inside the held-constant list.
-#
-# The bridge enforces the same gate independently (board.cpp's
-# `board_init_from_env` + the arm gate in dispatch_action /
-# is_registered_action), so even a hand-rolled client calling `board_post` in
-# arm A gets `unknown_action`. This half exists so the agent never SEES a tool
-# it would then be refused — surface and wire agree because both read the same
-# episode config.
+# ---------------------------------------------------------------------------
+# msg_send — pre-registration v3 section 5.2 (Study 0, channel lane)
+# ---------------------------------------------------------------------------
 
-
-async def board_post(text: str) -> dict[str, Any]:
-    """Post one message to the shared board every English lord can read.
-
-    APPEND-ONLY: there is no edit, no delete and no reply threading. Your post
-    is stamped by the bridge with who you are, which character you speak for,
-    the in-game date and the flush it executed in — you cannot set any of those
-    and you do not need to. A post longer than 2,048 bytes (about 300 words) is
-    refused, not shortened, and there is a per-flush limit, so say the thing that
-    changes someone else's decision rather than narrating.
+async def msg_send(to: str, text: str) -> dict[str, Any]:
+    """Send a short message to another steered ruler's seat. `to` is a seat label
+    (`K` for the king, `D1`..`Dn` for the dukes). Who you may write to is fixed
+    for this game: a recipient outside the table is refused `topology_denied`.
+    You may send at most the declared number of messages per cycle (a cycle ends
+    when your session(action='wait') calls have carried the game date the
+    registered cadence past the cycle's start); the next is refused `quota_exceeded`. A text
+    over the declared byte bound is refused `text_too_long`, never truncated.
+    Every attempt, delivered or refused, is written to the episode's ledger.
+    Messages reach the recipient inside its next observe (`result.messages[]`).
+    There is no broadcast: to reach several seats, send several messages.
 
     Args:
-        text: what you want the other lords to read.
+        to: the recipient's seat label.
+        text: the message, at most the declared number of UTF-8 bytes.
     """
-    err = await _ensure_connected(_get_state(), "board_post")
+    state = _get_state()
+    err = await _ensure_connected(state, "msg_send")
     if err:
         return err
-    # ck-2r46. `BridgeGateway` HAS NO `call`. Its public surface is
-    # read / write / read_many / confirmed_write, with `_dispatch` private —
-    # and this line said `.call`, so
-    # every board post in the deploy-40 arm-B smoke failed with
-    # "'BridgeGateway' object has no attribute 'call'". The board tools had
-    # never been registered in a live seat before ck-2r46's arm fix, so this
-    # path had never executed. Same shape as the seal-time `self.client`
-    # fault: a method named on an object that does not have it, on a line no
-    # row drove.
-    #
-    # WRITE, NOT READ, and the bridge is the authority for why. snapshot.cpp
-    # lists board_post as bridge-internal, so it is served INLINE and never
-    # handed to the game-thread drain — but its own comment records that
-    # `board_post` still classifies as TICK_WRITE in classify_polarity(),
-    # because a post "is buffered and executed in a flush like any other
-    # write (§3.2), and carries the same flush_id as the actions around it".
-    # A post is a mutation that goes through the flush, so it takes the write
-    # path (the action path, full response), as every write does.
     gw = await _gateway_now()
-    return redesign.raw_reply_envelope("board_post", await gw.write("board_post", {"text": text}),
-                                        game=gw.game(), bridge_health=gw.health)
+    if _CHANNEL is None or not _CHANNEL.enabled:
+        return _blocked("msg_send", state, _channel.GATE_UNAVAILABLE,
+                        "this seat's arm declares no channel")
+    if _CHANNEL.seat_refusal():
+        return _blocked("msg_send", state, _channel.GATE_UNAVAILABLE,
+                        f"{_CHANNEL.seat_refusal()}: this process has no "
+                        f"{_channel.ENV_SEAT}, so it is nobody's seat and nothing "
+                        "was sent", measured={"reason": _CHANNEL.seat_refusal()})
+    ledger = await _seat_ledger(gw)
+    if ledger is None:
+        return _blocked("msg_send", state, _channel.GATE_UNAVAILABLE,
+                        "no episode id: neither CK3_EPISODE_ID nor the bridge's "
+                        "get_tick_info pipeline.episode_id names the episode, so "
+                        "there is no ledger to write to; nothing was sent")
+    game = gw.game()
+    row = _channel.attempt(_CHANNEL, ledger, to=str(to or ""), text=str(text or ""),
+                           game_date=game.get("date"), tick=game.get("tick"),
+                           cycle=_SEAT.cycles.cycle)
+    shown = {k: row[k] for k in ("msg_id", "sender", "recipient", "cycle", "bytes",
+                                 "text_sha256", "verdict", "game_date", "tick")}
+    if row["verdict"] == _channel.V_DELIVERED:
+        return redesign.envelope("msg_send", verdict="applied", result=shown,
+                                 game=game, bridge_health=gw.health)
+    detail = {
+        _channel.V_TOPOLOGY_DENIED: (
+            f"{_CHANNEL.seat} may not write to {row['recipient']!r} under the "
+            f"{_CHANNEL.topology} topology (seats: {', '.join(_CHANNEL.seats)})"),
+        _channel.V_TEXT_TOO_LONG: (
+            f"{row['bytes']} bytes exceeds the declared bound of "
+            f"{_CHANNEL.max_text_bytes}; nothing was sent and nothing truncated"),
+        _channel.V_QUOTA_EXCEEDED: (
+            f"{_CHANNEL.quota_per_cycle} messages were already delivered in cycle "
+            f"{row['cycle']}; the quota resets when your session(action='wait') calls have "
+            "carried the game date past this cycle's boundary"),
+    }[row["verdict"]]
+    return redesign.envelope("msg_send", ok=False, verdict="rejected", result=shown,
+                             blocked=redesign.why_blocked(row["verdict"], summary=detail),
+                             game=game, bridge_health=gw.health)
 
 
-async def board_read(since_seq: int = 0, limit: int = 0) -> dict[str, Any]:
-    """Read the shared board. Returns every post with seq >= since_seq.
-
-    Pass back the `next_seq` you were last given to see only what is new; pass
-    0 to read the board from the beginning. Each post carries its author's
-    session, the character they speak for, the in-game date, and the flush it
-    landed in, so "who said what, when" is not a matter of trust.
-
-    Args:
-        since_seq: resume cursor; 0 reads from the start.
-        limit: max posts to return (0 = the server's page size).
-    """
-    err = await _ensure_connected(_get_state(), "board_read")
-    if err:
-        return err
-    # ck-2r46, as above: `.call` does not exist. A read takes `read()`.
-    gw = await _gateway_now()
-    res = await gw.read("board_read", {"since_seq": int(since_seq), "limit": int(limit)})
-    return redesign.raw_reply_envelope("board_read", res, game=gw.game(),
-                                        bridge_health=gw.health)
-
-
-if _board_enabled():
-    mcp.add_tool(board_post)
-    mcp.add_tool(board_read)
+# REGISTERED ONLY UNDER A DECLARED TOPOLOGY OTHER THAN `none` (section 5.1): in
+# E0, K1 and free play the name is absent from list_tools, not present-and-
+# refused (the ruling the deleted arm.py recorded, G5 option A2, carried).
+if _CHANNEL is not None and _CHANNEL.enabled:
+    mcp.add_tool(msg_send)
 
 
 def registered_tool_definitions() -> list[dict]:
@@ -2913,10 +3088,10 @@ def _write_tool_surface_record() -> None:
 
     ck-3ron graded the arm's tool surface from the CLI's `init` event, and in
     registered-d45 slot 2 that event listed 15 tools where the seat had 17 —
-    the two absent being `board_post` and `board_read`, which are registered
-    LAST, immediately above. All six seats were refused `arm_tools_absent`, and
-    all six then used both tools: 60 board posts from 6 sessions. A false
-    refusal of a functioning treatment costs a slot and leaves the seats running.
+    the two absent being the ones registered LAST (the CLI defers schemas, so
+    its init list can be short of the real surface). All six seats were refused
+    `arm_tools_absent` for tools they had. A false refusal of a functioning seat
+    costs a slot and leaves the seats running.
 
     So the surface is written down by the process that decided it. The witness
     reads this and keeps the init list beside it as a second, weaker reading.
@@ -2970,7 +3145,6 @@ def _write_tool_surface_record() -> None:
             "written_utc": _dt.datetime.now(_dt.timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"),
             "arm": (os.environ.get("CK3_EPISODE_ARM") or "").strip().lower(),
-            "board_enabled": bool(_board_enabled()),
             "enumerated_via": via,
             "tools": names,
             "schemas_via": schemas_via,

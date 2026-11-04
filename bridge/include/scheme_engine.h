@@ -25,6 +25,15 @@ uintptr_t scheme_type_by_name(const std::string& key);
 // has only ever started with a real contract or artifact this process.
 const char* scheme_bridge_refusal(uintptr_t type_ptr, const std::string& key);
 
+// "scheme_type_targets_a_title" when the type's target is not a character
+// (scheme_type::TARGET_TYPE != 0: a title, culture, faith or nothing), else
+// nullptr. The bridge starts and checks character-target schemes only; the start
+// (execute_scheme_intent) and the check (execute_scheme_check_intent) refuse
+// through this one reader, so do(scheme start) and discover(scheme_targets) name
+// the same door (L18 round 2: generate_claim's start was refused
+// engine_refused_can_start_scheme, its check scheme_type_targets_a_title).
+const char* scheme_target_refusal(uintptr_t type_ptr);
+
 // The engine's scheme_success_chance (funcs::SCHEME_GET_SUCCESS_CHANCE), in percent
 // (its int64 fixed-point / 100000). False when the call could not be made or
 // faulted; every emitter then writes success_chance: null.

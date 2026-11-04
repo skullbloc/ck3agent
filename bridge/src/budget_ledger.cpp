@@ -384,8 +384,6 @@ bool budget_gate_applies(const char* action_type,
     static const char* kAlways[] = {
         "report_usage", "set_budget_config", "get_budget_state",
         "check", "cancel", "handshake",
-        // R4's board: reading the board is how a spent agent stays in the arm.
-        "board_read",
         // Session-activity verbs (§2.7's record; turn_done itself is retired).
         "turn_done", "end_turn",
     };
