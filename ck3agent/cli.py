@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -15,6 +16,7 @@ import sys
 import threading
 import time
 import tomllib
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,6 +49,10 @@ MCP_ALWAYS_LOAD = {"alwaysLoad": True}
 RELEASES_URL = "https://github.com/skullbloc/ck3agent/blob/main/docs/supported-versions.md"
 CK3_EXAMPLE = '"$HOME/.local/share/Steam/steamapps/common/Crusader Kings III/binaries/ck3"'
 CONTINUE_WAIT = 120
+#: The default wait when the game directory's shader cache is empty: CK3 compiles
+#: it on its first start there (about 590 MB; the 2026.12.1 node smoke's first
+#: load ran past 120 s while still compiling).
+FIRST_LOAD_WAIT = 600
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 VERSION_LINE = (f"ck3agent {__version__} (CK3 {SUPPORTED_GAME_VERSION} {SUPPORTED_PLATFORM}, "
                 f"BuildID {SUPPORTED_BUILD_ID})")
@@ -523,12 +529,50 @@ def prepare_game_dir(owner: Path, dst: Path) -> Path:
     return dst
 
 
+#: The keys CK3 reads from continue_game.json under --continuelastsave, each
+#: with no check that it is there: the reader (ck3+0x75b3dc0) looks up `title`,
+#: `desc` and `date` and takes each value's string at +0x20, so a missing key
+#: is a read of address 0x20 (ck3+0x80a6090) and the game dies before its main
+#: menu. A pointer of `title` alone crashed 2026.12.1's every launch (node
+#: smoke18; re/findings/re_userdir.md "The smoke18 crash").
+CONTINUE_POINTER_KEYS = ("title", "desc", "date")
+
+
+def complete_pointer(d: dict, title: str | None = None) -> tuple[dict, list[str]]:
+    """continue_game.json content CK3 can read: D with every CONTINUE_POINTER_KEYS
+    key a string. TITLE (a newly staged save) replaces the title and the two
+    fields that describe it. Returns (pointer, the keys filled in)."""
+    out = dict(d)
+    filled: list[str] = []
+    if title is not None:
+        out.update(title=title, desc=title, date=time.strftime("%Y-%m-%d %H:%M:%S"))
+    if not isinstance(out.get("title"), str) or not out["title"]:
+        raise ValueError("continue_game.json names no save; pass --save PATH")
+    if not isinstance(out.get("desc"), str):
+        out["desc"] = out["title"]
+        filled.append("desc")
+    if not isinstance(out.get("date"), str):
+        out["date"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        filled.append("date")
+    return out, filled
+
+
+def repair_pointer(ptr: Path) -> list[str]:
+    """Fill the keys CK3 needs into the launched game's existing pointer (one
+    2026.12.1 wrote holds only `title`). Returns the keys filled; [] if none."""
+    pointer, filled = complete_pointer(_load_json(ptr))
+    if filled:
+        _write_json(ptr, pointer)
+    return filled
+
+
 def stage_save(path: Path) -> tuple[Path, str]:
     """Make PATH the save --continuelastsave loads in the launched game's own
     tree. Returns (save, sha256). PATH is copied there; it is never written.
 
     The game follows the `title` in continue_game.json, not file mtimes, so the
-    game tree's pointer is rewritten. The user's own pointer is not touched.
+    game tree's pointer is rewritten, with every key CK3 reads from it
+    (CONTINUE_POINTER_KEYS). The user's own pointer is not touched.
     """
     src = path.expanduser().resolve()
     if not src.is_file() or src.suffix != ".ck3":
@@ -549,8 +593,7 @@ def stage_save(path: Path) -> tuple[Path, str]:
         d = _load_json(ptr)
     except ValueError:
         d = {}
-    d["title"] = dst.stem
-    _write_json(ptr, d)
+    _write_json(ptr, complete_pointer(d, dst.stem)[0])
     return dst, sha256(dst)
 
 
@@ -579,6 +622,114 @@ def _debug_log_hint() -> None:
     con.note(f"game log: {cfg.game_debug_log()}")
 
 
+def shader_cache_empty(game_dir: Path) -> bool:
+    """True when the game directory has no compiled shaders yet (a first start there)."""
+    d = game_dir / "shadercache"
+    try:
+        return not any(d.iterdir())
+    except OSError:
+        return True
+
+
+def launch_wait(no_wait: bool, wait: int | None, cont: bool, first_load: bool) -> int:
+    """Seconds `launch` waits for the game: --wait, else FIRST_LOAD_WAIT for a
+    --continue whose shader cache is still to be built, else CONTINUE_WAIT."""
+    if no_wait:
+        return 0
+    if wait is not None:
+        return wait
+    if not cont:
+        return 0
+    return FIRST_LOAD_WAIT if first_load else CONTINUE_WAIT
+
+
+#: The game's own log line for each screen it enters ("Setting idler 'Frontend'").
+_IDLER = re.compile(r"Setting idler '([^']+)'")
+
+#: How far a debug.log's mtime may sit before the launch and still be this
+#: launch's: the kernel stamps files from a coarse clock that can trail
+#: time.time() by a tick. A previous run's log is minutes or days older.
+LOG_CLOCK_SLACK = 2.0
+
+
+@dataclass(frozen=True)
+class GameStage:
+    """What the game's debug.log says about this launch. kind is one of:
+    "unreadable" (no log, or it cannot be read; `why` says which),
+    "stale" (the log was last written before this launch: a previous run's),
+    "no_idler" (this launch's log names no screen yet),
+    "idler" (the last screen this launch entered, verbatim in `idler`)."""
+    kind: str
+    idler: str = ""
+    why: str = ""
+
+
+def game_stage(log: Path, launched: float) -> GameStage:
+    """The last screen the game's debug.log says it entered since LAUNCHED (epoch s)."""
+    try:
+        mtime = log.stat().st_mtime
+        text = log.read_text(errors="replace")
+    except OSError as e:
+        return GameStage("unreadable", why=e.strerror or str(e))
+    if mtime < launched - LOG_CLOCK_SLACK:
+        return GameStage("stale")
+    hits = _IDLER.findall(text)
+    return GameStage("idler", hits[-1]) if hits else GameStage("no_idler")
+
+
+def not_active_hint(stage: GameStage, first_load: bool, log: Path, cont: bool = True) -> str:
+    """What a launch that timed out (socket not up, or game not active) should tell
+    the user. CONT: the launch asked the game to load a save (--continue/--save)."""
+    ready = "`ck3agent doctor` says when it is ready."
+    if stage.kind == "unreadable":
+        return (f"The game's log {log} could not be read ({stage.why}), so what CK3 is doing is "
+                f"not known. Leave it running; {ready}")
+    if stage.kind == "stale":
+        return (f"The game's log {log} predates this launch (CK3 has not written to it yet), so "
+                f"it does not say what this game is doing. Leave it running; {ready}")
+    if stage.kind == "no_idler":
+        why = ("the first start in this game directory compiles the shader cache, which takes "
+               "minutes" if first_load else "the game has not reached its main menu yet")
+        return f"CK3 is still loading ({why}). Leave it running; {ready}"
+    if stage.idler == "Frontend":
+        if not cont:
+            return "CK3 is at its main menu."
+        return ("CK3 is at its main menu: the save did not load. A player save needs a click "
+                "on Continue in the game window; otherwise see the game log.")
+    if stage.idler == "In Game":
+        return "CK3 is in game, but the bridge did not report it active. `ck3agent doctor` says why."
+    if stage.idler == "Load Save":
+        return f"CK3 is loading the save. {ready}"
+    return f"CK3's last screen in its log is '{stage.idler}'. {ready}"
+
+
+def busy_socket_lines(sock: str, holders: list[tuple[int, str]]) -> tuple[str, list[str]]:
+    """The refusal when a bridge socket already answers: (detail, notes), naming its holders.
+
+    Only a holder whose executable was READ as something other than `ck3` gets
+    the note to end it. One whose executable could not be read is named as
+    unidentified; a running game whose binary was replaced on disk reads as
+    `.../ck3 (deleted)` and is still the game.
+    """
+    if not holders:
+        return f"{sock}: another CK3 with the bridge is running (its process is not visible here)", []
+    detail = f"{sock}: held by " + ", ".join(f"pid {pid} ({exe})" for pid, exe in holders)
+    notes: list[str] = []
+    game = False
+    for pid, exe in holders:
+        if exe == br.UNKNOWN_EXE:
+            notes.append(f"pid {pid} could not be identified (its executable is not readable "
+                         "here); check what it is before ending it.")
+        elif Path(exe.removesuffix(" (deleted)")).name == "ck3":
+            game = True
+        else:
+            notes.append(f"pid {pid} is not CK3: a process a crashed game started (its crash "
+                         f"reporter) kept the socket open. End it (kill {pid}) and launch again.")
+    if game:
+        notes.append("another CK3 with the bridge is running")
+    return detail, notes
+
+
 def cmd_launch(a: argparse.Namespace) -> int:
     c = cfg.Config.load()
     binary = cfg.resolve("ck3_binary", c, a.ck3).path
@@ -596,7 +747,10 @@ def cmd_launch(a: argparse.Namespace) -> int:
         return 1
     sock = br.socket_path()
     if br.alive(sock):
-        con.fail("a bridge is already listening", f"{sock}: another CK3 with the bridge is running")
+        detail, notes = busy_socket_lines(sock, br.socket_holders(sock))
+        con.fail("a bridge is already listening", detail)
+        for n in notes:
+            con.note(n)
         return 1
 
     if any(x.lstrip("-").startswith("userdir") for x in a.game_args):
@@ -609,7 +763,6 @@ def cmd_launch(a: argparse.Namespace) -> int:
                  "set XDG_STATE_HOME to one without")
         return 1
     cont = a.cont or bool(a.save)
-    wait = 0 if a.no_wait else (a.wait if a.wait is not None else (CONTINUE_WAIT if cont else 0))
     record = {"launched_utc": _now_utc(), "binary": str(binary), "bridge": str(bridge),
               "game_user_dir": str(gdir)}
     try:
@@ -621,10 +774,29 @@ def cmd_launch(a: argparse.Namespace) -> int:
             save, digest = stage_save(src)
             con.ok("save staged", f"{save} (sha256 {digest[:12]})")
             record["save"], record["save_sha256"] = str(save), digest
+        elif cont or (gdir / "continue_game.json").exists():
+            # Every launch, not only --continue: the main menu's Continue may read
+            # the same pointer, and a title-only one 2026.12.1 left behind crashes
+            # its reader (re_userdir.md). A plain launch loads no save, so a
+            # pointer naming none is left as it is there.
+            try:
+                filled = repair_pointer(gdir / "continue_game.json")
+            except ValueError:
+                if cont:
+                    raise
+                filled = []
+            if filled:
+                con.ok("continue_game.json repaired", f"added {', '.join(filled)} (CK3 crashes on load "
+                       "without them)")
     except (ValueError, OSError) as e:
         con.fail("--save" if a.save else "game directory", str(e))
         return 1
     con.ok("game directory", f"{gdir} (saves land in its save games/)")
+    first_load = shader_cache_empty(gdir)
+    wait = launch_wait(a.no_wait, a.wait, cont, first_load)
+    if first_load and cont:
+        con.note(f"first start in this game directory: CK3 builds its shader cache (about 600 MB, "
+                 f"several minutes); waiting up to {wait}s")
 
     env, notes = launch_env(os.environ, bridge, a.allow_unsupported, a.native_wayland)
     for n in notes:
@@ -633,6 +805,7 @@ def cmd_launch(a: argparse.Namespace) -> int:
     logs = _logs_dir()
     logs.mkdir(parents=True, exist_ok=True)
     out = logs / f"ck3-{datetime.now():%Y%m%d-%H%M%S}.log"
+    launched = time.time()
     with out.open("wb") as fh:
         proc = subprocess.Popen(argv, cwd=binary.parent, env=env, stdout=fh, stderr=subprocess.STDOUT,
                                 start_new_session=True)
@@ -660,10 +833,15 @@ def cmd_launch(a: argparse.Namespace) -> int:
             _debug_log_hint()
             return 1
         con.warn("bridge socket not up", f"after {wait}s. `ck3agent doctor` shows why.")
+        log = cfg.game_debug_log()
+        con.note(not_active_hint(game_stage(log, launched), first_load, log, cont))
         _debug_log_hint()
         return EXIT_TIMEOUT
     if cont:
         rc = br.wait_for_active(sock, deadline, proc, pause=not a.no_pause)
+        if rc == EXIT_TIMEOUT:
+            log = cfg.game_debug_log()
+            con.note(not_active_hint(game_stage(log, launched), first_load, log))
         if rc:
             _debug_log_hint()
         return rc
@@ -1534,11 +1712,13 @@ def build_parser() -> argparse.ArgumentParser:
         "autosaves and logs land there. Your own CK3 saves are read, never written."))
     s.add_argument("--continue", dest="cont", action="store_true",
                    help=f"load the save the launched game played last (the first time: a copy of the "
-                        f"save your CK3 played last); waits {CONTINUE_WAIT}s and dismisses the observe prompt")
+                        f"save your CK3 played last); waits {CONTINUE_WAIT}s ({FIRST_LOAD_WAIT}s on the first start) "
+                        f"and dismisses the observe prompt")
     s.add_argument("--save", metavar="PATH",
                    help="copy this .ck3 into the game directory and load it (implies --continue)")
     s.add_argument("--wait", type=int, metavar="SECS",
-                   help=f"wait up to SECS for the game (default {CONTINUE_WAIT} with --continue, else 0)")
+                   help=f"wait up to SECS for the game (default with --continue: {CONTINUE_WAIT}, "
+                        f"{FIRST_LOAD_WAIT} on the first start in the game directory; else 0)")
     s.add_argument("--no-wait", action="store_true", help="return as soon as CK3 starts")
     s.add_argument("--no-pause", action="store_true",
                    help="leave the clock running once the game is active (default: pause it)")

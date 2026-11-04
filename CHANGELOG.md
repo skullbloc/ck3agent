@@ -3,7 +3,68 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.2 — 2026-11-04
+
+A hotfix for `ck3agent launch`. In 2026.12.1, every `--save` and `--continue`
+launch that got past loading the history crashed CK3 about 17 seconds later,
+because the `continue_game.json` it wrote held only `title`; `launch` now
+writes the three keys CK3 reads and repairs a file 2026.12.1 left behind. The
+first launch in a new game directory waits up to 600 s, not 120 s, while CK3
+builds its shader cache, and a wait that runs out says what the game's log
+shows. A crashed game's CrashReporter no longer keeps the bridge socket
+answering, and the refusal names the process that holds it. Nothing else
+changed: the surface is still thirteen tools.
+
+* **`ck3agent launch --save` and `--continue` no longer crash the game while
+  it loads.** In 2026.12.1 every `--save` and `--continue` launch that got
+  past "End loading of history" died about 17 seconds later, before the main
+  menu (four of four in the node smoke; SIGSEGV at ck3+0x80a6090, address
+  0x20). The cause was the `continue_game.json` that `launch` wrote into the
+  game's new directory: it held only `title`. Before the menu, CK3 reads
+  `title`, `desc` and `date` from that file and does not check that each one
+  is there, so the missing `desc` was a read of address 0x20. The
+  `-userdir=` switch was not the cause. The plain game binary with no bridge
+  reaches the game with `-userdir=` and a complete file, and crashes at the
+  same address with a `title`-only one. `launch` now writes all three keys:
+  `title` and `desc` are the save's name, and `date` is the time it was
+  staged. A plain launch (no `--continuelastsave`) was not run on 2026.12.1,
+  so whether it crashed too is not known. If a game directory that 2026.12.1
+  left behind has a `title`-only file, every `launch` (with or without
+  `--continue`) adds the two missing keys and says `continue_game.json
+  repaired`; `--save` writes the file whole.
+* **The first launch in a new game directory waits long enough.** That game
+  directory has no shader cache yet, and CK3 spends minutes building one
+  (about 600 MB). The 120 s default ran out while the game was still
+  compiling, and the warning told the user to click Continue. `--continue`
+  and `--save` now wait up to 600 s when the shader cache is empty, and say
+  so. When a wait runs out, the message comes from the game's own log: still
+  loading (with the shader-cache reason on a first start), at the main menu
+  (only then does it suggest a click on Continue), loading the save, or in
+  game without the bridge reporting it active. Any other screen is named as
+  the log names it. A log that cannot be read, or that was last written
+  before this launch (a previous run's), is reported as such, never as
+  "still loading".
+* **A crashed game no longer leaves its bridge socket answering.** CK3's
+  crash handler starts a CrashReporter, which inherited the socket's
+  listening descriptor along with `LD_PRELOAD`. The socket kept accepting
+  connections with no bridge behind it, so the next `launch` refused with "a
+  bridge is already listening … another CK3 with the bridge is running" when
+  no game was running. The bridge's descriptors are now close-on-exec. A
+  process the bridge loads into that is not the game (`/proc/self/exe` is
+  not `ck3`) closes any listener it holds on the bridge's socket path and
+  serves nothing. The refusal now names each process holding the socket,
+  with its pid and executable. For a process whose executable reads as
+  something other than CK3, it says that a crashed game left it behind and
+  to end it. A process whose executable cannot be read is called
+  unidentified, and the refusal says to check what it is before ending it;
+  and a running game whose binary was replaced on disk (`ck3 (deleted)`) is
+  still called CK3.
+
 ## 2026.12.1 — 2026-11-05
+
+Erratum: in this release `ck3agent launch --save` and `launch --continue`
+crashed CK3 while it loaded (fixed in 2026.12.2); a plain `launch` was not
+run. The date above is one day late. It was published on 2026-11-04.
 
 The second round of toolkit fixes, from the node smoke of 2026.12.0 and the
 November pilots' transcripts. `ck3agent launch` runs the game in a user-data

@@ -145,6 +145,10 @@ set(CK3_BRIDGE_SOURCES
     src/log_archive.cpp
     # L20-A: the game-day pause alarm's state. PURE; host-tested by test_pause_alarm.
     src/pause_alarm.cpp
+    # L21 (node smoke18): the socket lives only in the game process: close-on-exec
+    # descriptors, and a non-game process closes a listener it inherited.
+    # PURE (libc only); host-tested by test_listener_fd.
+    src/listener_fd.cpp
 )
 
 set(CK3_PLATFORM "linux" CACHE STRING "Platform layer implementation: linux|windows|macos")
@@ -836,6 +840,15 @@ if(BUILD_BRIDGE_TESTS)
         target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
     endforeach()
     target_compile_definitions(test_council_task_family_prefix_control PRIVATE FAMILY_PREFIX_CONTROL)
+
+    # L21 (node smoke18): CrashReporter inherited the listening socket and kept
+    # it answering. The control is the pre-L21 calls and must fail (WILL_FAIL).
+    foreach(_v test_listener_fd test_listener_fd_legacy_control)
+        add_executable(${_v} test/test_listener_fd.cpp src/listener_fd.cpp)
+        target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_listener_fd_legacy_control PRIVATE CK3_LISTENER_LEGACY)
 
     # L20-A (smoke17 new item 1): the game-day pause alarm's rule, engine-free.
     add_executable(test_pause_alarm test/test_pause_alarm.cpp src/pause_alarm.cpp)
@@ -1561,6 +1574,7 @@ if(BUILD_BRIDGE_TESTS)
     add_executable(test_ipc_wiring
         test/test_ipc_wiring.cpp
         src/ipc_server.cpp
+        src/listener_fd.cpp
         ${SESSION_HOST_SOURCES}
         src/instance_paths.cpp
         src/pipeline_mode.cpp
@@ -1647,6 +1661,7 @@ if(BUILD_BRIDGE_TESTS)
     add_executable(test_game_thread_reads
         test/test_game_thread_reads.cpp
         src/ipc_server.cpp
+        src/listener_fd.cpp
         ${SESSION_HOST_SOURCES}
         src/instance_paths.cpp
         src/pipeline_mode.cpp
@@ -1961,9 +1976,14 @@ endif()
                test_action_args    # L18-B: built since ck-6kvq.15, never run by ctest
                test_war_scope test_pause_alarm test_council_task_family     # L20-A
                test_diag_dtor      # L20-D: DIAG_OBJECT_DTOR is the engine's dtor
-               test_optional_id)   # L20 r3: location_id absent -> missing_location_id
+               test_optional_id    # L20 r3: location_id absent -> missing_location_id
+               test_listener_fd)   # L21: the socket lives only in the game process
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
+    # The negative control exits 0 only when exactly its named rows FAIL (see
+    # test_listener_fd.cpp kLegacyFails): not WILL_FAIL, which any nonzero
+    # exit passes (the mkdtemp early return, rc 2, did; a signal does not).
+    add_test(NAME test_listener_fd_legacy_control COMMAND test_listener_fd_legacy_control)
     # L18-A: the action-log row decision and its wiring; the world-reset
     # acceptance (incl. the first-write-before-first-tick lane) and its
     # structural half (the drain samples the world before any queued write).

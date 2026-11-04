@@ -4,6 +4,7 @@
 // and pushes complete messages to a thread-safe queue.
 
 #include "instance_paths.h"  // ck-qn03
+#include "listener_fd.h"     // L21: close-on-exec descriptors
 #include "envelope_shape.h"
 #include "observation_route.h"   //: ck-h4pn
 #include "inflight.h"
@@ -2168,7 +2169,13 @@ static void server_loop() {
 
         struct sockaddr_un client_addr;
         socklen_t addr_len = sizeof(client_addr);
+        // L21: close-on-exec, like the listener: a child the game execs (its
+        // CrashReporter, smoke18) must not hold a client's connection open.
+#ifdef _WIN32
         int client = accept(g_server_fd, (struct sockaddr*)&client_addr, &addr_len);
+#else
+        int client = bridge::accept_cloexec(g_server_fd, &client_addr, &addr_len);
+#endif
         if (client < 0) {
             if (bridge::g_logfile) fprintf(bridge::g_logfile,
                 "[CK3-Bridge] IPC accept() failed: %s (errno=%d)\n",
@@ -2394,8 +2401,14 @@ bool start_ipc_server(const char* socket_path) {
         }
     }
 
-    // Create socket
-    g_server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    // Create socket. L21 (node smoke18): close-on-exec. Without it CK3's crash
+    // handler handed the listener to CrashReporter (fork + exec), which kept the
+    // socket accepting with no bridge behind it after the game died.
+#ifdef _WIN32
+    g_server_fd = socket(AF_UNIX, SOCK_STREAM, 0);   // unreachable: the tcp_loopback block returned
+#else
+    g_server_fd = bridge::listen_socket_cloexec();
+#endif
     if (g_server_fd < 0) {
         if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Failed to create socket: %s\n", strerror(errno));
         return false;
