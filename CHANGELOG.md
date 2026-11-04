@@ -3,6 +3,195 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.1 — 2026-11-05
+
+The second round of toolkit fixes, from the node smoke of 2026.12.0 and the
+November pilots' transcripts. `ck3agent launch` runs the game in a user-data
+directory of its own and no longer writes into your saves.
+`session(action="wait", game_days=N)` stops at N days: the bridge holds the
+stop (an ask of 10 days came back 25). Every decision the engine judged
+unavailable faulted inside the bridge, on an address 0xF00000 low in its
+header; named decisions now come back as rows with the requirement they
+failed, or a refusal naming them. A ministry's council seats take their own
+version of a task, `query_war_stance` lists the wars of a ruler at war,
+`declare_war`'s casus-belli refusal and 105 more bridge codes reach the seat
+typed, and `query(domain="conquest_targets")` is 7,300 characters, not 38,500.
+`doctor` checks only the play directory it is told and says when Claude Code
+has not trusted it, `serve` starts with one line, and the linux tarball carries
+the documentation. The surface is still thirteen tools.
+
+* **`ck3agent launch` no longer writes into your own CK3 saves.** The game it
+  started used your `~/.local/share/Paradox Interactive/Crusader Kings III/`,
+  so its autosave rotation replaced your `save games/autosave.ck3` (the
+  2026.12.0 node smoke found a new one after a run) and `--save` rewrote your
+  `continue_game.json`. The game now runs with `-userdir=` pointing at its own
+  directory, `~/.local/state/ck3agent/game/` (`$XDG_STATE_HOME`; `ck3agent
+  config` prints it). `--save` copies the save there. The first `--continue`
+  copies the save your CK3 played last, and later ones load the save the
+  launched game played last. The game's saves, autosaves and logs stay in that
+  directory. The files at the top of your directory (your settings) are
+  copied once, and every folder in it is linked (your `mod/` folder among
+  them) except the ones the game writes into: saves, logs, crashes, dumps,
+  exceptions, caches and player data, which are the launched game's own.
+* **`session(action="wait", game_days=N)` stops at N days.** The server could
+  read the date only between its own sleeps, so the stop was where a sleep
+  happened to end: in the 2026.12.0 smoke an ask of 10 days came back
+  `game_days_advanced 25` from the first 15 s wait. The bridge now holds the
+  stop: `unpause_game {"pause_at": "Y.M.D"}` arms a pause the game thread makes
+  on the first day at or past the target (refused, unpausing nothing, for a
+  date that is not after today), `get_tick_info` reports it as `pause_alarm`
+  (`armed`, `fired` with `paused_at`, or `cleared` by a pause), and the wait
+  reply says `stopped: "alarm"`, `wait_mode: "alarm"` and `alarm.paused_at`. A
+  tick that moves the date past the target before the pause holds is reported
+  as `overshoot_days`, never rounded away. Against a bridge without the alarm
+  the old repeated waits run and the reply says `wait_mode: "polled"` with
+  `alarm.state: "not_served"`; an arm the bridge did not confirm in time also
+  falls back to polling, and says `alarm.state: "not_witnessed"`. Every end of
+  the wait but the alarm's own pause writes a closing pause, which disarms the
+  alarm (an engine pause, the call budget, an error included); a closing pause
+  the bridge does not confirm is reported as `pause_unconfirmed: true`.
+* **A named decision comes back as a row, or as a refusal naming it.**
+  `do(action_class="decisions", candidates=[...])` answered `available []`,
+  `unavailable []` for a decision the game has: the server asked the bridge
+  for valid decisions only, which drops every decision that is not takeable,
+  and a decision whose evaluation faulted came back without its name, so the
+  reply could not match it. The server now asks for the annotated list; a
+  decision the engine judged is a row in `available` or `unavailable` with the
+  engine's reasons (`decision_unavailable` with the loc-key of the
+  requirement it failed, `cannot_afford`, `decision_not_shown` when the game
+  does not show it to this ruler); one whose evaluation the bridge had
+  to abandon (a fault or hang it caught, or a decision on its skip list) is an
+  `unavailable` row with `decision_eval_faulted`; and a name the game has no
+  decision for is refused as `unknown_decision`, naming it (a warning of that
+  code when other names did match). The bridge names every evaluated row from
+  the decision's own key and lists the requested names it matched nothing for
+  (`unmatched`).
+* **A decision the engine judges unavailable no longer faults.** Every
+  decision that failed a requirement faulted inside the bridge (the empty
+  reply above): to read the requirement's name the bridge evaluates the
+  failing block a second time into a diagnostic record, and it destroyed that
+  record by calling an address in the middle of an unrelated game function
+  (the offset in the bridge's header was 0xF00000 low, 0x04a5b060 for
+  0x0595b060: 0x1000000 subtracted from the disassembler's address where the
+  image base is 0x100000), which crashed. The bridge now calls the destructor
+  the game's own evaluator calls, and checks that at runtime against the
+  game's code. A decision the engine refuses is an `unavailable` row with the
+  requirement it failed. When the check disagrees the bridge skips the
+  requirement's name rather than call an unchecked address, and the row says
+  so: `decision_reason_unwitnessed` (the game said no; which requirement failed
+  was not read). The rejection reasons of interactions and laws went through
+  the same address and are read the same way now.
+* **A council task can be given to the seat that has it for your government.**
+  A ruler with ministries fabricates claims through the minister of justice
+  (the game's `task_fabricate_claim_minister_of_rites`, a copy of the court
+  chaplain's `task_fabricate_claim`), but `do(intent="council_task",
+  args={"seat": "minister_justice", "task": "task_fabricate_claim", ...})` was
+  refused with `seat_cannot_take_task` and `task_seat
+  councillor_court_chaplain` before the game was asked. A seat now picks that
+  seat's version of the task; the reply names it in `task_used`, and a seat
+  that has no version of the task is refused with every seat that does
+  (`task_seats`). `do(action_class="fabricate_targets")` takes the same
+  `seat` in `args` and its rows' `do_call` name the seat the bridge
+  evaluated. With no `seat` the court chaplain's task is tried first, so a
+  ruler with ministries passes `args={"seat": "minister_justice"}`; when the
+  chaplain's version finds nothing, the `fabricate_targets_empty` warning
+  lists the task's other seats (`task_seats`).
+* **`query_war_stance` lists the wars of a ruler at war.** A call without
+  `war_id` read the missing argument as the war id 0xFFFFFFFF and dropped every
+  war, so a ruler fighting war 13 got `wars []` and `war_count 0` while the
+  record walk had matched 30 records, and `inspect(subject="war_stance")` fell
+  back to the occupation guess. Without `war_id` (or with 0) the reply lists
+  every war the character leads as primary attacker; a `war_id` still scopes
+  it to that war. `query_war_score_breakdown` without `war_id` now answers
+  every cached war, as documented, instead of nothing.
+* **`declare_war` refused by the game's casus-belli check says so.** The
+  refusal reached the seat as `unmapped_refusal` with the bridge's raw
+  `engine_cb_validity_check_failed`. It is now `cb_invalid_for_target`, not
+  retryable, with `fix` naming `cbs(target_id=…)` and `plan_war()`, the two
+  calls that list what can be declared. The same sweep typed every other code
+  the bridge's write paths emit (105 more, from a census of the bridge
+  source): missing and invalid arguments, names nothing matches, missing or
+  dead characters, `engine_unreachable` (the bridge could not make the call;
+  nothing reached the game), `write_not_applied` (the game ran it and the
+  readback shows no change) and `bridge_fault`. The census walks the five
+  source files of the write paths a tool sends; in them only the operator
+  verbs no tool sends, and the AI-pipeline declare's own "unknown" rejection,
+  stay unmapped. Codes emitted elsewhere are not covered by it, among them
+  the research-only budget guard's `budget_exhausted` and
+  `budget_config_pinned`.
+* **`query(domain="conquest_targets")` is 7,300 characters, not 38,500.**
+  The compact reply still listed 25 counties at ~1,500 characters each (two
+  declare blocks per row) plus the bridge's long note, so a large realm's
+  answer was 38,481 characters. The default now lists 10 counties outside your
+  realm, conquerable first, each with the holder, the holder's realm, its
+  de-jure duchy and kingdom, adjacency, the verdict and its source, the gates
+  that are set and one `declare_args` that `declare_war` takes as it stands;
+  the engine's CB list and the other declare options are counts.
+  `detail="full"` gives the rows with every field the bridge writes on them
+  (the kin, war and liege flags included; a superset of the default row) and
+  the note, `max_results`
+  lists more, `verbose=true` is the bridge's reply unchanged. Any other
+  `detail` is refused as `invalid_argument`.
+* **`query(domain="character")` names the character.** The first read of a
+  character in a session came back with no `name` (only the game's
+  `name_key` and `name_pending`), because the bridge localizes names on the
+  game thread after the read that asks for them. The query now reads again
+  while that happens (about 1.5 s at most); a name still pending after that is
+  `name: null` beside `name_pending: true` and a `name_note` saying to read
+  again, never a bare null.
+* **`discover(what="scheme_targets")` answers for a character you have not
+  bound.** It is a read (the game's own start check; nothing is started), but
+  the bridge guarded it as a write, so a call with an explicit `character_id`
+  this session had not claimed was refused `actor_not_claimed`. The check now
+  passes the guard as every read does; starting and cancelling a scheme still
+  need the character bound.
+* **Releasing your only ruler says what to do instead.** The refusal
+  `last_claim_of_control_session` explained what was refused and nothing else.
+  Its `blocked.fix` now names the two ways out. The ruler is freed when the
+  session ends, and the game's AI plays it on with your last posture. To switch,
+  call `session(action="control", character_id=<other>)`, which moves the seat
+  in one call.
+* **A run's teardown leaves another run's ruler alone.** With two
+  `ck3agent run`s on one game, the second to finish tried to release the
+  first one's ruler and warned that it could not (`not_owned_by_session`).
+  The teardown now checks and releases only the rulers its own server's
+  session holds (the session the record names); a ruler another session holds
+  is named in the line and left alone, without a warning. When the session
+  record is missing or cannot be read, nothing can be attributed: the teardown
+  releases nothing and warns `session_record_missing`, listing the rulers it
+  saw bound as unattributed.
+* **`ck3agent doctor` checks only the play directory it is told.** With no
+  setup record it read `~/ck3agent-play/.mcp.json` anyway, so a directory left
+  by another install failed the check (rc 1 on a clean `XDG_CONFIG_HOME`, node
+  smoke of 2026.12.0). Doctor now reads `--play-dir` or the directory `setup`
+  recorded in the config. With neither it warns `play directory not set up: no
+  --play-dir and none recorded in <config>` and reads nothing.
+* **Setup and doctor say when Claude Code has not trusted the play
+  directory.** Until you accept Claude Code's trust dialog once, it ignores the
+  allow-list `setup` wrote. Every run in a fresh play directory printed
+  `Ignoring 1 permissions.allow entry ... this workspace has not been trusted`,
+  and nothing in ck3agent explained the line. `ck3agent run` was not affected,
+  because it passes `--allowedTools mcp__ck3` itself. `setup` now ends with the
+  one-time step. `doctor` reads Claude Code's record in `~/.claude.json` (read
+  only) and reports `Claude Code has not trusted the play directory` until the
+  dialog is accepted. Troubleshooting quotes the stderr line.
+* **`ck3agent serve` starts with one line, not the 64-line handshake.** The
+  server printed the bridge's whole handshake reply as indented JSON to
+  stderr at every start. It now logs one line (`bridge_version`,
+  `build_git_sha`, `build_id_status`, `session_id`) and keeps the reply in
+  `handshake_ack.json` in the instance's telemetry directory, which the line
+  names (with `-v`, the reply is also logged at DEBUG). The kept reply and the
+  DEBUG line leave out the bridge's `resume_token`: the file is for reading
+  the build, not for resuming a session. The file is written owner-only
+  (0600; a directory it creates is 0700, an existing one keeps its mode) and never
+  through a symlink.
+* **The linux tarball carries the documentation.** `docs/` (getting started,
+  troubleshooting, `reference/tools.md`, `reference/files-and-paths.md`) was
+  in the sdist only, and the tarball's `README.txt` pointed at a URL. The
+  tarball now has the whole `docs/` directory: about 92 KB compressed, 241 KB
+  unpacked. `README.txt` names the local files. `release.yml` checks the
+  tarball's listing for each of them before it publishes.
+
 ## 2026.12.0 — 2026-11-04
 
 The toolkit fixes from the review of the November pilots' transcripts. The

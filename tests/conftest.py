@@ -18,6 +18,7 @@ def hermetic(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local/share"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local/state"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("CK3_BRIDGE_SOCKET", str(tmp_path / "nope.sock"))
     monkeypatch.setenv("CK3_BRIDGE_LOG", str(tmp_path / "bridge.log"))

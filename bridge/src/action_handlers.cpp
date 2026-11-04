@@ -3,7 +3,13 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "pause_alarm.h"
+#include "council_task_family.h"
+#include "optional_id.h"     // witness r1 item 8: an optional id read through json_get_int
+#include "game_date.h"
 #include "action_dispatch_internal.h"
+#include "action_args.h"      // L20-B: action_sub_op
+#include "diag_dtor.h"   // L20-D: the diag record dtor, witnessed from the engine's call
 #include "declare_war_outcome.h"
 #include "refusal_record.h"
 #include "scope_slot_policy.h"   // ck-zgh4: the scope latch + its one refusal text
@@ -1202,6 +1208,29 @@ namespace {
     constexpr uintptr_t CTT_VALUE      = 0x10;   // ptr to CCouncilTaskType
     constexpr uintptr_t CTT_NAME       = 0x10;   // key std::string on the task-type obj
     constexpr uintptr_t TASKTYPE_POSREF = 0x30;  // position-type ref on the task-type obj
+
+    // L20-A (B5): every task type of the flat map, with its clone template and
+    // its seat (council_task_family.h). Pure reads; one pass, as the name scan was.
+    std::vector<bridge::council_task_family::Row> read_council_task_rows(uintptr_t table, uint32_t mask) {
+        std::vector<bridge::council_task_family::Row> rows;
+        for (uint32_t i = 0; i <= mask; i++) {
+            uintptr_t bucket = table + static_cast<uintptr_t>(i) * CTT_STRIDE;
+            if (safe_read<uint8_t>(bucket + CTT_CTRL) == 0xff) continue;
+            uintptr_t val = safe_read<uintptr_t>(bucket + CTT_VALUE);
+            if (!val || !is_mapped(val)) continue;
+            bridge::council_task_family::Row row;
+            row.obj = val;
+            row.name = ad_read_std_string(val + CTT_NAME);
+            const uintptr_t tmpl = safe_read<uintptr_t>(val + ck3::council_task_type::CLONE_TEMPLATE_PTR);
+            row.clone_of = (tmpl && is_mapped(tmpl)) ? tmpl : 0;
+            const uintptr_t pref = safe_read<uintptr_t>(val + TASKTYPE_POSREF);
+            const char* kp = nullptr; size_t kl = 0;
+            if (pref && is_mapped(pref) && read_db_obj_name(pref, kp, kl) && kl)
+                row.seat.assign(kp, std::min(kl, (size_t)127));
+            rows.push_back(std::move(row));
+        }
+        return rows;
+    }
 }
 
 bool do_set_council_task(const char* params_json, std::string* response_out) {
@@ -1237,16 +1266,18 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = R"({"success":false,"action":"set_council_task","reason":"task_db_malformed"})";
         return false;
     }
-    uintptr_t tasktype = 0;
-    for (uint32_t i = 0; i <= mask; i++) {
-        uintptr_t bucket = table + static_cast<uintptr_t>(i) * CTT_STRIDE;
-        uint8_t ctrl = safe_read<uint8_t>(bucket + CTT_CTRL);
-        if (ctrl == 0xff) continue;
-        uintptr_t val = safe_read<uintptr_t>(bucket + CTT_VALUE);
-        if (!val || !is_mapped(val)) continue;
-        if (ad_read_std_string(val + CTT_NAME) == want) { tasktype = val; break; }
-    }
-    ADLOG("set_council_task: scan done, tasktype=%lx\n", (unsigned long)tasktype);
+    // L20-A (B5): every type, with its clone template and its seat, so the task
+    // can be resolved to the family member on the asked seat
+    // (council_task_family.h: task_fabricate_claim is the chaplain's;
+    // task_fabricate_claim_minister_of_rites, its clone, is minister_justice's).
+    const char* seat_arg = json_get_string(params_json, "seat");
+    const std::string want_seat = seat_arg ? std::string(seat_arg) : std::string();
+    const std::vector<bridge::council_task_family::Row> task_rows = read_council_task_rows(table, mask);
+    const bridge::council_task_family::Pick task_pick =
+        bridge::council_task_family::resolve(task_rows, want, want_seat);
+    uintptr_t tasktype = task_pick.asked ? task_pick.asked->obj : 0;
+    ADLOG("set_council_task: scan done, tasktype=%lx family=%zu\n", (unsigned long)tasktype,
+          task_pick.family.size());
     if (!tasktype) {
         if (response_out) {
             ResponseBuilder r; r.begin_object();
@@ -1275,25 +1306,23 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     // with nothing in the reply saying so, and its retry read
     // no_change_already_set. Now: the reply names the seat it used, and an
     // explicit `seat` that is not the task's seat is refused up front.
-    std::string task_seat;
-    {
-        const char* kp = nullptr; size_t kl = 0;
-        if (postype_ref && is_mapped(postype_ref) && read_db_obj_name(postype_ref, kp, kl) && kl)
-            task_seat.assign(kp, std::min(kl, (size_t)127));
+    //
+    // L20-A (B5): a seat that is not the asked task's own picks the family
+    // member on that seat (a clone the engine defines for it), and the reply
+    // names the task used (`task_used`) beside the one asked (`requested`).
+    // Only a seat no family member sits on is refused, with the family's seats.
+    std::string task_seat = task_pick.asked->seat;
+    std::string task_used = want;
+    if (task_pick.chosen && task_pick.chosen != task_pick.asked) {
+        tasktype = task_pick.chosen->obj;
+        task_used = task_pick.chosen->name;
+        task_seat = task_pick.chosen->seat;
+        postype_ref = safe_read<uintptr_t>(tasktype + TASKTYPE_POSREF);
+        ADLOG("set_council_task: seat '%s' resolves '%s' to its clone '%s'\n",
+              want_seat.c_str(), want.c_str(), task_used.c_str());
     }
     {
-        const char* seat_arg = json_get_string(params_json, "seat");
-        std::string want_seat = seat_arg ? std::string(seat_arg) : std::string();
-        auto norm = [](std::string v) {
-            for (auto& ch : v) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
-            const std::string pre = "councillor_";
-            if (v.compare(0, pre.size(), pre) == 0) v = v.substr(pre.size());
-            return v;
-        };
-        bool numeric = !want_seat.empty() &&
-            want_seat.find_first_not_of("0123456789") == std::string::npos;
-        if (!want_seat.empty() && !numeric && !task_seat.empty() &&
-                norm(want_seat) != norm(task_seat)) {
+        if (!task_pick.chosen && !task_seat.empty()) {
             ADLOG("set_council_task: REFUSE seat '%s' cannot take '%s' (task seat %s)\n",
                   want_seat.c_str(), want.c_str(), task_seat.c_str());
             if (response_out) {
@@ -1304,11 +1333,19 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
                 r.key("reason"); r.value_string("seat_cannot_take_task");
                 r.key("requested_seat"); r.value_string(want_seat.c_str(), want_seat.size());
                 r.key("task_seat"); r.value_string(task_seat.c_str(), task_seat.size());
+                // L20-A: every seat that has this task (the template's and its clones').
+                std::string seats_list;
+                r.key("task_seats"); r.begin_array();
+                for (const auto* fm : task_pick.family) {
+                    r.value_string(fm->seat.c_str(), fm->seat.size());
+                    seats_list += (seats_list.empty() ? "" : ", ") + fm->seat;
+                }
+                r.end_array();
                 r.key("applied"); r.value_bool(false);
-                std::string w = "'" + want + "' is a " + task_seat + " task; the game assigns it "
-                                "only to that seat. Omit `seat` (the task picks its seat) or pick a "
-                                "task of the seat you want (inspect(subject='council') lists seats "
-                                "and their current tasks).";
+                std::string w = "'" + want + "' is a task of " + seats_list + " only; the game "
+                                "assigns it only to those seats. Omit `seat` (the task picks its seat) "
+                                "or pick a task of the seat you want (inspect(subject='council') lists "
+                                "seats and their current tasks).";
                 r.key("warning"); r.value_string(w.c_str(), w.size());
                 r.end_object();
                 *response_out = r.take();
@@ -1568,9 +1605,11 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     // routine and task-progress machinery run on the daily tick) and is read back
     // later; the old was_paused / paused_not_confirmed reported that as a failed
     // apply, which is gone with the bridge's paused refusals.
-    bool readback_ok = (current_task == want);
-    bool changed   = readback_ok && (prior != want);
-    bool unchanged = readback_ok && (prior == want);
+    // L20-A: the type written is `task_used` (the seat's clone when one was
+    // picked), so the read-back compares with that, not with the asked name.
+    bool readback_ok = (current_task == task_used);
+    bool changed   = readback_ok && (prior != task_used);
+    bool unchanged = readback_ok && (prior == task_used);
     bool applied = changed;
 
     // L20 stickiness: once the agent has deliberately set a council task, lock
@@ -1615,6 +1654,8 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         r.key("success"); r.value_bool(success);
         r.key("action"); r.value_string("set_council_task");
         r.key("requested"); r.value_string(want.c_str(), want.size());
+        // L20-A: the type actually evaluated/assigned (a seat's clone of `requested`).
+        r.key("task_used"); r.value_string(task_used.c_str(), task_used.size());
         r.key("assignable"); r.value_bool(assignable != 0);   // game's real CanAssign verdict
         r.key("applied"); r.value_bool(applied);              // the write landed (read-back && changed)
         r.key("unchanged"); r.value_bool(unchanged);
@@ -1722,13 +1763,30 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         if (response_out) *response_out = R"({"success":false,"action":"query_fabricate_targets","reason":"task_db_malformed"})";
         return false;
     }
-    uintptr_t tasktype = 0;
-    for (uint32_t i = 0; i <= mask; i++) {
-        uintptr_t bucket = table + static_cast<uintptr_t>(i) * CTT_STRIDE;
-        if (safe_read<uint8_t>(bucket + CTT_CTRL) == 0xff) continue;
-        uintptr_t val = safe_read<uintptr_t>(bucket + CTT_VALUE);
-        if (!val || !is_mapped(val)) continue;
-        if (ad_read_std_string(val + CTT_NAME) == want) { tasktype = val; break; }
+    // L20-A (B5): an optional `seat` resolves the task to that seat's clone
+    // (council_task_family.h), as set_council_task does, so the targets are
+    // evaluated on the type the seat would be given.
+    const char* fseat = json_get_string(params_json, "seat");
+    const std::string fab_seat = fseat ? std::string(fseat) : std::string();
+    const std::vector<bridge::council_task_family::Row> fab_rows = read_council_task_rows(table, mask);
+    const bridge::council_task_family::Pick fab_pick =
+        bridge::council_task_family::resolve(fab_rows, want, fab_seat);
+    uintptr_t tasktype = fab_pick.chosen ? fab_pick.chosen->obj : 0;
+    if (fab_pick.asked && !fab_pick.chosen) {
+        if (response_out) {
+            ResponseBuilder r; r.begin_object();
+            r.key("success"); r.value_bool(false);
+            r.key("action"); r.value_string("query_fabricate_targets");
+            r.key("reason"); r.value_string("seat_cannot_take_task");
+            r.key("requested"); r.value_string(want.c_str(), want.size());
+            r.key("requested_seat"); r.value_string(fab_seat.c_str(), fab_seat.size());
+            r.key("task_seats"); r.begin_array();
+            for (const auto* fm : fab_pick.family) r.value_string(fm->seat.c_str(), fm->seat.size());
+            r.end_array();
+            r.end_object();
+            *response_out = r.take();
+        }
+        return false;
     }
     if (!tasktype) {
         if (response_out) {
@@ -1778,6 +1836,13 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
             r.key("action"); r.value_string("query_fabricate_targets");
             r.key("reason"); r.value_string("no_matching_position");
             r.key("requested"); r.value_string(want.c_str(), want.size());
+            // L20 r3 (witness item 3): the seat evaluated and every seat the
+            // task family has, so a ruler whose government seats the task
+            // elsewhere (a ministry's minister_justice) is told which to pass.
+            r.key("task_seat"); r.value_string(fab_pick.chosen->seat.c_str(), fab_pick.chosen->seat.size());
+            r.key("task_seats"); r.begin_array();
+            for (const auto* fm : fab_pick.family) r.value_string(fm->seat.c_str(), fm->seat.size());
+            r.end_array();
             r.end_object();
             *response_out = r.take();
         }
@@ -2025,6 +2090,13 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         r.key("success"); r.value_bool(true);
         r.key("action"); r.value_string("query_fabricate_targets");
         r.key("task"); r.value_string(want.c_str(), want.size());
+        // L20-A: the type evaluated and its seat (a `seat` picks that seat's clone),
+        // and every seat this task family has.
+        r.key("task_used"); r.value_string(fab_pick.chosen->name.c_str(), fab_pick.chosen->name.size());
+        r.key("task_seat"); r.value_string(fab_pick.chosen->seat.c_str(), fab_pick.chosen->seat.size());
+        r.key("task_seats"); r.begin_array();
+        for (const auto* fm : fab_pick.family) r.value_string(fm->seat.c_str(), fm->seat.size());
+        r.end_array();
         r.key("actor_id"); r.value_uint(actor_id & 0xFFFFFF);
         r.key("counties_scanned"); r.value_uint(scanned);
         r.key("counties_considered"); r.value_uint(considered);
@@ -2137,7 +2209,10 @@ namespace {
 
     bool resolve_build_target(const char* params_json, const char* action, const std::string& want,
                               BuildTarget& t, std::string* out) {
-        t.barony_id = static_cast<uint32_t>(json_get_int(params_json, "location_id")) & 0xFFFFFF;
+        // json_get_int answers -1 for an absent key: masked, that was the id
+        // 0xFFFFFF and missing_location_id never fired (L20-A, the A3 class;
+        // optional_id.h, tested by test_optional_id).
+        t.barony_id = bridge::optional_id(json_get_int(params_json, "location_id"));
         if (want.empty()) { build_refusal(out, action, "missing_building", want, 0); return false; }
         if (!t.barony_id) { build_refusal(out, action, "missing_location_id", want, 0); return false; }
         t.actor = resolve_actor(params_json);
@@ -3011,6 +3086,62 @@ bool do_unpause_game(const char* params_json) {
 bool do_set_speed(const char* params_json) {
     return clock_verb_speed(ClockOrigin::Session, params_json);
 }
+
+// L20-A: the game-day pause alarm (pause_alarm.h). One guarded date read, the
+// arm, then the same unpause write as unpause_game. A refusal unpauses nothing
+// and leaves a previously armed alarm as it was.
+bool do_unpause_game_with_alarm(const char* params_json, std::string* out) {
+    namespace pa = bridge::pause_alarm;
+    const char* t = json_get_string(params_json, "pause_at");
+    const std::string target_s = t ? t : "";
+    auto refuse = [&](const char* reason, const char* hint, const char* game_date) {
+        ResponseBuilder r; r.begin_object();
+        r.key("success"); r.value_bool(false);
+        r.key("action");  r.value_string("unpause_game");
+        r.key("reason");  r.value_string(reason);
+        r.key("pause_at"); r.value_string(target_s.c_str());
+        if (game_date) { r.key("game_date"); r.value_string(game_date); }
+        r.key("hint");    r.value_string(hint);
+        r.end_object();
+        if (out) *out = r.take();
+        return false;
+    };
+    int32_t target = 0;
+    if (!pa::parse_date(target_s.c_str(), &target))
+        return refuse("pause_at_unparseable",
+                      "pause_at is a game date \"Y.M.D\" on the engine calendar (no Feb 29); "
+                      "nothing was unpaused", nullptr);
+    const int faults = safe_read_fault_count();
+    const uintptr_t gs = safe_read_offset<uintptr_t>(ck3::globals::GAME_STATE_ROOT);
+    const int32_t raw = gs ? safe_read<int32_t>(gs + ck3::game_state::GAME_DATE) : 0;
+    if (!gs || raw == 0 || safe_read_fault_count() != faults)
+        return refuse("game_date_unreadable",
+                      "the game date could not be read, so the target cannot be checked; "
+                      "nothing was unpaused", nullptr);
+    const int32_t now = ck3::game_date::raw_to_total_days(raw);
+    char now_s[16];
+    ck3::game_date::format_total_days(now, now_s, sizeof now_s);
+    if (pa::arm(target, now) != pa::Arm::Armed)
+        return refuse("pause_at_not_in_future",
+                      "pause_at must be after the game date; nothing was unpaused", now_s);
+    clock_write(ClockWrite::Unpause, ClockOrigin::Session);
+    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Game unpaused; pause alarm armed for %s (now %s)\n",
+                           target_s.c_str(), now_s);
+    if (safe_read_had_fault()) return true;   // case_unpause_game answers memory_access_fault
+    char tgt_s[16];
+    ck3::game_date::format_total_days(target, tgt_s, sizeof tgt_s);
+    ResponseBuilder r; r.begin_object();
+    r.key("success"); r.value_bool(true);
+    r.key("action");  r.value_string("unpause_game");
+    r.key("pause_alarm"); r.begin_object();
+    r.key("state");    r.value_string("armed");
+    r.key("target");   r.value_string(tgt_s);
+    r.key("armed_at"); r.value_string(now_s);
+    r.end_object();
+    r.end_object();
+    if (out) *out = r.take();
+    return true;
+}
 #ifdef CK3_BRIDGE_DEBUG_VERBS  // rc2 B2: input injection is compiled out of release builds
 
 // =============================================================================
@@ -3783,8 +3914,20 @@ static bool law_extract_block_failure(uintptr_t trigger_block, uintptr_t scope_c
     typedef void (*fn_diag_dtor)(void*);
     auto fn_populate = reinterpret_cast<fn_eval_with_failures>(
         g_base_addr + ck3::trigger_eval_funcs::EVAL_WITH_FAILURES);
-    auto fn_destroy = reinterpret_cast<fn_diag_dtor>(
-        g_base_addr + ck3::trigger_eval_funcs::DIAG_OBJECT_DTOR);
+    // L20-D: destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
+    // refuse the extraction (diag_dtor.h); never jump to an unwitnessed address.
+    const uintptr_t dtor_addr = bridge::resolve_diag_dtor(g_base_addr, is_mapped_range);
+    if (!dtor_addr) {
+        static bool s_logged = false;
+        if (!s_logged && g_logfile) {
+            s_logged = true;
+            fprintf(g_logfile, "[CK3-Bridge] law_extract_block_failure: diag dtor not witnessed at EVAL_WITH_FAILURES+0x%llx; "
+                    "failure-key extraction refused\n",
+                    (unsigned long long)ck3::trigger_eval_funcs::EVAL_WITH_FAILURES_DTOR_CALL);
+        }
+        return false;
+    }
+    auto fn_destroy = reinterpret_cast<fn_diag_dtor>(dtor_addr);
     if (!is_mapped(reinterpret_cast<uintptr_t>(fn_populate)) ||
         !is_mapped(reinterpret_cast<uintptr_t>(fn_destroy))) return false;
 
@@ -5708,8 +5851,10 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
             const rapidjson::Value* scope = &d;
             auto pit = d.FindMember("params");
             if (pit != d.MemberEnd() && pit->value.IsObject()) scope = &pit->value;
-            auto ait = scope->FindMember("action");
-            if (ait != scope->MemberEnd() && ait->value.IsString()) sub_action = ait->value.GetString();
+            // the one reader of the sub-operation (action_args.h), which the
+            // dispatch guard also asks (call_is_read_only)
+            const std::string sub = bridge::action_sub_op(params_json);
+            if (!sub.empty()) sub_action = sub;
             is_cancel = (sub_action == "cancel");
             is_check = (sub_action == "check");
             auto cit = scope->FindMember("candidates");

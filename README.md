@@ -38,20 +38,22 @@ sets a ruler's strategy. The game's own AI carries it out.
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing     # in the download directory
-tar xzf ck3agent-2026.12.0-linux-x86_64.tar.gz && cd ck3agent-2026.12.0-linux-x86_64
+tar xzf ck3agent-2026.12.1-linux-x86_64.tar.gz && cd ck3agent-2026.12.1-linux-x86_64
 ./install.sh                                 # installs the bridge and the ck3agent command
 ```
 
-Before you launch: have a non-Ironman single-player save ready, and copy any
-campaign you care about out of `~/.local/share/Paradox Interactive/Crusader
-Kings III/save games/`. ck3agent never writes into the game folder, but once
-the clock runs the game's own autosave rotation does. Claude cannot play your
+Before you launch: have a non-Ironman single-player save ready. `ck3agent
+launch` gives the game its own user-data directory,
+`~/.local/state/ck3agent/game/` (`ck3agent config` prints it): the save is
+copied there, and the game's saves and autosaves land there. Your own
+`~/.local/share/Paradox Interactive/Crusader Kings III/` is read, never
+written. Claude cannot play your
 character: use an observer save (start a new game, choose **Observe**, save),
 or let Claude take an AI ruler in your own campaign.
 [Getting started](docs/getting-started.md) covers both.
 
 ```bash
-ck3agent launch --continue      # loads the save CK3 played last; --save PATH loads a specific one
+ck3agent launch --continue      # the save CK3 played last, copied; --save PATH loads a specific one
 cd ~/ck3agent-play && claude
 ```
 

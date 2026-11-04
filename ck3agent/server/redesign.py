@@ -216,6 +216,24 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # agent is told which kind of wall it is, so "wait until richer" and "this
     # will never work" stop reading identically.
     "decision_unavailable":      {"class": "target_state",   "severity": "invalid", "retryable": False},
+    # L20-B (smoke17 B3): do(action_class="decisions") named a decision the engine
+    # has no entry for (the bridge's `unmatched`); another name may work, this never.
+    "unknown_decision":          {"class": "target_state",   "severity": "invalid", "retryable": False},
+    # L20-B: the engine's evaluation of a named decision faulted or is skip-listed
+    # (the bridge's eval_wedged / eval_skipped row): no verdict was reached.
+    "decision_eval_faulted":     {"class": "bridge",         "severity": "blocked", "retryable": False,
+                                  "is_known_limitation": True,
+                                  "note": "no verdict was reached; the decision may or may not be takeable"},
+    # L20 integration (L20-B x L20-D): the engine judged the decision not takeable,
+    # and the bridge refused to read the failed requirement's name because it could
+    # not witness the diag record's destructor (diag_dtor.h resolve_diag_dtor() == 0;
+    # the row's `failure_key_unwitnessed`). A verdict WAS reached; its reason was not read.
+    "decision_reason_unwitnessed": {"class": "bridge",       "severity": "blocked", "retryable": False,
+                                  "is_known_limitation": True,
+                                  "note": "the engine said no; the bridge could not safely read which requirement failed"},
+    # L20 r3 (witness item 6): the engine's is_shown said no (the row's shown:false)
+    # and no requirement failed: a verdict the bridge reported, not a missing reason.
+    "decision_not_shown":        {"class": "target_state",   "severity": "invalid", "retryable": False},
     "ai_potential_not_met":      {"class": "target_state",   "severity": "invalid", "retryable": False},
     # Gold accrues. This is the one kind in the group a later attempt CAN win,
     # so it is the one that keeps retryable True.
@@ -335,6 +353,18 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # unmapped and the engine's IsValid unread). Refused rather than sent: an
     # unpriced mint is how k_ireland was created at 17.85 gold.
     "mint_cost_unverified":      {"class": "bridge",         "severity": "blocked", "retryable": False, "is_known_limitation": True},
+    # L20-B (smoke17 R2): the game's own casus-belli check says this CB cannot be
+    # used against this target now (the strict CB read's cull_reason: the engine's
+    # inner verdict, or the family gate the bridge names beside it). A re-plan.
+    "cb_invalid_for_target":     {"class": "target_state",   "severity": "invalid", "retryable": False},
+    # L20-B census: the bridge could not make the call at all — an engine function,
+    # table or queue it needs is unmapped, unreadable or full in this build. Nothing
+    # reached the game, unlike bridge_fault (a contained fault mid-call).
+    "engine_unreachable":        {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    # L20-B census: the game ran the write and reading it back shows no change
+    # (culture/faith not applied, a law change that did not execute, a title-law
+    # command the queue declined).
+    "write_not_applied":         {"class": "target_state",   "severity": "invalid", "retryable": False},
 }
 
 # Maps documented raw bridge refusal strings → a gate enum. Maintained next to the
@@ -549,6 +579,132 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "no_controlled_character": "no_ruler_bound",
     "axis_out_of_range": "invalid_argument",
     "missing interaction_type": "missing_required_argument",
+    # ── L20-B: the census of the write paths (test_refusal_census.py walks
+    # action_handlers.cpp, intent_dispatch.cpp, scheme_engine.cpp, factions.cpp,
+    # ai_eval_hook.cpp and the strict CB read's culls; each code below is one it
+    # found that reached a seat as unmapped_refusal). Typed by kind.
+    # The strict CB read (declare_war's pre-check, plan_war, cbs): smoke17 R2.
+    "engine_cb_validity_check_failed": "cb_invalid_for_target",
+    "not_realm_adjacent": "cb_invalid_for_target",
+    "de_jure_not_liege": "cb_invalid_for_target",
+    "not_tribal_government": "cb_invalid_for_target",
+    "faith_gate": "cb_invalid_for_target",
+    "in_truce": "target_truced",
+    "in_alliance": "target_allied",
+    # the AI-pipeline declare (declare_war's pre-validation, execute_war_intent)
+    "one_or_more_preconditions_failed": "cb_invalid_for_target",
+    "ai_pipeline_ran_but_did_not_declare": "engine_refused",
+    "title_required_for_cb": "missing_required_argument",
+    # a missing argument
+    "casus_belli_required": "missing_required_argument",
+    "casus_belli_required_for_force_player_path": "missing_required_argument",
+    "cb_name_required": "missing_required_argument",
+    "missing_argument": "missing_required_argument",
+    "missing_culture": "missing_required_argument",
+    "missing_doctrine": "missing_required_argument",
+    "missing_faith": "missing_required_argument",
+    "missing_interaction_type": "missing_required_argument",
+    "missing_request_id": "missing_required_argument",
+    "missing_target_id": "missing_required_argument",
+    "missing_task": "missing_required_argument",
+    "missing_title_id": "missing_required_argument",
+    # an argument whose value this call does not take
+    "bad_method": "invalid_argument",
+    "bad_mode": "invalid_argument",
+    "invalid_mode": "invalid_argument",
+    "level_out_of_range": "invalid_argument",
+    "seat_occupied_pass_replace": "invalid_argument",
+    "high_stakes_law_uncosted": "invalid_argument",
+    "high_stakes_law_costed_path_disabled": "invalid_argument",
+    "unknown_intent_type": "unknown_verb",
+    # a name nothing matches
+    "cb_type_not_found": "name_not_found",
+    "company_not_found": "name_not_found",
+    "county_title_not_found": "name_not_found",
+    "culture_not_found": "name_not_found",
+    "faith_not_found": "name_not_found",
+    "law_not_found": "name_not_found",
+    "position_not_found": "name_not_found",
+    "task_not_found": "name_not_found",
+    "title_id_not_found": "name_not_found",
+    "title_not_found": "name_not_found",
+    "not_found_or_already_consumed": "name_not_found",
+    # a character that is not there, or not alive
+    "actor_handle_zero": "character_not_found",
+    "attacker_not_found": "character_not_found",
+    "claimant_not_found": "character_not_found",
+    "defender_not_found": "character_not_found",
+    "no_actor": "character_not_found",
+    "attacker_not_alive": "character_dead",
+    "claimant_not_alive": "character_dead",
+    "defender_not_alive": "character_dead",
+    # the game's state rules the target out
+    "claimant_not_in_court": "target_ineligible",
+    "not_a_ruler": "target_ineligible",
+    "actor_no_realm": "target_ineligible",
+    "regiment_not_owned": "target_ineligible",
+    "invalid_target": "target_ineligible",
+    "no_faith": "target_ineligible",
+    "already_active": "already_in_that_state",
+    "already_target_culture": "already_in_that_state",
+    "already_target_faith": "already_in_that_state",
+    "add_doctrine_rejected": "engine_refused",
+    # the game ran it and the readback shows no change
+    "culture_not_applied": "write_not_applied",
+    "faith_not_applied": "write_not_applied",
+    "execution_failed": "write_not_applied",
+    "command_queue_declined": "write_not_applied",
+    # create_title's price could not be read (execute_create_title_intent)
+    "price_fn_unmapped": "mint_cost_unverified",
+    "price_args_null": "mint_cost_unverified",
+    "price_tier_unreadable": "mint_cost_unverified",
+    # a contained fault mid-call: the effect may or may not have landed
+    "apply_crashed": "bridge_fault",
+    "appoint_crashed": "bridge_fault",
+    "assign_crashed": "bridge_fault",
+    "check_crashed": "bridge_fault",
+    "claim_validate_exception": "bridge_fault",
+    "crashed_during_execution": "bridge_fault",
+    "create_title_exception": "bridge_fault",
+    "create_title_unknown_failure": "bridge_fault",
+    "game_state_resolve_exception": "bridge_fault",
+    "is_alive_exception": "bridge_fault",
+    "lock_acquire_exception": "bridge_fault",
+    "target_independent_check_exception": "bridge_fault",
+    "validate_characters_exception": "bridge_fault",
+    "validate_crashed": "bridge_fault",
+    "vtable_validation_crashed": "bridge_fault",
+    # nothing reached the game: a function, table or queue the call needs is
+    # unmapped, unreadable or full in this build
+    # L20-A x L20-B (integration): unpause_game {"pause_at"}'s three refusals
+    # (action_handlers.cpp, the pause alarm); each unpauses nothing. A target the
+    # bridge cannot parse or that is not after its game date is the argument's
+    # fault; a game date it cannot read means the call never reached the clock.
+    "pause_at_unparseable": "invalid_argument",
+    "pause_at_not_in_future": "invalid_argument",
+    "game_date_unreadable": "engine_unreachable",
+    "cb_db_invalid": "engine_unreachable",
+    "cb_db_unmapped": "engine_unreachable",
+    "contract_layout_invalid": "engine_unreachable",
+    "create_title_fn_unmapped": "engine_unreachable",
+    "create_title_pid_unmapped": "engine_unreachable",
+    "culture_unavailable": "engine_unreachable",
+    "faith_unavailable": "engine_unreachable",
+    "faith_key_unresolved": "engine_unreachable",
+    "focus_db_unavailable": "engine_unreachable",
+    "game_state_invalid": "engine_unreachable",
+    "game_state_root_unmapped": "engine_unreachable",
+    "level_addr_unmapped": "engine_unreachable",
+    "no_council_instance": "engine_unreachable",
+    "queue_intent_failed": "engine_unreachable",
+    "realm_law_db_corrupt": "engine_unreachable",
+    "realm_law_db_not_found": "engine_unreachable",
+    "scheme_type_db_unreadable": "engine_unreachable",
+    "task_db_malformed": "engine_unreachable",
+    "task_db_unavailable": "engine_unreachable",
+    "title_db_unavailable": "engine_unreachable",
+    "vtable_validation_failed": "engine_unreachable",
+    "war_count_unreadable": "engine_unreachable",
 }
 
 #: ENGINE PROSE, ORDERED, AND CHECKED AFTER THE EXACT MAP (ck-3mz0).
@@ -655,6 +811,13 @@ GATE_WHY: dict[str, str] = {
     "faction_write_not_applied": "the game ran the call and reading the faction back shows it did not take effect",
     "faction_query_busy": "another faction read was being computed on the game's thread",
     "mint_cost_unverified": "the game's price for this title could not be read, so the mint was not sent",
+    "cb_invalid_for_target": "the game's own casus-belli check says this casus belli cannot be used against this target now",
+    "engine_unreachable": "the bridge could not make this call: a game function, table or queue it needs is unmapped, unreadable or full in this build; nothing was sent to the game",
+    "write_not_applied": "the game ran the write and reading it back shows it did not take effect",
+    "unknown_decision": "the game has no decision by that name",
+    "decision_eval_faulted": "the engine's evaluation of this decision faulted or is skip-listed, so no verdict was reached",
+    "decision_reason_unwitnessed": "the game judged this decision not takeable now; the bridge did not read which requirement failed, because it could not confirm the game function that reading needs in this build",
+    "decision_not_shown": "the game does not show this decision to this ruler (its is_shown trigger is false), so it cannot be taken",
 }
 
 #: Gates that fire REGARDLESS of the arguments. `scope: "generic"` tells a seat
@@ -686,6 +849,8 @@ GATE_NEXT: dict[str, str] = {
     "faction_refused": "call do(action_class='factions_to_join') for what the game allows now",
     "faction_precondition": "call do(action_class='factions_to_join') for the factions you are in and who leads them",
     "faction_query_busy": "retry the read once",
+    "cb_invalid_for_target": "call cbs(target_id=<the target>) for every casus belli against him with the game's verdict, or plan_war() for the wars you can declare now",
+    "unknown_decision": "call discover(what='decisions') for the decision names",
 }
 
 #: Said in full rather than implied, for the gates where nothing will ever work.
@@ -4328,8 +4493,13 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
     if match is not None and not (match.get("declarable") or
                                   (match.get("outer_status") == "pass" and match.get("inner_status") == "pass")):
         cull = match.get("cull_reason") or match.get("inner_status") or "target_ineligible"
+        blk = write_blocked(cull, summary=cull)
+        if blk.get("gate") == "cb_invalid_for_target":
+            # L20-B (smoke17 R2): the doors that list what CAN be declared
+            blk["fix"] = {"tool": "cbs", "args": {"target_id": tid, "character_id": character_id},
+                          "or": {"tool": "plan_war", "args": {"character_id": character_id}}}
         return envelope("declare_war", ok=False, verdict="rejected", actor=actor, game=gw.game(),
-                        blocked=write_blocked(cull, summary=cull), bridge_health=gw.health)
+                        blocked=blk, bridge_health=gw.health)
 
     # confirm_straddle hard guard.
     if not confirm_straddle:
@@ -5612,6 +5782,56 @@ def decision_eval_rows(res, requested) -> tuple[list, Optional[dict]]:
     return rows, None
 
 
+def decision_unmatched(res) -> Optional[list]:
+    """The requested decisions no engine entry matched, as the bridge witnessed
+    them (`unmatched`, enumerate_decisions_annotated in list mode, L20-B). None
+    when the reply carries no such witness (a bridge before it): the caller then
+    says the rows are unexplained, never derives "unknown" from a missing row —
+    a row the bridge could not name was missing the same way (smoke17 B3)."""
+    u = res.get("unmatched") if isinstance(res, dict) else None
+    return [str(x) for x in u] if isinstance(u, list) else None
+
+
+def _decision_row(d: dict) -> dict:
+    """One evaluated decision as do(action_class="decisions") lists it: the engine's
+    verdict and its reasons (the failed requirement keys), or the fault that kept
+    the engine from reaching one."""
+    name = d.get("id") or d.get("name") or d.get("hash")
+    row = {"label": name,
+           "do_call": {"intent": "take_decision", "args": {"decision": name}}}
+    if d.get("eval_error") or d.get("eval_wedged") or d.get("eval_skipped"):
+        how = ("skip-listed (its evaluation hangs the engine)" if d.get("eval_skipped")
+               else "the engine's evaluation faulted")
+        row["blocked"] = why_blocked(
+            "decision_eval_faulted", summary=f"{name}: {how}; no verdict was reached",
+            measured={k: d[k] for k in ("eval_wedged", "eval_skipped") if k in d})
+    elif d.get("available"):
+        row["blocked"] = None
+    else:
+        fails = [str(f) for f in (d.get("failures") or [])]
+        if d.get("failure_key_unwitnessed") and (d.get("valid") is False or d.get("cost_ok") is False):
+            # L20 integration: a failed requirement whose name the bridge refused to
+            # read (diag dtor not witnessed): a typed state, never a reasonless row.
+            row["blocked"] = why_blocked(
+                "decision_reason_unwitnessed",
+                summary=f"{name}: not available; the failed requirement's name was not read",
+                measured={"failures": fails, "failure_key_unwitnessed": True})
+        elif fails == ["cannot_afford_decision"]:
+            row["blocked"] = why_blocked("cannot_afford", summary=f"{name}: cannot afford it now",
+                                         measured={"cost": d.get("cost")})
+        elif fails:
+            row["blocked"] = why_blocked("decision_unavailable", summary=f"{name}: " + ", ".join(fails),
+                                         measured={"failures": fails})
+        elif d.get("shown") is False:
+            row["blocked"] = why_blocked("decision_not_shown",
+                                         summary=f"{name}: the game does not show it to this ruler (is_shown is false)",
+                                         measured={"shown": False})
+        else:
+            row["blocked"] = why_blocked("gate_introspection_unavailable",
+                                         summary=f"{name}: not available and the engine gave no reason")
+    return row
+
+
 async def _do_enumerate(gw, action_class: str, character_id: int, candidates: list,
                         actor: dict, args: dict = None) -> dict[str, Any]:
     """Enumerate-mode: hand back self-describing do_call rows (SPEC §2 graft).
@@ -5629,24 +5849,42 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                             blocked=why_blocked("unbounded_eval_refused",
                                                 summary="decisions enumerate REQUIRES a bounded `candidates` list (#64 freeze safety)"),
                             bridge_health=gw.health)
-        res = await gw.read("list_valid_decisions",
+        # L20-B (smoke17 B3): the ANNOTATED read, not list_valid_decisions. The
+        # valid-only read drops every decision that is not available
+        # (enumerate_decisions_annotated: `if (valid_only && !available) continue`),
+        # so `unavailable` could never hold a row and a named decision that was
+        # not takeable came back as nothing at all.
+        res = await gw.read("list_decisions_annotated",
                             {"character_id": character_id, "decisions": candidates})
         rows, refused = decision_eval_rows(res, candidates)
         if refused is not None:
             return envelope("do", ok=False, actor=actor, game=gw.game(), blocked=refused,
                             bridge_health=gw.health)
         for d in rows:
-            avail = d.get("available")
-            row = {"label": d.get("id") or d.get("name"),
-                   "do_call": {"intent": "take_decision", "args": {"decision": d.get("id") or d.get("name")}}}
-            if avail:
-                row["blocked"] = None
-                available.append(row)
-            else:
-                fails = d.get("failures") or []
-                row["blocked"] = why_blocked("gate_introspection_unavailable" if not fails else "missing_prerequisite_law",
-                                             summary=", ".join(fails) if fails else "blocked behind the frozen gate path (O3)")
-                unavailable.append(row)
+            row = _decision_row(d)
+            (available if row["blocked"] is None else unavailable).append(row)
+        unknown = decision_unmatched(res)
+        if unknown and res.get("partial"):
+            warnings.append({"code": "decisions_not_reached", "names": unknown,
+                             "detail": f"the evaluation stopped at its time budget before reaching "
+                                       f"{', '.join(unknown)}; ask for fewer at once"})
+        elif unknown and not rows:
+            return envelope("do", ok=False, actor=actor, game=gw.game(),
+                            blocked=why_blocked("unknown_decision",
+                                                summary=f"the game has no decision named {', '.join(unknown)}; "
+                                                        "discover(what='decisions') lists the names",
+                                                measured={"unknown": unknown}),
+                            bridge_health=gw.health)
+        elif unknown:
+            warnings.append({"code": "unknown_decision", "names": unknown,
+                             "detail": f"the game has no decision named {', '.join(unknown)}"})
+        elif unknown is None:
+            seen = {str(r["label"]) for r in available + unavailable}
+            missing = [str(c) for c in candidates if str(c) not in seen]
+            if missing:
+                warnings.append({"code": "decision_rows_unexplained", "names": missing,
+                                 "detail": "this bridge returned no row for "
+                                           f"{', '.join(missing)} and does not say why"})
     elif action_class == "interactions":
         res = await gw.read("list_interactions", {})
         for i in (res or {}).get("interactions", []) if isinstance(res, dict) else []:
@@ -5655,19 +5893,31 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                               "do_call": {"intent": "interact", "args": {"interaction": name, "target_id": 0}},
                               "blocked": None})
     elif action_class == "council_tasks":
-        res = await gw.read("query_fabricate_targets",
-                            {"actor_id": character_id, "task": "task_fabricate_claim", "max_results": 40})
-        for t in (res or {}).get("targets", []) if isinstance(res, dict) else []:
+        # L20 r3 (witness item 3): `seat` goes to the bridge, which evaluates the
+        # targets on that seat's version of the task (council_task_family.h) and
+        # names the version and its seat (`task_used`, `task_seat`). The rows'
+        # do_call names the seat the bridge resolved; with no seat the bridge
+        # tries the court chaplain's task_fabricate_claim, and a ruler with
+        # ministries passes seat (B5: minister_justice).
+        want_seat = str(args.get("seat") or "").strip()
+        params = {"actor_id": character_id, "task": "task_fabricate_claim", "max_results": 40}
+        if want_seat:
+            params["seat"] = want_seat
+        res = await gw.read("query_fabricate_targets", params)
+        r = res if isinstance(res, dict) else {}
+        task_seats = [_short_seat(x) for x in r.get("task_seats") or [] if isinstance(x, str)]
+        row_seat = (_short_seat(r["task_seat"]) if isinstance(r.get("task_seat"), str) and r["task_seat"]
+                    else (want_seat or FABRICATE_CLAIM_SEAT))
+        for t in r.get("targets", []) or []:
             assignable = t.get("assignable")
             row = {"label": f"Fabricate claim on {t.get('title') or t.get('title_id')}",
                    # lane-query item 1: this row used to say seat "chancellor".
                    # task_fabricate_claim is a COURT CHAPLAIN task (dump
                    # ck3_20260625_152901_ivar867: tasktype+0x30 ->
-                   # councillor_court_chaplain), so the printed call named a
-                   # seat the game never uses for it, and a seat that read it
-                   # went looking for its chancellor's skill.
+                   # councillor_court_chaplain); its clones sit on other seats
+                   # (task_fabricate_claim_minister_of_rites, minister_justice).
                    "do_call": {"intent": "council_task",
-                               "args": {"seat": FABRICATE_CLAIM_SEAT, "task": "task_fabricate_claim",
+                               "args": {"seat": row_seat, "task": "task_fabricate_claim",
                                         "target_title_id": t.get("title_id")}},
                    "warnings": [{"code": "may_revert_ai_reasserts", "is_known_limitation": True}]}
             if assignable:
@@ -5677,27 +5927,35 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                 row["blocked"] = why_blocked("target_not_assignable",
                                              summary="target dropped off the eligible list this tick — re-enumerate, never reuse a stale target_id")
                 unavailable.append(row)
+        if r.get("reason") == "seat_cannot_take_task":
+            return envelope("do", ok=False, actor=actor, game=gw.game(),
+                            blocked=why_blocked("target_ineligible", raw_reason="seat_cannot_take_task",
+                                                summary=(f"seat {want_seat} has no version of task_fabricate_claim; "
+                                                         f"the seats that do: {', '.join(task_seats) or 'none named'}"),
+                                                measured={"seat": want_seat, "task_seats": task_seats}),
+                            bridge_health=gw.health)
         if not available and not unavailable:
             # L18-B item 2 (Cui 13191, an administrative ruler): the list came back
-            # empty with no reason. The bridge evaluates the task on the council seat
-            # whose current task type is the task's position (action_handlers.cpp
-            # do_query_fabricate_targets), and the printed call names the court
-            # chaplain; a ruler whose realm seats the task elsewhere (a ministry's
-            # minister_justice) has no court-chaplain row. The empty reply names the
-            # seat it used and what the bridge said, rather than an empty list.
-            r = res if isinstance(res, dict) else {}
+            # empty with no reason. The empty reply names the seat it used, the
+            # seats the task has (the bridge's task_seats) and what the bridge said.
             said = {k: r.get(k) for k in ("reason", "requested", "eligible_count",
                                           "assignable_count", "counties_considered",
                                           "seat_vacant", "seat_warning", "scan_truncated")
                     if r.get(k) is not None}
-            warnings.append({"code": "fabricate_targets_empty", "is_known_limitation": True,
-                             "detail": (f"no fabricate-claim target for this ruler on the "
-                                        f"{FABRICATE_CLAIM_SEAT} seat (task_fabricate_claim). "
-                                        "A realm that seats the task elsewhere (an "
-                                        "administrative ministry's minister_justice) is not "
-                                        "looked up by the bridge yet. The bridge said: "
-                                        + (", ".join(f"{k}={said[k]}" for k in sorted(said)) if said else "nothing")),
-                             "seat": FABRICATE_CLAIM_SEAT, "bridge": said})
+            others = [x for x in task_seats if x != row_seat]
+            hint = (f"The task's other seats: {', '.join(others)}; a ruler whose government seats it "
+                    f"there passes args={{\"seat\": \"{others[0]}\"}}. " if others else
+                    "" if want_seat else
+                    "A ruler with ministries (the minister_justice) passes args={\"seat\": ...}. ")
+            w = {"code": "fabricate_targets_empty", "is_known_limitation": True,
+                 "detail": (f"no fabricate-claim target for this ruler on the "
+                            f"{row_seat} seat (task_fabricate_claim). " + hint +
+                            "The bridge said: "
+                            + (", ".join(f"{k}={said[k]}" for k in sorted(said)) if said else "nothing")),
+                 "seat": row_seat, "bridge": said}
+            if task_seats:
+                w["task_seats"] = task_seats
+            warnings.append(w)
     elif action_class == "laws":
         # lane-query item 2: THE REPLY SHAPE WAS NEVER READ. The bridge answers
         # {groups: [{group_name, current_law, options: [{name, ...}]}]} and this
@@ -5729,7 +5987,7 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
             warnings.append({"code": "no_law_options", "is_known_limitation": False,
                              "detail": f"no law changes listed: {_why}"})
     elif action_class == "fabricate_targets":
-        return await _do_enumerate(gw, "council_tasks", character_id, candidates, actor)
+        return await _do_enumerate(gw, "council_tasks", character_id, candidates, actor, args)
     elif action_class == "mercenaries":
         # lane-query item 2: 562 rows, every label null, no size, 49 KB. The
         # bridge now labels each company (home county + men), gives troops and
@@ -6478,6 +6736,14 @@ async def scheme_targets_impl(gw, scheme: str, character_id: int = 0, target_id:
 #: ck3_20260625_152901_ivar867: tasktype+0x30 -> councillor_court_chaplain). One
 #: definition: the fabricate_targets rows' do_call and its empty reply name it.
 FABRICATE_CLAIM_SEAT = "court_chaplain"
+
+
+def _short_seat(seat: str) -> str:
+    """The engine's position key as the council_task seat argument spells it
+    ("councillor_court_chaplain" -> "court_chaplain"; the bridge compares both
+    the same way, council_task_family.h norm_seat)."""
+    seat = str(seat)
+    return seat[len("councillor_"):] if seat.lower().startswith("councillor_") else seat
 #: title is the council task task_fabricate_claim (do(action_class='fabricate_targets')).
 TITLE_CLAIM_DOOR = {"tool": "do", "args": {"action_class": "fabricate_targets"}}
 #: The bridge's refusal of a scheme type whose target is not a character, from the
@@ -7780,6 +8046,22 @@ RELEASE_REFUSAL_SUMMARIES = {
 }
 
 
+#: L20-C (smoke16/17: "documented; surprising"): the last-ruler refusal named
+#: what was refused and not what the user wanted to do instead. The two ways
+#: out, as the fix: switch (control the other ruler, which moves the seat), or
+#: end the session (the bridge frees every ruler a session held when it ends;
+#: docs/reference/bridge-contract.md).
+RELEASE_REFUSAL_FIXES = {
+    "last_claim_of_control_session": {
+        "tool": "session",
+        "args": {"action": "control", "character_id": "<the ruler to switch to>"},
+        "hint": ("this ruler is freed when this session ends: the game's AI plays it on with "
+                 "your last posture, and nothing needs releasing. To switch rulers, control "
+                 "the other one; that moves the seat in one call."),
+    },
+}
+
+
 def control_refusal_reason(res) -> "Optional[str]":
     """The refusal code, or None when the bridge WITNESSED a success. (ck-switch)
 
@@ -8581,7 +8863,8 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                     _gate,
                                     "the bridge refused the release and named a reason "
                                     "this client does not know: treat as UNFORESEEN"),
-                                raw_reason=_r if isinstance(_r, str) else ""),
+                                raw_reason=_r if isinstance(_r, str) else "",
+                                fix=RELEASE_REFUSAL_FIXES.get(_gate)),
                             bridge_health=gw.health)
         return envelope("session", verdict="applied",
                         result={"released": character_id,
@@ -8740,14 +9023,202 @@ async def _session_wait_once(gw, secs: int):
 
 
 async def _session_wait_game_days(gw, days: int, secs: int, cap_days):
-    """v3 §7.2: let the clock run until the game date has advanced ≥ `days`
-    game-days since this call began — bounded waits of at most `secs`
-    (≤ WAIT_CAP_S) each, the next one planned from the rate measured so far
-    (`cycle_cadence.plan_wait`), at most MAX_WAIT_CALLS, and stopped after
-    MAX_NO_PROGRESS waits with no date movement. The reply carries what was
-    asked, what was covered, how many calls it took and why it stopped; a
-    refused or pending inner wait is returned as that wait's own envelope.
+    """v3 §7.2: let the clock run until the game date has advanced `days`
+    game-days since this call began.
+
+    L20-A: the bridge's pause alarm first (`_session_wait_alarm`): the game
+    thread pauses at the target date, so the reply's `game_days_advanced` is
+    the ask, not a polling artefact (smoke17: 25 for 10 in one 15 s probe).
+    A bridge that does not serve the alarm (its unpause reply carries no
+    `pause_alarm`) gets the polled loop below, and the reply says which ran
+    (`wait_mode`).
+
+    The polled loop: bounded waits of at most `secs` (≤ WAIT_CAP_S) each, the
+    next one planned from the rate measured so far (`cycle_cadence.plan_wait`),
+    at most MAX_WAIT_CALLS, and stopped after MAX_NO_PROGRESS waits with no
+    date movement. The reply carries what was asked, what was covered, how
+    many calls it took and why it stopped; a refused or pending inner wait is
+    returned as that wait's own envelope.
     """
+    alarm_out, alarm_note = await _session_wait_alarm(gw, days, secs, cap_days)
+    if alarm_out is not None:
+        return alarm_out
+    out = await _session_wait_polled(gw, days, secs, cap_days)
+    res = out.get("result")
+    if isinstance(res, dict):
+        res["wait_mode"] = "polled"
+        res["alarm"] = {"state": alarm_note}
+        if alarm_note in ALARM_FALLBACK_DETAIL:
+            res["alarm"]["detail"] = ALARM_FALLBACK_DETAIL[alarm_note]
+    return out
+
+
+#: L20 r3 (witness item 5a): why the game-day wait fell back to the polled loop.
+#: `not_witnessed`: the pause_at write got no reply in time (mcp_server answers
+#: {"status": "sent_no_confirmation"}), so whether the alarm was armed is not
+#: known; it is not "not_served", which is a bridge whose reply had no alarm.
+ALARM_FALLBACK_DETAIL = {
+    "not_witnessed": "the pause_at write was not confirmed (no reply in time), so the arm "
+                     "was not witnessed; the wait fell back to polling, and its closing "
+                     "pause disarms an alarm that did land",
+}
+
+
+async def _session_wait_alarm(gw, days: int, secs: int, cap_days):
+    """The game-day wait on the bridge's pause alarm (bridge/include/
+    pause_alarm.h): read the date, arm `unpause_game {"pause_at": start+days}`,
+    poll get_tick_info every ALARM_POLL_S until the alarm reports `fired`
+    (the game thread paused at the first pass at or past the target), then
+    read the date the game holds. Returns (envelope, None), or (None, why)
+    when the alarm cannot be used and nothing was written: the polled loop
+    then runs. A refused arm is returned as a refusal, never retried polled.
+
+    `game_days_advanced` is the date read AFTER the pause minus the start: if
+    the engine ran a tick it had already queued (speed 4-5), the reply shows
+    `game_days_advanced` > the ask and `overshoot_days`, and `alarm.paused_at`
+    says where the game thread stopped it. Wall time is bounded as the polled
+    loop's: `secs` x MAX_WAIT_CALLS."""
+    before = await _settle_pause(gw, None)
+    start_date = before.get("game_date")
+    start_ord = _cc.ordinal(start_date)
+    if start_ord is None:
+        return None, "start_date_unreadable"
+    target = _cc.date_from_ordinal(start_ord + days)
+    calls = 0
+    reply = await gw.write("unpause_game", {"pause_at": target})
+    calls += 1
+    refused = reply_refusal(reply)
+    if refused:
+        return envelope("session", ok=False, verdict="rejected",
+                        result={"start_date": start_date, "wait_mode": "alarm",
+                                "alarm": {"state": "refused", "target": target},
+                                "game_days_requested": days, "game_days_advanced": 0,
+                                "calls": calls, "cadence_game_days": cap_days},
+                        game=_game_from_tick(gw, before),
+                        blocked=write_blocked(refused, raw=reply,
+                                              summary=(f"the bridge refused the pause alarm for {target} "
+                                                       f"({refused}); nothing was waited")),
+                        bridge_health=gw.health), None
+    if isinstance(reply, dict) and reply.get("status") == "sent_no_confirmation":
+        return None, "not_witnessed"
+    if not isinstance(reply, dict) or not isinstance(reply.get("pause_alarm"), dict):
+        return None, "not_served"
+    budget = float(secs) * _cc.MAX_WAIT_CALLS
+    elapsed = 0.0
+    stopped = _cc.STOP_MAX_CALLS
+    last_ord, still_s = start_ord, 0.0
+    alarm: dict = dict(reply["pause_alarm"])
+    ti: dict = before
+    pres, paused_written = None, False
+    try:
+        while elapsed < budget:
+            await _SLEEP(_cc.ALARM_POLL_S)
+            elapsed += _cc.ALARM_POLL_S
+            ti = await _fresh_tick(gw)
+            al = ti.get("pause_alarm")
+            alarm = dict(al) if isinstance(al, dict) else {"state": None}
+            state = alarm.get("state")
+            if state == "fired":
+                stopped = _cc.STOP_ALARM
+                break
+            if state == "cleared":
+                stopped = _cc.STOP_ALARM_CLEARED
+                break
+            if state != "armed":
+                stopped = _cc.STOP_ALARM_LOST
+                break
+            if ti.get("paused") is True:
+                # The engine paused the game itself (an event): not a bridge clock
+                # write, so the alarm stands. Unpause again on the same target, as
+                # every polled wait used to unpause at its start.
+                if calls >= _cc.MAX_WAIT_CALLS:
+                    break
+                reply = await gw.write("unpause_game", {"pause_at": target})
+                calls += 1
+                if reply_refusal(reply):
+                    # the date reached the target while paused: the next read says
+                    stopped = _cc.STOP_ALARM_LOST
+                    break
+                continue
+            o = _cc.ordinal(ti.get("game_date"))
+            if o is not None and o != last_ord:
+                last_ord, still_s = o, 0.0
+            else:
+                still_s += _cc.ALARM_POLL_S
+                if still_s >= _cc.ALARM_NO_PROGRESS_S:
+                    stopped = _cc.STOP_NO_PROGRESS
+                    break
+    finally:
+        # L20 r3 (witness item 5b): an alarm outlives nothing but its own wait
+        # (pause_alarm.h). Every end but `fired` (the alarm disarmed itself as it
+        # paused) writes the closing pause, which disarms through clock_write:
+        # the engine-paused end, the budget, a lost alarm, an error.
+        if stopped != _cc.STOP_ALARM:
+            paused_written = True
+            pres = await gw.write("pause_game", {})
+    after = await _settle_pause(gw, True, 3.0)
+    end_date = after.get("game_date")
+    end_ord = _cc.ordinal(end_date)
+    advanced = (end_ord - start_ord) if end_ord is not None else 0
+    res = {
+        "waited_s": round(elapsed), "cap_s": WAIT_CAP_S,
+        "start_date": start_date, "end_date": end_date,
+        "clock_ran": bool(start_date) and start_date != end_date,
+        "paused": after.get("paused"),
+        "wait_mode": "alarm",
+        "alarm": {"state": alarm.get("state"), "target": target,
+                  "paused_at": alarm.get("paused_at")},
+        "game_days_requested": days, "game_days_advanced": advanced,
+        "cycle_start_date": start_date, "calls": calls,
+        "waited_s_total": round(elapsed, 1), "cadence_game_days": cap_days,
+        "stopped": stopped,
+    }
+    if advanced > days:
+        res["overshoot_days"] = advanced - days
+    al_after = after.get("pause_alarm")
+    if paused_written and isinstance(al_after, dict) and al_after.get("state"):
+        res["alarm"]["state_after"] = al_after["state"]      # the disarm, as the bridge reads it
+    if paused_written and not (isinstance(pres, dict) and pres.get("success") is True
+                               and not reply_refusal(pres)):
+        # L20 r3 (witness item 5c): the closing pause is a write; its reply is
+        # read, and a pause it does not confirm is said, never assumed
+        res["pause_unconfirmed"] = True
+        res["pause_reply"] = ((reply_refusal(pres) or pres.get("status") or "no_success")
+                              if isinstance(pres, dict) else "no_reply")
+    g = _game_from_tick(gw, after)
+    if stopped == _cc.STOP_ALARM and advanced >= days and after.get("paused") is True:
+        return envelope("session", verdict="applied", result=res, game=g,
+                        bridge_health=gw.health), None
+    if after.get("paused") is not True:
+        return envelope("session", verdict="pending", result=res, game=g,
+                        pending=write_pending(
+                            "next_pass", game_date_at_submit=end_date,
+                            expected_change="the game reads paused",
+                            why_pending=("get_tick_info did not read paused within 3 s of "
+                                         f"the wait's end (paused reads {after.get('paused')!r})"),
+                            verify_with="session(action='health') paused"),
+                        bridge_health=gw.health), None
+    return _alarm_wait_not_reached(gw, res, g), None
+
+
+def _alarm_wait_not_reached(gw, res: dict, g: dict) -> dict:
+    """The alarm wait that did not cover its ask (no write here: the clock's
+    shortfall is not a refusal of a write)."""
+    days, advanced, calls = res["game_days_requested"], res["game_days_advanced"], res["calls"]
+    return envelope("session", ok=False, verdict="rejected", result=res, game=g,
+                    blocked=why_blocked(
+                        "cycle_not_reached",
+                        summary=(f"the clock covered {advanced} of {days} game-days in {calls} "
+                                 f"call(s) ({res['waited_s_total']:.0f} s) and stopped: "
+                                 f"{res['stopped']}. session(action='health'), then ask again "
+                                 "for the remaining days."),
+                        measured={"game_days_requested": days, "game_days_advanced": advanced,
+                                  "calls": calls}),
+                    bridge_health=gw.health)
+
+
+async def _session_wait_polled(gw, days: int, secs: int, cap_days):
+    """The polled game-day loop (the bridge serves no pause alarm)."""
     start_date = None
     start_ord = None
     elapsed = 0.0

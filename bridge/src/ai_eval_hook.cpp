@@ -8,6 +8,7 @@
 // deadlock/hang caused by mutex access in the parallel AI eval hot path.
 
 #include "action_dispatch_internal.h"
+#include "diag_dtor.h"   // L20-D: the diag record dtor, witnessed from the engine's call
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
 #include "runtime_resolver.h"
 #include "cb_outer_filter.h"
@@ -3691,8 +3692,20 @@ static bool loud_extract_slot_key(uintptr_t trigger_block,
     typedef void (*fn_diag_dtor)(void*);
     auto fn_populate = reinterpret_cast<fn_eval_with_failures>(
         g_base_addr + ck3::trigger_eval_funcs::EVAL_WITH_FAILURES);
-    auto fn_destroy = reinterpret_cast<fn_diag_dtor>(
-        g_base_addr + ck3::trigger_eval_funcs::DIAG_OBJECT_DTOR);
+    // L20-D: destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
+    // refuse the extraction (diag_dtor.h); never jump to an unwitnessed address.
+    const uintptr_t dtor_addr = bridge::resolve_diag_dtor(g_base_addr, is_mapped_range);
+    if (!dtor_addr) {
+        static bool s_logged = false;
+        if (!s_logged && g_logfile) {
+            s_logged = true;
+            fprintf(g_logfile, "[CK3-Bridge] loud_extract: diag dtor not witnessed at EVAL_WITH_FAILURES+0x%llx; "
+                    "failure-key extraction refused\n",
+                    (unsigned long long)ck3::trigger_eval_funcs::EVAL_WITH_FAILURES_DTOR_CALL);
+        }
+        return false;
+    }
+    auto fn_destroy = reinterpret_cast<fn_diag_dtor>(dtor_addr);
     if (!is_mapped(reinterpret_cast<uintptr_t>(fn_populate)) ||
         !is_mapped(reinterpret_cast<uintptr_t>(fn_destroy))) {
         return false;

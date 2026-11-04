@@ -83,9 +83,13 @@ Args:
         (e.g. "c_york"), instead of target_county.
     counties: For domain="map_graph", scope=explicit: comma-separated county keys.
     detail: For domain="map_graph": "brief" drops distances and the live overlay.
+        For domain="conquest_targets": "full" gives each row every field (the
+        engine_valid_cbs list, both declare options) and the bridge's note; the
+        default row carries counts instead.
     verbose: Opt-in to full detail for characters/wars/council/armies/realm/claims/
-        conquest_targets (whose default lists 25 counties outside your realm,
-        conquerable first, with max_results for more).
+        conquest_targets (whose default lists 10 counties outside your realm,
+        conquerable first, each with declare_args for declare_war; max_results
+        for more).
         Default False returns lean payloads (drops per-row skills, government, age,
         trait names, war participant id arrays, score_breakdown, and per-army
         secondary status fields) — all of which the agent's default formatters do not read. Set True
@@ -166,7 +170,8 @@ Args:
           contract), is_secret and max_breaches.
           scheme_targets: whom the actor can start `scheme` against, by the
           game's own check (the scheme's allow and valid triggers, an
-          existing scheme, the cooldown). target_id checks one character;
+          existing scheme, the cooldown). A read: it answers for any
+          character_id, bound to this session or not; nothing is started. target_id checks one character;
           candidates=[ids] checks those; neither checks your court and
           vassals, your liege and his court, the holders of titles you claim and their courts. Stops at max_results (default
           20) valid. A refused row lists the game's reasons, one per failing
@@ -448,14 +453,17 @@ Args:
                   recruit cost and fielded_regiments; 30 rows, fielded first then
                   cheapest, or pass candidates=[types]. laws: the other laws in each
                   law group you have; whether a change is allowed now is decided when
-                  change_law runs. fabricate_targets: the titles the court
-                  chaplain's task_fabricate_claim can take (the door for a claim on a
-                  title; the generate_claim scheme is refused); an empty list warns
-                  fabricate_targets_empty, naming the seat it used and the bridge's
-                  counts. council_task takes args.seat optionally; a task
-                  belongs to ONE seat (task_fabricate_claim is the court chaplain's), a
-                  seat that cannot take it is refused, and every reply names the seat
-                  and councillor used. buildings: the game's building types (40
+                  change_law runs. fabricate_targets: the titles task_fabricate_claim
+                  can take (the door for a claim on a title; the generate_claim scheme
+                  is refused). With no args.seat the court chaplain's task is tried
+                  first; a ruler with ministries passes args={"seat":
+                  "minister_justice"}, and each row's do_call names the seat the
+                  bridge evaluated. An empty list warns fabricate_targets_empty, naming
+                  the seat it used, the task's other seats (task_seats) and the
+                  bridge's counts. council_task takes args.seat optionally; a seat
+                  picks its own version of the task (task_used), a seat with no
+                  version is refused with the seats that have one, and every reply
+                  names the seat and councillor used. buildings: the game's building types (40
                   rows, or pass candidates=[keys]); pass args={"location_id": <barony
                   title id of a holding you hold>} and each row is the game's verdict
                   for you there (available, or blocked with the game's reasons or the
@@ -583,10 +591,14 @@ wait: the way to let time pass between cycles. Unpauses if paused, blocks for
 `seconds` (1-110; longer waits are several calls), pauses again, and returns
 start_date/end_date. Do not use Bash `sleep` for this: Claude Code refuses sleeps
 of 30 s or more. With `game_days` > 0 the wait is measured in GAME-DAYS instead:
-the server repeats bounded waits (each at most `seconds`, planned from the clock
-rate it measures) until the game date has advanced that many days since the call
-began, and reports game_days_advanced, calls and why it stopped; seconds are not
-the unit, because the clock's rate depends on the host and the seat count. Under
+the bridge pauses the game itself on the first day at or past the start date plus
+`game_days` (stopped "alarm"; alarm.paused_at is where it stopped), and the reply
+reports game_days_advanced, calls and why it stopped; seconds are not the unit,
+because the clock's rate depends on the host and the seat count. A bridge without
+the alarm gets repeated bounded waits instead (wait_mode "polled", alarm.state
+"not_served"), and so does an arm the bridge did not confirm in time
+(alarm.state "not_witnessed"). A closing pause the bridge did not confirm is
+reported (pause_unconfirmed: true). Under
 a registered cadence (CK3_CYCLE_GAME_DAYS) an ask above it is refused
 (cycle_game_days_over_cadence), never clamped. Under a registered horizon
 (CK3_EPISODE_HORIZON_END) a wait made at or past it is refused (horizon_reached):

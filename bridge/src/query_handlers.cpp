@@ -3,7 +3,10 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "war_scope.h"
+#include "pause_alarm.h"
 #include "action_args.h"
+#include "diag_dtor.h"   // L20-D: the diag record dtor, witnessed from the engine's call
 #include "scope_slot_policy.h"   // ck-zgh4: the scope latch
 #include "engine_text.h"               // war names are rendered text: one cleaner
 #include "instance_paths.h"  // ck-qn03
@@ -5160,8 +5163,9 @@ bool do_query_war_score_breakdown(const char* params_json, std::string* out) {
     ResponseBuilder r;
     r.begin_object();
 
-    // Parse optional war_id
-    uint32_t war_id = static_cast<uint32_t>(json_get_int(params_json, "war_id"));
+    // Parse optional war_id: absent (-1) and 0 both mean every cached war
+    // (war_scope.h; L20-A: absent used to read as war 0xFFFFFFFF).
+    uint32_t war_id = bridge::war_scope::from_param(json_get_int(params_json, "war_id"));
 
     auto emit_breakdown = [&](uint32_t wid, const WarScoreBreakdown& bd) {
         r.begin_object();
@@ -5191,7 +5195,7 @@ bool do_query_war_score_breakdown(const char* params_json, std::string* out) {
         r.end_object();
     };
 
-    if (war_id != 0) {
+    if (!bridge::war_scope::all_wars(war_id)) {
         // Single war query.
         //
         // STEP 1 — live struct reads (always, independent of the cache). These
@@ -5366,7 +5370,9 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
         return false;
     }
     uint32_t my_id = static_cast<uint32_t>(actor_id) & 0xFFFFFF;
-    uint32_t want_war = static_cast<uint32_t>(json_get_int(params_json, "war_id"));
+    // The optional war scope (war_scope.h). L20-A / smoke17 A3: read as a plain
+    // cast, an absent war_id (-1) was the scope 0xFFFFFFFF and dropped every row.
+    const uint32_t want_war = bridge::war_scope::from_param(json_get_int(params_json, "war_id"));
     const bool walk_enabled =
         g_war_stance_record_walk_enabled.load(std::memory_order_relaxed);
 
@@ -5487,13 +5493,11 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
             uint32_t stored = safe_read<uint32_t>(war_ptr + ck3::war_obj::WAR_ID);
             if ((stored & 0xFFFFFF) != idx) continue;
             if (safe_read<uint8_t>(war_ptr + ck3::war_obj::IS_ENDED) != 0) continue;
-            if (want_war != 0 && (want_war & 0xFFFFFF) != idx) continue;
-
             uint32_t patk = safe_read<uint32_t>(war_ptr + ck3::war_obj::PRIMARY_ATK_REF) & 0xFFFFFF;
             uint32_t pdef = safe_read<uint32_t>(war_ptr + ck3::war_obj::PRIMARY_DEF_REF) & 0xFFFFFF;
             // Only the primary attacker decides the siege; that is who "stuck"
             // applies to. (A called ally cannot white-peace the war.)
-            if (my_id != patk) continue;
+            if (!bridge::war_scope::stance_row_selected(want_war, idx, patk, my_id)) continue;
 
             war_count++;
 
@@ -7514,6 +7518,32 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
         r.end_object();
     }
 
+    // L20-A: the game-day pause alarm (pause_alarm.h), always present: state
+    // "none" until the first unpause_game {"pause_at"}; "armed" with its target;
+    // "fired" with the date the drain paused at; "cleared" with what cleared it.
+    {
+        namespace pa = bridge::pause_alarm;
+        const pa::Snapshot a = pa::snapshot();
+        char buf[16];
+        r.key("pause_alarm");
+        r.begin_object();
+        r.key("state"); r.value_string(pa::state_name(a.state));
+        if (a.state != pa::State::None) {
+            ck3::game_date::format_total_days(a.target_day, buf, sizeof buf);
+            r.key("target"); r.value_string(buf);
+            ck3::game_date::format_total_days(a.armed_at_day, buf, sizeof buf);
+            r.key("armed_at"); r.value_string(buf);
+        }
+        if (a.state == pa::State::Fired) {
+            ck3::game_date::format_total_days(a.paused_at_day, buf, sizeof buf);
+            r.key("paused_at"); r.value_string(buf);
+        }
+        if (a.state == pa::State::Cleared) { r.key("cleared_by"); r.value_string(a.cleared_by); }
+        r.key("arms");  r.value_uint(a.arms);
+        r.key("fires"); r.value_uint(a.fires);
+        r.end_object();
+    }
+
     // Pause sub-counts for diagnostics (event-pause, date-pause)
     uintptr_t gs2 = safe_read_offset<uintptr_t>(ck3::globals::GAME_STATE_ROOT);
     if (gs2) {
@@ -8136,9 +8166,12 @@ bool dv_eval_block(uintptr_t trigger_block, uintptr_t scope_ctx, bool* crashed) 
 
 // Harvest the requirement loc-key from the loud-failure diag record for a
 // failing trigger block. Mirrors loud_extract_slot_key. On any failure leaves
-// out_key empty and returns false.
+// out_key empty and returns false. L20 integration: *dtor_unwitnessed is set
+// when the extraction was refused because resolve_diag_dtor() could not witness
+// the destructor (the row then says so; it is not a requirement-less "no").
 bool dv_extract_failure_key(uintptr_t trigger_block, uintptr_t scope_ctx,
-                            char* out_key, size_t out_size) {
+                            char* out_key, size_t out_size,
+                            bool* dtor_unwitnessed = nullptr) {
     if (!out_key || out_size == 0) return false;
     out_key[0] = '\0';
 
@@ -8146,8 +8179,21 @@ bool dv_extract_failure_key(uintptr_t trigger_block, uintptr_t scope_ctx,
     typedef void (*fn_diag_dtor)(void*);
     auto fn_populate = reinterpret_cast<fn_eval_with_failures>(
         g_base_addr + ck3::trigger_eval_funcs::EVAL_WITH_FAILURES);
-    auto fn_destroy = reinterpret_cast<fn_diag_dtor>(
-        g_base_addr + ck3::trigger_eval_funcs::DIAG_OBJECT_DTOR);
+    // L20-D: destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
+    // refuse the extraction (diag_dtor.h); never jump to an unwitnessed address.
+    const uintptr_t dtor_addr = bridge::resolve_diag_dtor(g_base_addr, is_mapped_range);
+    if (!dtor_addr) {
+        if (dtor_unwitnessed) *dtor_unwitnessed = true;
+        static bool s_logged = false;
+        if (!s_logged && g_logfile) {
+            s_logged = true;
+            fprintf(g_logfile, "[CK3-Bridge] dv_extract_failure_key: diag dtor not witnessed at EVAL_WITH_FAILURES+0x%llx; "
+                    "failure-key extraction refused\n",
+                    (unsigned long long)ck3::trigger_eval_funcs::EVAL_WITH_FAILURES_DTOR_CALL);
+        }
+        return false;
+    }
+    auto fn_destroy = reinterpret_cast<fn_diag_dtor>(dtor_addr);
     if (!is_mapped(reinterpret_cast<uintptr_t>(fn_populate)) ||
         !is_mapped(reinterpret_cast<uintptr_t>(fn_destroy))) return false;
 
@@ -8243,6 +8289,7 @@ DvCost dv_read_cost(uintptr_t decision) {
 // skips begin/end) if the decision is not available.
 struct DvFields {
     bool shown, valid, cost_ok, available, eval_error;
+    bool dtor_unwitnessed;   // a failure key was refused: diag dtor not witnessed (diag_dtor.h)
     char fail_valid[96];
     char fail_cost[96];
 };
@@ -8250,6 +8297,7 @@ struct DvFields {
 void dv_evaluate(uintptr_t decision, uintptr_t scope_ctx, DvFields& f) {
     f.shown = f.valid = f.cost_ok = f.available = false;
     f.eval_error = false;
+    f.dtor_unwitnessed = false;
     f.fail_valid[0] = '\0';
     f.fail_cost[0]  = '\0';
 
@@ -8261,14 +8309,14 @@ void dv_evaluate(uintptr_t decision, uintptr_t scope_ctx, DvFields& f) {
     if (crashed) { f.eval_error = true; return; }
     if (!f.valid) {
         dv_extract_failure_key(decision + ck3::decision_type::IS_VALID, scope_ctx,
-                               f.fail_valid, sizeof(f.fail_valid));
+                               f.fail_valid, sizeof(f.fail_valid), &f.dtor_unwitnessed);
     }
 
     f.cost_ok = dv_eval_block(decision + ck3::decision_type::COST_TRIGGER, scope_ctx, &crashed);
     if (crashed) { f.eval_error = true; return; }
     if (!f.cost_ok) {
         dv_extract_failure_key(decision + ck3::decision_type::COST_TRIGGER, scope_ctx,
-                               f.fail_cost, sizeof(f.fail_cost));
+                               f.fail_cost, sizeof(f.fail_cost), &f.dtor_unwitnessed);
     }
 
     f.available = f.shown && f.valid && f.cost_ok;
@@ -8429,6 +8477,10 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
     // stops at kGameThreadEvalBudgetMs (L13 FF2, witness R6; was 4 s) and says so
     // (partial:true, the count it considered).
     volatile bool budget_hit = false;
+    // L20-B: which requested decisions a DB entry matched (list mode); the rest
+    // are emitted as `unmatched` after the loop.
+    std::vector<std::string> matched_names;
+    std::vector<uint32_t>    matched_hashes;
 
     uintptr_t db = safe_read<uintptr_t>(g_base_addr + ck3::globals::DECISION_DB);
     if (db && is_mapped(db)) {
@@ -8453,15 +8505,25 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
 
                 // #64 LIST-MODE: when specific decisions were requested, evaluate ONLY those
                 // (bounded → fast + freeze-safe). Match by name-hash or by decision key name.
+                // L20-B: the decision's own key, read BEFORE any engine eval (a
+                // safe read of the DB object), so a row whose eval faults or is
+                // skip-listed still names the decision asked for. The hash-only
+                // table (resolve_decision_name) knows a handful of decisions;
+                // smoke17 B3's visit_local_shrine_decision faulted, was emitted
+                // with a hash and no name, and the reader could not match it.
+                std::string key_name;
+                {
+                    const char* nm = nullptr; size_t nl = 0;
+                    if (read_db_obj_name(obj, nm, nl) && nm) key_name.assign(nm, nl);
+                }
                 if (list_mode) {
                     bool want = false;
-                    for (uint32_t h : req_hashes) { if (h == (uint32_t)hash) { want = true; break; } }
-                    if (!want && !req_names.empty()) {
-                        const char* nm = nullptr; size_t nl = 0;
-                        if (read_db_obj_name(obj, nm, nl) && nm) {
-                            for (const std::string& rn : req_names)
-                                if (rn.size() == nl && memcmp(rn.data(), nm, nl) == 0) { want = true; break; }
-                        }
+                    for (uint32_t h : req_hashes) {
+                        if (h == (uint32_t)hash) { want = true; matched_hashes.push_back(h); break; }
+                    }
+                    if (!key_name.empty()) {
+                        for (const std::string& rn : req_names)
+                            if (rn == key_name) { want = true; matched_names.push_back(rn); break; }
                     }
                     if (!want) continue;  // not requested — skip without evaluating
                 }
@@ -8480,7 +8542,7 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
 #endif
                 if (g_decision_skip.count((uint32_t)hash)) {
                     rb.begin_object();
-                    const char* sn = resolve_decision_name((uint32_t)hash);
+                    const char* sn = key_name.empty() ? resolve_decision_name((uint32_t)hash) : key_name.c_str();
                     if (sn) { rb.key("name"); rb.value_string(sn); }
                     rb.key("hash"); rb.value_uint((uint32_t)hash);
                     rb.key("eval_error"); rb.value_bool(true);
@@ -8530,7 +8592,8 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
                         f.eval_error = true;
                         eval_errors++;
                         rb.begin_object();
-                        const char* dn = resolve_decision_name(hash);  // hash-only; no obj deref (it may be the faulting ptr)
+                        // the key read before the eval, else the hash-only table; no obj deref here (it may be the faulting ptr)
+                        const char* dn = key_name.empty() ? resolve_decision_name(hash) : key_name.c_str();
                         if (dn) { rb.key("name"); rb.value_string(dn); }
                         rb.key("hash"); rb.value_uint(hash);
                         rb.key("eval_error"); rb.value_bool(true);
@@ -8586,6 +8649,11 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
                     if (!f.cost_ok && f.fail_cost[0]) rb.value_string(f.fail_cost);
                     if (!afford_ok) rb.value_string("cannot_afford_decision");
                     rb.end_array();
+                    // L20 integration: a failed block whose key could not be read because
+                    // the diag dtor was not witnessed (diag_dtor.h) says so on the row.
+                    if (f.dtor_unwitnessed) {
+                        rb.key("failure_key_unwitnessed"); rb.value_bool(true);
+                    }
 
                     // Cost block (static defaults; have-vs-need with current{}).
                     rb.key("cost"); rb.begin_object();
@@ -8609,6 +8677,15 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
     rb.key("budget_ms"); rb.value_int(kGameThreadEvalBudgetMs);
     rb.key("eval_errors"); rb.value_int(eval_errors);
     rb.key("valid_only"); rb.value_bool(valid_only);
+    if (list_mode) {
+        // L20-B: requested decisions no DB entry matched. With partial:true the
+        // walk stopped early, so an entry here may be one it never reached.
+        rb.key("unmatched"); rb.begin_array();
+        for (const std::string& u : bridge::decision_unmatched(req_names, req_hashes,
+                                                               matched_names, matched_hashes))
+            rb.value_string(u.c_str(), u.size());
+        rb.end_array();
+    }
     rb.end_object();
     return rb.take();
 }

@@ -21,6 +21,7 @@ None. `ck3agent config` prints the paths in use; `ck3agent doctor` checks them.
 | `config.toml` | `${XDG_CONFIG_HOME:-~/.config}/ck3agent/`, or `CK3AGENT_CONFIG` | `ck3agent setup` |
 | play directory: `.mcp.json`, `CLAUDE.md`, `.claude/settings.json`, `runs/` | `~/ck3agent-play` | `ck3agent setup`, `ck3agent run` |
 | game output | `DATA/logs/ck3-<timestamp>.log` | `ck3agent launch` |
+| the launched game's user-data directory (`-userdir=`): `save games/`, autosaves, `continue_game.json`, `logs/`, its copy of your settings | `${XDG_STATE_HOME:-~/.local/state}/ck3agent/game/` | `ck3agent launch`, the game |
 | last launch record | `DATA/state/last-launch.json` | `ck3agent launch` |
 | bridge socket, mode 0600 | `RUN/agent.sock` | the bridge |
 | bridge log | `RUN/bridge.log` | the bridge |
@@ -32,9 +33,14 @@ to `RUN/inst/<id>/`. `CK3_INSTANCE_LAYOUT=legacy` restores the old shared
 `/tmp` layout with a 0666 socket that any local user can reach; use it only
 on a single-user lab host.
 
-`ck3agent` never writes into the game directory. `launch --save` copies the
-save into CK3's `save games/` folder and points `continue_game.json` at it,
-keeping the old pointer as `continue_game.json.bak-ck3agent`.
+`ck3agent` never writes into the game's install directory or into your own
+CK3 user-data directory, `~/.local/share/Paradox Interactive/Crusader Kings
+III/`. `launch` starts the game with `-userdir=` set to its own directory
+(above). The first time, it copies your settings files there and links your
+`mod/` folder. `--save PATH` copies the save into that directory's
+`save games/` and points its `continue_game.json` at it. The first `--continue`
+does the same with the save your CK3 played last. The uninstaller leaves the
+directory in place: it holds the saves Claude played. Delete it by hand.
 
 ## Install by hand
 
@@ -81,7 +87,7 @@ Variables read only by the bridge are in
 | `CK3_SESSION_OUT` | `run` sets it; the MCP server writes its session id and resume token here so `run` can finish the release if the server is killed first |
 | `CK3_EPISODE_ARM` | experiment arm label, stamped into the server's tool-surface record |
 | `CK3_STRICT_BUILD_ID` | `launch --allow-unsupported-build` sets it to `0` for the bridge |
-| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR` | base directories above; an empty value counts as unset |
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR` | base directories above; an empty value counts as unset |
 | `WAYLAND_DISPLAY`, `SDL_VIDEODRIVER` | when the first is set and the second is not, `launch` runs the game under XWayland |
 | `NO_COLOR` | plain CLI output |
 

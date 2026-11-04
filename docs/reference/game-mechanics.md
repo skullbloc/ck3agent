@@ -131,7 +131,11 @@ chaplain seat means `task_fabricate_claim` has no one to execute it and NO claim
 ever produced (this silently stalled fabrication in a live run — see L29). Before/while
 assigning fabrication: confirm the chaplain seat is filled (`query(domain="council")`
 shows `vacant_positions`), and fabrication speed scales with the chaplain's **Learning**,
-not the Chancellor's Diplomacy.
+not the Chancellor's Diplomacy. A ruler with ministries fabricates through the
+**minister of justice** instead (the game's `task_fabricate_claim_minister_of_rites`,
+a copy of the chaplain's task): pass `args={"seat": "minister_justice"}` to
+`do(action_class="fabricate_targets")` and to the row's `council_task`; with no seat
+the chaplain's task is tried first, and an empty list names the task's other seats.
 
 Council skill directly affects task speed/success. Place your best people here — and yes,
 powerful vassals expect council seats. Denying them tanks their opinion.

@@ -12,13 +12,15 @@ From download to Claude's first move, about 15 minutes.
 - A single-player save that is not Ironman. Two kinds work: an **observer
   save** (start a new game, choose **Observe** on the character-selection
   screen, save) if you want to watch Claude rule, or **your own campaign** if
-  you want to play against Claude. Back up the campaign first: the game's
-  autosave rotation runs whenever the clock runs, and ck3agent does not stop it.
+  you want to play against Claude. `ck3agent launch` copies the save into
+  its own game directory and the game saves and autosaves there, so your
+  campaign file is not changed. A save Claude played is in
+  `~/.local/state/ck3agent/game/save games/`.
 
 ## 1. Download and verify
 
 From the [releases page](https://github.com/skullbloc/ck3agent/releases),
-download `ck3agent-2026.12.0-linux-x86_64.tar.gz` and `SHA256SUMS` into one
+download `ck3agent-2026.12.1-linux-x86_64.tar.gz` and `SHA256SUMS` into one
 directory. Verify there, before unpacking:
 
 ```bash
@@ -26,15 +28,15 @@ cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-Expected: `ck3agent-2026.12.0-linux-x86_64.tar.gz: OK`. With the GitHub CLI
+Expected: `ck3agent-2026.12.1-linux-x86_64.tar.gz: OK`. With the GitHub CLI
 you can also run
-`gh attestation verify ck3agent-2026.12.0-linux-x86_64.tar.gz --repo skullbloc/ck3agent`.
+`gh attestation verify ck3agent-2026.12.1-linux-x86_64.tar.gz --repo skullbloc/ck3agent`.
 
 ## 2. Install
 
 ```bash
-tar xzf ck3agent-2026.12.0-linux-x86_64.tar.gz
-cd ck3agent-2026.12.0-linux-x86_64
+tar xzf ck3agent-2026.12.1-linux-x86_64.tar.gz
+cd ck3agent-2026.12.1-linux-x86_64
 ./install.sh
 ```
 
@@ -51,6 +53,13 @@ Setup finds the game, checks its build, and creates the play directory
 ck3agent launch --save "$HOME/.local/share/Paradox Interactive/Crusader Kings III/save games/<name>.ck3"   # a specific save
 ck3agent launch --continue                                                                                # the save CK3 played last
 ```
+
+The game runs with its own user-data directory, `~/.local/state/ck3agent/game/`
+(`$XDG_STATE_HOME/ck3agent/game/`): `launch` copies the save into its
+`save games/`, and the game's saves, autosaves, `continue_game.json` and logs
+stay there. Your own CK3 directory is only read. The first `--continue` copies
+the save your CK3 played last; after that `--continue` loads the save the
+launched game played last.
 
 Both start CK3 with the bridge and wait up to 120 seconds for the game.
 Expect a few game days to pass before the pause lands: the bridge has to let

@@ -122,8 +122,14 @@ def test_fabricate_enumerate_prints_the_chaplain_and_the_bridge_accepts_it():
     assert row["do_call"]["args"]["seat"] == "court_chaplain"
     # The bridge compares after stripping "councillor_" and lower-casing; the
     # task's seat key for task_fabricate_claim is councillor_court_chaplain.
+    # L20-A: the comparison moved into council_task_family.h (norm_seat, run by
+    # bridge/test/test_council_task_family.cpp on "court_chaplain" and
+    # "councillor_court_chaplain"), and do_set_council_task resolves through it.
     seg = _handler_text("action_handlers.cpp", "do_set_council_task")
-    assert '"councillor_"' in seg
+    assert "council_task_family::resolve(" in seg
+    hdr = open(os.path.join(BRIDGE_SRC, "..", "include", "council_task_family.h"),
+               encoding="utf-8").read()
+    assert 'const std::string pre = "councillor_";' in hdr
 
 
 # ---------------------------------------------------------------- item 2

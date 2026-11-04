@@ -279,6 +279,9 @@ def cmd_setup(a: argparse.Namespace) -> int:
     print("Next:")
     print("  ck3agent launch --continue")
     print(f"  cd {shlex.quote(str(play))} && claude")
+    if not a.no_allow and not trust_record(play)[0]:
+        print("  The first time, accept Claude Code's trust dialog for this directory: until then")
+        print("  it ignores the allow-list setup wrote. (`ck3agent run` passes it on the command line.)")
     return 0
 
 
@@ -314,6 +317,47 @@ def _check_mcp_entry(k: _Checks, path: Path) -> None:
                "(moved by a reinstall?)", "ck3agent setup (it replaces a missing command)")
     else:
         con.ok("ck3 MCP command", str(entry.get("command")))
+
+
+#: What Claude Code prints, on every `claude -p` in a play directory whose
+#: workspace was never trusted (smoke17, each run's stderr.log):
+#: "Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace
+#: has not been trusted. Run Claude Code interactively here once and accept the
+#: trust dialog, or set projects["<dir>"].hasTrustDialogAccepted: true in ~/.claude.json."
+TRUST_KEY = "hasTrustDialogAccepted"
+
+
+def trust_record(play: Path, env=None) -> tuple[bool | None, str]:
+    """(trusted?, where) from Claude Code's own record, read only.
+
+    None when it cannot be read: CLAUDE_CONFIG_DIR moves Claude Code's state and
+    this does not guess where, and an unreadable file is not "untrusted"."""
+    env = os.environ if env is None else env
+    if env.get("CLAUDE_CONFIG_DIR"):
+        return None, "CLAUDE_CONFIG_DIR is set"
+    path = Path.home() / ".claude.json"
+    if not path.exists():
+        return False, str(path)
+    try:
+        projects = _load_json(path).get("projects")
+    except (ValueError, OSError) as e:
+        return None, f"{path}: {e}"
+    entry = projects.get(str(play.resolve())) if isinstance(projects, dict) else None
+    return (isinstance(entry, dict) and entry.get(TRUST_KEY) is True), str(path)
+
+
+def _check_trust(k: _Checks, play: Path) -> None:
+    trusted, where = trust_record(play)
+    if trusted:
+        con.ok("Claude Code trusts the play directory", where)
+    elif trusted is None:
+        con.warn("Claude Code trust: not read", where)
+    else:
+        # A note, not the next step: the game comes first, and `run` is unaffected.
+        con.warn("Claude Code has not trusted the play directory",
+                 f"no {TRUST_KEY} for {play.resolve()} in {where}: until it does, the allow-list "
+                 "in .claude/settings.json is ignored (`ck3agent run` passes it on the command line)")
+        con.note(f"the first `cd {shlex.quote(str(play))} && claude` asks; accept the trust dialog once")
 
 
 def cmd_doctor(a: argparse.Namespace) -> int:
@@ -362,10 +406,18 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     else:
         k.warn("claude CLI not on PATH", "needed for Claude Code play and `ck3agent run`")
 
-    play = cfg.resolve("play_dir", c, a.play_dir).path
-    if (play / ".mcp.json").exists():
-        con.ok("play directory", str(play))
+    # The play directory doctor checks is the one it is told: --play-dir, or the
+    # one setup recorded in the config. With neither, a ~/ck3agent-play left by
+    # another install (or another XDG config) is not this install's and is not read.
+    rp = cfg.resolve("play_dir", c, a.play_dir)
+    play = rp.path
+    if rp.source == "default":
+        k.warn("play directory not set up", f"no --play-dir and none recorded in {cfg.config_path()}",
+               "ck3agent setup")
+    elif (play / ".mcp.json").exists():
+        con.ok("play directory", f"{play} ({rp.source})")
         _check_mcp_entry(k, play / ".mcp.json")
+        _check_trust(k, play)
     else:
         k.warn("play directory not set up", f"{play} has no .mcp.json", "ck3agent setup")
 
@@ -429,11 +481,54 @@ def launch_env(base: dict, bridge: Path, allow_unsupported: bool,
     return env, notes
 
 
+#: The entries of a CK3 user-data tree the launched game must OWN: the
+#: directories it writes into and the files it rewrites. They start empty or
+#: absent in the game's own tree. Every other file of the user's tree is copied
+#: once (pdx_settings.txt, dlc_load.json: a symlink would carry the game's
+#: write back), every other directory is symlinked (mod/: installed content).
+#: The same rule as the research tree's instance.py PRIVATE_USER_DIR_*.
+GAME_PRIVATE_DIRS = ("save games", "logs", "crashes", "dumps", "exceptions", "cache",
+                     "shadercache", "player", "pops_filestorage")
+GAME_PRIVATE_FILES = ("continue_game.json", "pops_filestorage.index", "last_save.ck3")
+
+
+def userdir_ok(path: Path) -> bool:
+    """CK3 splits its command line at spaces and quotes; an absolute path free of both."""
+    s = str(path)
+    return path.is_absolute() and not any(c.isspace() or c == '"' for c in s)
+
+
+def prepare_game_dir(owner: Path, dst: Path) -> Path:
+    """Build (once) the launched game's own user-data tree DST from the user's OWNER tree.
+
+    OWNER is only read. Settings files are copied the first time, so the game's
+    own settings writes stay in DST; a later change in OWNER is not picked up.
+    """
+    dst.mkdir(parents=True, exist_ok=True)
+    private = set(GAME_PRIVATE_DIRS) | set(GAME_PRIVATE_FILES)
+    if owner.is_dir():
+        for entry in sorted(owner.iterdir()):
+            if entry.name in private or entry.name.startswith("continue_game.json"):
+                continue
+            target = dst / entry.name
+            if target.exists() or target.is_symlink():
+                continue
+            if entry.is_dir():
+                target.symlink_to(entry)
+            elif entry.is_file():
+                with contextlib.suppress(OSError):
+                    shutil.copy2(entry, target)
+    for name in GAME_PRIVATE_DIRS:
+        (dst / name).mkdir(exist_ok=True)
+    return dst
+
+
 def stage_save(path: Path) -> tuple[Path, str]:
-    """Make PATH the save --continuelastsave loads. Returns (save, sha256).
+    """Make PATH the save --continuelastsave loads in the launched game's own
+    tree. Returns (save, sha256). PATH is copied there; it is never written.
 
     The game follows the `title` in continue_game.json, not file mtimes, so the
-    pointer is rewritten (old copy kept as continue_game.json.bak-ck3agent).
+    game tree's pointer is rewritten. The user's own pointer is not touched.
     """
     src = path.expanduser().resolve()
     if not src.is_file() or src.suffix != ".ck3":
@@ -443,7 +538,8 @@ def stage_save(path: Path) -> tuple[Path, str]:
     dst = saves / src.name
     if dst.resolve() != src:
         if dst.exists() and sha256(dst) != sha256(src):
-            raise ValueError(f"{dst} exists with different content; rename your save")
+            raise ValueError(f"{dst} exists with different content (a save the launched game "
+                             "wrote); rename your save, or move that file away")
         if not dst.exists():
             shutil.copy2(src, dst)
     now = time.time()
@@ -453,11 +549,30 @@ def stage_save(path: Path) -> tuple[Path, str]:
         d = _load_json(ptr)
     except ValueError:
         d = {}
-    if ptr.exists():
-        shutil.copy2(ptr, ptr.with_name(ptr.name + ".bak-ck3agent"))
     d["title"] = dst.stem
     _write_json(ptr, d)
     return dst, sha256(dst)
+
+
+def owner_last_save() -> Path:
+    """The save the user's own CK3 played last (their continue_game.json `title`)."""
+    ptr = cfg.owner_game_dir() / "continue_game.json"
+    try:
+        title = _load_json(ptr).get("title")
+    except (ValueError, OSError) as e:
+        raise ValueError(f"{ptr}: {e}") from e
+    if not isinstance(title, str) or not title:
+        raise ValueError(f"{ptr} names no save; pass --save PATH")
+    save = cfg.owner_game_dir() / "save games" / f"{title}.ck3"
+    if not save.is_file():
+        raise ValueError(f"{save} (named by {ptr}) does not exist; pass --save PATH")
+    return save
+
+
+def launch_argv(binary: Path, game_dir: Path, cont: bool, game_args: list[str]) -> list[str]:
+    """The game's command line: its own user-data tree first (`-userdir=`)."""
+    return [str(binary), f"-userdir={game_dir}"] + (["--continuelastsave"] if cont else []) \
+        + list(game_args)
 
 
 def _debug_log_hint() -> None:
@@ -484,22 +599,37 @@ def cmd_launch(a: argparse.Namespace) -> int:
         con.fail("a bridge is already listening", f"{sock}: another CK3 with the bridge is running")
         return 1
 
+    if any(x.lstrip("-").startswith("userdir") for x in a.game_args):
+        con.fail("-userdir in the game arguments",
+                 "ck3agent gives the game its own user-data directory; set XDG_STATE_HOME to move it")
+        return 1
+    gdir = cfg.game_user_dir().resolve()
+    if not userdir_ok(gdir):
+        con.fail("game directory unusable", f"{gdir}: CK3 cannot take a path with spaces or quotes; "
+                 "set XDG_STATE_HOME to one without")
+        return 1
     cont = a.cont or bool(a.save)
     wait = 0 if a.no_wait else (a.wait if a.wait is not None else (CONTINUE_WAIT if cont else 0))
-    record = {"launched_utc": _now_utc(), "binary": str(binary), "bridge": str(bridge)}
-    if a.save:
-        try:
-            save, digest = stage_save(Path(a.save))
-        except (ValueError, OSError) as e:
-            con.fail("--save", str(e))
-            return 1
-        con.ok("save staged", f"{save} (sha256 {digest[:12]})")
-        record["save"], record["save_sha256"] = str(save), digest
+    record = {"launched_utc": _now_utc(), "binary": str(binary), "bridge": str(bridge),
+              "game_user_dir": str(gdir)}
+    try:
+        prepare_game_dir(cfg.owner_game_dir(), gdir)
+        src = Path(a.save) if a.save else None
+        if src is None and cont and not (gdir / "continue_game.json").exists():
+            src = owner_last_save()     # first launch: the save the user's CK3 played last
+        if src is not None:
+            save, digest = stage_save(src)
+            con.ok("save staged", f"{save} (sha256 {digest[:12]})")
+            record["save"], record["save_sha256"] = str(save), digest
+    except (ValueError, OSError) as e:
+        con.fail("--save" if a.save else "game directory", str(e))
+        return 1
+    con.ok("game directory", f"{gdir} (saves land in its save games/)")
 
     env, notes = launch_env(os.environ, bridge, a.allow_unsupported, a.native_wayland)
     for n in notes:
         con.note(n)
-    argv = [str(binary)] + (["--continuelastsave"] if cont else []) + list(a.game_args)
+    argv = launch_argv(binary, gdir, cont, a.game_args)
     logs = _logs_dir()
     logs.mkdir(parents=True, exist_ok=True)
     out = logs / f"ck3-{datetime.now():%Y%m%d-%H%M%S}.log"
@@ -1211,10 +1341,14 @@ def cmd_run(a: argparse.Namespace) -> int:
                 srec = _load_json(paths["session"]) or {}
                 prebind, prebind_wait = srec.get("prebind"), srec.get("prebind_wait")
             except (ValueError, OSError):
-                prebind = prebind_wait = None
+                srec, prebind, prebind_wait = {}, None, None
             release, resumed = _release_after(paths, sock, link)
             good = _clean(resumed) if resumed is not None else _clean(release)
-            teardown = br.teardown(sock, wait=0 if good else 5.0, link=link)
+            # L20-B: this run's sessions only (the server's, from its session
+            # record); another run's rulers are named and left alone.
+            own_sessions = [s for s in ((srec if isinstance(srec, dict) else {}).get("session_id"),
+                                        (resumed or {}).get("session_id")) if s]
+            teardown = br.teardown(sock, wait=0 if good else 5.0, link=link, sessions=own_sessions)
             with paths["stream"].open(encoding="utf-8", errors="replace") as f:
                 manifest.update(summarize_stream(f))
             # The one counter: the drain fed it, the cycle stop read it (and froze
@@ -1325,6 +1459,7 @@ def cmd_config(a: argparse.Namespace) -> int:
         ("bridge socket", br.socket_path(), ""),
         ("bridge log", br.bridge_log_path(), ""),
         ("action log", br.action_log_path(), ""),
+        ("game dir", str(cfg.game_user_dir()), "launch's saves and autosaves"),
         ("game log", str(cfg.game_debug_log()), ""),
         ("server modules", str(server_dir()), ""),
     ]
@@ -1394,10 +1529,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_doctor)
 
     s = sub.add_parser("launch", parents=[game], formatter_class=raw, description=(
-        "Start CK3 with the bridge loaded. Example: ck3agent launch --continue -- -debug_mode"))
+        "Start CK3 with the bridge loaded. Example: ck3agent launch --continue -- -debug_mode\n"
+        "The game gets its own user-data directory (`ck3agent config` names it): its saves,\n"
+        "autosaves and logs land there. Your own CK3 saves are read, never written."))
     s.add_argument("--continue", dest="cont", action="store_true",
-                   help=f"load the last save; waits {CONTINUE_WAIT}s and dismisses the observe prompt")
-    s.add_argument("--save", metavar="PATH", help="make this .ck3 the save --continue loads (implies --continue)")
+                   help=f"load the save the launched game played last (the first time: a copy of the "
+                        f"save your CK3 played last); waits {CONTINUE_WAIT}s and dismisses the observe prompt")
+    s.add_argument("--save", metavar="PATH",
+                   help="copy this .ck3 into the game directory and load it (implies --continue)")
     s.add_argument("--wait", type=int, metavar="SECS",
                    help=f"wait up to SECS for the game (default {CONTINUE_WAIT} with --continue, else 0)")
     s.add_argument("--no-wait", action="store_true", help="return as soon as CK3 starts")

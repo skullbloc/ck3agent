@@ -4,10 +4,12 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "pause_alarm.h"
 #include "action_log_row.h"
 #include "log_dedupe.h"      // ck-os50
 #include "instance_paths.h"  // ck-qn03
 #include "action_dispatch_internal.h"
+#include "action_args.h"      // L20-B: call_is_read_only
 #include "claim_event_log.h"   //: ck-jij9
 #include "primary_cause.h"   //: ck-6xi6 cause register
 #include "skip_held_heir.h"
@@ -2336,6 +2338,15 @@ static bool case_pause_game(const char* params_json, std::string* response_out) 
 
 static bool case_unpause_game(const char* params_json, std::string* response_out) {
     safe_read_clear();
+    // L20-A: {"pause_at":"Y.M.D"} arms the game-day pause alarm first; a plain
+    // unpause disarms one left armed (pause_alarm.h: an alarm outlives nothing
+    // but its own wait).
+    if (json_has_key(params_json, "pause_at")) {
+        const bool armed_ok = do_unpause_game_with_alarm(params_json, response_out);
+        if (safe_read_had_fault()) return answer_memory_access_fault("unpause_game", response_out);
+        return armed_ok;
+    }
+    bridge::pause_alarm::clear("unpause");
     const bool ok = do_unpause_game(params_json);
     if (safe_read_had_fault()) return answer_memory_access_fault("unpause_game", response_out);
     return ok;
@@ -2537,6 +2548,7 @@ static bool case_list_decisions(const char* /*params_json*/, std::string* respon
 static bool case_set_pause(const char* params_json, std::string* response_out) {
     safe_read_clear();
     bool paused = json_get_bool(params_json, "paused", true);
+    if (!paused) bridge::pause_alarm::clear("unpause");   // L20-A, as unpause_game
     clock_write(paused ? ClockWrite::Pause : ClockWrite::Unpause, ClockOrigin::Session);
     if (safe_read_had_fault()) return answer_memory_access_fault("set_pause", response_out);
     return true;
@@ -2788,8 +2800,13 @@ bool dispatch_action(const char* action_type, const char* params_json,
         bridge::is_clock_verb(action_type) &&
         bridge::mode_admits_observer_clock_verbs(bridge::pipeline_mode());
 
+    // L20-B (smoke17 item 5): scheme_action's "check" reads (the engine's start
+    // check, nothing started), so it is guarded as a read: no observe refusal, no
+    // actor-ownership check (action_args.h call_is_read_only).
+    const bool is_read_only_call = bridge::call_is_read_only(action_type, params_json);
+
     if (session && bridge::action_is_mutation(action_type) &&
-        !is_provenance_declaration && !is_null_mode_clock_pin) {
+        !is_provenance_declaration && !is_null_mode_clock_pin && !is_read_only_call) {
         if (session->is_observe()) {
             if (g_logfile) fprintf(g_logfile,
                 "[CK3-Bridge] Action %s rejected: observe mode cannot mutate\n", action_type);

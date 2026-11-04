@@ -160,11 +160,10 @@ def test_the_printed_do_call_uses_a_key_the_builder_reads():
     This is the row that would have caught the original defect from either side:
     the printed key must be one the builder consumes, whichever name it is.
     """
-    src = open(os.path.join(os.path.dirname(__file__), "redesign.py"),
-               encoding="utf-8").read()
-    i = src.index('elif action_class == "council_tasks":')
-    row = src[i:i + 1200]
-    printed = set(re.findall(r'"(target_[a-z_]+|title_id)":', row))
+    # the do_call rows the enumerator prints, run (a fixed window of its source
+    # went blind when L20 r3 put the seat resolution ahead of the row)
+    printed = {k for call in _enumerated_do_calls() for k in call["args"]
+               if re.fullmatch(r"target_[a-z_]+|title_id", k)}
     assert printed, "the council_tasks enumerator no longer prints a target key"
     for key in printed:
         p = _build({"task": "task_fabricate_claim", key: 227})

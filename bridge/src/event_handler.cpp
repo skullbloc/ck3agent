@@ -16,6 +16,8 @@
 // The legacy AI_EVENT_OPTION_EVAL hook was never installed; its RE notes are
 // kept below as provenance.
 
+#include "pause_alarm.h"
+#include "game_date.h"
 #include "bridge.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
 #include "ck3_offsets.h"
@@ -372,6 +374,9 @@ static const char* clock_origin_name(ClockOrigin o) {
 }
 
 void clock_write(ClockWrite kind, ClockOrigin origin, int speed) {
+    // L20-A: any pause disarms an armed game-day alarm (pause_alarm.h). The
+    // alarm's own pause comes after take_due disarmed it, so it clears nothing.
+    if (kind == ClockWrite::Pause) bridge::pause_alarm::clear("pause");
     std::unique_lock<std::timed_mutex> clock_lock(g_clock_mutex, std::defer_lock);
     if (!clock_lock.try_lock_for(std::chrono::seconds(2)) && g_logfile)
         fprintf(g_logfile, "[CK3-Bridge] clock_write: the clock mutex was held past 2 s; "
@@ -404,6 +409,28 @@ void clock_write(ClockWrite kind, ClockOrigin origin, int speed) {
             fprintf(g_logfile, "[CK3-Bridge] clock_write: %s origin=%s (count %llu)\n",
                     kind == ClockWrite::Pause ? "pause" : "unpause",
                     clock_origin_name(origin), static_cast<unsigned long long>(n));
+    }
+}
+
+// L20-A: the game-day pause alarm's drain step (pause_alarm.h for the rule).
+void pause_alarm_drain_check() {
+    if (!bridge::pause_alarm::armed()) return;
+    const int faults = safe_read_fault_count();
+    void* gs = get_game_state_root();
+    if (!gs) return;
+    const int32_t raw = safe_read<int32_t>(reinterpret_cast<uintptr_t>(gs) + ck3::game_state::GAME_DATE);
+    // No date, no verdict: a faulted or unset read leaves the alarm armed for
+    // the next pass rather than firing (or not) on a value that was not read.
+    if (safe_read_fault_count() != faults || raw == 0) return;
+    const int32_t today = ck3::game_date::raw_to_total_days(raw);
+    if (!bridge::pause_alarm::take_due(today)) return;
+    clock_write(ClockWrite::Pause, ClockOrigin::Session);
+    if (g_logfile) {
+        const bridge::pause_alarm::Snapshot a = bridge::pause_alarm::snapshot();
+        char at[16], tgt[16];
+        ck3::game_date::format_total_days(a.paused_at_day, at, sizeof at);
+        ck3::game_date::format_total_days(a.target_day, tgt, sizeof tgt);
+        fprintf(g_logfile, "[CK3-Bridge] pause_alarm: fired at %s (target %s)\n", at, tgt);
     }
 }
 

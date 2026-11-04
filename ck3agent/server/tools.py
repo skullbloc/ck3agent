@@ -730,27 +730,77 @@ DISCOVER_MOVED_TO_DO = {
 #: The compact reply keeps those, drops counties inside the ruler's own realm
 #: (holder_top_liege_id == ruler_id: no war is declared on them), lists conquerable
 #: counties first and caps the rows; verbose=True is the bridge's reply unchanged.
-#: L18 round 2 (witness item 5): `engine_valid_cbs` stays on a row. The README
-#: promises it, it is the game's own list behind `conquerable_now` (written only
-#: when the engine ran for that holder, query_handlers.cpp do_query_conquest_targets
-#: r.key("engine_valid_cbs")), and it is one short list per row.
-CONQUEST_TARGETS_DEFAULT_ROWS = 25
+#: L18 round 2 (witness item 5) kept `engine_valid_cbs` on every row (the game's own
+#: list behind `conquerable_now`, written only when the engine ran for that holder,
+#: query_handlers.cpp do_query_conquest_targets r.key("engine_valid_cbs")); it is now
+#: a count on the default row and the list under detail="full" (README says so).
+#: L20-B (smoke17 B4): the compact reply for Cui 13191 was still 38,481 characters
+#: at 25 rows (the tool-result text, indented): ~1,500 a row, 70% of it the two
+#: declare blocks, plus the bridge's 1,500-character note. The default is now 10
+#: rows of what a seat decides on: the county and its holder, the holder's realm
+#: (holder_top_liege_id: the one to war), the de-jure duchy and kingdom it sits in
+#: (the row's duchy), adjacency, the verdict and where it came from, the gates that
+#: are set, and one declare_args ready for declare_war. The long tails are counts
+#: (engine_valid_cb_count, declare_option_count); detail="full" gives the rows with
+#: every kept key (engine_valid_cbs, declare, declare_options) and the note,
+#: max_results=<n> lists more, verbose=True is the bridge's reply unchanged.
+CONQUEST_TARGETS_DEFAULT_ROWS = 10
+#: the row keys of detail="full": every key do_query_conquest_targets writes on a
+#: remaining_counties row and on a duchy row (bridge/src/query_handlers.cpp, the
+#: r.key lines inside `r.key("duchies")`; test_conquest_targets_size reads them off
+#: the emitter). L20 r3 (witness item 4): the county list lacked is_kin,
+#: already_at_war_opposing and holder_top_liege_unresolved/_independent, which the
+#: lean row shows when set, so "full" dropped the kin flag.
 _CONQUEST_COUNTY_KEYS = ("county_id", "county_key", "county_name", "holder_id", "holder_name",
-                         "holder_top_liege_id", "is_independent", "is_allied", "is_truced",
-                         "adjacent", "conquerable_now", "conquerable_now_source",
-                         "engine_valid_cbs", "block_reason", "declare", "declare_options")
-_CONQUEST_DUCHY_KEYS = ("duchy_id", "duchy_key", "duchy_name", "de_jure_kingdom_key",
-                        "in_toward", "expansion_target", "partially_held",
-                        "held_by_ruler_count", "total_count", "remaining_count")
+                         "holder_top_liege_id", "holder_top_liege_independent",
+                         "holder_top_liege_unresolved", "is_independent", "is_kin", "is_allied",
+                         "is_truced", "already_at_war_opposing", "adjacent", "conquerable_now",
+                         "conquerable_now_source", "engine_valid_cbs", "block_reason", "declare",
+                         "declare_options")
+_CONQUEST_DUCHY_KEYS = ("duchy_id", "duchy_key", "duchy_name", "de_jure_kingdom_id",
+                        "de_jure_kingdom_key", "in_toward", "expansion_target", "partially_held",
+                        "held_by_ruler_count", "total_count", "remaining_count", "adjacent")
 _CONQUEST_TOP_KEYS = ("action", "ruler_id", "duchy_count", "expansion_count", "toward_count",
                       "conquerable_count", "target_count", "include_expansion",
                       "engine_checks_done", "engine_checks_truncated", "note")
+#: the default row: always these when the bridge sent them ...
+_CONQUEST_LEAN_KEYS = ("county_id", "county_name", "holder_id", "holder_name",
+                       "holder_top_liege_id", "adjacent", "conquerable_now",
+                       "conquerable_now_source", "block_reason")
+#: ... and a gate only when it is set (is_independent only when it is NOT)
+_CONQUEST_LEAN_GATES = ("is_kin", "is_allied", "is_truced", "already_at_war_opposing",
+                        "holder_top_liege_unresolved")
+_CONQUEST_LEAN_DUCHY = ("duchy_id", "duchy_name", "de_jure_kingdom_key", "remaining_count")
+_CONQUEST_LEAN_DUCHY_FLAGS = ("in_toward", "expansion_target", "partially_held")
+#: the detail= values conquest_targets takes ("" = the default rows)
+CONQUEST_TARGETS_DETAILS = ("", "full")
 
 
-def compact_conquest_targets(reply: dict, max_results: int = 0) -> dict:
-    """The compact query(domain="conquest_targets") reply (see the comment above)."""
+def _lean_conquest_county(rc: dict) -> dict:
+    """One default conquest_targets row (see the comment above)."""
+    row = {k: rc[k] for k in _CONQUEST_LEAN_KEYS if k in rc}
+    for g in _CONQUEST_LEAN_GATES:
+        if rc.get(g):
+            row[g] = True
+    if rc.get("is_independent") is False:
+        row["is_independent"] = False
+    dec = rc.get("declare")
+    if isinstance(dec, dict) and dec.get("casus_belli"):
+        # declare_war's own argument names (declare_args: target_id, cb, cb_title_id)
+        row["declare_args"] = {"target_id": dec.get("target_id"), "cb": dec.get("casus_belli"),
+                               "cb_title_id": dec.get("cb_title_id")}
+    if isinstance(rc.get("declare_options"), list):
+        row["declare_option_count"] = len(rc["declare_options"])
+    if isinstance(rc.get("engine_valid_cbs"), list):
+        row["engine_valid_cb_count"] = len(rc["engine_valid_cbs"])
+    return row
+
+
+def compact_conquest_targets(reply: dict, max_results: int = 0, detail: str = "") -> dict:
+    """The compact query(domain="conquest_targets") reply (see the comments above)."""
     if not isinstance(reply, dict) or not isinstance(reply.get("duchies"), list):
         return reply
+    full = detail == "full"
     cap = max_results if max_results and max_results > 0 else CONQUEST_TARGETS_DEFAULT_ROWS
     ruler = reply.get("ruler_id")
     own = 0
@@ -769,20 +819,35 @@ def compact_conquest_targets(reply: dict, max_results: int = 0) -> dict:
     kept, omitted = flat[:cap], flat[cap:]
     by_duchy: dict = {}
     for _, di, rc in kept:
-        by_duchy.setdefault(di, []).append({k: rc[k] for k in _CONQUEST_COUNTY_KEYS if k in rc})
+        lean = _lean_conquest_county(rc)
+        if full:
+            # every emitted key, then what the lean row derives (declare_args, the counts):
+            # detail="full" is a superset of the default row
+            row = {k: rc[k] for k in _CONQUEST_COUNTY_KEYS if k in rc}
+            row.update({k: v for k, v in lean.items() if k not in row})
+            lean = row
+        by_duchy.setdefault(di, []).append(lean)
     duchies = []
     for di in sorted(by_duchy):
         d = reply["duchies"][di]
-        row = {k: d[k] for k in _CONQUEST_DUCHY_KEYS if k in d}
+        if full:
+            row = {k: d[k] for k in _CONQUEST_DUCHY_KEYS if k in d}
+        else:
+            row = {k: d[k] for k in _CONQUEST_LEAN_DUCHY if k in d}
+            row.update({f: True for f in _CONQUEST_LEAN_DUCHY_FLAGS if d.get(f)})
+            if d.get("held_by_ruler_count"):
+                row["held_by_ruler_count"] = d["held_by_ruler_count"]
         row["remaining_counties"] = by_duchy[di]
         duchies.append(row)
-    out = {k: reply[k] for k in _CONQUEST_TOP_KEYS if k in reply}
+    out = {k: reply[k] for k in _CONQUEST_TOP_KEYS if k in reply and (full or k != "note")}
     out["duchies"] = duchies
     out["compact"] = {"counties_listed": len(kept), "counties_omitted": len(omitted),
                       "own_realm_counties_dropped": own,
                       "how": ("conquerable_now first, then the rest in duchy order; counties "
                               "inside your own realm are dropped. max_results=<n> lists more, "
-                              "verbose=true returns the bridge's full reply")}
+                              + ("" if full else "detail='full' gives every row field (the CB "
+                                 "lists, both declare options) and the bridge's note, ")
+                              + "verbose=true returns the bridge's full reply")}
     return out
 
 

@@ -168,13 +168,14 @@ def test_Q1_the_compact_reply_keeps_what_seats_read_and_drops_their_own_realm():
     rows = [rc for d in out["duchies"] for rc in d["remaining_counties"]]
     assert len(rows) == T.CONQUEST_TARGETS_DEFAULT_ROWS
     assert all(rc["holder_top_liege_id"] != CUI for rc in rows)
-    assert sum(1 for rc in rows if rc["conquerable_now"]) == 12     # every conquerable kept
+    assert sum(1 for rc in rows if rc["conquerable_now"]) == min(12, T.CONQUEST_TARGETS_DEFAULT_ROWS)  # conquerable first
     assert out["compact"]["own_realm_counties_dropped"] == 180
-    assert out["compact"]["counties_omitted"] == 68 - 25
-    for k in ("duchy_count", "expansion_count", "toward_count", "conquerable_count", "target_count", "note"):
+    assert out["compact"]["counties_omitted"] == 68 - T.CONQUEST_TARGETS_DEFAULT_ROWS
+    # L20-B: the counts stay; the bridge's long note is under detail="full"
+    for k in ("duchy_count", "expansion_count", "toward_count", "conquerable_count", "target_count"):
         assert out[k] == full[k], k
-    assert set(rows[0]) >= {"county_id", "county_key", "county_name", "holder_id", "holder_name",
-                            "holder_top_liege_id", "conquerable_now_source", "declare"}
+    assert set(rows[0]) >= {"county_id", "county_name", "holder_id", "holder_name",
+                            "holder_top_liege_id", "conquerable_now_source", "declare_args"}
     assert len(json.dumps(out)) < len(json.dumps(full)) / 4
 
 
@@ -187,7 +188,7 @@ def test_Q3_an_engine_checked_row_keeps_the_games_cb_list():
     rc = full["duchies"][60]["remaining_counties"][0]
     rc.update(conquerable_now_source="engine_county_conquest_cb",
               engine_valid_cbs=["county_conquest_cb", "claim_cb"])
-    out = T.compact_conquest_targets(full)
+    out = T.compact_conquest_targets(full, detail="full")     # L20-B: the list under detail="full"
     row = next(r for d in out["duchies"] for r in d["remaining_counties"]
                if r["county_id"] == rc["county_id"])
     assert row["engine_valid_cbs"] == ["county_conquest_cb", "claim_cb"], row

@@ -50,6 +50,17 @@ The game can stall on load under Wayland; `debug.log` stops a few seconds in.
 Start `claude` in the play directory, where `.mcp.json` is. Check that
 `~/.local/bin` is on `PATH` and that `ck3agent serve` starts by hand. Ctrl-C quits it.
 
+### `Ignoring 1 permissions.allow entry ... this workspace has not been trusted`
+
+Claude Code prints this, in a `ck3agent run`'s `<stamp>.stderr.log` too, until
+you accept its trust dialog for the play directory once. Until then it ignores
+the allow-list `setup` wrote into `.claude/settings.json`, so an interactive
+`claude` asks before each `ck3` call. `ck3agent run` passes the allow-list on
+the command line (`--allowedTools mcp__ck3`), so a run is not affected. Fix:
+`cd ~/ck3agent-play && claude`, accept the dialog, quit. `ck3agent doctor`
+reports whether Claude Code has recorded the directory as trusted. ck3agent
+reads that record from `~/.claude.json` and never writes it.
+
 ### Claude says it controls no ruler, or `no_ruler_bound`
 
 Nothing is bound to Claude's session. `whoami`'s

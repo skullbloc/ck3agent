@@ -217,18 +217,43 @@ def held_rulers(sock: str, link: Link | None = None) -> list[int] | None:
             link.close()
 
 
-def teardown(sock: str, wait: float = 15.0, link: Link | None = None) -> list[tuple[str, bool, str]]:
-    """Pause, then confirm no ruler is still bound. Never raises.
+def _held_by(rows: list[dict], cid: int) -> str:
+    for row in rows:
+        if cid in (row.get("claimed_character_ids") or []):
+            return f"session {row.get('session_id')} ({row.get('session_state') or '?'}, " \
+                   f"{row.get('client_name') or '?'})"
+    return "an unknown session"
+
+
+#: the teardown's refusal when it was given no session of this run to attribute claims to
+SESSION_RECORD_MISSING = "session_record_missing"
+
+
+def teardown(sock: str, wait: float = 15.0, link: Link | None = None,
+             sessions=()) -> list[tuple[str, bool, str]]:
+    """Pause, then confirm no ruler of THIS run is still bound. Never raises.
+
+    `sessions` are this run's bridge sessions (the MCP server's, named in the
+    session record it wrote at handshake, CK3_SESSION_OUT). Only their claims are
+    this run's: a ruler another session holds (a second `ck3agent run` beside
+    this one, an attached `serve`) is named and left alone. Before L20-B every
+    session's claims were tried, and a run's teardown warned that it could not
+    release the OTHER run's ruler (smoke17: "13902 still held by session ...14:
+    not_owned_by_session").
 
     Only the session that claimed a ruler may release it (the bridge answers
     anyone else not_owned_by_session), so the release itself is the MCP
     server's, on its own shutdown. This waits up to `wait` seconds for it to
     land, then tries a release of its own and names the holder if that fails.
-    "No ruler bound" means no session holds any ruler, not only that the
-    bridge's primary is gone: a session may hold several (lane-multi).
+    "No ruler bound" means none of this run's sessions holds a ruler: a session
+    may hold several (lane-multi). With no session given (the record was missing
+    or unreadable) nothing can be attributed, so nothing is released and the
+    step is not clean: `session_record_missing`, the claims seen listed as
+    unattributed.
     """
     if not alive(sock):
         return [("bridge", False, "socket not listening")]
+    mine = {str(s) for s in sessions or () if s}
     out: list[tuple[str, bool, str]] = []
     own = link is None
     link = link or Link(sock, mode="control")
@@ -242,10 +267,31 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None) -> list[tu
             if t is None or "controlled_character_id" not in t:
                 out.append(("release", False, "no tick info; ruler unknown"))
                 return out
-            cid = int(t["controlled_character_id"] or 0)
-            left = ([cid] if cid else []) + [c for c in _claims(link) if c != cid]
+            rows = _sessions(link.call("get_bridge_state"))
+            if not mine:
+                # L20 r3 (witness item 2): the session record is the only
+                # attribution. Without it every claim would read as another
+                # run's and the teardown as clean, so it releases nothing and
+                # says so; the claims it saw are listed, unattributed.
+                seen = [c for row in rows for c in row.get("claimed_character_ids") or []
+                        if isinstance(c, int)]
+                held = ("no ruler is bound in the game" if not seen else "unattributed: " + "; ".join(
+                    f"{c} held by {_held_by(rows, c)}" for c in dict.fromkeys(seen)))
+                out.append(("release", False, f"{SESSION_RECORD_MISSING}: no session record of this run "
+                                              f"was read, so nothing was released; {held}"))
+                return out
+            left: list[int] = []
+            others: list[int] = []
+            for row in rows:
+                into = left if str(row.get("session_id")) in mine else others
+                for c in row.get("claimed_character_ids") or []:
+                    if isinstance(c, int) and c not in left and c not in others:
+                        into.append(c)
             if not left:
-                out.append(("release", True, "no ruler bound"))
+                note = "no ruler bound" if not others else (
+                    "no ruler of this run bound; "
+                    + "; ".join(f"{c} held by {_held_by(rows, c)}, not this run's" for c in others))
+                out.append(("release", True, note))
                 return out
             if time.monotonic() >= deadline:
                 break

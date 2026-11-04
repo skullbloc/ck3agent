@@ -40,7 +40,14 @@ the block and the episode's horizon) and the bundle's lineage reader
   * `plan_wait` — the next bounded bridge wait (seconds ≤ WAIT_CAP_S) from the
     days still owed and the rate measured so far: a short probe first, then
     `remaining / rate`, so the overshoot is about one second of game time
-    rather than a whole call's worth.
+    rather than a whole call's worth. Used only when the bridge does not serve
+    the pause alarm (below); the 2026.12.0 smoke measured 25 days for an ask of
+    10 from its 15 s probe alone.
+  * `date_from_ordinal` — the inverse of `ordinal`, in the bridge's spelling
+    (`%04d.%02d.%02d`): the target date of a game-day wait. Since L20-A a
+    `game_days` wait hands that target to the bridge (`unpause_game
+    {"pause_at": ...}`), whose game thread pauses on the first pass at or past
+    it (bridge/include/pause_alarm.h); the reply stops `alarm`.
 """
 from __future__ import annotations
 
@@ -71,6 +78,17 @@ R_CADENCE_UNREADABLE = "cycle_cadence_unreadable"
 R_HORIZON_REACHED = "horizon_reached"
 R_HORIZON_UNREADABLE = "episode_horizon_unreadable"
 STOP_REACHED = "game_days_reached"
+#: L20-A: the bridge's pause alarm fired (the stop the game thread made).
+STOP_ALARM = "alarm"
+#: The alarm was disarmed by a pause someone else wrote before it fired.
+STOP_ALARM_CLEARED = "alarm_cleared"
+#: get_tick_info stopped carrying the armed alarm (a bridge restart, a reload).
+STOP_ALARM_LOST = "alarm_lost"
+#: An alarm wait polls the bridge this often (seconds); the stop itself is the
+#: game thread's, so this bounds only how late the server notices it.
+ALARM_POLL_S = 1
+#: A running clock whose date has not moved for this long is not running.
+ALARM_NO_PROGRESS_S = MAX_NO_PROGRESS * PROBE_S
 STOP_NO_PROGRESS = "clock_not_running"
 STOP_MAX_CALLS = "max_calls"
 
@@ -89,6 +107,14 @@ def ordinal(date: Any) -> Optional[int]:
     if not (1 <= m <= 12 and 1 <= d <= 31):
         return None
     return y * DAYS_PER_YEAR + MONTH_CUM_DAYS[m - 1] + (d - 1)
+
+
+def date_from_ordinal(o: int) -> str:
+    """The game date `o` game-days after year 0 (engine calendar), spelled as
+    the bridge spells dates. `ordinal(date_from_ordinal(o)) == o` for o >= 0."""
+    y, rem = divmod(int(o), DAYS_PER_YEAR)
+    m = max(i for i in range(12) if MONTH_CUM_DAYS[i] <= rem)
+    return f"{y:04d}.{m + 1:02d}.{rem - MONTH_CUM_DAYS[m] + 1:02d}"
 
 
 def registered_cycle_game_days(environ: Optional[dict] = None) -> tuple[Optional[int], Optional[str]]:

@@ -24,14 +24,67 @@ try:                                   # normal: `ck3agent.server.bridge_client`
     from .instance import socket_path as _resolve_socket_path
     from .instance import check_peer as _check_peer
     from .instance import check_socket_owner as _check_socket_owner
+    from .instance import telemetry_dir as _telemetry_dir
 except ImportError:                    # bare: sys.path points at ck3agent/server
     from instance import bridge_endpoint as _bridge_endpoint
     from instance import socket_path as _resolve_socket_path
     from instance import check_peer as _check_peer
     from instance import check_socket_owner as _check_socket_owner
+    from instance import telemetry_dir as _telemetry_dir
 
 SOCKET_PATH = _resolve_socket_path()
 RECV_BUF = 65536
+
+#: L20-B (smoke16/17 trip-over): the handshake ack's fields the start line names.
+#: `ck3agent serve` printed the whole ack (~64 lines of indented JSON) to stderr
+#: at every start; the line now names these and where the whole ack was kept.
+HANDSHAKE_SUMMARY_KEYS = ("bridge_version", "build_git_sha", "build_id_status", "session_id")
+#: the whole last ack, beside the action log in the instance's telemetry dir
+HANDSHAKE_ACK_FILE = "handshake_ack.json"
+
+
+#: L20 r3 (witness item 1): keys of the ack that never reach the file or the
+#: DEBUG line. `resume_token` is server-minted, "an authorisation over a claim
+#: set" (ipc_server.cpp:1784); the kept ack is for reading the build, not for
+#: resuming. The only on-disk copy of the token is the 0600 session record
+#: (mcp_server._record_session_at_handshake).
+HANDSHAKE_ACK_WITHHELD = ("resume_token",)
+
+
+def ack_for_disk(ack: dict) -> dict:
+    """The ack as it may be written or logged: every key but the withheld ones."""
+    return {k: v for k, v in ack.items() if k not in HANDSHAKE_ACK_WITHHELD}
+
+
+def keep_handshake_ack(ack: dict) -> Optional[str]:
+    """Write the ack, less the withheld keys, to <telemetry dir>/handshake_ack.json
+    (replaced at each handshake): the dir is made 0700, the file 0600 through
+    O_NOFOLLOW (the primitive mcp_server._record_session_at_handshake uses).
+    Returns the path, or None when it could not be written: the start line then
+    says so, and the ack is still logged at DEBUG."""
+    try:
+        d = _telemetry_dir()
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        path = os.path.join(d, HANDSHAKE_ACK_FILE)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            os.fchmod(fh.fileno(), 0o600)     # a stale tmp keeps its old mode
+            json.dump(ack_for_disk(ack), fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp, path)
+        return path
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def handshake_summary(ack: dict, kept: Optional[str]) -> str:
+    """The one start line: the summary fields (`absent` when the ack lacks one),
+    then where the whole ack is."""
+    parts = [f"{k}={ack.get(k) if ack.get(k) not in (None, '') else 'absent'}"
+             for k in HANDSHAKE_SUMMARY_KEYS]
+    where = f"full ack: {kept}" if kept else "full ack: not written (logged at DEBUG)"
+    return " ".join(parts) + f" ({where})"
 
 # --- handshake v2 (ck-6kvq.6) ---------------------------------------------
 # The bridge has parsed handshake v2 since M1 (bridge/src/ipc_server.cpp:210-284,
@@ -572,7 +625,8 @@ class BridgeClient:
         # Wait for handshake_ack
         resp = self.recv(timeout=timeout)
         if resp and resp.get("type") == "handshake_ack":
-            log.info("Handshake OK: %s", json.dumps(resp, indent=2))
+            log.info("Handshake OK: %s", handshake_summary(resp, keep_handshake_ack(resp)))
+            log.debug("handshake_ack: %s", json.dumps(ack_for_disk(resp), sort_keys=True))
             self.handshake_ack = resp
             bid = resp.get("binary_build_id")
             if bid and self._last_build_id and bid != self._last_build_id:
