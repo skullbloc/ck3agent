@@ -3,7 +3,7 @@
 The bridge compiles these in and refuses any other binary; the CLI reads
 them to name the supported build before launch.
 """
-RELEASE_VERSION = "2026.12.0"
+RELEASE_VERSION = "2026.12.1"
 SUPPORTED_BUILD_ID = "e61ff2642f07094defd140fcc98e078d42541275"
 SUPPORTED_GAME_VERSION = "1.18.3.1"
 SUPPORTED_PLATFORM = "linux"

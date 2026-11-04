@@ -315,6 +315,12 @@ class InstancePaths:
     #: it — but the SIXTH SINGLETON in docs/multi-instance.md's table is NOT
     #: namespaced, and two concurrent games would share one user-data tree.
     #: ``scripts/instance_write_witness.py`` is the check; it FAILS today.
+    #:
+    #: L20-C (2026-11-04): the "no command-line switch" half of the quote above is
+    #: wrong too. The binary checks ``-userdir=<path>`` through the same argument
+    #: table as ``-continuelastsave`` and uses the path as the whole user-data
+    #: tree (re/findings/re_userdir.md, static; the public ``ck3agent launch``
+    #: passes it). Not wired here; this layout is the research tree's.
     xdg_data_home: Optional[str]
     #: CK3's own user-data directory *inside* `xdg_data_home` (None when the
     #: instance inherits the user's).

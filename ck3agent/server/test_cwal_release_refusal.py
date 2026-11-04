@@ -65,6 +65,36 @@ class TheLiteralIsTheAGREEDONE(unittest.TestCase):
         self.assertIn("still allowed", s)
 
 
+class TheRefusalSaysWhatToDoInstead(unittest.TestCase):
+
+    def test_the_reply_fix_names_the_switch_and_the_end_of_session(self):
+        """smoke16/17: release of the only held ruler answered
+        `last_claim_of_control_session` and nothing about the two ways out. The
+        reply's `fix` now carries both: switch with session(control), or end the
+        session, which frees the ruler."""
+        import asyncio
+
+        class Gw:
+            health = "ok"
+
+            def game(self):
+                return None
+
+            async def write(self, action, params):
+                return {"success": False, "reason": LITERAL}
+
+        out = asyncio.run(rd.session_impl(Gw(), "release", character_id=13902))
+        self.assertIs(out["ok"], False)
+        fix = out["blocked"]["fix"]
+        self.assertEqual(fix["tool"], "session")
+        self.assertEqual(fix["args"]["action"], "control")
+        self.assertIn("freed when this session ends", fix["hint"])
+        self.assertIn("switch", fix["hint"])
+
+    def test_no_other_release_refusal_gets_this_fix(self):
+        self.assertEqual(set(rd.RELEASE_REFUSAL_FIXES), {LITERAL})
+
+
 class AnUnknownCodeStillDegradesSafely(unittest.TestCase):
 
     def test_an_unfamiliar_reason_is_NOT_swallowed(self):

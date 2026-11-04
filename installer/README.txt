@@ -6,5 +6,7 @@ ck3agent: let Claude play Crusader Kings III (Linux x86_64, single-player).
 
 VERSION holds the ck3agent release version. `ck3agent version` prints it with
 the one CK3 build it supports; any other build is refused.
-If something fails: `ck3agent doctor`.
-Docs: https://github.com/skullbloc/ck3agent/blob/main/docs/getting-started.md
+If something fails: `ck3agent doctor`, then docs/troubleshooting.md.
+Docs, in this directory: docs/getting-started.md; the tools: docs/reference/tools.md;
+paths and saves: docs/reference/files-and-paths.md.
+Online: https://github.com/skullbloc/ck3agent/blob/main/docs/getting-started.md

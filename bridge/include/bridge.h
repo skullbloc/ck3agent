@@ -816,6 +816,10 @@ ClockWriteCounts clock_write_counts();
 // The deferred PAUSE_SET(0) repeat an unpause queued (part of that one write);
 // called from the game-thread drain every pass.
 void check_delayed_unpause();
+// L20-A: the game-day pause alarm's drain step (event_handler.cpp; pause_alarm.h).
+// Game thread only: reads the date and, when an armed target is reached, pauses
+// through clock_write (origin session: the session armed it).
+void pause_alarm_drain_check();
 
 // Check if the game is paused
 bool is_paused();

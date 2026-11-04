@@ -2593,6 +2593,21 @@ static void drain_game_thread_work_at(DrainSite site) {
 
     }
 
+    // L20-A: the game-day pause alarm (pause_alarm.h). Every pass, paused or
+    // running: a lock-free test while nothing is armed; armed, one guarded read
+    // of the game date and, at or past the target, the pause, here on the
+    // session thread between two engine commands. Before the delayed-unpause
+    // repeat below, so a pause the alarm writes cancels a deferred PAUSE_SET(0)
+    // queued by the unpause that armed it (pause_primitive clears it).
+    g_in_protected_region = true;
+    if (sigsetjmp(g_recovery_point, 1) == 0) {
+        pause_alarm_drain_check();
+    } else {
+        blog("[CK3-Bridge] BUILD-B: WARNING: SIGSEGV in pause_alarm_drain_check at tick=%lu\n", tick);
+        bridge_strict_check_abort("pause_alarm_drain_check");
+    }
+    g_in_protected_region = false;
+
     // Check delayed unpause (handles game auto-pausing for events)
     //
     // ck-cg3b: sigsetjmp, not try/catch alone. This step DEREFERENCES ENGINE

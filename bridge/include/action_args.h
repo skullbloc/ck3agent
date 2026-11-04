@@ -58,4 +58,28 @@ bool action_has(const rapidjson::Value& inner, const char* key);
 bool decision_request(const char* params_json, std::vector<uint32_t>* hashes,
                       std::vector<std::string>* names);
 
+// L20-B: the requested decisions no DB entry matched, in request order: each name
+// absent from `matched_names`, then each hash absent from `matched_hashes` (as its
+// decimal string). A list-mode evaluation emits these as `unmatched` so the reader
+// can tell "the engine does not know this decision" from "it was evaluated and
+// dropped" — before, a name that matched nothing and a row the reply could not
+// name both came back as no row at all (smoke17 B3).
+std::vector<std::string> decision_unmatched(const std::vector<std::string>& req_names,
+                                            const std::vector<uint32_t>& req_hashes,
+                                            const std::vector<std::string>& matched_names,
+                                            const std::vector<uint32_t>& matched_hashes);
+
+// L20-B (smoke17 item 5): the sub-operation of a verb that carries one in an
+// "action" argument (scheme_action: start | cancel | check), read as
+// do_dispatch_scheme_intent reads it: from "params" when the request is framed,
+// else from the object itself. Empty when absent or not a string.
+std::string action_sub_op(const char* params_json);
+
+// True for a call that only READS although its verb can write: scheme_action
+// with action "check" (the engine's CanStartScheme over targets; nothing is
+// started). The dispatch guard skips the actor-ownership check for it, so a
+// session may ask it about a character it has not claimed — a read, like every
+// query_* — while start and cancel still need the claim.
+bool call_is_read_only(const char* action_type, const char* params_json);
+
 }  // namespace bridge

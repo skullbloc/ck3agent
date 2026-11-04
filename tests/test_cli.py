@@ -329,6 +329,59 @@ def test_doctor_ready_without_a_game(install, supported, tmp_path, capsys):
     assert capsys.readouterr().out.strip().endswith("Ready. Next: ck3agent launch --continue")
 
 
+def test_doctor_never_reads_a_play_dir_it_was_not_told(install, supported, hermetic, tmp_path,
+                                                         monkeypatch, capsys):
+    """smoke17: with fresh XDG dirs and no setup record, doctor read the host's
+    ~/ck3agent-play/.mcp.json (another install's, its command gone) and failed rc 1."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    residue = hermetic / "ck3agent-play"
+    residue.mkdir()
+    (residue / ".mcp.json").write_text(json.dumps(
+        {"mcpServers": {"ck3": {"command": "/gone/venv/bin/ck3agent", "args": ["serve"]}}}))
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "/gone/venv" not in out and "ck3 MCP command missing" not in out
+    assert "play directory not set up" in out and "none recorded in" in out
+    # told explicitly, it reads it
+    assert cli.main(["doctor", "--play-dir", str(residue)]) == 1
+    assert "ck3 MCP command missing" in capsys.readouterr().out
+    # and the dir setup recorded is the one read
+    play = tmp_path / "play"
+    assert cli.main(["setup", "--ck3", str(ck3), "--play-dir", str(play)]) == 0
+    capsys.readouterr()
+    assert cli.main(["doctor"]) == 0
+    assert f"{play} (config)" in capsys.readouterr().out
+
+
+def test_doctor_reads_claude_codes_trust_record_for_the_play_dir(install, supported, hermetic, tmp_path,
+                                                                  monkeypatch, capsys):
+    """smoke17: every `claude -p` in a fresh play dir printed "Ignoring 1 permissions.allow
+    entry ... this workspace has not been trusted". Doctor and setup now say so, from
+    Claude Code's own record (read only); nothing writes it."""
+    ck3, _ = install
+    play = tmp_path / "play"
+    assert cli.main(["setup", "--ck3", str(ck3), "--play-dir", str(play)]) == 0
+    assert "accept Claude Code's trust dialog" in capsys.readouterr().out
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "Claude Code has not trusted the play directory" in out
+    assert "accept the trust dialog once" in out
+    assert out.strip().endswith("Ready. Next: ck3agent launch --continue")
+    rec = hermetic / ".claude.json"
+    rec.write_text(json.dumps({"projects": {str(play.resolve()): {cli.TRUST_KEY: True}}}))
+    before = rec.read_bytes()
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "Claude Code trusts the play directory" in out and "has not trusted" not in out
+    assert rec.read_bytes() == before
+    assert cli.trust_record(play) == (True, str(rec))
+    assert cli.trust_record(play, {"CLAUDE_CONFIG_DIR": "/x"})[0] is None
+    rec.write_text("[")
+    assert cli.trust_record(play)[0] is None
+
+
 def test_doctor_matches_only_the_exact_refusal(tmp_path, capsys):
     log = Path(os.environ["CK3_BRIDGE_LOG"])
     log.write_text("[CK3-Bridge] deferred_drain: a deferred call was REFUSED and did not run\n")
@@ -373,7 +426,7 @@ def test_launch_flags():
     assert p.parse_args(["launch", "--allow-unsupported-build"]).allow_unsupported
 
 
-def test_stage_save_repoints_continue_game(tmp_path):
+def test_stage_save_repoints_the_game_dirs_continue_game(tmp_path):
     src = tmp_path / "my world.ck3"
     src.write_bytes(b"SAV")
     ptr = cfg.game_user_dir() / "continue_game.json"
@@ -382,10 +435,114 @@ def test_stage_save_repoints_continue_game(tmp_path):
     dst, digest = cli.stage_save(src)
     assert dst == cfg.game_user_dir() / "save games/my world.ck3" and dst.read_bytes() == b"SAV"
     assert json.loads(ptr.read_text()) == {"title": "my world", "desc": "d"}
-    assert json.loads(ptr.with_name("continue_game.json.bak-ck3agent").read_text())["title"] == "autosave"
     assert digest == cli.sha256(src)
     with pytest.raises(ValueError):
         cli.stage_save(tmp_path / "nope.txt")
+
+
+def _tree(root: Path) -> dict:
+    """Every entry under ROOT: file bytes, link targets, directories."""
+    out = {}
+    for p in sorted(root.rglob("*")):
+        k = str(p.relative_to(root))
+        out[k] = ("link", os.readlink(p)) if p.is_symlink() else \
+            ("dir",) if p.is_dir() else ("file", p.read_bytes(), p.stat().st_mtime_ns)
+    return out
+
+
+@pytest.fixture
+def owner_tree():
+    """The user's own CK3 user-data tree: a campaign, its autosave, a pointer, settings, a mod."""
+    own = cfg.owner_game_dir()
+    (own / "save games").mkdir(parents=True)
+    (own / "save games/campaign.ck3").write_bytes(b"MINE")
+    (own / "save games/autosave.ck3").write_bytes(b"AUTO")
+    (own / "continue_game.json").write_text(json.dumps({"title": "campaign"}))
+    (own / "pdx_settings.txt").write_text("fullscreen=no")
+    (own / "last_save.ck3").write_bytes(b"LAST")
+    (own / "mod").mkdir()
+    (own / "mod/x.mod").write_text("name=x")
+    (own / "logs").mkdir()
+    return own
+
+
+class _Popen:
+    calls: list = []
+
+    def __init__(self, argv, **kw):
+        _Popen.calls.append((argv, kw))
+        self.pid, self.returncode = 4242, None
+
+    def poll(self):
+        return None
+
+
+def _launch(monkeypatch, *args):
+    _Popen.calls = []
+    monkeypatch.setattr(cli.subprocess, "Popen", _Popen)
+    rc = cli.main(["launch", "--no-wait", *args])
+    return rc, (_Popen.calls[0][0] if _Popen.calls else None)
+
+
+def test_launch_gives_the_game_its_own_userdir_and_never_writes_the_users_tree(
+        install, supported, owner_tree, tmp_path, monkeypatch):
+    """smoke17: the launched game's autosave rotated the owner's save games/autosave.ck3.
+    The game now runs with -userdir=<XDG_STATE_HOME>/ck3agent/game, and the user's
+    tree (saves, continue_game.json, settings) is byte-identical after a launch."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    before = _tree(owner_tree)
+    src = tmp_path / "observer.ck3"
+    src.write_bytes(b"OBS")
+    rc, argv = _launch(monkeypatch, "--save", str(src))
+    assert rc == 0
+    game = cfg.game_user_dir().resolve()
+    assert game == (cfg.state_dir() / "game").resolve()
+    assert not str(game).startswith(str(owner_tree))
+    assert argv[:3] == [str(ck3), f"-userdir={game}", "--continuelastsave"]
+    assert (game / "save games/observer.ck3").read_bytes() == b"OBS"
+    assert json.loads((game / "continue_game.json").read_text())["title"] == "observer"
+    # settings copied (a write stays private), directories the game writes are its own
+    assert (game / "pdx_settings.txt").read_text() == "fullscreen=no"
+    assert not (game / "pdx_settings.txt").is_symlink()
+    assert (game / "mod").is_symlink() and not (game / "save games").is_symlink()
+    assert not (game / "logs").is_symlink() and not (game / "last_save.ck3").exists()
+    assert _tree(owner_tree) == before
+    rec = json.loads((cfg.data_dir() / "state/last-launch.json").read_text())
+    assert rec["game_user_dir"] == str(game) and rec["save"] == str(game / "save games/observer.ck3")
+
+
+def test_launch_continue_copies_the_users_last_save_once(install, supported, owner_tree, monkeypatch):
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    before = _tree(owner_tree)
+    rc, argv = _launch(monkeypatch, "--continue")
+    game = cfg.game_user_dir().resolve()
+    assert rc == 0 and f"-userdir={game}" in argv
+    assert (game / "save games/campaign.ck3").read_bytes() == b"MINE"
+    # the game played on in its own tree: the next --continue follows the game's pointer
+    (game / "save games/autosave.ck3").write_bytes(b"AGENT")
+    (game / "continue_game.json").write_text(json.dumps({"title": "autosave"}))
+    rc, _ = _launch(monkeypatch, "--continue")
+    assert rc == 0 and json.loads((game / "continue_game.json").read_text())["title"] == "autosave"
+    assert _tree(owner_tree) == before
+
+
+def test_launch_refuses_a_userdir_it_cannot_pass(install, supported, owner_tree, tmp_path, monkeypatch, capsys):
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    rc, argv = _launch(monkeypatch, "--", "-userdir=/elsewhere")
+    assert rc == 1 and argv is None and "-userdir in the game arguments" in capsys.readouterr().out
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "with space"))
+    rc, argv = _launch(monkeypatch)
+    assert rc == 1 and argv is None and "spaces or quotes" in capsys.readouterr().out
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "st"))
+    (owner_tree / "continue_game.json").write_text("{}")
+    rc, argv = _launch(monkeypatch, "--continue")
+    assert rc == 1 and argv is None and "names no save" in capsys.readouterr().out
 
 
 def test_wait_for_active_times_out_with_3(monkeypatch):

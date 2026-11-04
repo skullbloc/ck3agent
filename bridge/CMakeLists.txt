@@ -143,6 +143,8 @@ set(CK3_BRIDGE_SOURCES
     # compiled standalone by test_instance_paths.
     src/instance_paths.cpp
     src/log_archive.cpp
+    # L20-A: the game-day pause alarm's state. PURE; host-tested by test_pause_alarm.
+    src/pause_alarm.cpp
 )
 
 set(CK3_PLATFORM "linux" CACHE STRING "Platform layer implementation: linux|windows|macos")
@@ -826,6 +828,50 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_json_helpers PRIVATE Threads::Threads)
     target_compile_options(test_json_helpers PRIVATE -O2 -Wall -Wextra)
 
+    # L20-A (smoke17 B5): a council task's seat clone, on the 867 dump's 72 types;
+    # the prefix control is the pre-fix rule and must fail.
+    foreach(_v test_council_task_family test_council_task_family_prefix_control)
+        add_executable(${_v} test/test_council_task_family.cpp)
+        target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_council_task_family_prefix_control PRIVATE FAMILY_PREFIX_CONTROL)
+
+    # L20-A (smoke17 new item 1): the game-day pause alarm's rule, engine-free.
+    add_executable(test_pause_alarm test/test_pause_alarm.cpp src/pause_alarm.cpp)
+    target_include_directories(test_pause_alarm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets)
+    target_link_libraries(test_pause_alarm PRIVATE Threads::Threads)
+    target_compile_options(test_pause_alarm PRIVATE -O2 -Wall -Wextra)
+
+    # L20-A (smoke17 A3): query_war_stance's war scope and row rule on a fixture
+    # from the 867 dump, through the real json_get_int; the prefix control is
+    # the pre-fix scope read and must fail.
+    foreach(_v test_war_scope test_war_scope_prefix_control)
+        add_executable(${_v} test/test_war_scope.cpp src/json_helpers.cpp)
+        target_include_directories(${_v} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+        target_link_libraries(${_v} PRIVATE Threads::Threads)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_war_scope_prefix_control PRIVATE WAR_SCOPE_PREFIX_CONTROL)
+
+    # L20 r3 (witness item 8): construct_building's optional location_id through
+    # the real json_get_int; the prefix control is the pre-fix read and must fail.
+    foreach(_v test_optional_id test_optional_id_prefix_control)
+        add_executable(${_v} test/test_optional_id.cpp src/json_helpers.cpp)
+        target_include_directories(${_v} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+        target_link_libraries(${_v} PRIVATE Threads::Threads)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_optional_id_prefix_control PRIVATE OPTIONAL_ID_PREFIX_CONTROL)
+
     # ck-qn03 (R12): the instance naming rules, compiled standalone. The test
     # is a CROSS-CHECK, not a second opinion: `scripts/test_multi_instance.py`
     # runs this binary and compares its answers, key for key, against the
@@ -1217,6 +1263,17 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_action_args PRIVATE -O2 -Wall -Wextra)
 
+    # L20-D: the diag record dtor the bridge calls is the one the engine's own
+    # EVAL_WITH_FAILURES calls (engine bytes from the binary; header vs engine).
+    add_executable(test_diag_dtor
+        test/test_diag_dtor.cpp
+    )
+    target_include_directories(test_diag_dtor PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+    )
+    target_compile_options(test_diag_dtor PRIVATE -O2 -Wall -Wextra)
+
     # ck-6kvq.13 (R6): the decision-budget governor's ENFORCING half. Pure by
     # construction — no engine, no game, no stub global — because "is this agent
     # out of budget" must be provable without a running game. Also carries the
@@ -1411,6 +1468,8 @@ if(BUILD_BRIDGE_TESTS)
         # coordinator's two refusal counts, so this target needs their leaf TU
         # at link time — the same rule, one symbol later.
         src/deferred_counters.cpp
+        # L20-A: dispatch_router.cpp's clock verbs clear the game-day pause alarm.
+        src/pause_alarm.cpp
         ${DISPATCH_HANDLER_STUBS}
     )
     set(RELEASE_HANDLER_INCLUDES
@@ -1899,7 +1958,10 @@ endif()
                test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_intent_lookup test_handoff_player
                add_claim_probe name_pending_probe tls_prologue_scan_probe
                latch_guarded_rows_probe
-               test_action_args)   # L18-B: built since ck-6kvq.15, never run by ctest
+               test_action_args    # L18-B: built since ck-6kvq.15, never run by ctest
+               test_war_scope test_pause_alarm test_council_task_family     # L20-A
+               test_diag_dtor      # L20-D: DIAG_OBJECT_DTOR is the engine's dtor
+               test_optional_id)   # L20 r3: location_id absent -> missing_location_id
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
     # L18-A: the action-log row decision and its wiring; the world-reset
@@ -1919,6 +1981,14 @@ endif()
     add_test(NAME test_debug_verbs_negative_control
              COMMAND test_debug_verbs_negative_control)
     set_tests_properties(test_debug_verbs_negative_control PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME test_council_task_family_prefix_control COMMAND test_council_task_family_prefix_control)
+    set_tests_properties(test_council_task_family_prefix_control PROPERTIES WILL_FAIL TRUE)
+    # L20-A: the pre-fix war scope read must fail the same rows.
+    add_test(NAME test_war_scope_prefix_control COMMAND test_war_scope_prefix_control)
+    set_tests_properties(test_war_scope_prefix_control PROPERTIES WILL_FAIL TRUE)
+    # L20 r3: the pre-fix location_id read must fail the absent rows.
+    add_test(NAME test_optional_id_prefix_control COMMAND test_optional_id_prefix_control)
+    set_tests_properties(test_optional_id_prefix_control PROPERTIES WILL_FAIL TRUE)
     # L14 S3: the pre-fix 64-bit read of a bool must fail the same checks.
     add_test(NAME test_engine_bool_prefix_control
              COMMAND test_engine_bool_prefix_control)

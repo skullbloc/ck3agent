@@ -202,3 +202,255 @@ def test_the_cycle_is_the_registered_cadence_in_game_days_across_waits_not_any_w
     assert f.note("wait", _wait_env("867.01.03", "867.01.04")) == 1
     assert f.note("wait", {"ok": False, "verdict": "rejected", "result": {"waited_s": 1}}) == 2
     assert f.note("wait", {"ok": False, "blocked": {"gate": "game_did_not_unpause"}, "result": {}}) == 2
+
+
+# ── L20-A: the bridge's pause alarm (bridge/include/pause_alarm.h) ───────────
+
+class AlarmClock(Clock):
+    """A Clock whose bridge serves the pause alarm. The reply keys are the
+    emitters': unpause_game's `pause_alarm` {state, target, armed_at}
+    (bridge/src/action_handlers.cpp do_unpause_game_with_alarm) and
+    get_tick_info's `pause_alarm` {state, target, armed_at, paused_at,
+    cleared_by, arms, fires} (bridge/src/query_handlers.cpp do_get_tick_info).
+    The game thread is modelled at TICK granularity: the date moves in steps of
+    `step` days, and the alarm pauses at the first step at or past the target
+    (pause_alarm::take_due). `queued` extra days run after the pause lands (a
+    tick the engine had already dispatched)."""
+
+    def __init__(self, rate=1.67, start="867.01.26", step=1, queued=0, event_pause_at=None, **kw):
+        super().__init__(rate=rate, start=start, **kw)
+        self.step, self.queued, self.event_pause_at = step, queued, event_pause_at
+        self.alarm = {"state": "none", "arms": 0, "fires": 0}
+        self.target_ord = None
+        self.acc = 0.0
+        self.params = []
+
+    def today(self):
+        return cc.ordinal(self.start) + int(self.days)
+
+    async def read(self, action, params=None):
+        out = await super().read(action, params)
+        if action == "get_tick_info":
+            out["pause_alarm"] = dict(self.alarm)
+        return out
+
+    async def write(self, action, params=None):
+        self.params.append((action, dict(params or {})))
+        if action == "pause_game" and self.alarm["state"] == "armed":
+            self.alarm.update(state="cleared", cleared_by="pause")
+        if action == "unpause_game" and params and "pause_at" in params:
+            t = cc.ordinal(params["pause_at"])
+            if t is None:
+                return {"success": False, "action": "unpause_game", "reason": "pause_at_unparseable",
+                        "pause_at": params["pause_at"], "hint": "x"}
+            if t <= self.today():
+                return {"success": False, "action": "unpause_game", "reason": "pause_at_not_in_future",
+                        "pause_at": params["pause_at"], "game_date": self.date(), "hint": "x"}
+            self.target_ord = t
+            self.alarm = {"state": "armed", "target": params["pause_at"], "armed_at": self.date(),
+                          "arms": self.alarm["arms"] + 1, "fires": self.alarm["fires"]}
+            self.paused = False
+            self.writes.append(action)
+            return {"success": True, "action": "unpause_game",
+                    "pause_alarm": {"state": "armed", "target": params["pause_at"], "armed_at": self.date()}}
+        return await super().write(action, params)
+
+    async def sleep(self, s):
+        self.slept.append(s)
+        if self.paused:
+            return
+        self.acc += self.rate * s
+        while self.acc >= self.step and not self.paused:
+            self.acc -= self.step
+            self.days += self.step
+            if self.event_pause_at is not None and self.today() >= cc.ordinal(self.event_pause_at):
+                self.event_pause_at = None
+                self.paused = True                 # the engine's own pause: no clock_write
+            if self.alarm["state"] == "armed" and self.today() >= self.target_ord:
+                self.alarm.update(state="fired", paused_at=self.date(), fires=self.alarm["fires"] + 1)
+                self.paused = True
+                self.days += self.queued           # a tick already dispatched runs anyway
+
+
+def test_smoke17_ten_days_is_ten_days_on_the_alarm(monkeypatch):
+    """smoke17 new item 1: wait(seconds=30, game_days=10) at ~1.67 d/s returned
+    game_days_advanced 25, calls 1, stopped game_days_reached (the 15 s probe).
+    Red before L20-A: the server sent a plain unpause_game and slept the probe."""
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = AlarmClock(rate=1.67, start="867.01.26")
+    out = _wait(gw, monkeypatch, seconds=30, game_days=10)
+    r = out["result"]
+    assert out["verdict"] == "applied", out
+    assert r["game_days_advanced"] == 10 and r["stopped"] == cc.STOP_ALARM
+    assert r["wait_mode"] == "alarm" and r["calls"] == 1
+    assert r["alarm"] == {"state": "fired", "target": "0867.02.05", "paused_at": "867.2.5"}
+    assert r["start_date"] == "867.1.26" and r["end_date"] == "867.2.5" and gw.paused is True
+    assert ("unpause_game", {"pause_at": "0867.02.05"}) in gw.params
+    assert "overshoot_days" not in r and all(s == cc.ALARM_POLL_S for s in gw.slept)
+    # the cycle counter reads the same dates it always read
+    c = cc.CycleCounter(cadence_days=10)
+    assert c.note("wait", out) == 1
+
+
+def test_a_tick_that_jumps_days_or_a_queued_tick_is_reported_not_rounded(monkeypatch):
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = AlarmClock(rate=6.0, step=3)                    # each pass moves 3 days
+    r = _wait(gw, monkeypatch, seconds=30, game_days=10)["result"]
+    assert r["game_days_advanced"] == 12 and r["overshoot_days"] == 2
+    assert r["alarm"]["paused_at"] == "867.2.7" and r["stopped"] == cc.STOP_ALARM
+    gw = AlarmClock(rate=1.0, queued=1)                  # one already-dispatched tick
+    r = _wait(gw, monkeypatch, seconds=30, game_days=10)["result"]
+    assert r["game_days_advanced"] == 11 and r["overshoot_days"] == 1
+    assert r["alarm"]["paused_at"] == "867.2.5" and r["end_date"] == "867.2.6"
+
+
+def test_an_engine_pause_is_unpaused_on_the_same_target_and_a_session_pause_clears(monkeypatch):
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = AlarmClock(rate=1.0, event_pause_at="867.01.30")
+    out = _wait(gw, monkeypatch, seconds=30, game_days=10)
+    r = out["result"]
+    assert out["verdict"] == "applied" and r["game_days_advanced"] == 10 and r["calls"] == 2
+    assert [p for a, p in gw.params if a == "unpause_game"] == [{"pause_at": "0867.02.05"}] * 2
+    # someone else's pause disarms the alarm: the wait stops and says so
+    gw = AlarmClock(rate=1.0)
+
+    async def pause_midway(s, _orig=gw.sleep):
+        await _orig(s)
+        if len(gw.slept) == 3:
+            await gw.write("pause_game", {})
+            gw.paused = True
+    gw.sleep = pause_midway
+    out = _wait(gw, monkeypatch, seconds=30, game_days=10)
+    assert out["ok"] is False and out["blocked"]["gate"] == "cycle_not_reached"
+    assert out["result"]["stopped"] == cc.STOP_ALARM_CLEARED
+
+
+def test_a_refused_arm_waits_nothing_and_an_old_bridge_gets_the_polled_loop(monkeypatch):
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = AlarmClock(rate=1.0)
+    gw.today = lambda: 10 ** 6                           # the bridge reads a later date
+    out = _wait(gw, monkeypatch, seconds=30, game_days=10)
+    assert out["ok"] is False and out["verdict"] == "rejected"
+    assert out["blocked"]["raw_reason"] == "pause_at_not_in_future" and gw.slept == []
+    # a bridge with no alarm: the polled loop runs, and the reply names it
+    gw = Clock(rate=1.1)
+    out = _wait(gw, monkeypatch, seconds=60, game_days=90)
+    r = out["result"]
+    assert out["verdict"] == "applied" and r["wait_mode"] == "polled"
+    assert r["alarm"] == {"state": "not_served"} and r["stopped"] == cc.STOP_REACHED
+
+
+def test_date_from_ordinal_inverts_ordinal_in_the_bridge_spelling():
+    for d in ("0867.01.01", "0867.02.28", "0867.03.01", "0867.12.31", "1066.09.15", "0000.01.01"):
+        assert cc.date_from_ordinal(cc.ordinal(d)) == d
+    for o in range(cc.ordinal("867.1.1"), cc.ordinal("869.1.1")):
+        assert cc.ordinal(cc.date_from_ordinal(o)) == o
+
+
+# ── L20 r3, witness item 5: the alarm's labels and its disarm on every exit ───
+# (a) a pause_at write answered {"status": "sent_no_confirmation"} (mcp_server
+#     Gateway._dispatch on a timeout) was labelled alarm.state "not_served";
+# (b) a wait that ended with the ENGINE holding the game paused wrote no
+#     closing pause, so the alarm stayed ARMED past its wait (pause_alarm.h:
+#     "an alarm outlives nothing but its own wait");
+# (c) the closing pause_game reply was never read.
+
+class NoConfirmArm(AlarmClock):
+    """The pause_at write times out: mcp_server answers sent_no_confirmation."""
+
+    async def write(self, action, params=None):
+        if action == "unpause_game" and params and "pause_at" in params:
+            self.params.append((action, dict(params)))
+            return {"status": "sent_no_confirmation", "action": "unpause_game"}
+        return await super().write(action, params)
+
+
+def test_an_unconfirmed_arm_is_not_witnessed_and_the_wait_says_it_fell_back(monkeypatch):
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = NoConfirmArm(rate=1.1)
+    out = _wait(gw, monkeypatch, seconds=60, game_days=30)
+    r = out["result"]
+    assert r["wait_mode"] == "polled"
+    assert r["alarm"]["state"] == "not_witnessed", r["alarm"]
+    assert "not confirmed" in r["alarm"]["detail"] and "polling" in r["alarm"]["detail"]
+
+
+class RefusedRearm(AlarmClock):
+    """The engine pauses (an event) and the re-arm on the same target is refused:
+    the wait ends with the game paused by the engine and the alarm still armed."""
+
+    async def write(self, action, params=None):
+        if action == "unpause_game" and params and "pause_at" in params and self.alarm["arms"]:
+            self.params.append((action, dict(params)))
+            return {"success": False, "action": "unpause_game", "reason": "pause_at_not_in_future"}
+        return await super().write(action, params)
+
+
+def test_an_engine_paused_end_disarms_the_alarm(monkeypatch):
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = RefusedRearm(rate=1.0, event_pause_at="867.01.30")
+    out = _wait(gw, monkeypatch, seconds=30, game_days=10)
+    assert out["result"]["stopped"] == cc.STOP_ALARM_LOST, out["result"]
+    assert gw.alarm["state"] == "cleared" and gw.alarm.get("cleared_by") == "pause", gw.alarm
+    assert gw.params[-1][0] == "pause_game"
+
+
+class EngineAlwaysPauses(AlarmClock):
+    """Every pass the engine pauses the game again: the re-arms run out of calls."""
+
+    async def sleep(self, s):
+        await super().sleep(s)
+        if not self.paused:
+            self.paused = True
+
+
+def test_a_budget_end_under_engine_pauses_disarms_the_alarm(monkeypatch):
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = EngineAlwaysPauses(rate=0.0)
+    out = _wait(gw, monkeypatch, seconds=30, game_days=10)
+    assert out["result"]["calls"] >= cc.MAX_WAIT_CALLS
+    assert gw.alarm["state"] == "cleared", gw.alarm
+
+
+class RearmRaises(AlarmClock):
+    async def write(self, action, params=None):
+        if action == "unpause_game" and params and "pause_at" in params and self.alarm["arms"]:
+            raise ConnectionError("socket closed")
+        return await super().write(action, params)
+
+
+def test_an_error_inside_the_wait_still_disarms_the_alarm(monkeypatch):
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = RearmRaises(rate=1.0, event_pause_at="867.01.30")
+    with pytest.raises(ConnectionError):
+        _wait(gw, monkeypatch, seconds=30, game_days=10)
+    assert gw.alarm["state"] == "cleared", gw.alarm
+
+
+def test_CONTROL_a_no_progress_end_with_the_game_running_disarms_on_base_too(monkeypatch):
+    """Not discriminating (the pre-fix code paused here as well): the path where
+    the game is running at the end, kept so every exit has a row."""
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = AlarmClock(rate=0.0)
+    out = _wait(gw, monkeypatch, seconds=30, game_days=10)
+    assert out["result"]["stopped"] == cc.STOP_NO_PROGRESS
+    assert gw.alarm["state"] == "cleared"
+
+
+class UnconfirmedPause(AlarmClock):
+    async def write(self, action, params=None):
+        out = await super().write(action, params)
+        if action == "pause_game":
+            return {"status": "sent_no_confirmation", "action": "pause_game"}
+        return out
+
+
+def test_an_unconfirmed_closing_pause_is_reported_never_assumed(monkeypatch):
+    monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
+    gw = UnconfirmedPause(rate=0.0)
+    r = _wait(gw, monkeypatch, seconds=30, game_days=10)["result"]
+    assert r["pause_unconfirmed"] is True and r["pause_reply"] == "sent_no_confirmation", r
+    gw = AlarmClock(rate=0.0)                       # a confirmed pause carries no flag
+    r = _wait(gw, monkeypatch, seconds=30, game_days=10)["result"]
+    assert "pause_unconfirmed" not in r
+    assert r["alarm"]["state_after"] == "cleared"

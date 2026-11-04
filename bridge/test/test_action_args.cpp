@@ -186,6 +186,39 @@ static void test_decision_request_framed_and_flat() {
     CHECK(!decision_request("{not json", &h3, &n3));
 }
 
+// L20-B (smoke17 B3): the requested decisions a list-mode walk did not match are
+// named, in request order, names before hashes; a matched one is not.
+static void test_decision_unmatched_names_the_unknown() {
+    std::printf("decision_unmatched: a requested decision no DB entry matched is named\n");
+    std::vector<std::string> names = {"visit_local_shrine_decision", "no_such_decision"};
+    std::vector<uint32_t> hashes = {2728205313u, 7u};
+    auto u = decision_unmatched(names, hashes, {"visit_local_shrine_decision"}, {2728205313u});
+    CHECK(u.size() == 2 && u[0] == "no_such_decision" && u[1] == "7");
+    CHECK(decision_unmatched(names, {}, names, {}).empty());          // all matched: none
+    auto all = decision_unmatched({"x"}, {}, {}, {});                  // nothing matched
+    CHECK(all.size() == 1 && all[0] == "x");
+}
+
+// L20-B (smoke17 item 5): discover(what="scheme_targets") sends scheme_action
+// with action "check"; the dispatch guard treats exactly that as a read.
+static void test_scheme_check_is_a_read() {
+    std::printf("call_is_read_only: scheme_action check is a read, start/cancel are not\n");
+    const char* framed_check =
+        "{\"action\":\"scheme_action\",\"params\":{\"actor_id\":13191,\"action\":\"check\","
+        "\"scheme\":\"generate_claim\",\"candidates\":[10465]},\"request_id\":\"r\"}";
+    CHECK(action_sub_op(framed_check) == "check");
+    CHECK(call_is_read_only("scheme_action", framed_check));
+    CHECK(!call_is_read_only("scheme_action",
+        "{\"action\":\"scheme_action\",\"params\":{\"actor_id\":1,\"action\":\"start\"}}"));
+    CHECK(!call_is_read_only("scheme_action",
+        "{\"action\":\"scheme_action\",\"params\":{\"actor_id\":1,\"action\":\"cancel\"}}"));
+    // flat: the top-level "action" is the verb itself, so no sub-operation is a check
+    CHECK(!call_is_read_only("scheme_action", "{\"action\":\"scheme_action\",\"actor_id\":1}"));
+    CHECK(!call_is_read_only("faction_action", framed_check));   // only scheme_action
+    CHECK(!call_is_read_only(nullptr, framed_check));
+    CHECK(action_sub_op("{not json").empty());
+}
+
 int main() {
     std::printf("test_action_args — ck-6kvq.15 params-fallback regression\n\n");
     test_framed_check_resolves();
@@ -195,6 +228,8 @@ int main() {
     test_absence_is_distinguishable_from_empty();
     test_mixed_and_degenerate_framings();
     test_decision_request_framed_and_flat();
+    test_decision_unmatched_names_the_unknown();
+    test_scheme_check_is_a_read();
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

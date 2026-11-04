@@ -15,7 +15,8 @@ from ck3agent import __version__, cli, _bridge as br
 
 def test_teardown_pauses_and_finds_no_ruler(bridge):
     fb = bridge()
-    assert br.teardown(br.socket_path(), wait=0) == [("pause", True, ""), ("release", True, "no ruler bound")]
+    assert br.teardown(br.socket_path(), wait=0, sessions=["s1"]) == [("pause", True, ""),
+                                                                     ("release", True, "no ruler bound")]
     assert ("handshake", "control") in fb.seen and fb.paused
 
 
@@ -24,7 +25,7 @@ def test_teardown_names_the_holder_when_release_is_refused(bridge):
     fb = bridge()
     fb.sessions["s99"] = {"state": "detached", "client_name": "ck3agent-mcp", "mode": "control"}
     fb.owner[42] = "s99"
-    steps = br.teardown(br.socket_path(), wait=0)
+    steps = br.teardown(br.socket_path(), wait=0, sessions=["s99"])
     assert steps[-1] == ("release", False, "42 still held by session s99 (detached, ck3agent-mcp): "
                                            "not_owned_by_session")
     assert ("release_character", {"character_id": 42}) in fb.seen and fb.owner == {42: "s99"}
@@ -34,8 +35,62 @@ def test_teardown_waits_for_the_owner_to_release(bridge):
     fb = bridge()
     fb.owner[42] = "s99"
     threading.Timer(1.5, lambda: fb.owner.clear()).start()
-    assert br.teardown(br.socket_path(), wait=10)[-1] == ("release", True, "no ruler bound")
+    assert br.teardown(br.socket_path(), wait=10, sessions=["s99"])[-1] == ("release", True, "no ruler bound")
     assert ("release_character", {"character_id": 42}) not in fb.seen
+
+
+def test_teardown_leaves_another_runs_ruler_alone_and_names_it(bridge):
+    """L20-B (smoke17: consolidate's teardown warned "13902 still held by session
+    ...14: not_owned_by_session", expand's ruler). Two sessions hold one ruler
+    each; the teardown of the run whose session is s1 releases nothing of s2's,
+    asks the bridge for nothing of s2's, and does not warn."""
+    fb = bridge()
+    fb.sessions["s1"] = {"state": "detached", "client_name": "ck3agent-mcp", "mode": "control"}
+    fb.sessions["s2"] = {"state": "attached", "client_name": "ck3agent", "mode": "control"}
+    fb.owner[13902] = "s2"                       # the other run's ruler
+    steps = br.teardown(br.socket_path(), wait=0, sessions=["s1"])
+    assert steps[-1][0] == "release" and steps[-1][1] is True, steps
+    assert "13902 held by session s2 (attached, ck3agent), not this run's" in steps[-1][2]
+    assert ("release_character", {"character_id": 13902}) not in fb.seen
+    assert fb.owner == {13902: "s2"}
+
+
+def test_teardown_releases_its_own_ruler_beside_another_runs(bridge):
+    fb = bridge()
+    fb.sessions["s1"] = {"state": "detached", "client_name": "ck3agent-mcp", "mode": "control"}
+    fb.sessions["s2"] = {"state": "attached", "client_name": "ck3agent", "mode": "control"}
+    fb.owner[12145] = "s1"
+    fb.owner[13902] = "s2"
+    steps = br.teardown(br.socket_path(), wait=0, sessions=["s1"])
+    assert ("release_character", {"character_id": 12145}) in fb.seen
+    assert ("release_character", {"character_id": 13902}) not in fb.seen
+
+
+def test_teardown_without_a_session_record_releases_nothing_and_is_not_clean(bridge):
+    """L20 r3, witness item 2: with no session record (`sessions` empty) every
+    claim read as another run's, and the teardown returned ("release", True,
+    "no ruler of this run bound"). The record is the only attribution: nothing
+    is released, the step is not clean, and the claims seen are unattributed."""
+    fb = bridge()
+    fb.sessions["s99"] = {"state": "detached", "client_name": "ck3agent-mcp", "mode": "control"}
+    fb.owner[42] = "s99"
+    for sessions in ((), [None], [""]):
+        steps = br.teardown(br.socket_path(), wait=0, sessions=sessions)
+        what, ok, detail = steps[-1]
+        assert what == "release" and ok is False, steps
+        assert detail.startswith("session_record_missing:"), detail
+        assert "unattributed: 42 held by session s99 (detached, ck3agent-mcp)" in detail, detail
+    assert not any(v == "release_character" for v, _ in fb.seen), fb.seen
+    assert fb.owner == {42: "s99"}
+
+
+def test_teardown_without_a_session_record_and_no_claims_is_still_not_clean(bridge):
+    fb = bridge()
+    what, ok, detail = br.teardown(br.socket_path(), wait=0)[-1]
+    assert (what, ok) == ("release", False)
+    assert detail == ("session_record_missing: no session record of this run was read, so "
+                      "nothing was released; no ruler is bound in the game")
+    assert fb.paused
 
 
 def test_teardown_on_a_dead_bridge_reports_and_does_not_raise():

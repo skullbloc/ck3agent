@@ -18,7 +18,8 @@ Run Claude unattended with a goal and a stopping rule, and keep a record.
    ck3agent launch --save ~/saves/start_867.ck3
    ```
 
-   `--save` implies `--continue` and records the save's SHA-256, which the
+   `--save` implies `--continue`, copies the save into the launched game's own
+   directory and records the save's SHA-256, which the
    run manifest copies. Without a fixed save, use `ck3agent launch --continue`.
 
 2. Start the run:

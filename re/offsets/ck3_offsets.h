@@ -2660,6 +2660,19 @@ namespace war_stance {
     //   attacker offensive ⟺ enemy < own AND (enemy/own) < 0.75  (single-objective war).
     // rec+0x1b28 / rec+0x1b30: enemy-side / own-side total strength, longs (HIGH; the
     // REC_STRENGTH_ENEMY/OWN names were deleted with force_offensive_stance, their reader).
+    // L20-A (2026-11-04) NOT A STANDING READ — do not re-add a reader that reports them
+    // as "how far below 1.33x": the HIGH is for what the SELECTOR reads at its own
+    // moment, not for what the record holds between ticks. Census of the 1097 dump
+    // ck3_20260421_195552.core (CAIManager at the CAIMAN_VTABLE vptr, records via
+    // AIMGR_REC_ARRAY/COUNT: 174 active): 168 records hold 0/0, 6 hold values, and
+    // those 6 do not obey the gate in either orientation (rec 159 attacker_offensive
+    // with 0x1b28=7,132,000,000 vs 0x1b30=930,000,000; rec 172 attacker_offensive
+    // with 0 vs 13,983,000,000; rec 126 attacker_offensive with 48,536 vs 36,600 /
+    // 100000, ratio 0.754 either way round). The 867 dump has no records yet
+    // (ai_root+0x54 = 0 at 867.01.01). Reading: the totals are scratch the selector
+    // fills (FUN_04e63700 path) and leaves stale or zeroes; the writer is still the
+    // §5 open question of re/findings/re_offensive_strength_gate.md. A strength
+    // reading needs that writer pinned, or the per-side sum computed live.
     constexpr size_t REC_SOLDIERS_OWN       = 0x1b38;  // MEDIUM: int32, own soldier count (FUN_04e63700 reads)
     // Ratio thresholds (fixed-point /100000), core-dump-verified:
     //   RATIO_HI = 0.75 (_DAT_0c16ecf0): at/above this an attacker is NOT offensive
@@ -4640,6 +4653,18 @@ namespace council_pos_type {
 // The offset was a literal in query_council and council_task_hook (lane-p5 named it).
 namespace council_task_type {
     constexpr size_t POSITION_TYPE_PTR  = 0x30;   // HIGH: ptr, CCouncilPositionType* (514/514 positions reach councillor_* keys, 867 core)
+    // L20-A (B5): a task another seat CLONES (council_tasks `clone = <task>`) is
+    // its own type whose +0x14d8 points at the template; 0 when not a clone.
+    // HIGH: decompile of FUN_05cb9ed0 (image VA 0x05cb9ed0; returns when
+    // *(t+0x14d8)==0, else copies the template's +0x38..+0x44, +0x278..+0x27c
+    // and the string at +0xdc8 into the clone; "Cannot clone CouncilTask type {}
+    // using {} as template as the template is also a clone" at 0x5cb9f95) + the
+    // 867 dump ck3_20260625_152901_ivar867: 5 of 72 types set, each to its data
+    // template (task_fabricate_claim_minister_of_rites 0x7f9006b56b80 id 67,
+    // seat minister_justice, +0x14d8 = task_fabricate_claim 0x7f90068e54a0 id 6,
+    // seat councillor_court_chaplain); the other 67 read 0.
+    constexpr size_t CLONE_TEMPLATE_PTR = 0x14d8; // HIGH: ptr, CCouncilTaskType* template (evidence above)
+    constexpr size_t TYPE_ID            = 0x08;   // HIGH: u32, dense 0..71 in the 867 dump
 }
 
 // =============================================================================
@@ -5924,7 +5949,16 @@ namespace trigger_eval_funcs {
     constexpr uintptr_t INIT_EVAL_CTX     = 0x0744fe70;  // HIGH: void(eval_ctx*, scope_obj) — init two typed arrays + scope ref (ck-vqth) (ck-e58l.20)
     constexpr uintptr_t BUILD_TYPED_SCOPE = 0x07451620;  // HIGH: scope*(buf, scope_obj, eval_ctx*) — 40-byte typed scope wrapper (ck-vqth) (ck-e58l.20)
     constexpr uintptr_t IS_EMPTY           = 0x06a8f650;  // HIGH: bool(scripted_cost) — all sub-counts=0 (ck-e58l.20)
-    constexpr uintptr_t DIAG_OBJECT_DTOR  = 0x04a5b060;  // HIGH: void(diag_obj) — destroy 0xD8 diagnostic object allocated by EVAL_WITH_FAILURES (FUN_05a5b060, image 0x5a5b060; header = image-0x100000) (ck-wtk7) (item81: corrected from 0x0495b060 which resolved mid-FUN_0595af50+0x110)
+    // L20-D 2026-11-04: DIAG_OBJECT_DTOR was 0x04a5b060 (item81 subtracted 0x1000000, not 0x100000),
+    // which is image 0x4b5b060, mid FUN_04b5af30 (a sort helper): every failure-key extraction jumped
+    // there, wrote into its caller's frame and SIGSEGVed at 0x4a5b0d3 (smoke17 bridge.log 24130, r14 =
+    // 0x9019eb00000001bb = the code bytes at 0x4a5b098). The ENGINE names the dtor: EVAL_WITH_FAILURES
+    // +0x3b is `e8 60 d2 41 fe` = call 0x0595b060 (objdump, binary MD5 09ba163b). Ghidra FUN_05a5b060
+    // (image) is a 537-byte entry whose first store is the diag vtable trigger_diag::VTABLE. The
+    // bridge resolves it through bridge/include/diag_dtor.h, which re-reads that call at runtime and
+    // refuses on disagreement. Text is file-backed, not in the core dump; the binary is the witness.
+    constexpr uintptr_t DIAG_OBJECT_DTOR  = 0x0595b060;  // HIGH: void(diag_obj) — destroy (not free) the 0xD8 diag object allocated by EVAL_WITH_FAILURES; Ghidra FUN_05a5b060 (image 0x5a5b060 = header + 0x100000); 3 sources: the engine call at EVAL_WITH_FAILURES+0x3b, Ghidra entry 537 B, the vtable store (L20-D)
+    constexpr uintptr_t EVAL_WITH_FAILURES_DTOR_CALL = 0x3b;  // HIGH: byte offset in EVAL_WITH_FAILURES of its `call rel32` to DIAG_OBJECT_DTOR (objdump 0x753ddfb; L20-D)
 }
 
 // Diagnostic record (0xD8-byte) field layout, populated by EVAL_WITH_FAILURES

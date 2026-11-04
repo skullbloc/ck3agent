@@ -680,6 +680,10 @@ bool do_set_offgoal_veto(const char* params_json, std::string* out);
 // another origin (the pipeline's flush effects). Both go through clock_write.
 bool do_pause_game(const char* params_json);
 bool do_unpause_game(const char* params_json);
+// L20-A: unpause_game {"pause_at":"Y.M.D"} — arm the game-day pause alarm
+// (pause_alarm.h), then unpause. Refuses, unpausing nothing, a target that does
+// not parse or is not after the game date. Writes its own reply.
+bool do_unpause_game_with_alarm(const char* params_json, std::string* out);
 bool do_set_speed(const char* params_json);
 bool clock_verb_pause(ClockOrigin origin, const char* params_json);
 bool clock_verb_unpause(ClockOrigin origin, const char* params_json);

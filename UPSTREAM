@@ -1,6 +1,6 @@
 # Provenance of this public tree (written by release/export.py; do not edit)
-upstream_commit=6a2272f6ca73d47beeb618a1b58d9f51a5b05a63
+upstream_commit=7632451f840fb6865c1564017ec1dcc0258519f8
 upstream_branch=release-prep-2026.10
 upstream_dirty=no
-manifest_blob=dbcb05f5fd266ae8678721be48c4639c5411c418
-exported_at=2026-11-04T10:37:53Z
+manifest_blob=20932f5787cd2f54952bd76c842d693f5168e642
+exported_at=2026-11-04T17:26:22Z

@@ -41,8 +41,9 @@ if _HERE not in sys.path:
 from mcp.server.fastmcp import FastMCP, Context
 from pydantic import Field, StrictBool
 
-from tools import QUERY_DOMAINS, DISCOVER_WHATS
+from tools import QUERY_DOMAINS, DISCOVER_WHATS, CONQUEST_TARGETS_DETAILS
 import redesign
+import bridge_client  # noqa: E402
 import seat_lineage                      # v3 §7.5: the seat is a lineage (inert unless armed)
 import do_intent_args
 
@@ -774,12 +775,20 @@ def get_overview() -> dict[str, Any]:
     """Connection status, tick ID, game date (structured data, not a JSON string)."""
     ctx = mcp.get_context()
     state: BridgeState = ctx.request_context.lifespan_context
+    return overview_payload(state)
+
+
+def overview_payload(state) -> dict:
+    """ck3://state/overview's body. The handshake is the ack less the withheld
+    keys (bridge_client.HANDSHAKE_ACK_WITHHELD): the resume token is an
+    authorisation over this session's claims and a resource body lands in the
+    client's transcript (L20 witness r2, follow-up b)."""
     return {
         "connected": state.connected,
         "mock_mode": state.mock_mode,
         "tick_id": state.tick_id,
         "game_date": state.game_date,
-        "handshake": state.handshake_info,
+        "handshake": bridge_client.ack_for_disk(state.handshake_info) if state.handshake_info else state.handshake_info,
     }
 
 
@@ -1819,9 +1828,13 @@ async def query(
             (e.g. "c_york"), instead of target_county.
         counties: For domain="map_graph", scope=explicit: comma-separated county keys.
         detail: For domain="map_graph": "brief" drops distances and the live overlay.
+            For domain="conquest_targets": "full" gives each row every field (the
+            engine_valid_cbs list, both declare options) and the bridge's note; the
+            default row carries counts instead.
         verbose: Opt-in to full detail for characters/wars/council/armies/realm/claims/
-            conquest_targets (whose default lists 25 counties outside your realm,
-            conquerable first, with max_results for more).
+            conquest_targets (whose default lists 10 counties outside your realm,
+            conquerable first, each with declare_args for declare_war; max_results
+            for more).
             Default False returns lean payloads (drops per-row skills, government, age,
             trait names, war participant id arrays, score_breakdown, and per-army
             secondary status fields) — all of which the agent's default formatters do not read. Set True
@@ -1896,6 +1909,11 @@ async def query(
             if unbound is not None:
                 return None, [], unbound["blocked"]
             return await _query_relative_power(state, character_id, target_id)
+        if d == "conquest_targets" and detail not in CONQUEST_TARGETS_DETAILS:
+            return None, [], redesign.why_blocked(
+                "invalid_argument",
+                summary=f"detail='{detail}' is not a conquest_targets detail; "
+                        "pass detail='full' or leave it out")
         resolved = resolve_query(d, params)
         if resolved is None:
             return None, [], redesign.why_blocked(
@@ -1914,9 +1932,11 @@ async def query(
         declined = _declined(reply, action)
         if declined is not None:
             return None, [], declined
+        if d == "character":
+            reply = await _reread_pending_name(state, action, bridge_params, reply)
         if d == "conquest_targets" and not verbose:
             from tools import compact_conquest_targets
-            reply = compact_conquest_targets(reply, max_results)
+            reply = compact_conquest_targets(reply, max_results, detail)
         return reply, [], None
 
     # Batch mode: every domain's reply under its own key; a domain that failed is
@@ -1944,6 +1964,39 @@ async def query(
     if refused is not None:
         return _refused("query", state, refused)
     return _ok("query", state, got, errors=errs)
+
+
+#: L20-B (smoke17 new item 4): the pauses before each re-read of a character whose
+#: name the bridge has queued for the game thread (name_tables.cpp: a cache miss
+#: answers name_key + name_pending and queues the id; the drain after the next
+#: game-thread pass, paused or running, resolves it). ~1.5 s in all.
+NAME_PENDING_REREADS_S = (0.25, 0.25, 0.5, 0.5)
+NAME_PENDING_NOTE = ("the game has not localized this name yet (the bridge queued it for the "
+                     "game thread); read the character again in a moment")
+
+
+async def _reread_pending_name(state, action: str, bridge_params: dict, reply):
+    """query(domain="character") for an id the bridge has not named yet: re-read it
+    while the drain resolves the name (smoke17: 12015 and 11329 came back with
+    name_key + name_pending on the first read of the session, and `name` absent,
+    while the same ids were named by later reads). A name still pending after the
+    re-reads is said: `name` null beside name_pending and a note, never a key."""
+    def pending(r):
+        return isinstance(r, dict) and r.get("name_pending") and not r.get("name")
+    if not pending(reply):
+        return reply
+    for pause in NAME_PENDING_REREADS_S:
+        await asyncio.sleep(pause)
+        try:
+            again = await _query_bridge(state, action, bridge_params)
+        except Exception:                                # noqa: BLE001
+            break
+        if _declined(again, action) is not None or not isinstance(again, dict):
+            break
+        reply = again
+        if not pending(reply):
+            return reply
+    return {**reply, "name": None, "name_note": NAME_PENDING_NOTE}
 
 
 async def _query_event_log(state, since_tick: int, limit: int, filter: str):
@@ -2298,7 +2351,8 @@ async def discover(
               contract), is_secret and max_breaches.
               scheme_targets: whom the actor can start `scheme` against, by the
               game's own check (the scheme's allow and valid triggers, an
-              existing scheme, the cooldown). target_id checks one character;
+              existing scheme, the cooldown). A read: it answers for any
+              character_id, bound to this session or not; nothing is started. target_id checks one character;
               candidates=[ids] checks those; neither checks your court and
               vassals, your liege and his court, the holders of titles you claim and their courts. Stops at max_results (default
               20) valid. A refused row lists the game's reasons, one per failing
@@ -2795,14 +2849,17 @@ async def do(
                       recruit cost and fielded_regiments; 30 rows, fielded first then
                       cheapest, or pass candidates=[types]. laws: the other laws in each
                       law group you have; whether a change is allowed now is decided when
-                      change_law runs. fabricate_targets: the titles the court
-                      chaplain's task_fabricate_claim can take (the door for a claim on a
-                      title; the generate_claim scheme is refused); an empty list warns
-                      fabricate_targets_empty, naming the seat it used and the bridge's
-                      counts. council_task takes args.seat optionally; a task
-                      belongs to ONE seat (task_fabricate_claim is the court chaplain's), a
-                      seat that cannot take it is refused, and every reply names the seat
-                      and councillor used. buildings: the game's building types (40
+                      change_law runs. fabricate_targets: the titles task_fabricate_claim
+                      can take (the door for a claim on a title; the generate_claim scheme
+                      is refused). With no args.seat the court chaplain's task is tried
+                      first; a ruler with ministries passes args={"seat":
+                      "minister_justice"}, and each row's do_call names the seat the
+                      bridge evaluated. An empty list warns fabricate_targets_empty, naming
+                      the seat it used, the task's other seats (task_seats) and the
+                      bridge's counts. council_task takes args.seat optionally; a seat
+                      picks its own version of the task (task_used), a seat with no
+                      version is refused with the seats that have one, and every reply
+                      names the seat and councillor used. buildings: the game's building types (40
                       rows, or pass candidates=[keys]); pass args={"location_id": <barony
                       title id of a holding you hold>} and each row is the game's verdict
                       for you there (available, or blocked with the game's reasons or the
@@ -2918,10 +2975,14 @@ async def session(
     `seconds` (1-110; longer waits are several calls), pauses again, and returns
     start_date/end_date. Do not use Bash `sleep` for this: Claude Code refuses sleeps
     of 30 s or more. With `game_days` > 0 the wait is measured in GAME-DAYS instead:
-    the server repeats bounded waits (each at most `seconds`, planned from the clock
-    rate it measures) until the game date has advanced that many days since the call
-    began, and reports game_days_advanced, calls and why it stopped; seconds are not
-    the unit, because the clock's rate depends on the host and the seat count. Under
+    the bridge pauses the game itself on the first day at or past the start date plus
+    `game_days` (stopped "alarm"; alarm.paused_at is where it stopped), and the reply
+    reports game_days_advanced, calls and why it stopped; seconds are not the unit,
+    because the clock's rate depends on the host and the seat count. A bridge without
+    the alarm gets repeated bounded waits instead (wait_mode "polled", alarm.state
+    "not_served"), and so does an arm the bridge did not confirm in time
+    (alarm.state "not_witnessed"). A closing pause the bridge did not confirm is
+    reported (pause_unconfirmed: true). Under
     a registered cadence (CK3_CYCLE_GAME_DAYS) an ask above it is refused
     (cycle_game_days_over_cadence), never clamped. Under a registered horizon
     (CK3_EPISODE_HORIZON_END) a wait made at or past it is refused (horizon_reached):

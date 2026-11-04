@@ -4,6 +4,8 @@ Files (XDG; an empty variable counts as unset):
 
 * config: ``$XDG_CONFIG_HOME/ck3agent/config.toml`` (``CK3AGENT_CONFIG`` overrides)
 * data:   ``$XDG_DATA_HOME/ck3agent/`` (``lib/libck3_bridge.so``)
+* game:   ``$XDG_STATE_HOME/ck3agent/game/``: the user-data directory of the
+  game ``ck3agent launch`` starts (its saves, autosaves, logs, continue_game.json)
 
 Each setting resolves in one order: flag, environment, config file, discovery.
 :func:`resolve` is the only place that order lives.
@@ -39,9 +41,21 @@ def config_path() -> Path:
     return Path(_env("CK3AGENT_CONFIG") or config_dir() / "config.toml")
 
 
-def game_user_dir() -> Path:
-    """CK3's own user-data tree. The game uses ``$HOME/.local/share`` whatever XDG says."""
+def state_dir() -> Path:
+    return Path(_env("XDG_STATE_HOME") or Path.home() / ".local/state") / "ck3agent"
+
+
+def owner_game_dir() -> Path:
+    """The user's own CK3 user-data tree, where the game writes when the user plays.
+    CK3 picks ``$HOME/.local/share`` whatever XDG says. ck3agent only reads it."""
     return Path.home() / ".local/share/Paradox Interactive/Crusader Kings III"
+
+
+def game_user_dir() -> Path:
+    """The user-data tree of the game ``ck3agent launch`` starts (``-userdir=``):
+    its saves, autosaves, continue_game.json and logs land here, never in
+    :func:`owner_game_dir`."""
+    return state_dir() / "game"
 
 
 def game_debug_log() -> Path:
