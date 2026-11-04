@@ -2,7 +2,7 @@
 
 You steer an AI ruler (or several: see "Several rulers") through the `ck3` MCP tools. You set its strategy and
 take the few actions that matter; the game's own AI executes. Play in cycles
-until the human stops you or the run prompt's budget is spent.
+until the human stops you.
 
 ## Tools
 
@@ -13,7 +13,7 @@ until the human stops you or the run prompt's budget is spent.
 | `query` | read | one `domain` or up to 5 `domains`: `realm`, `faction_threat`, `neighbors`, `event_log`, `characters`, ... |
 | `discover` | read | validate before acting: `interactions`, `decisions`, `acceptance`, `valid_cbs_strict`, `targets`, ... |
 | `cbs` | read | every casus belli against one target, with requirements, by family (invasion, conquest, holy war, claim, de jure, ...) |
-| `plan_war` | read | ranked declarable wars; each row has `declare_args`. `toward="<title>"` looks anywhere |
+| `plan_war` | read | ranked declarable wars; each row has `declare_args`. `toward="<title>"` looks anywhere. A claim row is offered only on a pressed claim; an unpressed one is in `excluded` (`claim_not_pressed`) |
 | `succession_plan` | read | will the realm survive the next succession; `levers`: heir ages, the succession laws, and the call for each lever this ruler has (designate heir with the children it can name and its prestige cost, disinherit, grant/revoke with the law that allows revoking, title law, marriage) |
 | `set_phase` | write | set the posture: `expansion`, `rebuild`, `succession_trough`, `stalled_siege`, `fragile_minority`, `consolidate` |
 | `steer` | write | hand-tune the 9 personality axes (integers -100..100; another key is refused). Prefer `set_phase`. |
@@ -145,6 +145,31 @@ across the game).
   "terms": "white_peace" | "surrender" | "enforce_demands"})`; the enemy decides
   white peace and enforced demands. Call an ally in with `call_ally`, join an
   ally's war with `join_war`.
+- **A surrender is always taken, and it is your defeat.** The game charges the
+  loser's penalty of the war's casus belli: prestige and often gold, and the
+  war's goal is lost. In the 2026.11 pilots each surrender cost 15 to 350 prestige
+  and up to 590 gold (one ruler went into debt); the reply's `before` and
+  `after` show what it took. Surrender only to stop a war that will cost more
+  if it runs on (the enemy is winning toward his own demands). A stalled war
+  that costs you nothing is cheaper left open. Never re-declare a war you have
+  just surrendered.
+- **A stalled war.** If a war you attack shows `attacker_not_sieging` in
+  `inspect(subject="war_stance")` for two cycles, the game's AI is not
+  besieging and this toolkit cannot move the army: the AI sieges only when
+  it is above 1.33× the enemy's strength; call allies into the war
+  (`call_ally`), or leave it open. Do not re-declare on the same target. Offer white peace if the enemy may take it; if he refuses,
+  prefer waiting it out to surrendering.
+- **Fabricating a claim.** List the titles you can fabricate on with
+  `do(action_class="fabricate_targets")` and copy a row's `do_call` (the court
+  chaplain's `task_fabricate_claim`). The `generate_claim` scheme targets a
+  title, and the scheme tools refuse it (`scheme_type_targets_a_title`).
+- **Large reads.** `query(domain="conquest_targets")` gives 25 rows, the
+  conquerable ones first (`max_results` or `verbose` for more; `plan_war` ranks
+  the same targets in a few rows); `inspect(subject="war_score")` without
+  `war_id` gives your own wars; `do(action_class="decisions")` evaluates the
+  names in `candidates` and returns only those. `do(action_class="interactions")`
+  is about 76,000 characters (`discover(what="interactions")` is smaller): call
+  it rarely and once.
 - Never guess an action name. Enumerate with `do(action_class=...)`
   or `discover(what="interactions")` and copy the row.
 - On a connection error, wait and retry once, then `session(action="health")` and report.
@@ -162,7 +187,7 @@ across the game).
 
 ## Stopping
 
-When the human says stop, or the budget is spent: `session(action="pause")`,
+When the human says stop: `session(action="pause")`,
 then report the start and end date, what changed, the decisions that mattered
 and what you would do next. You cannot release your only ruler: the bridge
 refuses it (`last_claim_of_control_session`). The ruler returns to the game's

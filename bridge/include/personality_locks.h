@@ -109,6 +109,23 @@ size_t   personality_lock_count();
 size_t   personality_quarantine_count();
 uint64_t personality_quarantine_epoch();   // 0 = nothing has ever been quarantined
 
+// L18-A: where one character's steering stands, for the readback. `locked`
+// alone could say only "live" or nothing, and nothing read the same whether the
+// lock was never written or was written and then quarantined by a world reset —
+// the second is what 12 of 32 pilot seats' first set_phase met. Masked like
+// every lock-map site (24-bit id).
+enum class PersonalityLockState { None, Live, Quarantined };
+PersonalityLockState personality_lock_state(uint32_t character_id);
+const char* personality_lock_state_name(PersonalityLockState s);   // "none" / "live" / "quarantined"
+
+// set_ai_personality's lock_state, with g_personality_lock_mutex HELD by the
+// caller (the write's own unique lock; personality_lock_state would take it
+// again). "live" when the write leaves any axis locked (held_axes = written +
+// retained), else "quarantined" when a world reset set this character's lock
+// aside, else "none". L18 round 2: a write of no axes answered "none" while a
+// quarantined lock existed, and get_ai_personality answered "quarantined".
+const char* personality_set_reply_lock_state_locked(uint32_t character_id, int held_axes);
+
 // ---------------------------------------------------------------------------
 // The CROSS-PROCESS carrier (personality_persist.cpp) — ck-9fc3.
 // ---------------------------------------------------------------------------

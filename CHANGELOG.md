@@ -3,6 +3,150 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.0 — 2026-11-04
+
+The toolkit fixes from the review of the November pilots' transcripts. The
+agents read the refusals right; the tools lost them the ground. The first
+`set_phase` holds (12 of 32 seats had it undone at the first tick), the action
+log says what an action did (42 rows said a war failed; 39 of those wars were
+declared), an argument a tool does not take is refused instead of dropped (174
+`pass_turn(character_id=...)` calls), `plan_war`'s claim rows can be declared,
+replies that ran to 186,000 characters are bounded, and a surrender says it is
+your defeat (six of twelve seats paid for one, believing it free).
+`session(action="wait")` can wait in game-days, `ck3agent run` counts the
+cycles and ends the run itself, and the shared board is gone. The surface is
+still thirteen tools.
+
+* **`session(action="wait")` can wait in game-days.** A new optional
+  `game_days` argument: the server repeats bounded waits (each at most
+  `seconds`, ≤ 110 s, the next one planned from the clock rate it measured)
+  until the game date has advanced that many days since the call began, and
+  reports `game_days_advanced`, `calls` and why it stopped. Seconds were the
+  only unit, and the clock's rate depends on the host and the number of
+  sessions, so "wait 60 days" at the prompt overshot by a factor of ~2.7 in a
+  six-seat run. Without `game_days` the tool behaves exactly as before. When
+  `CK3_CYCLE_GAME_DAYS` names a registered cadence, an ask above it is refused
+  (`cycle_game_days_over_cadence`), never clamped. When `CK3_EPISODE_HORIZON_END`
+  names a registered horizon, a wait made at or past that game date is refused
+  (`horizon_reached`); without the variable nothing changes. The 13-tool surface
+  is unchanged.
+* **The shared board is removed.** The two arm-gated tools `board_post` and
+  `board_read`, the bridge's `board_post` / `board_read` / `board_admin` verbs
+  and the `CK3_BOARD_*` variables are gone. They were an experiment channel; no
+  public run used them. The server registers the same 13 tools in every
+  process.
+* **The first `set_phase` holds, and the reply says whether it does.** In the
+  2026.11 pilots the first `set_phase` of 12 of 32 seats was undone at the
+  first tick: the bridge first saw the world after unpause and set aside, as
+  a reload, the personality written while paused at the start date. The
+  bridge now samples the world at every drain, before any queued action.
+  `set_phase` answers `result.lock_state` (`live`, `quarantined` or `none`,
+  the bridge's word) and `world_epoch`, and warns
+  `personality_lock_not_live` when the write is not held; `observe` carries
+  the same field under `posture.genome.lock_state`.
+* **The action log records what an action did.** Each row of
+  `action_log.jsonl` was the enqueue receipt (`success: false`, `queued`), so
+  42 pilot rows said a war failed while the executor declared 39 of them.
+  Every row now carries `verdict` (`applied`, `rejected`, `pending`,
+  `unknown`) and, apart from it, `poll`; when the game thread runs the action
+  the bridge writes an `outcome` row with the same `dispatch_id`, the verdict
+  and the result (the war id for a war).
+* **An argument a tool does not take is refused.** A call with an unknown key
+  ran as if the key were absent: `pass_turn(character_id=...)` 174 times in
+  the pilots, `steer` with the axes flat once. Every tool now answers
+  `ok: false`, gate `unknown_argument`, naming the keys in
+  `fix.rejected_fields` and the ones it takes in `fix.accepted_fields`, and
+  runs nothing. `pass_turn` takes `character_id` and names the ruler who
+  passed.
+* **`declare_war` takes the `claimant_id: null` that `plan_war` writes.** A
+  `plan_war` row's fields passed one by one were refused at the tool's door
+  (`Input should be a valid integer`); null is no claimant.
+* **`plan_war`'s claim rows are declarable.** A claim row kept the county's
+  title where the game accepts the war on the title of the pressed claim, so
+  `declare_war` refused it (`claim_not_pressed`); and the claim and
+  independence rows of the war-target list were dropped (the bridge writes
+  `target_char_id`, the server read `target_id`). A claim row now carries the
+  claimed title and the claimant, and a row whose casus belli needs a
+  claimant is offered only on a pressed claim, also when no casus belli
+  options could be read; any other is listed in `excluded`
+  (`claim_not_pressed`). A goal-scoped plan no longer counts your own
+  vassals' counties as targets; `empty_reason.measured.own_realm_counties`
+  says how many it set aside.
+* **`plan_war`'s empty reply says how long it has been empty.**
+  `empty_reason` carries `unchanged_since` (the game date this ruler first
+  got the same reason for the same call) and `times`. A row pruned past the
+  probe cap said "re-plan to surface", which the same call never did; it now
+  says raise `max_results`, with the value in `fix.max_results`.
+* **Big replies are bounded.** `do(action_class="decisions")` evaluates the
+  names in `candidates` and returns only those: the bridge read the list at
+  the wrong level, so every call returned every decision, unevaluated (about
+  186,000 characters even for one name). `inspect(subject="war_score")`
+  without `war_id` returns your wars, not every war in the game (394 rows,
+  118,000 characters). `query(domain="conquest_targets")` returns 25 rows,
+  the conquerable first, with the counts (`max_results` or `verbose` for
+  more).
+* **A surrender says it is your defeat.** Six of twelve budget-pilot seats
+  surrendered right after a refused white peace, believing it free; each paid
+  15 to 350 prestige and up to 590 gold. `do(intent="make_peace",
+  terms="surrender")` warns `surrender_is_your_defeat`, and
+  `inspect(subject="war_stance")`'s `exit_lever` carries `surrender_cost`.
+  The protocol says the same.
+* **A stalled attack says no lever moves it.** The game's AI besieges only
+  when it is above 1.33× the enemy's strength, an engine constant that no
+  personality axis or phase reaches. A war row inferred `attacker_not_sieging`
+  carries the limitation `war_stalled_no_lever`, naming the one lever there
+  is: call allies into the war, or leave it open.
+* **Claims are fabricated through the council.** The `generate_claim` scheme
+  targets a title: `discover(what="scheme_targets")` and a start through
+  `do(intent="scheme")` both refuse it `scheme_type_targets_a_title` (the
+  start said `engine_refused_can_start_scheme`), and the refusal and the
+  protocol point to `do(action_class="fabricate_targets")`. The "pass `target_id=0`" hint now
+  appears only for interactions aimed at yourself. An empty
+  `fabricate_targets` list warns `fabricate_targets_empty`, naming the seat it
+  used (the court chaplain) and the bridge's counts; a ruler whose realm
+  seats the task on a ministry is not looked up yet.
+* **`war_duration_unavailable` is gone.** It fired on 391 of 392 observes, at
+  peace too, and was about the succession estimate;
+  `succession_eta_basis` beside the estimate says what it is based on.
+* **The live-state hook shows your own ruler.** With two sessions on one
+  game the hook showed the ruler of the session that claimed first to both
+  seats. It now reads its seat from the session record `ck3agent run` hands
+  it (`CK3_SESSION_OUT`), else the declared `CK3_AGENT_CHARACTER_ID`; when
+  two or more control sessions are attached and neither says which is yours,
+  it shows no ruler and points to `session(action="whoami")`, also while your
+  own session holds nothing yet. A seat given a session record that names no
+  attached session (`CK3_SESSION_OUT` set under `ck3agent run`, and its
+  server's handshake not landed or its connect failed) is shown no ruler
+  either, since the one attached session may be another seat's. Only with
+  one seat on the game, and no such record, does it show the bridge's ruler.
+  One case the hook cannot tell apart: an interactive seat (no record, since
+  `ck3agent setup` writes none) whose own server has not attached yet, or
+  whose connect failed, while one other seat is attached, looks like the only
+  seat and is shown the bridge's ruler, which is that other seat's. Set
+  `CK3_AGENT_CHARACTER_ID` to close it. Another session's rulers are
+  otherwise named as held by another session, never as yours.
+* **The ck3 tools load at the start.** `ck3agent setup` and `ck3agent run`
+  register the server with `alwaysLoad: true`, so Claude Code lists the tools
+  up front instead of deferring them behind a tool search.
+* **`ck3agent run` counts the cycles and ends the run itself.** The run
+  prompt said "BUDGET: N cycles" and the model counted; it now names no count.
+  The run counts cycles from the transcript as they happen and stops the
+  session when `--cycles` are done (stop reason `cycles`, exit code 0), as it
+  does at `--until-date` and `--wall-seconds`; `--cycles 0` turns the cycle
+  stop off. A `--prompt-file` may still use `{{cycles}}`. The manifest gains
+  `cycles_completed` and `cycles_met`, `observe_calls`, `wait_groups`,
+  `ended_on` (the last ck3 call), and `total_cost_usd_source` (Claude Code's
+  estimate, not a bill). The cycle's definition is written beside the count.
+  The run keeps one live counter, fed from the transcript as it is written;
+  any stop (`--cycles`, `--until-date`, `--wall-seconds`) freezes it when it
+  fires, so `cycles_completed` is the counter as it stood at the stop.
+  `cycles_recounted` re-reads the finished transcript with the same
+  definition, as a cross-check: it can exceed `cycles_completed` by a call
+  that was in flight when the stop fired.
+* **The boot text no longer mentions a run-prompt budget.** `protocol/CLAUDE.md`
+  says "Play in cycles until the human stops you"; a harness that bounds a run
+  ends the session itself rather than asking the model to count.
+
 ## 2026.11.0 — 2026-11-02
 
 The toolkit, redone from a player's seat. Thirteen tools (`intent` is folded

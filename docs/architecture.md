@@ -90,7 +90,7 @@ and keeps the game coherent when the model is slow.
 ## Research instrumentation
 
 The bridge also carries experiment machinery: episode policy, a decision
-budget, a speed pin, a shared board and a per-session seat declaration. It is
+budget, a speed pin and a per-session seat declaration. It is
 compiled in and inert unless its environment variables are set. See
 [research notes](research.md).
 

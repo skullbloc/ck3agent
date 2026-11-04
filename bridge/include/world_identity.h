@@ -181,14 +181,6 @@ struct RestoreRecord {
     WorldIdentity recorded;
     WorldIdentity presented;
 
-    // ck-81su: what this same decision did to the shared board's carrier.
-    // "" / "none" when there was no carrier to resolve — every arm but B, every
-    // free-play bridge, and every cold start. `board_json` is a BoardRelaunch,
-    // pre-rendered rather than typed, so this header does not have to include
-    // board.h (which includes this one).
-    std::string board_decision;
-    std::string board_json;
-
     std::string to_json() const;
 };
 

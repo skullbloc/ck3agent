@@ -28,8 +28,9 @@ Run Claude unattended with a goal and a stopping rule, and keep a record.
                 --cycles 60 --until-date 900.1.1 --wall-seconds 7200
    ```
 
-   The run stops at the first limit reached: the cycle budget in the prompt,
-   `--max-turns`, the game date, or the wall-clock limit.
+   The run stops at the first limit reached: `--cycles` (the run counts the
+   cycles in the transcript; the prompt names no count), `--max-turns`, the
+   game date, or the wall-clock limit.
 
    **Pre-bind.** `CK3_AGENT_CHARACTER_ID` binds rulers before Claude's first
    turn: one id, or a comma-separated list. The first is the primary (a call
@@ -69,7 +70,7 @@ Run Claude unattended with a goal and a stopping rule, and keep a record.
 |------|---------|
 | `--goal TEXT` | replaces `{{goal}}` in the run prompt |
 | `--prompt-file FILE` | use FILE as the whole prompt; `{{goal}}` and `{{cycles}}` are still replaced |
-| `--cycles N` | cycle budget written into the prompt, default 50 |
+| `--cycles N` | stop after N cycles, counted by the run under `cycle_definition` (stop reason `cycles`), default 50, `0` for no cycle stop; the shipped prompt names no count |
 | `--max-turns N` | `claude --max-turns`, default 400, `0` for no cap |
 | `--until-date Y.M.D` | stop at this game date, checked every 15 seconds |
 | `--wall-seconds N` | stop after N seconds |
@@ -92,7 +93,7 @@ when two runs start in the same second):
 |------|----------|
 | `<stamp>.prompt.md` | the exact prompt sent |
 | `<stamp>.jsonl` | the full transcript, `claude --output-format stream-json --verbose` |
-| `<stamp>.json` | the manifest: model (as Claude Code reports it, which may be an alias such as `claude-opus-5[1m]`; cite `ck3agent version` and the model id from the transcript's init event for a paper), session id, Claude Code and ck3agent versions, the last launch record with any save hash, and whether its pid is the game's (`launch_check`). Also the start and end game date, `usage` and `total_cost_usd`, exit code, stop reason, how Claude was stopped (`claude_stop`), the server's release, the release through its resumed session (`resumed_release`) and the teardown result. `rulers` lists every ruler of the run: `declared` (`CK3_AGENT_CHARACTER_ID`), `bound_at_start`, `bound_at` (the tick and date each bind landed), `refused_at_start`, `prebind_wait` (`waited_s`, `polls`, `game_active`: how long the server waited for the game before binding), `held_at_stop` and `held_after_teardown` (empty when the teardown is clean) |
+| `<stamp>.json` | the manifest: model (as Claude Code reports it, which may be an alias such as `claude-opus-5[1m]`; cite `ck3agent version` and the model id from the transcript's init event for a paper), session id, Claude Code and ck3agent versions, the last launch record with any save hash, and whether its pid is the game's (`launch_check`). Also the start and end game date, `usage` and `total_cost_usd` (Claude Code's own estimate from its result event, named in `total_cost_usd_source`; not a bill), the cycles: `cycles` asked for, `cycles_completed` under `cycle_definition` (a stretch between two groups of `session(action="wait")` calls that contains an `observe`; a last cycle that ends in `pause` counts), `cycles_met`, `observe_calls`, `wait_groups` and `ended_on` (the last ck3 call; all from the run's one live counter as it stood at the stop; any stop, `--cycles`, `--until-date` or `--wall-seconds`, freezes it when it fires), `cycles_recounted` (the finished transcript re-read under the same definition, a cross-check that can exceed `cycles_completed` by a call in flight at the stop), exit code, stop reason, how Claude was stopped (`claude_stop`), the server's release, the release through its resumed session (`resumed_release`) and the teardown result. `rulers` lists every ruler of the run: `declared` (`CK3_AGENT_CHARACTER_ID`), `bound_at_start`, `bound_at` (the tick and date each bind landed), `refused_at_start`, `prebind_wait` (`waited_s`, `polls`, `game_active`: how long the server waited for the game before binding), `held_at_stop` and `held_after_teardown` (empty when the teardown is clean) |
 | `<stamp>.stderr.log` | Claude Code's stderr |
 | `<stamp>.tools.json` | the tools the MCP server serves: names, descriptions and input schemas, with a hash of them |
 | `<stamp>.release.json` | the claims the MCP server held at shutdown, and which ones it released |

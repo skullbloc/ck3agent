@@ -243,12 +243,10 @@ static void test_reads_never_refused() {
     CHECK(!budget_gate_applies("get_budget_state", false, false));
     CHECK(!budget_gate_applies("check",            true,  false));
     CHECK(!budget_gate_applies("cancel",           true,  false));
-    CHECK(!budget_gate_applies("board_read",       true,  false));
     CHECK(!budget_gate_applies("",                 true,  false));
     // ...and what it may not.
     CHECK(budget_gate_applies("declare_war",       true,  false));
     CHECK(budget_gate_applies("send_interaction",  true,  false));
-    CHECK(budget_gate_applies("board_post",        true,  false));
     CHECK(budget_gate_applies("set_ai_personality",true,  false));
 
     // Every refused mutation is COUNTED, per session and per year.

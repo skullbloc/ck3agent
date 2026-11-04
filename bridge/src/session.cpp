@@ -1432,13 +1432,6 @@ bool action_is_readonly(const char* action_type) {
         // read — an observe-mode session (the episode harness) must be able to
         // pull it for the bundle.
         "get_budget_state",
-        // ck-6kvq.12 (R4): READING the board is a read. This is what lets an
-        // OBSERVE-mode session — the meter lane, and the harness draining
-        // board.jsonl into the bundle — see every post while being structurally
-        // unable to make one: `board_post` is absent from this table, so it is a
-        // mutation, and the dispatch choke point refuses a mutation from an
-        // observe session with a typed `observe_mode`.
-        "board_read",
     };
     for (const char* r : kReadonly) {
         if (strcmp(action_type, r) == 0) return true;

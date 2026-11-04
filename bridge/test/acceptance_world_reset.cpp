@@ -359,6 +359,97 @@ static void lane_personality() {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. L18-A — the first set_phase of a seat, replayed from the pilot logs.
+//     pilots-2026.11 scale0/n2 bridge-full.log: set_ai_personality for 13191 runs
+//     in a tick-0 drain (line 481, "Processed 1 queued actions at tick=0"); the
+//     first tick after unpause then logs "WORLD-RELOAD fingerprint:
+//     gs=0x7faa3aa84f30 <- gs=(nil)" and "quarantined 2 personality lock(s)"
+//     (lines 6984-6985). The fix samples at the top of the drain; this lane
+//     replays both orders on the real table and the real detector.
+// ---------------------------------------------------------------------------
+static WorldFingerprint fp_867_paused() {
+    WorldFingerprint f;
+    f.loaded = true; f.game_state_ptr = 0x7faa3aa84f30; f.start_date_year = 867;
+    f.game_date = 51394920;   // the logged date of the pilot's first sighting
+    return f;
+}
+
+static void lane_first_write() {
+    printf("\n4b. FIRST WRITE BEFORE THE FIRST TICK (L18-A) — real table, real detector\n");
+    const char* LANE = "real-code";
+    const uint32_t cui = 13191;
+    auto reset_all = [] {
+        world_epoch_reset_for_test();
+        std::unique_lock<std::shared_mutex> lk(g_personality_lock_mutex);
+        g_personality_locks.clear();
+        g_quarantined_personality_locks.clear();
+    };
+    auto write_lock = [&] {
+        std::unique_lock<std::shared_mutex> lk(g_personality_lock_mutex);
+        g_personality_locks[cui] = lock_with(85);
+    };
+    WorldFingerprint first_tick = fp_867_paused();
+    first_tick.game_date += WORLD_RAW_UNITS_PER_DAY;   // the clock runs one day
+
+    // THE FIXED ORDER: the drain samples (first sighting, nothing to drop), then
+    // runs the queued write; the first tick sees the same world.
+    reset_all();
+    check(LANE, world_epoch_observe(fp_867_paused(), "drain"),
+          "the drain's first sample is the world's first sighting (game_state_appeared)");
+    write_lock();
+    const uint64_t e_write = world_epoch();
+    check(LANE, !world_epoch_observe(first_tick, "ai_tick"),
+          "the first tick after unpause is NOT a reload of the world the drain already saw");
+    check(LANE, world_epoch() == e_write, "the epoch the lock was written in is still the epoch");
+    check_eq_sz(LANE, personality_lock_count(), 1, "the tick-0 lock is still LIVE after the first tick");
+    check(LANE, personality_lock_state(cui) == PersonalityLockState::Live,
+          "lock_state reads live for the steered character");
+    check_eq_str(LANE, personality_lock_state_name(personality_lock_state(cui)), "live",
+                 "lock_state's wire name is \"live\"");
+    check(LANE, personality_lock_state(cui | 0x5000000) == PersonalityLockState::Live,
+          "lock_state masks the 24-bit id like every lock-map site");
+    check(LANE, personality_lock_state(4242) == PersonalityLockState::None,
+          "an unsteered character reads none");
+
+    // A save loaded between drains is still caught by the drain before it writes.
+    WorldFingerprint other = fp_1066();
+    check(LANE, world_epoch_observe(other, "drain"),
+          "a different world seen at the next drain is a reload (the fix keeps the detector)");
+    check(LANE, personality_lock_state(cui) == PersonalityLockState::Quarantined,
+          "...and the lock is quarantined, and lock_state says so instead of going silent");
+    check_eq_str(LANE, personality_lock_state_name(personality_lock_state(cui)), "quarantined",
+                 "lock_state's wire name is \"quarantined\"");
+    // L18 round 2: set_ai_personality's reply, which runs under the lock map's
+    // unique lock, says the same: a write of no axes over a quarantined lock is
+    // "quarantined", not "none"; a write that locks an axis is "live".
+    {
+        std::unique_lock<std::shared_mutex> held(g_personality_lock_mutex);
+        check_eq_str(LANE, personality_set_reply_lock_state_locked(cui, 0), "quarantined",
+                     "set_ai_personality writing nothing over a quarantined lock answers quarantined");
+        check_eq_str(LANE, personality_set_reply_lock_state_locked(cui | 0x5000000, 0), "quarantined",
+                     "...masked to the 24-bit id");
+        check_eq_str(LANE, personality_set_reply_lock_state_locked(4242, 0), "none",
+                     "[control] nothing written and nothing quarantined answers none");
+        check_eq_str(LANE, personality_set_reply_lock_state_locked(cui, 3), "live",
+                     "[control] a write that locks axes answers live");
+    }
+
+    // CONTROL — the 0a969f2e order (first sample = first tick). It models the
+    // mechanism, not the wiring: it passes on any tree, and shows the defect
+    // the drain-order check (scripts/acceptance_world_reset.py, structural)
+    // guards. Labelled non-discriminating.
+    reset_all();
+    write_lock();
+    check(LANE, world_epoch_observe(first_tick, "ai_tick"),
+          "[control, non-discriminating] with no earlier sample the first tick reads game_state_appeared");
+    check_eq_sz(LANE, personality_lock_count(), 0,
+                "[control, non-discriminating] ...and quarantines the tick-0 lock: the pilot's revert");
+    check(LANE, personality_lock_state(cui) == PersonalityLockState::Quarantined,
+          "[control, non-discriminating] the reverted seat's lock_state is quarantined, not none");
+    reset_all();
+}
+
+// ---------------------------------------------------------------------------
 // 5. Sent events / war score / war monitor — reset semantics on models.
 //    (The structural lane proves the product registers the same functions.)
 // ---------------------------------------------------------------------------
@@ -432,6 +523,7 @@ int main() {
     lane_name_cache();
     lane_war_ledger();
     lane_personality();
+    lane_first_write();
     lane_modelled();
     lane_no_false_positives();
 

@@ -81,7 +81,7 @@ bool instance_config_was_refused();
 // the dir was refused or never verified.
 FILE* instance_state_fopen(const char* name, const char* mode);
 // rc2 B1: the same open by PATH, for bridge-written files outside the state
-// dir fd (telemetry, board carrier, session detach stamp): O_NOFOLLOW|
+// dir fd (telemetry, session detach stamp): O_NOFOLLOW|
 // O_CLOEXEC, regular files only, created instance_file_mode(); a write open
 // tightens an existing file to that mode. nullptr (errno set) on failure.
 FILE* instance_fopen_private(const char* path, const char* mode);

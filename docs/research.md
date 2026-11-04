@@ -104,10 +104,21 @@ state-changing bridge verb, refused calls included (`observe_mode`,
 | `ts` | wall-clock time |
 | `game_date` | game date when the verb ran |
 | `session_id` | the bridge session that sent it, `""` if none; not the Claude Code session id |
-| `kind` | `action`, or `management` for the logged management verbs |
-| `verb` | bridge action name |
+| `kind` | `action`, `management` for the logged management verbs, or `outcome` (below) |
+| `verb` | bridge action name; `intent_outcome` on an `outcome` row |
+| `verdict` | what happened to the action: `applied`, `rejected`, `pending` (queued for the game thread; its `outcome` row follows) or `unknown` |
+| `poll` | what the bridge's wait for it did, separately: `answered`, `skipped_on_game_thread`, `timed_out` or `not_applicable` |
 | `args` | request parameters |
 | `result` | the bridge's reply |
+
+A write the game thread runs later (a war declaration, a title, a faction, a
+scheme, an interaction, a decision) is logged twice: the call, with
+`verdict: pending` and the reply's `result.dispatch_id`; then, when the game
+thread has run it, an `outcome` row with the same `dispatch_id`, the final
+`verdict`, a `reason` when rejected, `intent_type` and `result_raw` (the
+executor's report, e.g. `war_id`). Read the `outcome` row for whether the war
+was made; the call row's `result.success` is the queueing receipt's and is
+`false` for every queued write.
 
 Logged as `management`: `pause_game`, `unpause_game`, `set_pause`, `set_speed`,
 `set_character_ai`, `set_offgoal_veto`,
@@ -173,7 +184,7 @@ reads from the environment of each program the launcher execs, to stay preloaded
 | `CK3_PIPELINE_MODE` | experiment | `legacy` by default; `pipeline` buffers writes and gives the bridge the clock; `null` is the observe-only control |
 | `CK3_EPISODE_MODE` | experiment | `experiment` pins claims across disconnects and arms containment |
 | `CK3_EPISODE_ID` | experiment | id stamped into logs and the ledger |
-| `CK3_EPISODE_ARM` | experiment | arm label; arm `b` enables the board |
+| `CK3_EPISODE_ARM` | experiment | arm label, stamped into the handshake and the launch record |
 | `CK3_EPISODE_DIR` | experiment | session ledger directory |
 | `CK3_EPISODE_GAME_SPEED` | experiment | resting speed, `pipeline` mode only |
 | `CK3_EPISODE_HORIZON_START` | experiment | declared start date for the unavailability rule |
@@ -184,12 +195,6 @@ reads from the environment of each program the launcher execs, to stay preloaded
 | `CK3_UNAVAIL_X_DAYS` | experiment | retired; read only to report that it is ignored |
 | `CK3_BUDGET_PER_AGENT_PER_YEAR` | experiment | token ceiling per session per game year |
 | `CK3_BUDGET_ENFORCE` | experiment | `0`, `off` or `false`: record without refusing |
-| `CK3_BOARD_ENABLED` | experiment | shared board on; overrides the arm |
-| `CK3_BOARD_ADMIN_TOKEN` | experiment | enables `board_admin` |
-| `CK3_BOARD_CARRIER_PATH` | experiment | board persistence file |
-| `CK3_BOARD_MAX_POST_BYTES` | experiment | board post size limit |
-| `CK3_BOARD_MAX_POSTS_PER_FLUSH` | experiment | posts per session per flush |
-| `CK3_BOARD_MAX_POSTS_PER_EPISODE` | experiment | posts per episode |
 | `BRIDGE_NO_STAGE2_GROUP_TRIGGER` | experiment | `1` disables stage 2 of the CB validator |
 | `BRIDGE_NO_STAGE3_KIND_RELATION_MODE` | experiment | `1` disables stage 3 of the CB validator |
 | `BRIDGE_NO_PER_CB_OUTER_TRIGGER` | experiment | `1` disables the per-CB outer trigger check |

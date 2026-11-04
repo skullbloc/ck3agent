@@ -481,3 +481,35 @@ def test_the_discover_description_promises_no_debug_on_a_scheme_row():
     assert "{check, summary}" in body
     for word in ("debug", "file", "line", "block"):
         assert word not in body, word
+
+
+# --- L18 round 2 (witness item 7): the do path names the title-claim door ------
+
+def test_a_title_scheme_start_is_refused_with_the_fabricate_door():
+    """do(intent="scheme", scheme="generate_claim") was refused
+    engine_refused_can_start_scheme with no next call, while discover's check named
+    do(action_class="fabricate_targets"). The bridge's start now refuses a
+    title-target type as the check does (scheme_target_refusal) and the server
+    answers both with title_scheme_blocked."""
+    gw = _Gateway({"success": False, "action": "scheme_action", "actor_id": OWNER,
+                   "target_id": TARGET, "scheme": "generate_claim",
+                   "reason": "scheme_type_targets_a_title"})
+    env = _do(gw, action="start", scheme="generate_claim", target_id=TARGET)
+    b = env["blocked"]
+    assert env["verdict"] == "rejected"
+    assert b["gate"] == "target_ineligible" and b["raw_reason"] == "scheme_type_targets_a_title"
+    assert b["fix"] == redesign.TITLE_CLAIM_DOOR == {"tool": "do", "args": {"action_class": "fabricate_targets"}}
+    assert "task_fabricate_claim" in b["summary"], b
+
+
+def test_the_start_and_the_check_refuse_a_title_scheme_through_one_reader():
+    """One definition: scheme_target_refusal is the only reader of TARGET_TYPE for a
+    refusal, and the start asks it before CanStartScheme."""
+    eng = _cpp_code((BRIDGE / "src" / "scheme_engine.cpp").read_text())
+    disp = _cpp_code((BRIDGE / "src" / "intent_dispatch.cpp").read_text())
+    assert eng.count('"scheme_type_targets_a_title"') == 1
+    assert "scheme_type_targets_a_title" not in disp
+    start = disp[disp.index("bool execute_scheme_intent(Intent* intent) {"):]
+    assert start.index("scheme_target_refusal(type_ptr)") < start.index("scheme_can_start(")
+    check = eng[eng.index("bool execute_scheme_check_intent(Intent* intent) {"):]
+    assert "scheme_target_refusal(type_ptr)" in check.split("\n}\n", 1)[0]

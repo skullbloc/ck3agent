@@ -27,6 +27,10 @@
 
 #include "rapidjson/document.h"
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 namespace bridge {
 
 // Return the object that actually carries `key` for this action: `inner`
@@ -42,5 +46,16 @@ const rapidjson::Value& action_args(const rapidjson::Value& inner, const char* k
 // True when `key` is present in either position. Use this instead of
 // inner.HasMember(key) in any hand-rolled read.
 bool action_has(const rapidjson::Value& inner, const char* key);
+
+// L18-B: the "decisions" list of list_valid_decisions / list_decisions_annotated
+// (strings = decision keys, numbers = name hashes), read through action_args so a
+// framed caller's list is seen. submit_decision_eval read d["decisions"] top-level
+// only, so every MCP call (which frames it under "params") got the light
+// name+hash list of ALL decisions instead of an evaluation of the named ones:
+// 186K characters per do(action_class="decisions"), the same 26K list for
+// discover(what="decisions_annotated"|"valid_decisions"). Returns false when the
+// JSON does not parse.
+bool decision_request(const char* params_json, std::vector<uint32_t>* hashes,
+                      std::vector<std::string>* names);
 
 }  // namespace bridge

@@ -32,7 +32,7 @@ the release workflow and its artifacts.
   `CK3_INSTANCE_LAYOUT=legacy` turns all of this off: a 0666 socket in `/tmp`
   that any local user can reach.
 - **Bridge files.** Every file the bridge writes (logs and their archives,
-  flag and lock files, telemetry, the experiment's board and session files)
+  flag and lock files, telemetry, the experiment's session files)
   is created 0600 (0644 in the legacy layout), tightened if it already exists,
   and opened without following a symlink at its own name. They live in the private directory,
   except where you point a `CK3_*` path variable elsewhere. A boot log is

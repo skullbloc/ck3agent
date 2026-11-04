@@ -166,13 +166,75 @@ def test_a_dead_extra_ruler_is_flagged():
     assert "**DEAD**" in next(ln for ln in out.splitlines() if ln.startswith("    - id 12145"))
 
 
-def test_another_sessions_rulers_are_named_as_such():
+TWO_SESSIONS = [
+    {"session_id": "s1", "primary_character_id": 13902, "claimed_character_ids": [13902]},
+    {"session_id": "s2", "primary_character_id": 12145, "claimed_character_ids": [12145]}]
+
+
+def _seat_record(tmp_path, sid):
+    """The record `ck3agent run` hands the seat as CK3_SESSION_OUT (the MCP server's handshake)."""
+    path = tmp_path / ("%s.session.json" % sid)
+    path.write_text('{"session_id": "%s", "resume_token": "x", "pid": 1}' % sid)
+    return str(path)
+
+
+def test_another_sessions_rulers_are_named_as_such(tmp_path, monkeypatch):
+    """Two sessions hold rulers. The seat knows its own (its session record, or the
+    ruler it declared): its ruler is `You`, the other session's rulers are named as
+    the other session's and never as `You`. Each seat sees it from its own side."""
     hook = load_hook()
-    pl = two_rulers(paused=True, sessions=[
-        {"session_id": "s1", "primary_character_id": 13902, "claimed_character_ids": [13902]},
-        {"session_id": "s2", "primary_character_id": 12145, "claimed_character_ids": [12145]}])
-    out = report_p(hook, pl)
-    assert "Held by another session: ids 12145" in out and "Rulers this session holds" not in out
+    for sid, mine, theirs in (("s1", 13902, 12145), ("s2", 12145, 13902)):
+        monkeypatch.setenv("CK3_SESSION_OUT", _seat_record(tmp_path, sid))
+        out = report_p(hook, two_rulers(paused=True, sessions=TWO_SESSIONS))
+        assert "- You: id %d" % mine in out, out
+        assert "Held by another session: ids %d" % theirs in out, out
+        assert "- You: id %d" % theirs not in out and "Rulers this session holds" not in out
+    monkeypatch.delenv("CK3_SESSION_OUT")
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "12145")
+    out = report_p(hook, two_rulers(paused=True, sessions=TWO_SESSIONS))
+    assert "- You: id 12145" in out and "Held by another session: ids 13902" in out
+
+
+def test_two_sessions_and_no_seat_identity_show_the_whoami_line():
+    """Nothing says which session is this seat's: no ruler is shown as `You` (the
+    bridge's global primary is the session that claimed first, not necessarily
+    this one), none is named as another session's, and the line says to call whoami."""
+    hook = load_hook()
+    out = report_p(hook, two_rulers(paused=True, sessions=TWO_SESSIONS))
+    assert hook.SEAT_UNKNOWN % 2 in out and 'session(action="whoami")' in out
+    assert "- You:" not in out and "Held by another session" not in out
+    assert "13902" not in out and "12145" not in out
+
+
+def test_a_seat_whose_own_session_holds_nothing_is_not_shown_the_other_seats_ruler(monkeypatch):
+    """Two seats' sessions are attached; only the other seat's holds a ruler (this
+    seat's record is not written yet, or the play dir is interactive). The bridge's
+    global primary is the other seat's: no ruler is shown, the whoami line is."""
+    hook = load_hook()
+    monkeypatch.delenv("CK3_SESSION_OUT", raising=False)
+    monkeypatch.delenv("CK3_AGENT_CHARACTER_ID", raising=False)
+    rows = [TWO_SESSIONS[0], {"session_id": "s2", "mode": "control", "primary_character_id": 0,
+                              "claimed_character_ids": []}]
+    out = report_p(hook, two_rulers(paused=True, sessions=rows))
+    assert hook.SEAT_UNKNOWN % 2 in out and "- You:" not in out and "13902" not in out
+
+
+def test_a_seat_whose_record_names_no_listed_session_is_not_shown_the_other_seats_ruler(tmp_path, monkeypatch):
+    """L18 round 3: one other seat's session is attached and holds the bridge's
+    primary; this seat's record (`ck3agent run` set CK3_SESSION_OUT) is absent (its
+    server's connect failed or has not finished) or stale. One session is attached,
+    so the one-seat path would name the other seat's ruler as `You` (red on db8857cc)."""
+    hook = load_hook()
+    monkeypatch.delenv("CK3_AGENT_CHARACTER_ID", raising=False)
+    for path in (str(tmp_path / "absent.session.json"), _seat_record(tmp_path, "s9")):
+        monkeypatch.setenv("CK3_SESSION_OUT", path)
+        out = report_p(hook, two_rulers(paused=True, sessions=[TWO_SESSIONS[0]]))
+        assert "- You:" not in out and "13902" not in out, out      # the behaviour first: red on db8857cc here
+        assert "Held by another session" not in out
+        assert hook.SEAT_RECORD_UNMATCHED in out and 'session(action="whoami")' in out
+    monkeypatch.delenv("CK3_SESSION_OUT")
+    out = report_p(hook, two_rulers(paused=True, sessions=[TWO_SESSIONS[0]]))
+    assert "- You: id 13902" in out
 
 
 def test_no_ruler_lines_are_unchanged_with_sessions_present():

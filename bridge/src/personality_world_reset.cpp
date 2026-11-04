@@ -93,6 +93,28 @@ size_t personality_quarantine_count() {
     return g_quarantined_personality_locks.size();
 }
 
+PersonalityLockState personality_lock_state(uint32_t character_id) {
+    const uint32_t key = character_id & 0xFFFFFF;
+    std::shared_lock<std::shared_mutex> lock(g_personality_lock_mutex);
+    if (g_personality_locks.count(key)) return PersonalityLockState::Live;
+    if (g_quarantined_personality_locks.count(key)) return PersonalityLockState::Quarantined;
+    return PersonalityLockState::None;
+}
+
+const char* personality_set_reply_lock_state_locked(uint32_t character_id, int held_axes) {
+    if (held_axes > 0) return "live";
+    return g_quarantined_personality_locks.count(character_id & 0xFFFFFF) ? "quarantined" : "none";
+}
+
+const char* personality_lock_state_name(PersonalityLockState s) {
+    switch (s) {
+        case PersonalityLockState::Live:        return "live";
+        case PersonalityLockState::Quarantined: return "quarantined";
+        case PersonalityLockState::None:        break;
+    }
+    return "none";
+}
+
 uint64_t personality_quarantine_epoch() {
     std::shared_lock<std::shared_mutex> lock(g_personality_lock_mutex);
     return g_quarantine_epoch;

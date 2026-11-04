@@ -14,9 +14,22 @@
 // process, because clear_name_cache() had no caller anywhere.
 //
 // Mechanism: every world-scoped cache registers a reset callback here once, and
-// world_epoch_on_tick() (called from on_tick, game thread) samples a world
-// fingerprint each tick and fires every registered reset when the fingerprint
-// shows a discontinuity that cannot happen without a load.
+// world_epoch_sample() (game thread: the top of every drain and of on_tick)
+// samples a world fingerprint and fires every registered reset when the
+// fingerprint shows a discontinuity that cannot happen without a load.
+//
+// L18-A: THE FIRST SAMPLE MUST PRECEDE THE FIRST WORLD-SCOPED WRITE. The first
+// loaded sample always reads "game_state_appeared" and fires every reset. It
+// used to be taken only in on_tick, i.e. at the first tick AFTER UNPAUSE — but
+// the drain runs while paused, and the pilot seats' first set_phase landed in a
+// drain at tick 0 (867.01.01, paused). The first tick then quarantined those
+// locks as a "reload" of the world they were written in: 12 of 32 seats' first
+// genome read back `applied` and was gone at the next observe, with no `locked`
+// key (pilots-2026.11 bridge-full.log: every round's only WORLD-RELOAD is
+// "game_state_appeared ... <- gs=(nil)", right after a tick-0 write). Sampling at
+// the top of the drain, before it runs any queued action, makes the first
+// sighting precede every write the drain can make, so the reset it fires finds
+// nothing to drop.
 
 #include <cstdint>
 
@@ -100,16 +113,19 @@ uint64_t world_epoch();
 // Safe to call from any thread; the resets themselves take their own locks.
 void invalidate_world_caches(const char* why);
 
-// Game thread, once per on_tick: sample the fingerprint and invalidate on a
-// discontinuity. No-op while the game is not loaded.
-void world_epoch_on_tick();
+// Game thread: sample the fingerprint and invalidate on a discontinuity. Called
+// at the top of every drain (before any queued action runs; the drain runs
+// paused or running) and at the top of on_tick. `site` names the caller in the
+// WORLD-RELOAD log line ("drain" / "ai_tick"), so a live log shows which site
+// took the first sighting. No-op while the game is not loaded.
+void world_epoch_sample(const char* site);
 
 // Last fingerprint observed (diagnostics).
 WorldFingerprint world_last_fingerprint();
 
 // Test seam: feed a fingerprint directly instead of reading game memory.
 // Returns true if a reload was detected (and caches were invalidated).
-bool world_epoch_observe(const WorldFingerprint& fp);
+bool world_epoch_observe(const WorldFingerprint& fp, const char* site = nullptr);
 
 // Test seam: reset the detector to its pristine state (no prior sample).
 void world_epoch_reset_for_test();

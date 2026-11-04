@@ -11,7 +11,7 @@ protocol from `CLAUDE.md` in the play directory.
 
 | File | Purpose |
 |------|---------|
-| `.mcp.json` | starts the `ck3` MCP server (`ck3agent serve`) |
+| `.mcp.json` | starts the `ck3` MCP server (`ck3agent serve`), with `"alwaysLoad": true` so Claude Code loads its 13 tool schemas with the session instead of deferring them behind ToolSearch |
 | `CLAUDE.md` | the play protocol. Edit it to add a persona, goal or house rules. `ck3agent setup --force` restores it. |
 | `.claude/settings.json` | the live-state hook, the tool allow-list and the `env` block |
 | `runs/` | output of `ck3agent run` |
@@ -37,9 +37,19 @@ state block, the same whether the game is paused or running: the date, speed
 and pause state, the ruler, wars, succession, factions, schemes and council,
 and what it could not read. When Claude
 holds several rulers it lists each one: id, name and title, at war,
-imprisoned, dead. It reports the rulers of the session that holds the
-bridge's primary ruler, which is Claude's when one session is bound. Turn it
-off with `ck3agent setup --no-hook`.
+imprisoned, dead. It reports this seat's rulers: under `ck3agent run`, the
+ones its own bridge session holds (the run gives the hook the session record,
+`CK3_SESSION_OUT`), or the ones it declared (`CK3_AGENT_CHARACTER_ID`); in an
+interactive session with no other seat on the game, the bridge's ruler. When
+two or more control sessions are attached to the game (another seat's, and
+possibly yours before it holds a ruler) and the hook cannot tell which is
+yours, or when the record `ck3agent run` gave it names no attached session
+(your server has not handshaken yet), it shows no ruler and says to call
+`session(action="whoami")`, rather than another seat's. One case it cannot
+tell apart: an interactive seat (which has no record) whose own server has not
+attached yet, while one other seat is attached, looks like the only seat and is
+shown that seat's ruler. Set `CK3_AGENT_CHARACTER_ID` to name yours. Turn it off with
+`ck3agent setup --no-hook`.
 
 ## Steps
 

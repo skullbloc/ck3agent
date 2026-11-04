@@ -528,7 +528,11 @@ GAME_THREAD_ACTIONS = "is_game_thread_action"
 #: query_event_probabilities and its alias event_probabilities (Tier 2) and
 #: respond_event (game-thread action). Then 87 Tier-2: query_pending_events,
 #: kept only by the polarity table and parity_plan, went the same way.
-CLASSIFIER_FLOOR = {"is_bridge_internal_query": 46, "is_game_state_query": 87,
+#: Cleanup 2026.11 L17: 43 / 87 / 22. The shared board went (owner ruling
+#: 2026-11-02): board_post, board_read and board_admin were the three
+#: bridge-internal names in snapshot.cpp's safe[] list; no Tier-2 read and no
+#: game-thread action was the board's.
+CLASSIFIER_FLOOR = {"is_bridge_internal_query": 43, "is_game_state_query": 87,
                     "is_game_thread_action": 22}
 
 
@@ -1107,8 +1111,10 @@ SCOPE_ARM_FLOOR = 23
 #: action_registry.inc (160 at a1fb8c6b; 156 since L16 R3 deleted the four
 #: event lines: query_event_probabilities, event_probabilities, respond_event,
 #: set_auto_respond_events; 155 with query_pending_events, which had no caller
-#: either). A parse that found fewer would walk fewer closures and pass.
-REGISTRY_FLOOR = 155
+#: either; 152 since cleanup 2026.11 L17 deleted the shared board's three
+#: lines: board_post, board_read, board_admin). A parse that found fewer would
+#: walk fewer closures and pass.
+REGISTRY_FLOOR = 152
 
 
 def _crash_span(body: str, jmp: int) -> tuple[int, int] | None:

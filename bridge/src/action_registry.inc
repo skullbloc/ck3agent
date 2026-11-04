@@ -132,17 +132,6 @@ BRIDGE_ACTION("report_usage", do_report_usage)
 BRIDGE_ACTION("set_budget_config", do_set_budget_config)
 BRIDGE_ACTION("get_budget_state", do_get_budget_state)
 
-// --- The shared append-only board (ck-6kvq.12, R4) ---
-// ARM-GATED AT RUNTIME. Being in this table is necessary but NOT sufficient:
-// dispatch_action() and is_registered_action() both consult board().enabled()
-// FIRST, so in every arm but B these three names answer `unknown_action` and
-// are absent from the registry (decision G5, option A2 — the board tools are
-// ABSENT in arm A, not present-and-refused). The table entry exists so that
-// arm B needs no separate dispatch path, not because the verbs are always live.
-BRIDGE_ACTION("board_post", do_board_post)
-BRIDGE_ACTION("board_read", do_board_read)
-BRIDGE_ACTION("board_admin", do_board_admin)
-
 // --- Bridge State Recovery ---
 BRIDGE_ACTION("get_bridge_state", do_get_bridge_state)
 BRIDGE_ACTION("who_holds_the_lock", do_who_holds_the_lock)

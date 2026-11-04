@@ -82,6 +82,16 @@ def test_protocol_waits_through_the_server_not_bash_sleep():
             assert 'session(action="wait"' in text, name
 
 
+def test_no_shipped_boot_text_names_a_run_budget():
+    """L18 round 3: the model has no budget to spend. `ck3agent run` counts the
+    cycles and ends the session itself (CHANGELOG 2026.12.0); the interactive
+    play dir stops when the human says so. The three protocol files are the
+    boot texts `setup` and `run` write into a play dir, so none may name a
+    budget (CLAUDE.md's Stopping section said "or the budget is spent")."""
+    for name, text in _stopping_sections():
+        assert "budget" not in text.lower(), name
+
+
 def test_bridge_contract_lists_the_last_claim_refusal():
     text = (ROOT / "docs" / "reference" / "bridge-contract.md").read_text(encoding="utf-8")
     assert "last_claim_of_control_session" in text

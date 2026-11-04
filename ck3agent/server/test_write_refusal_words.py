@@ -141,6 +141,7 @@ NOT_THE_GAMES = {
     "set_phase_impl": "writes personality weights and a bridge flag; the bridge refuses with its own codes",
     "_session_impl_branches": "bridge session verbs; their refusals are the bridge's own codes",
     "_session_clock_write": "session pause/unpause; the bridge's own clock switch refuses with its codes",
+    "_session_wait_once": "session wait's unpause/pause pair (v3 §7.2: looped per game-day cycle); the bridge's own clock switch refuses with its codes",
     "_session_speed_write": "session speed; the bridge's own clock switch refuses with its codes",
     "steer_impl": "set_ai_personality is the bridge's own synchronous write; it refuses with its codes",
 }

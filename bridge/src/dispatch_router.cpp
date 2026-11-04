@@ -4,6 +4,7 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "action_log_row.h"
 #include "log_dedupe.h"      // ck-os50
 #include "instance_paths.h"  // ck-qn03
 #include "action_dispatch_internal.h"
@@ -15,7 +16,6 @@
 #include "pipeline.h"
 #include "episode_policy.h"
 #include "budget_ledger.h"
-#include "board.h"
 #include "vassal_roster.h"
 #ifdef _WIN32
 #include "windows/ck3_offsets_win.h"   // ck3_win::globals::AI_TOGGLE (P6)
@@ -2160,168 +2160,6 @@ bool do_get_budget_state(const char* /* params_json */, std::string* out) {
     return true;
 }
 
-// =============================================================================
-// ck-6kvq.12 / R4 — THE SHARED APPEND-ONLY BOARD, BRIDGE SIDE
-// =============================================================================
-// Design of record: docs/design/event-pipeline-conductor.md §3 (decisions G4,
-// G5). The board itself is PURE (board.{h,cpp}); these three handlers are the
-// only place it meets the game, and the only thing they add is the part that
-// cannot be pure: the ATTRIBUTION, minted here from the session registry and
-// the clock owner, and never read from the caller's frame.
-//
-// THE ARM GATE lives further down, in dispatch_action() and
-// is_registered_action(), because "arm A has no board" has to be true of the
-// REGISTRY and not merely of the handler — an agent that can see `board_post`
-// refuse is in a third condition, which is exactly what G5's option A2 rejects.
-
-namespace {
-
-// The unforgeable half of a post (§3.1). session_id and character_id come from
-// the ownership table via the installed ClientContext; game_date and tick come
-// from the clock owner; flush_id comes from the conductor that is applying this
-// call. Nothing here is reachable from the wire.
-BoardAttribution mint_board_attribution() {
-    BoardAttribution who;
-    if (Session* s = current_session()) {
-        who.session_id = s->session_id;
-        std::lock_guard<std::mutex> lk(s->mutex);
-        who.character_id = s->primary_character_id;
-    }
-    // NO FALLBACK TO g_controlled_primary, deliberately, and unlike the
-    // pipeline's ExecutionStamp. That global is the GLOBAL primary — somebody
-    // else's character in a six-session episode — and writing it here would
-    // attribute a post to a character its author does not own, which is the one
-    // thing this whole file exists to prevent. A session that has claimed
-    // nothing speaks for nobody, and `character_id: 0` says exactly that.
-    who.game_date = format_action_log_game_date();   // ck3::game_date, ck-05mg
-    who.tick      = g_tick_id.load(std::memory_order_relaxed);
-    who.flush_id  = pipeline_current_flush_id();
-    return who;
-}
-
-}  // namespace
-
-// board_post {text} -> {success, post_id, seq, game_date, tick, flush_id}
-// The frozen shape, per R4 "design frozen before episode one" as corrected by
-// the 2026-09-12 vocabulary ruling (window_id -> flush_id).
-bool do_board_post(const char* params_json, std::string* out) {
-    FaultScope fault_scope("board_post", out);
-    const BoardAttribution who = mint_board_attribution();
-    const BoardPostResult res = board().post(params_json, who);
-
-    ResponseBuilder r; r.begin_object();
-    r.key("action");  r.value_string("board_post");
-    r.key("success"); r.value_bool(res.ok);
-    if (!res.ok) {
-        r.key("reason"); r.value_string(res.reason.c_str());
-        if (!res.quota.empty()) {
-            r.key("quota");    r.value_string(res.quota.c_str());
-            r.key("limit");    r.value_int(res.limit);
-            r.key("observed"); r.value_int(res.observed);
-        }
-        r.key("hint"); r.value_string(
-            "The board refuses rather than truncating or dropping: it is "
-            "append-only and every accepted post is in the episode record.");
-        r.end_object();
-        if (out) *out = r.take();
-        if (g_logfile) fprintf(g_logfile,
-            "[CK3-Bridge][board] post refused: %s%s%s (session=%s flush=%llu)\n",
-            res.reason.c_str(), res.quota.empty() ? "" : " quota=",
-            res.quota.c_str(), who.session_id.c_str(),
-            (unsigned long long)who.flush_id);
-        return false;
-    }
-
-    r.key("post_id");      r.value_string(res.post.post_id.c_str());
-    r.key("seq");          r.value_uint(res.post.seq);
-    r.key("session_id");   r.value_string(res.post.who.session_id.c_str());
-    r.key("character_id"); r.value_uint(res.post.who.character_id);
-    r.key("game_date");    r.value_string(res.post.who.game_date.c_str());
-    r.key("tick");         r.value_uint(res.post.who.tick);
-    r.key("flush_id");     r.value_uint(res.post.who.flush_id);
-    r.end_object();
-    if (out) *out = r.take();
-    return true;
-}
-
-// board_read {since_seq} -> {posts:[{seq, session_id, character_id, game_date,
-//                                    tick, flush_id, text}], next_seq}
-// READ-ONLY (session.cpp's kReadonly), so an observe-mode session — the meter
-// lane, the harness draining board.jsonl — reads the board freely and can never
-// post to it.
-bool do_board_read(const char* params_json, std::string* out) {
-    int64_t since = json_get_int(params_json, "since_seq");
-    if (since < 0) since = 0;
-    int64_t limit = json_get_int(params_json, "limit");
-    if (limit < 0) limit = 0;
-
-    // Splice the board's own page body (posts/next_seq/total/truncated) rather
-    // than re-rendering it here, so there is exactly ONE renderer of a post and
-    // the wire shape and board.jsonl cannot drift apart.
-    const std::string page = board().read_json(static_cast<uint64_t>(since),
-                                               static_cast<size_t>(limit));
-
-    ResponseBuilder r; r.begin_object();
-    r.key("action");  r.value_string("board_read");
-    r.key("success"); r.value_bool(true);
-    std::string body = r.take();          // "{...true" — take() trims the comma
-    if (page.size() >= 2) {
-        body += ",";
-        body += page.substr(1, page.size() - 2);   // merge the page's members
-    }
-    body += "}";
-    if (out) *out = body;
-    return true;
-}
-
-// board_admin {op, host_token} — the HOST-ONLY lifecycle verb (§3.2: "created
-// and sealed by the episode harness"). It is host-only in the one way an agent
-// cannot route around: the token is read from the GAME PROCESS'S ENVIRONMENT,
-// which the harness set when it launched CK3 and which no agent can read. With
-// no CK3_BOARD_ADMIN_TOKEN configured the verb is not registered at all.
-bool do_board_admin(const char* params_json, std::string* out) {
-    const char* want = getenv("CK3_BOARD_ADMIN_TOKEN");
-    const char* got  = json_get_string(params_json, "host_token");
-    ResponseBuilder r; r.begin_object();
-    r.key("action"); r.value_string("board_admin");
-    if (!want || !*want || !got || strcmp(want, got) != 0) {
-        r.key("success"); r.value_bool(false);
-        r.key("reason");  r.value_string("board_admin_forbidden");
-        r.key("hint");    r.value_string(
-            "board_admin requires the host token the harness set in the game "
-            "process's environment; it is not an agent-reachable verb.");
-        r.end_object();
-        if (out) *out = r.take();
-        return false;
-    }
-
-    const char* op = json_get_string(params_json, "op");
-    if (op && strcmp(op, "seal") == 0) {
-        board().seal();
-    } else if (op && strcmp(op, "begin") == 0) {
-        const char* eid = json_get_string(params_json, "episode_id");
-        board().begin_episode(eid ? eid : "");
-        // ck-81su: and rotate the carrier with it. An explicit host `begin` is
-        // the ONE thing allowed to discard a board — a relaunch is not, which is
-        // the whole bead. The carrier is per-episode-id, so a new episode gets a
-        // new file and cannot read the previous one even by accident.
-        board_carrier_begin(eid ? eid : "");
-    } else {
-        r.key("success"); r.value_bool(false);
-        r.key("reason");  r.value_string("board_admin_unknown_op");
-        r.end_object();
-        if (out) *out = r.take();
-        return false;
-    }
-
-    r.key("success"); r.value_bool(true);
-    r.key("op");      r.value_string(op);
-    r.key("board");   r.value_raw(board().stats_json());
-    r.end_object();
-    if (out) *out = r.take();
-    return true;
-}
-
 // rc2 B8: the clock, per-character AI and steering-flag verbs are logged with
 // kind "management"; other management verbs and reads are not logged.
 static const char* action_log_kind(const char* action_type) {
@@ -2345,6 +2183,8 @@ static const char* action_log_kind(const char* action_type) {
     if (is_bridge_management_verb(action_type)) return nullptr;
     return "action";
 }
+
+static void append_action_log_line(const std::string& line);
 
 static void emit_action_log(const char* verb, const char* kind, const char* args_json,
                             const char* result_json) {
@@ -2377,12 +2217,28 @@ static void emit_action_log(const char* verb, const char* kind, const char* args
     line += kind;
     line += "\",\"verb\":\"";
     append_escaped(verb);
+    // L18-A: the action's verdict and the poll's state, separately. The reply
+    // spliced below as `result` is the enqueue receipt for a write the drain
+    // runs later ({"success":false,"status":"queued","reason":
+    // "no_poll_on_game_thread"}); read raw it said every landed war failed.
+    // The drain's verdict follows as a kind:"outcome" row (emit_action_outcome_log).
+    const ActionLogVerdict lv = action_log_verdict_of(result_json);
+    line += "\",\"verdict\":\"";
+    line += lv.verdict;
+    line += "\",\"poll\":\"";
+    line += lv.poll;
     line += "\",\"args\":";
     line += (args_json && args_json[0] == '{') ? args_json : "{}";
     line += ",\"result\":";
     line += (result_json && result_json[0] == '{') ? result_json : "null";
     line += "}";
 
+    append_action_log_line(line);
+}
+
+// The action log's one file writer: the dispatch rows above and the drain's
+// outcome rows below go through the same open, lock and path.
+static void append_action_log_line(const std::string& line) {
     if (!bridge::instance_private_dir_ok()) return;   // rc2 B1: no writes in an untrusted dir
     std::lock_guard<std::mutex> lock(g_action_log_mutex);
     // ck-qn03: the telemetry sink follows the instance, so two episodes on one
@@ -2395,6 +2251,17 @@ static void emit_action_log(const char* verb, const char* kind, const char* args
         ::fputc('\n', f);
         ::fclose(f);
     }
+}
+
+// L18-A: the drain's verdict on one completed write intent, attributed to the
+// call that queued it by dispatch_id (the receipt row's result.dispatch_id).
+// Game thread, after tick_maintenance (bridge_init.cpp). The row is decided in
+// action_log_row.h, engine-free.
+void emit_action_outcome_log(const Intent& completed) {
+    if (intent_is_read(completed)) return;   // a read's verdict is its asker's only
+    append_action_log_line(action_outcome_row(format_action_log_timestamp().c_str(),
+                                              format_action_log_game_date().c_str(),
+                                              completed));
 }
 
 // =============================================================================
@@ -2883,7 +2750,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
                 r.key("resets_at");  r.value_string(v.resets_at.c_str());
                 r.key("hint");       r.value_string(
                     "This session has spent its decision budget for this game year "
-                    "(output + uncached input tokens). Reads, board_read and "
+                    "(output + uncached input tokens). Reads and "
                     "report_usage continue; mutations resume when the game year "
                     "rolls over.");
                 r.end_object();
@@ -2988,27 +2855,6 @@ bool dispatch_action(const char* action_type, const char* params_json,
     }
 
 
-    // --- ck-6kvq.12 / R4 / G5: THE ARM GATE --------------------------------
-    // Arm A registers NO board verb (option A2, ruled by the progenitor
-    // 2026-09-10). The gate is HERE, above the registry chain, and mirrored
-    // exactly in is_registered_action() below, so in every arm but B the two
-    // board verbs are indistinguishable from a typo: `unknown_action`, absent
-    // from the registry, and fast-failed by the reader thread before they ever
-    // reach a handler. That is what "no channel" has to mean — a board_post
-    // that exists and refuses would put arm A in a third condition, which is
-    // the confound A2 exists to avoid.
-    if (board_verb_registration(action_type) == 0) {
-        if (g_logfile) fprintf(g_logfile,
-            "[CK3-Bridge][board] %s in an arm with no board — unknown_action\n",
-            action_type);
-        if (response_out) {
-            *response_out = "{\"success\":false,\"error\":\"unknown_action\",\"action\":\"";
-            *response_out += action_type;
-            *response_out += "\"}";
-        }
-        return false;
-    }
-
     // --- Registered actions: single source-of-truth table (D1-C / FIX 3.1) ---
     // action_registry.inc expands here into the strcmp dispatch chain. The SAME
     // table generates is_registered_action() below, so dispatch and registration
@@ -3046,13 +2892,6 @@ bool dispatch_action(const char* action_type, const char* params_json,
 // lists here: legit Tier-3 / unclassified actions must still queue).
 bool is_registered_action(const char* action_type) {
     if (!action_type || !action_type[0]) return false;
-    // ck-6kvq.12 / G5: the arm gate, mirrored from dispatch_action(). This is
-    // the half that matters most — the reader thread asks THIS function whether
-    // a name exists, so an arm without a board fast-fails `board_post` with
-    // `unknown_action` on the reader thread, exactly as it does for a typo, and
-    // nothing downstream ever sees the verb.
-    if (const int reg = board_verb_registration(action_type); reg >= 0)
-        return reg == 1;
 #define BRIDGE_ACTION(NAME, HANDLER) \
     if (strcmp(action_type, NAME) == 0) return true;
 #include "action_registry.inc"

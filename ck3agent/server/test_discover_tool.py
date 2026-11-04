@@ -119,7 +119,14 @@ def refused(env, gate):
 @pytest.mark.parametrize("what", T._DISCOVER_RESOLVED)
 def test_every_resolved_what_reaches_its_action_on_the_right_path(bridge, what):
     expect_action = T.resolve_discover({"what": what})[0]
-    env = run(ms.discover(what=what))
+    kw = {}
+    if what in ("decisions_annotated", "valid_decisions"):
+        # L18-B: these evaluate the decisions named (none named is a missing
+        # argument) and answer an evaluation (valid_only / considered present)
+        kw["decisions"] = ["found_kingdom_decision"]
+        bridge.replies[expect_action] = {"valid_only": what == "valid_decisions",
+                                         "considered": 1, "count": 0, "decisions": []}
+    env = run(ms.discover(what=what, **kw))
     assert env["ok"] is True, env
     ((path, action, _, timeout),) = bridge.sent       # one call, no clock verb around it
     assert action == expect_action
@@ -196,6 +203,13 @@ def test_every_discover_parameter_has_a_row():
 @pytest.mark.parametrize("name", sorted(PARAMS))
 def test_each_parameter_reaches_the_bridge(bridge, name):
     what, kwargs, action, expect = PARAMS[name]
+    if action == "list_decisions_annotated":
+        # L18-B: an annotated reply is an evaluation (enumerate_decisions_annotated
+        # writes valid_only and considered); anything else is refused not_evaluated.
+        bridge.replies[action] = {"action": "list_decisions", "character_id": 812,
+                                  "valid_only": False, "considered": 1, "count": 1,
+                                  "decisions": [{"name": "found_kingdom_decision",
+                                                 "hash": 1, "available": False}]}
     env = run(ms.discover(what=what, **kwargs))
     assert env["ok"] is True, env
     (sent,) = bridge.params_of(action)

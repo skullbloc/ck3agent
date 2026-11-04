@@ -356,7 +356,9 @@ MCP_BLOCKS = {
     "steer": lambda ms: ms.steer(),
 }
 # character_id there names the ruler to control or release; whoami is driven above.
-NOT_ACTOR_SCOPED = {"session"}
+# pass_turn (L18-B): character_id labels the decision-log row of the ruler who
+# passes; the tool reads and writes nothing in the game, so there is no ruler to bind.
+NOT_ACTOR_SCOPED = {"session", "pass_turn"}
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # The per-tool list moved from getting-started to troubleshooting in the

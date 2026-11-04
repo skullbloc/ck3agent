@@ -7,7 +7,8 @@
 # Pinned under pre-registration v2 (docs/pre-registration-v2.md, section 5),
 # re-baselined at tree 24cac589 (L16): every row is the answer of the classifier
 # compiled from that tree, as the test above checks, less the five rows lane H
-# deleted with their actions (v2 sections 5.4 and A.2: 155 rows). v1's pin (the answers of
+# deleted with their actions and the three board rows cleanup 2026.11 L17 deleted
+# with the board (v2 sections 5.4 and A.2: 152 rows). v1's pin (the answers of
 # 439ab5a6, kept byte for byte by L13, plus L14's query_create_title_cost) is
 # superseded with v1. Change a row only with an amendment to v2.
 toggle_all_ai any 0
@@ -39,9 +40,6 @@ set_character_ai any 0
 report_usage any 0
 set_budget_config any 0
 get_budget_state any 0
-board_post tick_write 0
-board_read any 0
-board_admin tick_write 0
 get_bridge_state any 0
 who_holds_the_lock any 0
 get_offset_validation any 0

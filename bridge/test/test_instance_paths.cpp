@@ -476,7 +476,7 @@ int main(int argc, char** argv) {
     }
 
     // 13. rc2 B1: instance_fopen_private, the by-path open behind every other
-    //     bridge-written file (gen_current.jsonl, board carrier, session stamp).
+    //     bridge-written file (gen_current.jsonl, session stamp).
     {
         char tmpl[] = "/tmp/ck3-ipt-XXXXXX";
         const char* t = mkdtemp(tmpl);
