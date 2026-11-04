@@ -24,6 +24,7 @@
 #include "drain_action_record_frame.h"   //: ck-td8m
 #include "drain_write_verdict.h"
 #include "instance_paths.h" // ck-qn03
+#include "listener_fd.h"     // L21: the socket lives only in the game process
 #include "budget_ledger.h"
 #include "drain_registry.h"
 #include "world_epoch.h"   // ck-hxh7
@@ -689,18 +690,12 @@ static bool is_ck3_process() {
     for (const char* q = exe_path; *q; ++q) if (*q == '\\' || *q == '/') b = q + 1;
     return _stricmp(b, "ck3.exe") == 0;
 #else
-    // Check /proc/self/exe — the most reliable indicator
+    // Check /proc/self/exe — the most reliable indicator (basename exactly "ck3")
     char exe_path[512] = {};
     ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (len > 0) {
-        exe_path[len] = '\0';
-        // Match "ck3" at end of path (e.g. .../binaries/ck3)
-        const char* basename = strrchr(exe_path, '/');
-        if (basename && strcmp(basename + 1, "ck3") == 0) {
-            return true;
-        }
-    }
-    return false;
+    if (len <= 0) return false;
+    exe_path[len] = '\0';
+    return bridge::exe_is_game(exe_path);
 #endif
 }
 
@@ -1245,6 +1240,14 @@ void bridge_init() {
     // With LD_PRELOAD, we load into Steam and every child process.
     // Only initialize if we're in the actual CK3 binary.
     if (!is_ck3_process()) {
+#ifndef _WIN32
+        // L21 (node smoke18): a process the game exec'd (CrashReporter) may hold
+        // the game's listening socket, inherited from a bridge built before the
+        // listener was close-on-exec. It serves nothing, so it must not keep the
+        // socket answering: close a listener on this instance's socket path.
+        // Nothing else is touched (no dirs made, no log opened).
+        bridge::close_listeners_bound_to(bridge::instance_socket_path());
+#endif
         return;
     }
 

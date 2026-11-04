@@ -40,10 +40,21 @@ The game can stall on load under Wayland; `debug.log` stops a few seconds in.
 
 ### `bridge socket not listening`
 
-1. The game is still starting. `launch --continue` waits up to 120 seconds.
+1. The game is still starting. `launch --continue` waits up to 120 seconds, or
+   600 seconds the first time, while CK3 builds its shader cache. When the
+   wait runs out, `launch` reads the game's log and says what the game is
+   doing: still loading, at the main menu, loading the save, or in game. If
+   the log cannot be read, or was written by an earlier run, it says that.
 2. The bridge refused the build: the bridge log says `REFUSED: unsupported CK3 build`.
 3. The game started without the bridge. Use `ck3agent launch`, or the Steam
    launch option `setup` printed.
+
+### `a bridge is already listening`
+
+`launch` names each process that holds the socket. If one is CK3's
+CrashReporter (a game crashed, and a bridge older than 2026.12.2 left the
+socket in the reporter), end that pid and launch again. If one is `ck3`,
+another game with the bridge is running.
 
 ### Claude Code does not list the `ck3` tools
 

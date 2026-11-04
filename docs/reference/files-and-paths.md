@@ -38,7 +38,8 @@ CK3 user-data directory, `~/.local/share/Paradox Interactive/Crusader Kings
 III/`. `launch` starts the game with `-userdir=` set to its own directory
 (above). The first time, it copies your settings files there and links your
 `mod/` folder. `--save PATH` copies the save into that directory's
-`save games/` and points its `continue_game.json` at it. The first `--continue`
+`save games/` and points its `continue_game.json` at it (`title`, `desc` and
+`date`, the three keys CK3 reads from that file before its main menu). The first `--continue`
 does the same with the save your CK3 played last. The uninstaller leaves the
 directory in place: it holds the saves Claude played. Delete it by hand.
 

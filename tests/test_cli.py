@@ -431,10 +431,12 @@ def test_stage_save_repoints_the_game_dirs_continue_game(tmp_path):
     src.write_bytes(b"SAV")
     ptr = cfg.game_user_dir() / "continue_game.json"
     ptr.parent.mkdir(parents=True)
-    ptr.write_text(json.dumps({"title": "autosave", "desc": "d"}))
+    ptr.write_text(json.dumps({"title": "autosave", "desc": "d", "rawGameVersion": "1.18.3.1"}))
     dst, digest = cli.stage_save(src)
     assert dst == cfg.game_user_dir() / "save games/my world.ck3" and dst.read_bytes() == b"SAV"
-    assert json.loads(ptr.read_text()) == {"title": "my world", "desc": "d"}
+    d = json.loads(ptr.read_text())
+    assert (d["title"], d["desc"], d["rawGameVersion"]) == ("my world", "my world", "1.18.3.1")
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d", d["date"])
     assert digest == cli.sha256(src)
     with pytest.raises(ValueError):
         cli.stage_save(tmp_path / "nope.txt")
@@ -457,7 +459,9 @@ def owner_tree():
     (own / "save games").mkdir(parents=True)
     (own / "save games/campaign.ck3").write_bytes(b"MINE")
     (own / "save games/autosave.ck3").write_bytes(b"AUTO")
-    (own / "continue_game.json").write_text(json.dumps({"title": "campaign"}))
+    (own / "continue_game.json").write_text(json.dumps(
+        {"title": "campaign", "desc": "Charles, King of the Franks", "date": "2026-10-16 19:59:58",
+         "rawGameVersion": "1.18.3.1"}))
     (own / "pdx_settings.txt").write_text("fullscreen=no")
     (own / "last_save.ck3").write_bytes(b"LAST")
     (own / "mod").mkdir()
@@ -524,10 +528,225 @@ def test_launch_continue_copies_the_users_last_save_once(install, supported, own
     assert (game / "save games/campaign.ck3").read_bytes() == b"MINE"
     # the game played on in its own tree: the next --continue follows the game's pointer
     (game / "save games/autosave.ck3").write_bytes(b"AGENT")
-    (game / "continue_game.json").write_text(json.dumps({"title": "autosave"}))
+    mine = {"title": "autosave", "desc": "Observing", "date": "2026-11-04 12:00:00"}
+    (game / "continue_game.json").write_text(json.dumps(mine))
     rc, _ = _launch(monkeypatch, "--continue")
-    assert rc == 0 and json.loads((game / "continue_game.json").read_text())["title"] == "autosave"
+    assert rc == 0 and json.loads((game / "continue_game.json").read_text()) == mine
     assert _tree(owner_tree) == before
+
+
+#: The keys CK3 1.18.3.1 reads from continue_game.json with no presence check
+#: (reader ck3+0x75b3dc0: `title`, `desc`, `date`; a missing one faults at
+#: ck3+0x80a6090, address 0x20). Spelled here, not imported: the test holds the
+#: game's contract, the code's constant is what it grades.
+CK3_POINTER_KEYS = ("title", "desc", "date")
+
+
+def test_launch_save_writes_a_pointer_ck3_can_read(install, supported, owner_tree, tmp_path, monkeypatch):
+    """smoke18: 2026.12.1 wrote {"title": ...} alone into a new game directory and
+    CK3 SIGSEGVed in every launch, ~17 s after loading history (desc missing)."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    src = tmp_path / "observer.ck3"
+    src.write_bytes(b"OBS")
+    rc, argv = _launch(monkeypatch, "--save", str(src))
+    d = json.loads((cfg.game_user_dir() / "continue_game.json").read_text())
+    assert rc == 0 and d["title"] == "observer"
+    assert all(isinstance(d.get(k), str) and d[k] for k in CK3_POINTER_KEYS), d
+
+
+def test_launch_continue_repairs_a_pointer_2026_12_1_wrote(install, supported, owner_tree, monkeypatch, capsys):
+    """A game directory 2026.12.1 left behind holds a title-only pointer: --continue
+    would load nothing new, so the pointer itself must be made readable."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    game = cfg.game_user_dir()
+    (game / "save games").mkdir(parents=True)
+    (game / "save games/smoke18_867.ck3").write_bytes(b"S")
+    (game / "continue_game.json").write_text(json.dumps({"title": "smoke18_867"}))
+    rc, argv = _launch(monkeypatch, "--continue")
+    d = json.loads((game / "continue_game.json").read_text())
+    assert rc == 0 and d["title"] == "smoke18_867"
+    assert all(isinstance(d.get(k), str) and d[k] for k in CK3_POINTER_KEYS), d
+    assert "continue_game.json repaired" in capsys.readouterr().out
+
+
+def test_a_plain_launch_repairs_a_pointer_2026_12_1_wrote(install, supported, owner_tree, monkeypatch, capsys):
+    """Witness F6: only --continue repaired a title-only pointer; a plain `launch`
+    kept it, and the main menu's Continue may go through the same reader."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    game = cfg.game_user_dir()
+    (game / "save games").mkdir(parents=True)
+    (game / "save games/smoke18_867.ck3").write_bytes(b"S")
+    (game / "continue_game.json").write_text(json.dumps({"title": "smoke18_867"}))
+    rc, argv = _launch(monkeypatch)
+    d = json.loads((game / "continue_game.json").read_text())
+    assert rc == 0 and "--continuelastsave" not in argv and d["title"] == "smoke18_867"
+    assert all(isinstance(d.get(k), str) and d[k] for k in CK3_POINTER_KEYS), d
+    assert "continue_game.json repaired" in capsys.readouterr().out
+    # a pointer that names no save is left alone by a plain launch (there is nothing to name)
+    (game / "continue_game.json").write_text(json.dumps({"desc": "x"}))
+    rc, argv = _launch(monkeypatch)
+    assert rc == 0 and json.loads((game / "continue_game.json").read_text()) == {"desc": "x"}
+
+
+class _Exited(_Popen):
+    def poll(self):
+        self.returncode = 1
+        return 1
+
+
+def test_launch_waits_longer_on_a_first_start(install, supported, owner_tree, monkeypatch, capsys):
+    """smoke18: a new game directory has no shader cache; the first load ran past
+    the 120 s default and the warning blamed a click on Continue."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    monkeypatch.setattr(cli.subprocess, "Popen", _Exited)
+    assert cli.main(["launch", "--continue"]) == 1          # the stand-in game exits at once
+    out = capsys.readouterr().out
+    assert "shader cache" in out and "waiting up to 600s" in out
+    (cfg.game_user_dir() / "shadercache/x.bin").write_bytes(b"S")   # a second start
+    assert cli.main(["launch", "--continue"]) == 1
+    assert "shader cache" not in capsys.readouterr().out
+
+
+_IDLER_LINE = "[08:15:20][D][gameapplication.cpp:559]: Setting idler '{}' with NO init options\n"
+_HISTORY = "[13:47:11][D][history.cpp:1381]: End loading of history\n"
+
+
+class _WritesLog(_Popen):
+    """A stand-in game that writes its debug.log as it starts (so the log postdates the launch)."""
+    text: str | None = None
+
+    def __init__(self, argv, **kw):
+        super().__init__(argv, **kw)
+        if _WritesLog.text is not None:
+            log = cfg.game_debug_log()
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(_WritesLog.text)
+
+
+@pytest.mark.parametrize("row, log_text, want, never", [
+    # the four stages a launch can time out in, read from this launch's log
+    ("no_idler", _HISTORY, "CK3 is still loading", "main menu"),
+    ("Frontend", _HISTORY + _IDLER_LINE.format("Frontend"), "main menu", "still loading"),
+    ("Load Save", _IDLER_LINE.format("Frontend") + _IDLER_LINE.format("Load Save"),
+     "CK3 is loading the save", "main menu"),
+    ("In Game", _IDLER_LINE.format("Load Save") + _IDLER_LINE.format("In Game"),
+     "CK3 is in game", "CK3 is loading"),
+    # any other screen is named as the log names it, never called "loading the save"
+    ("other", _IDLER_LINE.format("Lobby"), "'Lobby'", "loading the save"),
+    # no log at all, and a previous run's log: neither is "still loading"
+    ("missing", None, "could not be read", "CK3 is still loading"),
+    ("stale", "STALE", "predates this launch", "CK3 is in game"),
+])
+def test_launch_timeout_says_what_the_game_is_doing(row, log_text, want, never, install, supported,
+                                                    owner_tree, monkeypatch, capsys):
+    """Witness F3: game_stage returned None for a missing log and for a log with no
+    idler (both "still loading"), called every idler but Frontend/In Game "loading
+    the save", and read a previous run's debug.log as this launch's."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    log = cfg.game_debug_log()
+    if log_text == "STALE":     # a previous run's log, an hour old, that ended in game
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(_IDLER_LINE.format("In Game"))
+        os.utime(log, (time.time() - 3600, time.time() - 3600))
+        _WritesLog.text = None
+    else:
+        _WritesLog.text = log_text
+    monkeypatch.setattr(cli.subprocess, "Popen", _WritesLog)
+    calls = []
+    monkeypatch.setattr(br, "alive", lambda *a, **k: calls.append(1) or len(calls) > 1)
+    monkeypatch.setattr(br, "session", lambda *a, **k: (_ for _ in ()).throw(OSError("lobby_view_not_constructed")))
+    monkeypatch.setattr(br.time, "sleep", lambda s: None)
+    assert cli.main(["launch", "--continue", "--wait", "1"]) == cli.EXIT_TIMEOUT
+    out = capsys.readouterr().out
+    assert want in out and never not in out, out
+    assert "click on Continue" not in out or row == "Frontend", out
+
+
+@pytest.mark.parametrize("args, want, never", [
+    (["--continue"], "CK3 is at its main menu: the save did not load", None),
+    ([], "CK3 is at its main menu.", "click on Continue"),     # a plain launch loads no save
+])
+def test_launch_socket_not_up_says_what_the_game_is_doing(args, want, never, install, supported,
+                                                          owner_tree, monkeypatch, capsys):
+    """Witness F1: troubleshooting.md, under "bridge socket not listening", says that
+    when the wait runs out `launch` reads the game's log and says what the game is
+    doing; the socket-not-up branch printed no stage (only the game-not-active one did)."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    _WritesLog.text = _HISTORY + _IDLER_LINE.format("Frontend")
+    monkeypatch.setattr(cli.subprocess, "Popen", _WritesLog)
+    monkeypatch.setattr(br, "alive", lambda *a, **k: False)
+    assert cli.main(["launch", *args, "--wait", "1"]) == cli.EXIT_TIMEOUT
+    out = capsys.readouterr().out
+    assert "bridge socket not up" in out and want in out, out
+    assert never is None or never not in out, out
+
+
+def test_launch_busy_socket_names_the_holder(install, supported, monkeypatch, capsys):
+    """smoke18: a crashed game's CrashReporter inherited the socket and kept it
+    answering; the refusal said "another CK3 ... is running" while none ran."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    monkeypatch.setattr(br, "alive", lambda *a, **k: True)
+    # raising=False: graded against a tree without socket_holders, the row is red
+    # on the refusal's text (an assertion), not on a missing attribute.
+    monkeypatch.setattr(br, "socket_holders", lambda p: [(777, "/steam/Crusader Kings III/binaries/CrashReporter")],
+                        raising=False)
+    rc, argv = _launch(monkeypatch)
+    out = capsys.readouterr().out
+    assert rc == 1 and argv is None
+    assert "pid 777 (/steam/Crusader Kings III/binaries/CrashReporter)" in out and "kill 777" in out
+
+
+@pytest.mark.parametrize("exe, unidentified, game", [
+    ("?", True, False),                                          # /proc/<pid>/exe unreadable
+    ("/steam/Crusader Kings III/binaries/ck3 (deleted)", False, True),   # binary replaced mid-run
+    ("/steam/Crusader Kings III/binaries/ck3", False, True),
+])
+def test_busy_socket_kill_note_only_for_an_exe_read_as_not_ck3(exe, unidentified, game):
+    """Witness F2: a holder whose exe could not be read ("?"), or a live game whose
+    binary was replaced ("... (deleted)"), was told "pid N is not CK3 ... kill N"."""
+    detail, notes = cli.busy_socket_lines("/run/s.sock", [(31, exe)])
+    text = "\n".join(notes)
+    assert f"pid 31 ({exe})" in detail
+    assert "kill" not in text and "is not CK3" not in text, text
+    assert ("could not be identified" in text) is unidentified, text
+    assert ("another CK3 with the bridge is running" in text) is game, text
+
+
+def test_launch_refusal_names_the_process_holding_a_real_socket(install, supported, tmp_path, monkeypatch, capsys):
+    """socket_holders end to end: a real listener (this test's own process) on the
+    bridge path; the refusal names its pid and exe, read from /proc by inode, and
+    no longer says only "another CK3 with the bridge is running"."""
+    import socket as so
+    ck3, so_path = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so_path))
+    path = str(tmp_path / "agent.sock")
+    monkeypatch.setattr(br, "socket_path", lambda: path)
+    s = so.socket(so.AF_UNIX, so.SOCK_STREAM)
+    try:
+        s.bind(path)
+        s.listen(1)
+        rc, argv = _launch(monkeypatch)
+        out = capsys.readouterr().out
+        assert rc == 1 and argv is None
+        assert f"pid {os.getpid()} ({os.readlink('/proc/self/exe')})" in out, out
+    finally:
+        s.close()
+    assert br.socket_holders(path) == []
 
 
 def test_launch_refuses_a_userdir_it_cannot_pass(install, supported, owner_tree, tmp_path, monkeypatch, capsys):

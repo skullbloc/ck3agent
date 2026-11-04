@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import socket
 import struct
 import subprocess
@@ -51,6 +52,50 @@ def alive(path: str, timeout: float = 1.0) -> bool:
         return False
     finally:
         s.close()
+
+
+#: socket_holders' exe for a holder whose /proc/<pid>/exe could not be read.
+UNKNOWN_EXE = "?"
+
+
+def socket_holders(path: str) -> list[tuple[int, str]]:
+    """The processes that hold the socket bound at PATH open, as (pid, exe).
+
+    By inode: /proc/net/unix maps the path to its inodes, /proc/<pid>/fd/* to
+    `socket:[inode]`. The pid is NOT SO_PEERCRED's: that names the process
+    that called listen(), and after a crash it is the dead game while a
+    child that inherited the descriptor (CK3's crash reporter, smoke18) keeps
+    the socket answering. Empty when nothing is found or /proc cannot say;
+    exe is UNKNOWN_EXE when the holder's executable could not be read.
+    """
+    try:
+        rows = Path("/proc/net/unix").read_text().splitlines()[1:]
+    except OSError:
+        return []
+    want = {f"socket:[{f[6]}]" for f in (r.split() for r in rows) if len(f) >= 8 and f[7] == path}
+    if not want:
+        return []
+    out = []
+    for p in Path("/proc").iterdir():
+        if not p.name.isdigit():
+            continue
+        try:
+            fds = list((p / "fd").iterdir())
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                held = os.readlink(fd) in want
+            except OSError:
+                continue
+            if held:
+                try:
+                    exe = os.readlink(p / "exe")
+                except OSError:
+                    exe = UNKNOWN_EXE
+                out.append((int(p.name), exe))
+                break
+    return sorted(out)
 
 
 @contextlib.contextmanager
@@ -478,6 +523,5 @@ def wait_for_active(sock: str, deadline: float, proc: "subprocess.Popen", pause:
         except Exception as e:  # noqa: BLE001
             last = str(e) or repr(e)
         time.sleep(5.0)
-    con.warn("game not active yet", f"last bridge reason: {last or 'none'}. "
-             "A player save needs a click on Continue in the game window.")
+    con.warn("game not active yet", f"last bridge reason: {last or 'none'}")
     return 3

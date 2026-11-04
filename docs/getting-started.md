@@ -20,7 +20,7 @@ From download to Claude's first move, about 15 minutes.
 ## 1. Download and verify
 
 From the [releases page](https://github.com/skullbloc/ck3agent/releases),
-download `ck3agent-2026.12.1-linux-x86_64.tar.gz` and `SHA256SUMS` into one
+download `ck3agent-2026.12.2-linux-x86_64.tar.gz` and `SHA256SUMS` into one
 directory. Verify there, before unpacking:
 
 ```bash
@@ -28,15 +28,15 @@ cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-Expected: `ck3agent-2026.12.1-linux-x86_64.tar.gz: OK`. With the GitHub CLI
+Expected: `ck3agent-2026.12.2-linux-x86_64.tar.gz: OK`. With the GitHub CLI
 you can also run
-`gh attestation verify ck3agent-2026.12.1-linux-x86_64.tar.gz --repo skullbloc/ck3agent`.
+`gh attestation verify ck3agent-2026.12.2-linux-x86_64.tar.gz --repo skullbloc/ck3agent`.
 
 ## 2. Install
 
 ```bash
-tar xzf ck3agent-2026.12.1-linux-x86_64.tar.gz
-cd ck3agent-2026.12.1-linux-x86_64
+tar xzf ck3agent-2026.12.2-linux-x86_64.tar.gz
+cd ck3agent-2026.12.2-linux-x86_64
 ./install.sh
 ```
 
@@ -61,7 +61,9 @@ stay there. Your own CK3 directory is only read. The first `--continue` copies
 the save your CK3 played last; after that `--continue` loads the save the
 launched game played last.
 
-Both start CK3 with the bridge and wait up to 120 seconds for the game.
+Both start CK3 with the bridge and wait up to 120 seconds for the game. The
+first time, they wait up to 600 seconds: the game directory has no shader
+cache yet, and CK3 takes several minutes to build one (about 600 MB).
 Expect a few game days to pass before the pause lands: the bridge has to let
 the clock run to finish loading. On an observer save it enters Observe for
 you. On a player save it usually continues on its own; if the game stays on
