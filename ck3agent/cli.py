@@ -631,20 +631,23 @@ def shader_cache_empty(game_dir: Path) -> bool:
         return True
 
 
-def launch_wait(no_wait: bool, wait: int | None, cont: bool, first_load: bool) -> int:
+def launch_wait(no_wait: bool, wait: int | None, first_load: bool) -> int:
     """Seconds `launch` waits for the game: --wait, else FIRST_LOAD_WAIT for a
-    --continue whose shader cache is still to be built, else CONTINUE_WAIT."""
+    launch whose shader cache is still to be built, else CONTINUE_WAIT. A plain
+    launch (no save to load) waits for the main menu as long (L22, smoke19: it
+    returned at once and a game that never reached the menu said nothing)."""
     if no_wait:
         return 0
     if wait is not None:
         return wait
-    if not cont:
-        return 0
     return FIRST_LOAD_WAIT if first_load else CONTINUE_WAIT
 
 
 #: The game's own log line for each screen it enters ("Setting idler 'Frontend'").
 _IDLER = re.compile(r"Setting idler '([^']+)'")
+
+#: The screens that mean a plain launch reached the main menu (or went past it).
+MENU_OR_LATER = ("Frontend", "Load Save", "In Game")
 
 #: How far a debug.log's mtime may sit before the launch and still be this
 #: launch's: the kernel stamps files from a coarse clock that can trail
@@ -793,8 +796,8 @@ def cmd_launch(a: argparse.Namespace) -> int:
         return 1
     con.ok("game directory", f"{gdir} (saves land in its save games/)")
     first_load = shader_cache_empty(gdir)
-    wait = launch_wait(a.no_wait, a.wait, cont, first_load)
-    if first_load and cont:
+    wait = launch_wait(a.no_wait, a.wait, first_load)
+    if first_load and wait:
         con.note(f"first start in this game directory: CK3 builds its shader cache (about 600 MB, "
                  f"several minutes); waiting up to {wait}s")
 
@@ -845,7 +848,33 @@ def cmd_launch(a: argparse.Namespace) -> int:
         if rc:
             _debug_log_hint()
         return rc
-    return 0
+    return wait_for_menu(proc, deadline, launched, first_load, wait, out)
+
+
+def wait_for_menu(proc, deadline: float, launched: float, first_load: bool, wait: int,
+                  out: Path) -> int:
+    """A plain launch: wait until the game's log says it reached the main menu.
+    The bridge socket is up long before the menu, so the socket alone says
+    nothing about whether the game will get there (smoke19: a headless host
+    sat after "End loading of history" for 600 s)."""
+    log = cfg.game_debug_log()
+    while True:
+        stage = game_stage(log, launched)
+        if stage.kind == "idler" and stage.idler in MENU_OR_LATER:
+            con.ok("game at its main menu" if stage.idler == "Frontend" else "game past its main menu",
+                   f"its log: '{stage.idler}'")
+            return 0
+        if proc.poll() is not None:
+            con.fail("CK3 exited early", f"code {proc.returncode}; see {out}")
+            _debug_log_hint()
+            return 1
+        if time.time() >= deadline:
+            break
+        time.sleep(1.0)
+    con.warn("game not at its main menu", f"after {wait}s")
+    con.note(not_active_hint(stage, first_load, log, cont=False))
+    _debug_log_hint()
+    return EXIT_TIMEOUT
 
 
 # ── serve ────────────────────────────────────────────────────────────────────
@@ -1717,8 +1746,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--save", metavar="PATH",
                    help="copy this .ck3 into the game directory and load it (implies --continue)")
     s.add_argument("--wait", type=int, metavar="SECS",
-                   help=f"wait up to SECS for the game (default with --continue: {CONTINUE_WAIT}, "
-                        f"{FIRST_LOAD_WAIT} on the first start in the game directory; else 0)")
+                   help=f"wait up to SECS for the game: with --continue/--save until it is active, "
+                        f"else until its main menu (default {CONTINUE_WAIT}, "
+                        f"{FIRST_LOAD_WAIT} on the first start in the game directory)")
     s.add_argument("--no-wait", action="store_true", help="return as soon as CK3 starts")
     s.add_argument("--no-pause", action="store_true",
                    help="leave the clock running once the game is active (default: pause it)")

@@ -526,8 +526,9 @@ read exposes them. `guardian_candidates` lists in-court guardian prospects for a
 child with their martial, and the global high-martial pool to invite. `war_stance` is each war's side, stance and occupation
 with a stall verdict; an attacker inferred not sieging carries the limitation
 war_stalled_no_lever (the AI sieges only above 1.33x the enemy's strength, which no
-axis or phase moves; calling allies is the lever), and `exit_lever.surrender_cost`
-says a surrender is your defeat. `war_score` without war_id is your own wars
+axis or phase moves; calling allies is the lever), a row whose engine stance read
+named the other side carries stance_side_mismatch and an inferred stance, and
+`exit_lever.surrender_cost` says a surrender is your defeat. `war_score` without war_id is your own wars
 (get_active_wars), with war_id that one war. `pending` lists the writes still queued in the bridge and the
 outcomes of the ones that drained (match a do reply's pending.intent_id): the
 bridge keeps the verdicts of the last 128 drained writes (reads are never kept), a

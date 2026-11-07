@@ -38,7 +38,7 @@ sets a ruler's strategy. The game's own AI carries it out.
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing     # in the download directory
-tar xzf ck3agent-2026.12.2-linux-x86_64.tar.gz && cd ck3agent-2026.12.2-linux-x86_64
+tar xzf ck3agent-2026.12.3-linux-x86_64.tar.gz && cd ck3agent-2026.12.3-linux-x86_64
 ./install.sh                                 # installs the bridge and the ck3agent command
 ```
 

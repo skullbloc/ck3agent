@@ -872,6 +872,26 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_war_scope_prefix_control PRIVATE WAR_SCOPE_PREFIX_CONTROL)
 
+    # L22 (smoke19 A3 stance half): the coordinator record a war_stance row reads
+    # is its own side's, on a fixture from the 1097 dump; the prefix control is
+    # the pre-fix last-record-wins map and must fail.
+    foreach(_v test_war_stance_record test_war_stance_record_prefix_control)
+        add_executable(${_v} test/test_war_stance_record.cpp)
+        target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_war_stance_record_prefix_control PRIVATE WAR_STANCE_RECORD_PREFIX_CONTROL)
+
+    # L22 (smoke19 D1): the failure-key pass runs only for a shown decision, and
+    # the skip seeds are named by their hash; the prefix control is the pre-fix
+    # "every failing block" rule and must fail.
+    foreach(_v test_decision_eval_plan test_decision_eval_plan_prefix_control)
+        add_executable(${_v} test/test_decision_eval_plan.cpp)
+        target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_decision_eval_plan_prefix_control PRIVATE DECISION_EVAL_PLAN_PREFIX_CONTROL)
+
     # L20 r3 (witness item 8): construct_building's optional location_id through
     # the real json_get_int; the prefix control is the pre-fix read and must fail.
     foreach(_v test_optional_id test_optional_id_prefix_control)
@@ -1975,6 +1995,8 @@ endif()
                latch_guarded_rows_probe
                test_action_args    # L18-B: built since ck-6kvq.15, never run by ctest
                test_war_scope test_pause_alarm test_council_task_family     # L20-A
+               test_war_stance_record   # L22: a stance row reads its own side's record
+               test_decision_eval_plan  # L22: no failure-key pass on a not-shown decision
                test_diag_dtor      # L20-D: DIAG_OBJECT_DTOR is the engine's dtor
                test_optional_id    # L20 r3: location_id absent -> missing_location_id
                test_listener_fd)   # L21: the socket lives only in the game process
@@ -2006,6 +2028,10 @@ endif()
     # L20-A: the pre-fix war scope read must fail the same rows.
     add_test(NAME test_war_scope_prefix_control COMMAND test_war_scope_prefix_control)
     set_tests_properties(test_war_scope_prefix_control PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME test_war_stance_record_prefix_control COMMAND test_war_stance_record_prefix_control)
+    set_tests_properties(test_war_stance_record_prefix_control PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME test_decision_eval_plan_prefix_control COMMAND test_decision_eval_plan_prefix_control)
+    set_tests_properties(test_decision_eval_plan_prefix_control PROPERTIES WILL_FAIL TRUE)
     # L20 r3: the pre-fix location_id read must fail the absent rows.
     add_test(NAME test_optional_id_prefix_control COMMAND test_optional_id_prefix_control)
     set_tests_properties(test_optional_id_prefix_control PROPERTIES WILL_FAIL TRUE)

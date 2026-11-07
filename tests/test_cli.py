@@ -693,6 +693,37 @@ def test_launch_socket_not_up_says_what_the_game_is_doing(args, want, never, ins
     assert never is None or never not in out, out
 
 
+def test_a_plain_launch_waits_like_the_others():
+    """L22 (smoke19): a plain `launch` returned at once (wait 0)."""
+    assert cli.launch_wait(False, None, first_load=True) == cli.FIRST_LOAD_WAIT
+    assert cli.launch_wait(False, None, first_load=False) == cli.CONTINUE_WAIT
+    assert cli.launch_wait(True, None, first_load=True) == 0
+    assert cli.launch_wait(False, 7, first_load=True) == 7
+
+
+@pytest.mark.parametrize("log_text, rc, want, never", [
+    # smoke19: the headless node sat after "End loading of history" with no idler
+    (_HISTORY, cli.EXIT_TIMEOUT, ["game not at its main menu", "CK3 is still loading"], "game at its main menu"),
+    (_HISTORY + _IDLER_LINE.format("Frontend"), 0, ["game at its main menu"], "not at its main menu"),
+])
+def test_a_plain_launch_says_whether_the_game_reached_its_main_menu(
+        log_text, rc, want, never, install, supported, owner_tree, monkeypatch, capsys):
+    """L22 (smoke19): with the socket up, a plain launch returned 0 and said
+    nothing while the game never reached the menu. It now waits for the log's
+    main-menu screen and, when the wait runs out, names the stage the log shows."""
+    ck3, so = install
+    monkeypatch.setenv("CK3_BINARY", str(ck3))
+    monkeypatch.setenv("CK3AGENT_BRIDGE", str(so))
+    _WritesLog.text = log_text
+    monkeypatch.setattr(cli.subprocess, "Popen", _WritesLog)
+    alive = iter([False] + [True] * 100)       # no bridge before the launch, then up
+    monkeypatch.setattr(br, "alive", lambda *a, **k: next(alive))
+    monkeypatch.setattr(br.time, "sleep", lambda s: None)
+    assert cli.main(["launch", "--wait", "1"]) == rc
+    out = capsys.readouterr().out
+    assert all(w in out for w in want) and never not in out, out
+
+
 def test_launch_busy_socket_names_the_holder(install, supported, monkeypatch, capsys):
     """smoke18: a crashed game's CrashReporter inherited the socket and kept it
     answering; the refusal said "another CK3 ... is running" while none ran."""
