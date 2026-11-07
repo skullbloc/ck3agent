@@ -123,7 +123,7 @@ carve-out is known.
 |---|---|---|---|---|
 | P0 | Static spikes from Linux: depots, W0/M0 answers | 3-5 days | `binary-report` answers filled for Windows and macOS; Ghidra imports the PE | Anti-tamper or integrity check found |
 | P1 | Windows Ghidra project; anchor transfer by RTTI names, string xrefs, registration tables, BSim | 3-5 wks | Every anchor in `re/offsets/` has a Windows candidate or a documented gap | Transfer below ~40% of anchors with no new method |
-| P2 | `bridge/src/os/` layer; stub CI on `windows-latest` and `macos-14` | 2-3 wks (parallel with P1) | Linux acceptance unchanged; engine-free tests pass on 3 OSes | Linux behaviour changes |
+| P2 | `bridge/src/os/` layer; stub CI on `windows-latest` and `macos-15` | 2-3 wks (parallel with P1) | Linux acceptance unchanged; engine-free tests pass on 3 OSes | Linux behaviour changes |
 | P3 | Proton bring-up; layout probe over the 1,757 field offsets, per-ABI readers | 2-3 wks | Probe report: `agreed`/`disagreed`/`unwitnessed` per field | Under ~40% field agreement |
 | P4 | Proxy DLL loads and refuses under Proton | 1-2 wks | `match` on 1.18.3.1, `REFUSED` and no listener on any other build (**met under Proton 2026-10-19**) | No 1.18.3.1 rollback branch on Windows |
 | P5 | Observe parity | 3-5 wks | Every `query_*` equals the Linux bridge on the reference save (scripted diff) (**unmet** 2026-10-19, P6 round full7: 70 of 82 agree (58 with data, 5 across dates, 7 as refusals; full5: 66, P5 ended at 60); 5 unstable on Linux itself; of the 8 deferred-drain actions 6 now agree (the trigger query and interaction acceptance through the game's own interaction context), CBs-for-target differs only in the bridge's tick counter at the same game date, conquest targets by world drift; 6 open; trigger not indicated) | Parity below half the tools at 2x estimate |
@@ -318,7 +318,7 @@ proxy forwards (`windows/proxy.cpp`, every export of the real `version.dll`,
 `.def` generated from `windows/version_exports*.h`) and a `DllMain` that starts
 the P4 init thread (identity gate, nothing else; see the P4 row below). The `windows-latest` CI leg builds all of it and runs
 the tests (`continue-on-error` until green on real MSVC twice). macOS is all
-typed refusals (`macos/stubs.cpp`), built on `macos-14`.
+typed refusals (`macos/stubs.cpp`), built on `macos-15`.
 
 **Binary identity on the Python side.** `ck3agent/_elf.py` gains siblings
 `_pe.py` (debug directory → `RSDS` GUID/age, optional-header
@@ -496,7 +496,7 @@ mirroring the Linux `g_prev_sigsegv_action` chain.
 ## CI and packaging
 
 - **Build matrix:** `ubuntu-22.04`, `ubuntu-latest` (as today),
-  `windows-latest` (MSVC, `-DCK3_PLATFORM=windows`), `macos-14` (Clang,
+  `windows-latest` (MSVC, `-DCK3_PLATFORM=windows`), `macos-15` (Clang,
   `-DCK3_PLATFORM=macos`, `-DCMAKE_OSX_ARCHITECTURES=x86_64`), all with
   `-DCK3_STRICT_BUILD_ID=ON -DBUILD_BRIDGE_TESTS=ON`. No game in CI anywhere.
   The engine-free native tests (`test_json_helpers`,

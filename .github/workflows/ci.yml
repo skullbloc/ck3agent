@@ -146,7 +146,7 @@ jobs:
   # before the Linux bridge) with no game, no hooks. windows-latest builds the
   # Win32 cells, the ck3_bridge_win DLL and every os test and runs them (the
   # ADR "P2 cell status" table names the same test_os_win_<cell> tests);
-  # macos-14 builds the typed-refusal stubs and their test. ADR 0001 P2:
+  # macos-15 builds the typed-refusal stubs and their test. ADR 0001 P2:
   # "engine-free tests pass on 3 OSes".
   platform-windows:
     name: platform layer (windows-latest)
@@ -195,8 +195,8 @@ jobs:
         run: python -m pytest
 
   platform-macos:
-    name: platform layer (macos-14)
-    runs-on: macos-14
+    name: platform layer (macos-15)
+    runs-on: macos-15
     continue-on-error: true   # P2: macOS is all typed refusals; keep until green twice
     timeout-minutes: 20
     steps:
