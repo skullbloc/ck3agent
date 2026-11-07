@@ -118,3 +118,17 @@ def test_a_seat_with_no_version_is_refused_naming_the_seats_that_have_one():
     assert b["raw_reason"] == "seat_cannot_take_task" and b["gate"] == "target_ineligible", b
     assert b["measured"]["task_seats"] == ["court_chaplain", JUSTICE]
     assert re.search(r"court_chaplain, minister_justice", b["summary"]), b["summary"]
+
+
+def test_each_row_names_the_task_version_the_bridge_evaluated():
+    """L22 (smoke19 B9): with seat minister_justice the bridge evaluated
+    task_fabricate_claim_minister_of_rites, but the rows dropped task_used."""
+    gw = ScriptedGateway(cid=CUI, replies={"query_fabricate_targets": _ok(
+        "task_fabricate_claim_minister_of_rites", JUSTICE,
+        [{"title_id": 621, "title": "c_a", "assignable": True},
+         {"title_id": 14606, "title": "c_b", "assignable": False}])})
+    env = _run(R.do_impl(gw, action_class="fabricate_targets", character_id=CUI,
+                         args={"seat": JUSTICE}))
+    rows = env["result"]["available"] + env["result"]["unavailable"]
+    assert len(rows) == 2
+    assert {r.get("task_used") for r in rows} == {"task_fabricate_claim_minister_of_rites"}, rows

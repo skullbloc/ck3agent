@@ -40,8 +40,10 @@ The game can stall on load under Wayland; `debug.log` stops a few seconds in.
 
 ### `bridge socket not listening`
 
-1. The game is still starting. `launch --continue` waits up to 120 seconds, or
-   600 seconds the first time, while CK3 builds its shader cache. When the
+1. The game is still starting. `launch` waits up to 120 seconds, or 600
+   seconds the first time, while CK3 builds its shader cache: with `--continue`
+   or `--save` until the game is active, without them until its main menu
+   (`game not at its main menu` when it does not get there). When the
    wait runs out, `launch` reads the game's log and says what the game is
    doing: still loading, at the main menu, loading the save, or in game. If
    the log cannot be read, or was written by an earlier run, it says that.

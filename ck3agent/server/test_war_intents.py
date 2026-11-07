@@ -1082,3 +1082,31 @@ def test_an_inferred_stalled_attack_says_no_lever_moves_it(occupation, native, e
     if expected:
         assert row["stance_source"] == "inferred_from_occupation"
         assert "1.33" in row["limitations"][0]["detail"] and "call_ally" in row["limitations"][0]["detail"]
+
+
+def test_a_stance_read_for_the_other_side_is_not_shown_as_this_sides():
+    """L22 (smoke19 A3): at 0868.01.09 Charles, war 13's primary attacker with
+    occupation 8, got `side attacker, stance defender_defensive` from
+    inspect(war_stance): the bridge's row was the defender's coordinator record.
+    A native row whose is_attacker disagrees with the war row is not used."""
+    class GW:
+        async def read(self, verb, params):
+            if verb == "get_active_wars":
+                return {"wars": [{"war_id": WAR, "name": "W", "is_attacker": True,
+                                  "attacker_id": ME, "defender_id": ENEMY, "war_score": 10}]}
+            if verb == "query_war_score_breakdown":
+                return {"occupation_atk": 8}
+            if verb == "query_war_stance":
+                return {"wars": [{"war_id": WAR, "is_attacker": False,
+                                  "stance": "defender_defensive", "will_siege": False}]}
+            return {}
+
+        def game(self):
+            return {"tick": 1}
+
+    R._WAR_STANCE_UNSERVED.clear()
+    row = asyncio.run(R._war_stance_view(GW(), ME))["wars"][0]
+    assert row["side"] == "attacker", row
+    assert row["stance"] == "offensive_sieging", row
+    assert row["stance_source"] == "inferred_from_occupation", row
+    assert "stance_side_mismatch" in [lim["code"] for lim in row["limitations"]], row

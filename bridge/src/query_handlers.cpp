@@ -4,6 +4,8 @@
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
 #include "war_scope.h"
+#include "war_stance_record.h"   // which coordinator record a war_stance row reads
+#include "decision_eval_plan.h"   // the decision eval plan and the typed skip list
 #include "pause_alarm.h"
 #include "action_args.h"
 #include "diag_dtor.h"   // L20-D: the diag record dtor, witnessed from the engine's call
@@ -5429,9 +5431,11 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
     };
 
     // ---- Layer 2 (flag-gated): AI-mgr coordinator record walk -----------------
-    // Build {war_id → (stance_idx, is_attacker)} for the queried realm's records.
+    // Build {war slot → both sides' records}: the manager holds one record per
+    // war PER SIDE (war_stance_record.h; L22 smoke19 A3: one slot per war let the
+    // record walked last decide both the row's side and its stance).
     // Only when the runtime flag is armed AND the live ai_manager is captured.
-    std::map<uint32_t, std::pair<int,bool>> rec_stance;   // war_id → (slot idx, atk)
+    std::map<uint32_t, bridge::war_stance_record::WarRecs> rec_stance;   // war slot → records
     int records_scanned = 0, records_matched = 0, records_unresolved = 0;
     bool record_walk_ran = false;
     if (walk_enabled && stance_db_ok) {
@@ -5461,7 +5465,7 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
                     bool is_atk = (safe_read<uint16_t>(rec + ck3::war_stance::REC_FLAGS) & 0x4) != 0;
                     uintptr_t sp = safe_read<uintptr_t>(rec + ck3::war_stance::REC_STANCE_PTR);
                     int idx = map_stance(sp);
-                    rec_stance[rec_war_id & 0xFFFFFF] = { idx, is_atk };
+                    bridge::war_stance_record::note(rec_stance[rec_war_id & 0xFFFFFF], is_atk, idx);
                     records_matched++;
                 }
             }
@@ -5507,13 +5511,18 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
             int occupation = cached ? war_score_occupation_net(bd) : 0;
             int ticking    = cached ? war_score_ticking_net(bd) : 0;
 
-            // Stance from the record walk if it matched this war; else unavailable.
+            // The side from the war record (war_side.h, the one definition); the
+            // stance from the record of THAT side, else unavailable.
             const char* stance = "unavailable";
-            bool stance_known = false, will_siege_stance = false, is_attacker = true;
+            bool stance_known = false, will_siege_stance = false;
+            const bool side_atk = war_side::of(war_ptr, my_id) == war_side::Side::Attacker;
+            bool is_attacker = side_atk;
             auto rit = rec_stance.find(idx);
-            if (rit != rec_stance.end()) {
-                int sidx = rit->second.first;
-                is_attacker = rit->second.second;
+            const bridge::war_stance_record::SideRec* srec =
+                rit != rec_stance.end() ? &bridge::war_stance_record::for_side(rit->second, side_atk) : nullptr;
+            if (srec && srec->present) {
+                int sidx = srec->stance_idx;
+                is_attacker = bridge::war_stance_record::row_is_attacker(rit->second, side_atk);
                 if (sidx >= 0) {
                     stance = kStanceSlots[sidx].name;
                     will_siege_stance = kStanceSlots[sidx].offensive;
@@ -8307,14 +8316,16 @@ void dv_evaluate(uintptr_t decision, uintptr_t scope_ctx, DvFields& f) {
 
     f.valid = dv_eval_block(decision + ck3::decision_type::IS_VALID, scope_ctx, &crashed);
     if (crashed) { f.eval_error = true; return; }
-    if (!f.valid) {
+    // L22 (smoke19 D1): the diagnostic pass only for a shown decision
+    // (decision_eval_plan.h: it faulted 3x on not-shown candidates).
+    if (bridge::decision_eval::extract_failure_key(f.shown, f.valid)) {
         dv_extract_failure_key(decision + ck3::decision_type::IS_VALID, scope_ctx,
                                f.fail_valid, sizeof(f.fail_valid), &f.dtor_unwitnessed);
     }
 
     f.cost_ok = dv_eval_block(decision + ck3::decision_type::COST_TRIGGER, scope_ctx, &crashed);
     if (crashed) { f.eval_error = true; return; }
-    if (!f.cost_ok) {
+    if (bridge::decision_eval::extract_failure_key(f.shown, f.cost_ok)) {
         dv_extract_failure_key(decision + ck3::decision_type::COST_TRIGGER, scope_ctx,
                                f.fail_cost, sizeof(f.fail_cost), &f.dtor_unwitnessed);
     }
@@ -8342,9 +8353,8 @@ static bool g_decision_skip_loaded = false;
 static void load_decision_skip() {
     if (g_decision_skip_loaded) return;
     g_decision_skip_loaded = true;
-    g_decision_skip.insert(0x0d3cbc02);  // seed: known culprit (ruler 13902, full-scan idx=3)
-    g_decision_skip.insert(0xcce24e04);  // seed: foster_integration_decision (self-heal-captured 2026-06-19)
-    g_decision_skip.insert(0x5f86cc47);  // seed: create_armenian_empire_decision — froze game thread on #109 Surface-2 live check (2026-06-22); engine trigger-eval hangs with SIGALRM masked
+    // The seeds, typed and named by their hash (decision_eval_plan.h).
+    for (const auto& s : bridge::decision_eval::kSkipSeeds) g_decision_skip.insert(s.hash);
     // Promote a stranded in-flight hash from a prior freeze, then clear the marker.
     if (FILE* f = bridge::instance_state_fopen(kDecisionInflight, "r")) {
         unsigned h = 0;
@@ -8547,7 +8557,14 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
                     rb.key("hash"); rb.value_uint((uint32_t)hash);
                     rb.key("eval_error"); rb.value_bool(true);
                     rb.key("eval_skipped"); rb.value_bool(true);
-                    rb.key("note"); rb.value_string("skip-listed: engine trigger-eval hangs on this decision (re_decision_eval_hang.md)");
+                    // L22: which kind of entry (decision_eval_plan.h): a seed names
+                    // what was observed; a learned hash is a stranded in-flight
+                    // marker from a freeze in an earlier run on this host.
+                    const auto* seed = bridge::decision_eval::seed_for((uint32_t)hash);
+                    rb.key("skip_origin"); rb.value_string(bridge::decision_eval::origin_name(
+                        seed ? bridge::decision_eval::SkipOrigin::Seed : bridge::decision_eval::SkipOrigin::Learned));
+                    rb.key("note"); rb.value_string(seed ? seed->reason
+                        : "learned: its trigger eval froze the game thread in an earlier run on this host (re_decision_eval_hang.md)");
                     DvCost sc = dv_read_cost(obj);   // static cost is safe (no engine eval)
                     rb.key("cost"); rb.begin_object();
                     if (sc.has_gold)     { rb.key("gold");     rb.value_float(sc.gold); }

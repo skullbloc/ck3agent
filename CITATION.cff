@@ -5,9 +5,9 @@ type: software
 authors:
   - family-names: Stebbins
     given-names: Harrison
-version: 2026.12.2
+version: 2026.12.3
 # stamped at release; must match the release date
-date-released: "2026-11-04"
+date-released: "2026-11-07"
 license: Apache-2.0
 repository-code: "https://github.com/skullbloc/ck3agent"
 url: "https://github.com/skullbloc/ck3agent"

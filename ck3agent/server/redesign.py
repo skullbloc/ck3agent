@@ -2890,6 +2890,13 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
         # occupation is effectively offensive; an attacker stuck at occupation 0 is the
         # defensive-stance / impasse case (re_control_suppresses_war.md / re_query_war_stance.md).
         ns = native_by_war.get(wid) or {}
+        # L22 (smoke19 A3): a native row whose side disagrees with the war row's is
+        # another side's stance (the pre-2026.12.3 bridge kept one coordinator
+        # record per war, the last walked); the row never labels one side with the
+        # other's stance.
+        side_mismatch = bool(ns) and "is_attacker" in ns and bool(ns["is_attacker"]) != is_attacker
+        if side_mismatch:
+            ns = {}
         native_stance = ns.get("stance")
         # will_siege (native): the authoritative "this stance actually sieges" bit.
         will_siege = ns.get("will_siege")
@@ -2929,6 +2936,11 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
         # not enter: re/findings/re_offensive_strength_gate.md). No steering lever moves
         # an inferred non-sieging attacker; the row says so, typed, instead of implying one.
         limitations = []
+        if side_mismatch:
+            limitations.append({
+                "code": "stance_side_mismatch", "is_known_limitation": True,
+                "detail": ("the bridge's stance read named the other side of this war; "
+                           "the stance shown is inferred from occupation instead")})
         if stance == "attacker_not_sieging" and stance_source == "inferred_from_occupation":
             limitations.append({
                 "code": "war_stalled_no_lever", "is_known_limitation": True,
@@ -5804,7 +5816,7 @@ def _decision_row(d: dict) -> dict:
                else "the engine's evaluation faulted")
         row["blocked"] = why_blocked(
             "decision_eval_faulted", summary=f"{name}: {how}; no verdict was reached",
-            measured={k: d[k] for k in ("eval_wedged", "eval_skipped") if k in d})
+            measured={k: d[k] for k in ("eval_wedged", "eval_skipped", "skip_origin") if k in d})
     elif d.get("available"):
         row["blocked"] = None
     else:
@@ -5920,6 +5932,10 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                                "args": {"seat": row_seat, "task": "task_fabricate_claim",
                                         "target_title_id": t.get("title_id")}},
                    "warnings": [{"code": "may_revert_ai_reasserts", "is_known_limitation": True}]}
+            # L22 (smoke19 B9): the version of the task the bridge evaluated
+            # (a seat's clone, e.g. task_fabricate_claim_minister_of_rites).
+            if isinstance(r.get("task_used"), str) and r["task_used"]:
+                row["task_used"] = r["task_used"]
             if assignable:
                 row["blocked"] = None
                 available.append(row)

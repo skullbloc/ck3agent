@@ -3,6 +3,62 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.3 — 2026-11-07
+
+The third round of toolkit fixes, from the node smoke of the 2026.12.2 draft.
+`query_war_stance` reads each side's own stance: a war's primary attacker read
+as the defender because the bridge kept one of the war's two AI records, the
+one it walked last (the defender's, in 39 of 87 wars in a core dump).
+`do(action_class="decisions")` no longer trips the bridge's fault net (three
+faults on one five-candidate call): the failure reasons are read only for
+decisions the game shows. `fabricate_targets` rows name the task version the
+bridge evaluated, and a plain `ck3agent launch` waits for the main menu and
+says when the game does not reach it. The surface is still thirteen tools.
+
+* **`query_war_stance` reports the queried side's stance.** In the 2026.12.2
+  smoke, Charles (12015), war 13's primary attacker with occupation 8 and a
+  won siege, read `is_attacker: false, stance: defender_defensive`, and
+  `inspect(subject="war_stance")` showed `side: attacker` beside the
+  defender's stance. The game's AI keeps one coordinator record per war per
+  side, and the bridge kept one per war, so whichever side's record it walked
+  last decided the row (in the 1097 core dump, the defender's record comes
+  last in 39 of 87 wars). The row's side now comes from the war's participant
+  lists and its stance from that side's record. `inspect` also refuses to
+  pair a side with a stance read for the other side: such a row carries the
+  limitation `stance_side_mismatch` and an inferred stance.
+* **`do(action_class="decisions")` no longer trips the bridge's fault net on
+  decisions the game does not show.** A five-candidate call made the SIGSEGV
+  safety net fire three times on the game thread (recovered; the game lived).
+  The faults came from the pass that reads why a decision fails, which the
+  bridge ran even for decisions whose `is_shown` was false; the game appears
+  to build that explanation only for decisions it lists (a reading of the
+  game's code, not yet confirmed in a live game). The pass now runs only for
+  shown decisions, so a not-shown decision's row is `decision_not_shown` with
+  no fault behind it, or `cannot_afford` when its cost is more than the ruler
+  has. This is a change: before, a not-shown decision whose failure keys
+  were read came back as `decision_unavailable` or `cannot_afford`, since the
+  reader looked at the failures before the shown flag. Skip-listed decisions
+  now say why they are skipped: `measured.skip_origin` is `seed` (one of the
+  three decisions the bridge ships on the list, each of which froze the game
+  in testing) or `learned` (one that froze it on this machine). The seed
+  list's comments had two decisions' names swapped, and the names are now
+  checked against the hashes.
+* **`do(action_class="fabricate_targets")` rows name the task version.** With
+  `args={"seat": "minister_justice"}` the bridge evaluates that seat's
+  version of the task (`task_fabricate_claim_minister_of_rites`), and now
+  each row carries it as `task_used`, as the `council_task` reply already
+  did.
+* **A plain `ck3agent launch` waits for the main menu and says when the game
+  does not reach it.** Without `--continue` or `--save`, `launch` returned as
+  soon as CK3 started, and on a headless host whose game never reached the
+  menu it said nothing. It now waits as the other launches do (120 s, 600 s
+  on the first start while the shader cache is built) for the game's log to
+  show the main menu, prints `game at its main menu` (`game past its main
+  menu` if it got further), and when the wait runs out prints `game not at
+  its main menu` with the stage the log shows (for example "CK3 is still
+  loading") and exits 3; a bridge that never answered says `bridge socket not
+  up`, as before. `--no-wait` returns at once, as before.
+
 ## 2026.12.2 — 2026-11-04
 
 A hotfix for `ck3agent launch`. In 2026.12.1, every `--save` and `--continue`
