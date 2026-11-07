@@ -15,6 +15,9 @@ decisions the game shows. `fabricate_targets` rows name the task version the
 bridge evaluated, and a plain `ck3agent launch` waits for the main menu and
 says when the game does not reach it. The surface is still thirteen tools.
 
+* **CI: the macOS platform-layer job runs on `macos-15`.** GitHub retired the `macos-14` image on
+  2026-11-07 ("The configuration 'macos-14-arm64-us-default' is not supported"), which cancelled the whole CI run
+  before the release build; the job is not required and keeps `continue-on-error`.
 * **`query_war_stance` reports the queried side's stance.** In the 2026.12.2
   smoke, Charles (12015), war 13's primary attacker with occupation 8 and a
   won siege, read `is_attacker: false, stance: defender_defensive`, and
