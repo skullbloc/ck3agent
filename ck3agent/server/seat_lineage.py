@@ -14,7 +14,8 @@ title's current holder, with a skip-held-heir redirect). The driver's observer
 client cannot claim on a seat's behalf. So the step runs HERE, in the seat's
 server, at the top of every `observe` (the seat's cycle entry), and does three
 things: it WITNESSES a handoff the bridge made (a row, source `bridge_handoff`),
-it makes the rebind EXPLICITLY when the bridge could not (`set_controlled_character`
+it writes a `bound` row at the first step that holds a ruler (2026.12.4: a
+seat whose ruler never dies is witnessed, not absent), it makes the rebind EXPLICITLY when the bridge could not (`set_controlled_character`
 on the title's current holder, source `explicit_control`), and it ENDS the seat
 `lost` when the title has no holder. Every row goes to the sink
 `CK3_SEAT_LINEAGE_OUT` names; the driver lifts the sinks into the bundle's
@@ -40,7 +41,17 @@ LINEAGE_OUT_ENV = "CK3_SEAT_LINEAGE_OUT"
 #: K's registered title (§7.5 "the king's seat follows K's registered title").
 #: Absent for a duke: its primary title is read while it lives.
 LINEAGE_TITLE_ENV = "CK3_SEAT_LINEAGE_TITLE_ID"
+#: The seat's session id, written into every row as `seat_session_id`. THE
+#: spelling: mcp_server reads it here, `scripts/dry_cell.py` and
+#: `scripts/agent_launcher.py` set it, and `ck3agent run` (cli.SESSION_ID_ENV,
+#: the shipped mirror) sets it; test_the_runs_env_spellings_are_the_servers and
+#: scripts/test_dry_cell.py check the mirrors.
+SESSION_ID_ENV = "CK3_SESSION_ID"
 
+#: The first step that holds a ruler (2026.12.4, cell0 gap 2): the seat's
+#: opening witness. Without it a seat whose ruler never dies wrote no row, so its
+#: sink never existed and the bundle read it `unwitnessed` (cell0: n_at_end 0).
+KIND_BOUND = "bound"
 KIND_REBIND = "rebind"
 KIND_LOST = "lost"
 KIND_UNBOUND = "seat_unbound"
@@ -214,6 +225,45 @@ def registered_title_from_env(environ: Optional[dict] = None) -> Optional[int]:
     return v if v > 0 else None
 
 
+def prior_from_sink(path: Optional[str]) -> Optional[Prior]:
+    """The seat's Prior as its sink left it, or None when the sink holds no row.
+
+    2026.12.4 (L23 witness r2 item 1): a cell's `ck3agent run` resumes a seat in
+    a NEW claude, so a new server whose in-memory Prior starts at None. Seeded
+    from the sink, the resumed server knows the seat's lineage: the last
+    `bound`/`rebind` row's ruler and title (a dead original is not the ruler
+    any more), an ended seat (`lost`, `seat_unbound`) stays ended, and the
+    first step writes no second `bound` row."""
+    if not path:
+        return None
+    rows: list = []
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(r, dict):
+                    rows.append(r)
+    except OSError:
+        return None
+    if not rows:
+        return None
+    prior = Prior(ruler=0, title_id=None, rows=rows)
+    for r in rows:
+        k = r.get("kind")
+        if k in (KIND_BOUND, KIND_REBIND):
+            prior.ruler = _i(r.get("new_id"))
+            prior.title_id = r.get("title_id") if isinstance(r.get("title_id"), int) else prior.title_id
+            prior.pending_cycles = 0
+        elif k in (KIND_LOST, KIND_UNBOUND):
+            prior.ended = True
+        elif k == KIND_PENDING:
+            prior.pending_cycles += 1
+    return prior
+
+
 def append_row(path: str, row: dict) -> bool:
     try:
         with open(os.path.expanduser(path), "a", encoding="utf-8") as fh:
@@ -257,9 +307,16 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
             if not ok:
                 d = Decision(KIND_UNBOUND, d.old_id, d.bind_target, d.title_id, SOURCE_EXPLICIT,
                              f"{R_BIND_REFUSED}:{(res or {}).get('reason') if isinstance(res, dict) else 'no_reply'}")
-        if prior is None:
+        if prior is None or (prior.ruler == 0 and p > 0 and not prior.ended and not prior.rows):
+            # First sighting (or the first step that finds a ruler after steps
+            # that held none): the `bound` row opens the seat's sink, so a seat
+            # whose ruler lives to the horizon is witnessed `bound`, not absent.
             if p > 0:
                 prior = Prior(ruler=p, title_id=d.refresh_title)
+                rowd = Decision(KIND_BOUND, 0, p, d.refresh_title).row(
+                    seat_session_id=seat_session_id, game_date=date, tick=tick)
+                append_row(sink, rowd)
+                prior.rows.append(rowd)
             return prior if prior is not None else Prior(ruler=0, title_id=None)
         if d.kind is not None:
             rowd = d.row(seat_session_id=seat_session_id, game_date=date, tick=tick)

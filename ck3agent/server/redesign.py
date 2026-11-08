@@ -328,6 +328,12 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # (CK3_EPISODE_HORIZON_END) is refused; the harness ends the seat.
     "horizon_reached":           {"class": "timing",         "severity": "blocked", "retryable": False},
     "episode_horizon_unreadable": {"class": "bridge",        "severity": "invalid", "retryable": False},
+    # 2026.12.4: CK3_EPISODE_HORIZON_START makes the wait a cell wait, and then
+    # the cadence and the horizon end are required (cycle_cadence.cell_schedule).
+    "cell_schedule_unreadable":  {"class": "bridge",         "severity": "invalid", "retryable": False},
+    # 2026.12.4: in a cell (CK3_EPISODE_HORIZON_START set) the speed is the
+    # registered condition the runner established; session(speed) is refused.
+    "speed_registered":          {"class": "pause",          "severity": "invalid", "retryable": False, "is_known_limitation": True},
     # lane l5 (F8): the war intents (make_peace, call_ally, join_war) and the
     # game's two refusals of a directly sent interaction (ai_eval_hook.cpp
     # execute_tls_pipeline_dispatch): CTX_VALIDATE said no, or the recipient's
@@ -783,6 +789,8 @@ GATE_WHY: dict[str, str] = {
     "cycle_not_reached": "the clock did not cover the asked game-days within the bounded waits; ask again for the remaining days",
     "horizon_reached": "the game date is at or past the episode's registered horizon; no further wait is made and the harness ends the seat",
     "episode_horizon_unreadable": "CK3_EPISODE_HORIZON_END is set to something that is not a game date; nothing was waited",
+    "cell_schedule_unreadable": "CK3_EPISODE_HORIZON_START is set, and the cycle cadence or the horizon end it needs is missing or unreadable; nothing was waited",
+    "speed_registered": "in an experiment cell the game speed is the registered condition, set by the harness before the seats start; no seat may change it",
     "unmapped_refusal": "the bridge refused with a code this server does not map; raw_reason carries it",
     "owned_by_other": "another control session already holds that character",
     "last_claim_of_control_session": "this is the seat's last character and releasing it is refused",
@@ -8520,6 +8528,12 @@ async def _session_clock_write(gw, action: str) -> dict[str, Any]:
     return envelope("session", verdict="applied", result={"paused": want_paused, "settled": True},
                     game=g, bridge_health=gw.health)
 
+#: Seconds session(speed) re-reads get_tick_info for the written speed before
+#: it calls the write pending. The cell runner's read-back mirrors it
+#: (ck3bench/runner/cell.py SPEED_READBACK_S; a test checks the mirror).
+SPEED_SETTLE_S = 3.0
+
+
 async def _session_speed_write(gw, speed: int) -> dict:
     """session(speed): write, then read the speed back, like pause/unpause (L14
     FF2 M-5). The bridge stores the speed synchronously (clock_write ->
@@ -8536,7 +8550,7 @@ async def _session_speed_write(gw, speed: int) -> dict:
         return envelope("session", ok=False, verdict="rejected", game=gw.game(),
                         result={"raw": res}, blocked=write_blocked(refused, raw=res),
                         bridge_health=gw.health)
-    ti = await _settle_tick(gw, lambda t: t.get("game_speed") == speed, 3.0)
+    ti = await _settle_tick(gw, lambda t: t.get("game_speed") == speed, SPEED_SETTLE_S)
     g = _game_from_tick(gw, ti)
     if ti.get("game_speed") != speed:
         return envelope("session", verdict="pending", game=g,
@@ -8892,6 +8906,17 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                             "the seat may still hold the character. Call "
                             "session(action='whoami') before assuming it is free."],
                         game=gw.game(), bridge_health=gw.health)
+    if action == "speed" and _cc.in_cell():
+        # 2026.12.4 (L23 witness item 3): in an experiment cell the game speed
+        # is a registered condition (v3 §7.3), written and read back by the
+        # cell's runner before any seat boots; the seats share one clock, so a
+        # seat that re-speeds it changes the condition for every seat. Refused,
+        # nothing written.
+        return envelope("session", ok=False, game=gw.game(), bridge_health=gw.health,
+                        blocked=why_blocked("speed_registered",
+                                            summary=("the game speed is the experiment's registered "
+                                                     "condition and no seat may change it; nothing "
+                                                     "was written")))
     if action == "speed":
         # The bridge clamps every speed write to 1..SPEED_MAX (game_set_speed,
         # event_handler.cpp). This mirrors it so the reply says what was set, and
@@ -8950,6 +8975,16 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                              "horizon; no further wait is made. Pause and report "
                                              "(session(action='pause'))."),
                                     measured={"game_date": now.get("date")}))
+        # 2026.12.4 (PLAN §P decision 1): a CELL seat's wait returns at the next
+        # cycle boundary, capped at the horizon; `seconds` and `game_days` are
+        # recorded, never the target. Absent HORIZON_START_ENV: the published wait.
+        sched, sched_err = _cc.cell_schedule()
+        if sched_err:
+            return envelope("session", ok=False, game=gw.game(), bridge_health=gw.health,
+                            blocked=why_blocked(_cc.R_CELL_SCHEDULE_UNREADABLE, summary=sched_err))
+        if sched is not None:
+            return await _session_wait_cell(gw, sched, requested_seconds=seconds,
+                                            requested_game_days=game_days)
         try:
             days = int(game_days)
         except (TypeError, ValueError):
@@ -9215,6 +9250,128 @@ async def _session_wait_alarm(gw, days: int, secs: int, cap_days):
                             verify_with="session(action='health') paused"),
                         bridge_health=gw.health), None
     return _alarm_wait_not_reached(gw, res, g), None
+
+
+async def _session_wait_cell(gw, sched, *, requested_seconds, requested_game_days):
+    """A cell seat's wait (2026.12.4): let the shared clock run to the next
+    cycle boundary of the cell's schedule (cycle_cadence.CellSchedule), capped
+    at the horizon end, on the bridge's pause alarm.
+
+    FREE RUNNING (owner ruling, PLAN §P): the clock is not held for anyone. The
+    alarm is one per game (pause_alarm.h) and every seat of the cell arms the
+    SAME boundary, so N seats waiting together arm one target and all return
+    when it fires. The wait ends when the game date is at or past the target,
+    whoever's arm got it there: a seat that re-armed the next boundary before
+    this one polled `fired` does not make this wait sleep through a cycle. No
+    closing pause is written on any end: a pause would clear the alarm another
+    seat's wait stands on, and the alarm itself pauses the game at the boundary.
+
+    The reply: `stopped` "cycle_end" or "horizon" (`horizon_reached: true`, the
+    stop `ck3agent run` acts on), `game_days_advanced`, `cycle_index` (the
+    schedule's, the same for every seat), `requested_seconds` and
+    `requested_game_days` as asked. Neither the cadence nor the target is a
+    number the seat is told beforehand."""
+    try:
+        req_s = int(requested_seconds)
+    except (TypeError, ValueError):
+        req_s = requested_seconds if isinstance(requested_seconds, (str, int, float)) else None
+    before = await _settle_pause(gw, None)
+    start_date = before.get("game_date")
+    start_ord = _cc.ordinal(start_date)
+    if start_ord is None:
+        return envelope("session", ok=False, game=_game_from_tick(gw, before), bridge_health=gw.health,
+                        blocked=why_blocked(_cc.R_HORIZON_UNREADABLE,
+                                            summary=(f"the game date {start_date!r} could not be read "
+                                                     "against the cell's schedule; nothing was waited")))
+    target_ord = sched.next_boundary(start_ord)
+    target = _cc.date_from_ordinal(target_ord)
+    base = {"wait_mode": "cycle", "start_date": start_date, "cycle_start_date": start_date,
+            "requested_seconds": req_s, "requested_game_days": requested_game_days,
+            "cap_s": WAIT_CAP_S}
+    calls = 1
+    reply = await gw.write("unpause_game", {"pause_at": target})
+    refused = reply_refusal(reply)
+    if refused:
+        return envelope("session", ok=False, verdict="rejected", game=_game_from_tick(gw, before),
+                        result={**base, "alarm": {"state": "refused"}, "game_days_advanced": 0,
+                                "calls": calls},
+                        blocked=write_blocked(refused, raw=reply,
+                                              summary=f"the bridge refused the cycle's pause alarm ({refused}); "
+                                                      "nothing was waited"),
+                        bridge_health=gw.health)
+    budget = float(WAIT_CAP_S) * _cc.MAX_WAIT_CALLS
+    elapsed, still_s = 0.0, 0.0
+    last_ord = start_ord
+    stopped = _cc.STOP_MAX_CALLS
+    alarm: dict = dict(reply.get("pause_alarm") or {}) if isinstance(reply, dict) else {}
+    ti: dict = before
+    while elapsed < budget:
+        await _SLEEP(_cc.ALARM_POLL_S)
+        elapsed += _cc.ALARM_POLL_S
+        ti = await _fresh_tick(gw)
+        al = ti.get("pause_alarm")
+        alarm = dict(al) if isinstance(al, dict) else {"state": None}
+        o = _cc.ordinal(ti.get("game_date"))
+        if o is not None and o >= target_ord:
+            stopped = _cc.STOP_HORIZON if target_ord >= sched.end else _cc.STOP_CYCLE_END
+            break
+        if alarm.get("state") != "armed" or ti.get("paused") is True:
+            # Cleared (a pause or a bare unpause someone wrote), lost (a bridge
+            # restart), fired at an earlier target, or an engine pause: arm this
+            # cycle's boundary again and run on. Bounded like every loop here.
+            if calls >= _cc.MAX_WAIT_CALLS:
+                break
+            calls += 1
+            r2 = await gw.write("unpause_game", {"pause_at": target})
+            if reply_refusal(r2):
+                stopped = _cc.STOP_ALARM_LOST
+                break
+            continue
+        if o is not None and o != last_ord:
+            last_ord, still_s = o, 0.0
+        else:
+            still_s += _cc.ALARM_POLL_S
+            if still_s >= _cc.ALARM_NO_PROGRESS_S:
+                stopped = _cc.STOP_NO_PROGRESS
+                break
+    after = await _settle_pause(gw, None)
+    end_date = after.get("game_date")
+    end_ord = _cc.ordinal(end_date)
+    # Three-valued (L23 witness item 6): an end date that cannot be read is an
+    # unknown advance and an unknown horizon, never 0 days and never "not
+    # reached". A wait whose loop READ the date at or past the horizon end
+    # stopped "horizon", and that reading stands even if the closing read fails.
+    advanced = (end_ord - start_ord) if end_ord is not None else None
+    if stopped == _cc.STOP_HORIZON:
+        horizon_reached: Optional[bool] = True
+    else:
+        horizon_reached = None if end_ord is None else end_ord >= sched.end
+    reached = stopped in (_cc.STOP_CYCLE_END, _cc.STOP_HORIZON)
+    res = {**base, "waited_s": round(elapsed), "end_date": end_date,
+           "clock_ran": bool(start_date) and start_date != end_date, "paused": after.get("paused"),
+           "alarm": {"state": alarm.get("state"), "paused_at": alarm.get("paused_at")},
+           "game_days_advanced": advanced, "calls": calls, "waited_s_total": round(elapsed, 1),
+           "stopped": stopped,
+           "cycle_index": sched.cycle_index(end_ord) if end_ord is not None else None,
+           "horizon_reached": horizon_reached}
+    g = _game_from_tick(gw, after)
+    if reached:
+        return envelope("session", verdict="applied", result=res, game=g, bridge_health=gw.health)
+    return _cell_wait_not_reached(gw, res, g)
+
+
+def _cell_wait_not_reached(gw, res: dict, g: dict) -> dict:
+    """The cell wait that stopped before its boundary (no write here: the clock's
+    shortfall is not a refusal of a write; as `_alarm_wait_not_reached`)."""
+    return envelope("session", ok=False, verdict="rejected", result=res, game=g,
+                    blocked=why_blocked(
+                        "cycle_not_reached",
+                        summary=(f"the clock stopped before the end of this cycle ({res['stopped']}, "
+                                 f"{res['waited_s_total']:.0f} s). session(action='health'), "
+                                 "then wait again."),
+                        measured={"game_days_advanced": res["game_days_advanced"],
+                                  "calls": res["calls"]}),
+                    bridge_health=gw.health)
 
 
 def _alarm_wait_not_reached(gw, res: dict, g: dict) -> dict:

@@ -144,6 +144,7 @@ NOT_THE_GAMES = {
     "_session_wait_once": "session wait's unpause/pause pair (v3 §7.2: looped per game-day cycle); the bridge's own clock switch refuses with its codes",
     "_session_speed_write": "session speed; the bridge's own clock switch refuses with its codes",
     "_session_wait_alarm": "session wait's pause-alarm unpause and closing pause (L20-A); the bridge's own clock switch refuses with its codes",
+    "_session_wait_cell": "a cell seat's wait: the pause-alarm unpause at the cycle boundary (2026.12.4); the bridge's own clock switch refuses with its codes",
     "steer_impl": "set_ai_personality is the bridge's own synchronous write; it refuses with its codes",
 }
 

@@ -151,15 +151,16 @@ def _step(gw, prior, sink):
 def test_step_rebinds_explicitly_and_writes_the_row_the_driver_lifts(tmp_path):
     sink = tmp_path / "seat.jsonl"
     gw = _GW(_row(), alive=True, holder=None)
-    prior = _step(gw, None, sink)                      # first sighting
-    assert prior.ruler == 5 and prior.title_id == 9 and not sink.exists()
+    prior = _step(gw, None, sink)                      # first sighting: the `bound` row
+    assert prior.ruler == 5 and prior.title_id == 9
     gw.alive, gw.holder = False, 12
     prior = _step(gw, prior, sink)
     assert gw.writes == [("set_controlled_character", {"character_id": 12, "disable_native_ai": False})]
     rows = [json.loads(ln) for ln in sink.read_text().splitlines()]
-    assert rows[0]["kind"] == "rebind" and rows[0]["old_id"] == 5 and rows[0]["new_id"] == 12
-    assert rows[0]["title_id"] == 9 and rows[0]["game_date"] == "868.03.02"
-    assert rows[0]["seat_session_id"] == "seat-K-5" and rows[0]["source"] == "explicit_control"
+    assert [r["kind"] for r in rows] == ["bound", "rebind"]
+    assert rows[1]["kind"] == "rebind" and rows[1]["old_id"] == 5 and rows[1]["new_id"] == 12
+    assert rows[1]["title_id"] == 9 and rows[1]["game_date"] == "868.03.02"
+    assert rows[1]["seat_session_id"] == "seat-K-5" and rows[1]["source"] == "explicit_control"
     assert prior.ruler == 12 and not prior.ended
 
 
@@ -230,3 +231,120 @@ def test_observe_calls_the_step_only_when_armed(monkeypatch):
     monkeypatch.setenv(sl.LINEAGE_OUT_ENV, "/tmp/never-written.jsonl")
     assert asyncio.run(fn()) == {"ok": True} and calls == ["/tmp/never-written.jsonl"]
     assert state.seat_lineage_prior.ruler == 1
+
+
+def test_a_living_seat_writes_one_bound_row_at_its_first_step_and_nothing_while_held(tmp_path):
+    """cell0 gap 2 (2026.12.4): `step` wrote no row while the ruler was held, so a
+    seat whose ruler never died had no sink and read `unwitnessed` (n_at_end 0).
+    The first step that holds a ruler writes ONE `bound` row; later held steps
+    write nothing more."""
+    sink = tmp_path / "seat.jsonl"
+    gw = _GW(_row(), alive=True, holder=None)
+    prior = _step(gw, None, sink)
+    for _ in range(3):
+        prior = _step(gw, prior, sink)
+    rows = [json.loads(ln) for ln in sink.read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["kind"] == sl.KIND_BOUND == "bound"
+    assert rows[0]["old_id"] == 0 and rows[0]["new_id"] == 5 and rows[0]["title_id"] == 9
+    assert rows[0]["seat_session_id"] == "seat-K-5" and rows[0]["game_date"] == "868.03.02"
+    assert prior.ruler == 5 and not prior.ended
+
+
+def test_a_step_that_finds_no_ruler_writes_no_bound_row(tmp_path):
+    sink = tmp_path / "seat.jsonl"
+    gw = _GW(_row(primary_character_id=0), alive=True, holder=None)
+    prior = _step(gw, None, sink)
+    assert prior.ruler == 0 and not sink.exists()
+
+
+def test_a_resumed_seats_server_seeds_its_lineage_from_the_sink(monkeypatch, tmp_path):
+    """L23 witness r2 item 1: a cell's resumed claude starts a NEW server whose
+    in-memory Prior was None, so it re-learned the seat from scratch (a second
+    `bound` row, or the dead original). Its first observe now seeds the Prior
+    from the sink: the rebind's ruler and title. Red on b6998ec5: prior None."""
+    import mcp_server
+    seen = []
+
+    async def fake_step(gw, prior, **kw):
+        seen.append(prior)
+        return prior or sl.Prior(0, None)
+
+    async def fake_observe_impl(gw, character_id=0, depth="brief"):
+        return {"ok": True}
+
+    async def fake_gateway():
+        return object()
+
+    async def fake_ensure(state, name):
+        return None
+
+    sink = tmp_path / "seat-K-5.seat_lineage.jsonl"
+    sink.write_text(json.dumps({"kind": "bound", "old_id": 0, "new_id": 5, "title_id": 9}) + "\n"
+                    + json.dumps({"kind": "rebind", "old_id": 5, "new_id": 12, "title_id": 9}) + "\n")
+    state = mcp_server.BridgeState()
+    monkeypatch.setattr(mcp_server, "_get_state", lambda: state)
+    monkeypatch.setattr(mcp_server.seat_lineage, "step", fake_step)
+    monkeypatch.setattr(mcp_server.redesign, "observe_impl", fake_observe_impl)
+    monkeypatch.setattr(mcp_server, "_gateway_now", fake_gateway)
+    monkeypatch.setattr(mcp_server, "_ensure_connected", fake_ensure)
+    monkeypatch.setenv(sl.LINEAGE_OUT_ENV, str(sink))
+    fn = getattr(mcp_server.observe, "fn", mcp_server.observe)
+    asyncio.run(fn())
+    p = seen[0]
+    assert getattr(p, "ruler", None) == 12 and getattr(p, "title_id", None) == 9
+    assert p.ended is False and len(p.rows) == 2
+
+
+def test_a_seeded_seat_holding_its_heir_writes_no_second_bound_row(tmp_path):
+    """The seeded Prior and the carried ruler (cli carries 12): the step holds,
+    writes nothing; an ended sink stays ended."""
+    sink = tmp_path / "seat.jsonl"
+    sink.write_text(json.dumps({"kind": "bound", "old_id": 0, "new_id": 5, "title_id": 9}) + "\n"
+                    + json.dumps({"kind": "rebind", "old_id": 5, "new_id": 12, "title_id": 9}) + "\n")
+    prior = sl.prior_from_sink(str(sink))
+    gw = _GW(_row(primary_character_id=12, claimed_character_ids=[12]), alive=True, holder=None)
+    prior = _step(gw, prior, sink)
+    assert len(sink.read_text().splitlines()) == 2 and prior.ruler == 12 and gw.writes == []
+    ended = tmp_path / "ended.jsonl"
+    ended.write_text(json.dumps({"kind": "lost", "old_id": 5, "new_id": 0}) + "\n")
+    assert sl.prior_from_sink(str(ended)).ended is True
+    assert sl.prior_from_sink(str(tmp_path / "absent.jsonl")) is None
+
+
+def test_a_resumed_seat_holding_its_heir_writes_exactly_one_bound_row(monkeypatch, tmp_path):
+    """L23 witness r3 item 2, red by ASSERTION on a tree without the seeding:
+    the seat's sink already holds its `bound` row and the rebind to the heir;
+    a resumed server's observe runs the REAL step on a bridge where the seat
+    holds the living heir. Seeded from the sink it writes nothing; unseeded
+    (Prior None) it wrote a second `bound` row."""
+    import mcp_server
+
+    async def fake_observe_impl(gw, character_id=0, depth="brief"):
+        return {"ok": True}
+
+    gw = _GW(_row(primary_character_id=12, claimed_character_ids=[12]), alive=True, holder=None)
+
+    async def fake_gateway():
+        return gw
+
+    async def fake_ensure(state, name):
+        return None
+
+    sink = tmp_path / "seat-K-5.seat_lineage.jsonl"
+    sink.write_text(json.dumps({"kind": "bound", "old_id": 0, "new_id": 5, "title_id": 9}) + "\n"
+                    + json.dumps({"kind": "rebind", "old_id": 5, "new_id": 12, "title_id": 9}) + "\n")
+    state = mcp_server.BridgeState()
+    monkeypatch.setattr(mcp_server, "_get_state", lambda: state)
+    monkeypatch.setattr(mcp_server.redesign, "observe_impl", fake_observe_impl)
+    monkeypatch.setattr(mcp_server.redesign, "own_session_id", lambda g: "s1")
+    monkeypatch.setattr(mcp_server.redesign, "own_session_row",
+                        lambda bs, sid: next((r for r in bs.get("sessions", []) if r["session_id"] == sid), None))
+    monkeypatch.setattr(mcp_server, "_gateway_now", fake_gateway)
+    monkeypatch.setattr(mcp_server, "_ensure_connected", fake_ensure)
+    monkeypatch.setenv(sl.LINEAGE_OUT_ENV, str(sink))
+    fn = getattr(mcp_server.observe, "fn", mcp_server.observe)
+    asyncio.run(fn())
+    kinds = [json.loads(ln)["kind"] for ln in sink.read_text().splitlines()]
+    assert kinds.count("bound") == 1 and kinds == ["bound", "rebind"], kinds
+    assert gw.writes == []

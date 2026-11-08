@@ -131,9 +131,9 @@ void pipeline_init_from_env() {
 //
 // Step 3 comes before step 4 because the reader thread serves an
 // is_game_state_query read inline while paused and refuses it while running,
-// whatever action_is_readonly says: search_characters,
-// list_pending_interactions and `query` are reads that the
-// readonly table does not list, and as "mutations" they used to publish
+// whatever action_is_readonly says: list_pending_interactions and
+// `query` are reads that the readonly table does not list (search_characters
+// was a third until 2026.12.4 listed it), and as "mutations" they used to publish
 // TICK_WRITE, which told the gateway to UNPAUSE for a read the reader then
 // refused (cleanup 2026.11).
 //
