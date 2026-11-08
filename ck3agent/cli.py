@@ -1025,6 +1025,174 @@ class CycleCounter:
                 "wait_groups": self.groups, "ended_on": self.calls[-1] if self.calls else None}
 
 
+#: The registered horizon start and end and a seat's session id, as an
+#: experiment harness sets them for a seat (the server's spellings:
+#: ck3agent/server/cycle_cadence.py HORIZON_START_ENV and HORIZON_END_ENV,
+#: ck3agent/server/seat_lineage.py SESSION_ID_ENV).
+#: test_the_runs_env_spellings_are_the_servers checks each mirror.
+HORIZON_START_ENV = "CK3_EPISODE_HORIZON_START"
+HORIZON_END_ENV = "CK3_EPISODE_HORIZON_END"
+SESSION_ID_ENV = "CK3_SESSION_ID"
+
+#: 2026.12.4 (owner ruling: free running; the run brings a seat back). Under an
+#: experiment cell (HORIZON_START_ENV set) a seat whose claude ends before the
+#: run stops it (an `end_turn` after a cycle summary, the max-turns limit, any
+#: exit that is not the run's own stop) is resumed: `claude --resume
+#: <session_id>` with the same MCP config and flags and this one text, at most
+#: `--continuations` times. Each resume is a manifest row; past the cap the run
+#: exits EXIT_CONTINUATIONS_EXHAUSTED and says so. Outside a cell nothing resumes.
+CONTINUATION_TEXT = ("The game is still running and the run has not stopped you. "
+                     "Continue: observe, decide, act, wait.")
+DEFAULT_CONTINUATIONS = 40
+EXIT_CONTINUATIONS_EXHAUSTED = 3
+STOP_CONTINUATIONS_EXHAUSTED = "continuations_exhausted"
+#: The other exit-3 stop: claude ended and its transcript names no session to resume.
+STOP_CONTINUATION_WITHOUT_SESSION = "continuation_without_session"
+#: The declared rulers (mcp_server.AGENT_CHARACTER_ENV) and the seat's lineage
+#: sink (seat_lineage.LINEAGE_OUT_ENV), mirrors checked by a test, and the sink
+#: row kinds a carry reads (seat_lineage KIND_*).
+AGENT_CHARACTER_ENV = "CK3_AGENT_CHARACTER_ID"
+LINEAGE_OUT_ENV = "CK3_SEAT_LINEAGE_OUT"
+LINEAGE_RULER_KINDS = ("bound", "rebind")
+LINEAGE_END_KINDS = ("lost", "seat_unbound")
+
+
+def _id_list(v) -> list[int] | None:
+    if not isinstance(v, list):
+        return None
+    out = [int(x) for x in v if isinstance(x, int) and not isinstance(x, bool) and x > 0]
+    return out if len(out) == len(v) else None
+
+
+def sink_ruler(path: str | None) -> list[int] | None:
+    """The seat's ruler by its lineage sink: the last bound/rebind row's new_id,
+    [] when a later row ended the seat, None when the sink says nothing."""
+    if not path:
+        return None
+    ruler = None
+    with contextlib.suppress(OSError):
+        with open(os.path.expanduser(path), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(r, dict):
+                    continue
+                if r.get("kind") in LINEAGE_RULER_KINDS and isinstance(r.get("new_id"), int) and r["new_id"] > 0:
+                    ruler = [r["new_id"]]
+                elif r.get("kind") in LINEAGE_END_KINDS:
+                    ruler = []
+    return ruler
+
+
+def carried_rulers(release: dict | None, resumed: dict | None, sink: str | None) -> dict:
+    """{"rulers": ids or None, "source"}: what a resumed claude's server binds.
+    None keeps the environment's declaration (nothing recorded said otherwise)."""
+    for src, rec in (("release_record", release), ("resumed_session", resumed)):
+        ids = _id_list((rec or {}).get("claims"))
+        if ids is not None and (ids or src == "release_record" and not (rec or {}).get("error")):
+            return {"rulers": ids, "source": src}
+    ids = sink_ruler(sink)
+    if ids is not None:
+        return {"rulers": ids, "source": "lineage_sink"}
+    return {"rulers": None, "source": "declared_unchanged"}
+
+
+def in_cell(environ=None) -> bool:
+    """An experiment cell's seat: the harness set the horizon start."""
+    env = os.environ if environ is None else environ
+    return bool(str(env.get(HORIZON_START_ENV) or "").strip())
+
+
+def last_claude_session(path: Path) -> tuple[str | None, str | None, str | None]:
+    """(session_id, result subtype, result stop_reason) of the transcript's last
+    init/result events: the session a continuation resumes, and how it ended."""
+    sid = sub = why = None
+    with contextlib.suppress(OSError):
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(ev, dict):
+                    continue
+                if ev.get("type") == "system" and ev.get("subtype") == "init":
+                    sid = ev.get("session_id") or sid
+                    sub = why = None
+                elif ev.get("type") == "result":
+                    sid = ev.get("session_id") or sid
+                    sub, why = ev.get("subtype"), ev.get("stop_reason")
+    return sid, sub, why
+
+
+def resume_argv(argv: list[str], prompt: str, session_id: str) -> list[str]:
+    """The run's own claude argv with the continuation text for its prompt and
+    `--resume <session_id>`: the same MCP config, model, turn limit and flags."""
+    out = list(argv)
+    i = out.index(prompt)
+    out[i] = CONTINUATION_TEXT
+    return out[:i + 1] + ["--resume", session_id] + out[i + 1:]
+
+
+class HorizonSeen:
+    """2026.12.4 (PLAN §P decision 4): the server's own word that the episode's
+    horizon is reached, read off the transcript as the drain copies it. A
+    `session` reply of this run's ck3 server whose result says
+    `horizon_reached: true` (a cell wait that ended at the horizon) or whose
+    refusal is `horizon_reached` (a wait asked at or past it) sets `reached`;
+    `_Watch` then stops the run with stop_reason "horizon". Nothing else is
+    read: a seat's narration saying "horizon" is not the server's reply."""
+
+    PREFIX = f"mcp__{MCP_SERVER_NAME}__session"
+
+    def __init__(self) -> None:
+        self._ids: set[str] = set()
+        self.reached = False
+        self.game_date: str | None = None
+
+    def feed(self, line) -> None:
+        if self.reached:
+            return
+        try:
+            ev = json.loads(line)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(ev, dict):
+            return
+        for b in (ev.get("message") or {}).get("content") or []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use" and b.get("name") == self.PREFIX:
+                self._ids.add(b.get("id"))
+            elif b.get("type") == "tool_result" and b.get("tool_use_id") in self._ids:
+                env = _reply_json(b.get("content"))
+                if env is None:
+                    continue
+                res = env.get("result") if isinstance(env.get("result"), dict) else {}
+                blocked = env.get("blocked") if isinstance(env.get("blocked"), dict) else {}
+                if res.get("horizon_reached") is True or blocked.get("gate") == "horizon_reached":
+                    self.reached = True
+                    self.game_date = (env.get("game") or {}).get("date") if isinstance(
+                        env.get("game"), dict) else None
+                    return
+
+
+def _reply_json(content) -> dict | None:
+    """A tool_result's JSON object: `content` is a string or a list of text blocks."""
+    texts = [content] if isinstance(content, str) else [
+        x.get("text") for x in content or [] if isinstance(x, dict)]
+    for t in texts:
+        try:
+            d = json.loads(t or "")
+        except (ValueError, TypeError):
+            continue
+        if isinstance(d, dict):
+            return d
+    return None
+
+
 def count_cycles(lines) -> dict:
     """The run's cycles under CYCLE_DEFINITION, re-read from its stream-json
     transcript: a reader's recount (the manifest's `cycles_recounted`), not the
@@ -1056,12 +1224,20 @@ def summarize_stream(lines) -> dict:
                      permission_mode=ev.get("permissionMode"),
                      mcp_servers=ev.get("mcp_servers"), init_tools=ev.get("tools"))
         elif ev.get("type") == "result":
+            n = m.get("result_events", 0)
+            prev = (m.get("total_cost_usd"), m.get("num_turns")) if n else (None, None)
             m.update(result=ev.get("subtype"), is_error=ev.get("is_error"),
                      num_turns=ev.get("num_turns"), total_cost_usd=ev.get("total_cost_usd"),
                      usage=ev.get("usage"), model_usage=ev.get("modelUsage"),
                      duration_ms=ev.get("duration_ms"))
+            # A resumed run (a cell's continuations) writes one result event per
+            # claude process, each counting its own process: the run's are the sums.
+            for k, old in zip(("total_cost_usd", "num_turns"), prev):
+                if isinstance(old, (int, float)) and isinstance(m.get(k), (int, float)):
+                    m[k] = old + m[k]
             m["session_id"] = m.get("session_id") or ev.get("session_id")
             m["result_event"] = True
+            m["result_events"] = n + 1
     return m
 
 
@@ -1112,8 +1288,10 @@ def _stop_claude(proc, interrupted: bool = False) -> str:
 
 
 class _Watch(threading.Thread):
-    """Stops a run at its cycle count, a game date or after N wall seconds:
-    interrupt claude, pause, wait.
+    """Stops a run at its cycle count, a game date, after N wall seconds or at
+    the server's horizon reply: interrupt claude, pause, wait. Under a cell the
+    run swaps in a resumed claude (`proc`, under `lock`) and this one watch
+    stops whichever is running.
 
     The cycle count is the harness's, not the prompt's (L18 round 2, owner
     ruling): `counter` is the CycleCounter the transcript drain feeds, and the
@@ -1125,16 +1303,21 @@ class _Watch(threading.Thread):
     POLL = 15.0
 
     def __init__(self, proc, sock: str, until, wall: int | None, link: br.Link | None = None,
-                 cycles: int = 0, counter: "CycleCounter | None" = None):
+                 cycles: int = 0, counter: "CycleCounter | None" = None,
+                 horizon: "HorizonSeen | None" = None):
         super().__init__(daemon=True)
         self.proc, self.sock, self.until = proc, sock, until
-        self.cycles, self.counter = cycles, counter
+        self.cycles, self.counter, self.horizon = cycles, counter, horizon
         self._own = link is None
         self.link = link or br.Link(sock, mode="control")
         self.deadline = time.monotonic() + wall if wall else None
         self.reason: str | None = None
         self.how: str | None = None
         self.done = threading.Event()
+        # A cell's continuation swaps `proc` under this lock; a stop sets
+        # `reason` under it, so a stop never acts on a claude already replaced
+        # and a continuation never starts after a stop.
+        self.lock = threading.Lock()
 
     def run(self) -> None:
         try:
@@ -1146,6 +1329,8 @@ class _Watch(threading.Thread):
     def _poll(self) -> None:
         next_date = 0.0
         while not self.done.wait(1.0):
+            if self.horizon is not None and self.horizon.reached:
+                return self._halt("horizon")
             if self.cycles and self.counter is not None and self.counter.closed >= self.cycles:
                 return self._halt("cycles")
             if self.deadline and time.monotonic() >= self.deadline:
@@ -1162,22 +1347,25 @@ class _Watch(threading.Thread):
     def _halt(self, reason: str) -> None:   # not _stop: Thread.join() calls Thread._stop on 3.11/3.12
         # The count the stop acted on is the count the manifest records: freeze
         # it before claude can write another call (L18 round 3).
-        self.reason = reason
+        with self.lock:
+            self.reason = reason
+            proc = self.proc
         if self.counter is not None:
             self.counter.freeze()
         # SIGINT first: claude stops issuing tool calls, so the pause below holds.
-        if self.proc.poll() is None:
-            self.proc.send_signal(signal.SIGINT)
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGINT)
         self.link.call("pause_game")
-        self.how = _stop_claude(self.proc, interrupted=True)
+        self.how = _stop_claude(proc, interrupted=True)
 
 
 class _Drain(threading.Thread):
     """claude's stdout to the transcript (and the terminal), line by line."""
 
-    def __init__(self, src, fh, echo: bool, counter: "CycleCounter | None" = None):
+    def __init__(self, src, fh, echo: bool, counter: "CycleCounter | None" = None,
+                 horizon: "HorizonSeen | None" = None):
         super().__init__(daemon=True)
-        self.src, self.fh, self.echo, self.counter = src, fh, echo, counter
+        self.src, self.fh, self.echo, self.counter, self.horizon = src, fh, echo, counter, horizon
 
     def run(self) -> None:
         with contextlib.suppress(ValueError, OSError):  # fh closed under us: a grandchild kept the pipe
@@ -1189,6 +1377,8 @@ class _Drain(threading.Thread):
             self.fh.flush()
             if self.counter is not None:
                 self.counter.feed(line)
+            if self.horizon is not None:
+                self.horizon.feed(line)
             if self.echo:
                 try:
                     _echo(line)
@@ -1452,9 +1642,17 @@ def cmd_run(a: argparse.Namespace) -> int:
         ("tools", ".tools.json"), ("actions", ".actions.jsonl"), ("mcp", ".mcp.json"),
         ("release", ".release.json"), ("session", ".session.json"))}
     paths["prompt"].write_text(prompt, encoding="utf-8")
+    # 2026.12.4 (cell0 gap 11): the seat's session id, which the server writes
+    # into every lineage row (seat_session_id). A harness's declared id wins;
+    # otherwise the run's own record names it: "run-<stamp>", the stamp every
+    # file of this run carries. The manifest records which.
+    cell = in_cell()
+    seat_sid = os.environ.get(SESSION_ID_ENV) or f"run-{stamp}"
+    seat_sid_source = "environment" if os.environ.get(SESSION_ID_ENV) else "run_stamp"
     srv = {**dict(mcp["mcpServers"][MCP_SERVER_NAME]), **MCP_ALWAYS_LOAD}
     srv["env"] = {**(srv.get("env") or {}), "CK3_TOOL_SURFACE_OUT": str(paths["tools"]),
-                  "CK3_RELEASE_ON_EXIT": str(paths["release"]), "CK3_SESSION_OUT": str(paths["session"])}
+                  "CK3_RELEASE_ON_EXIT": str(paths["release"]), "CK3_SESSION_OUT": str(paths["session"]),
+                  SESSION_ID_ENV: seat_sid}
     _write_json(paths["mcp"], {"mcpServers": {MCP_SERVER_NAME: srv}})
 
     argv = build_claude_argv(claude, prompt, paths["mcp"], a, claude_supports(claude, "--strict-mcp-config"))
@@ -1468,6 +1666,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     env = dict(os.environ, CK3_TOOL_SURFACE_OUT=str(paths["tools"]),
                CK3_SESSION_OUT=str(paths["session"]),
                CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS="0")
+    env[SESSION_ID_ENV] = seat_sid
     action_log = Path(br.action_log_path())
     try:
         log_start = action_log.stat().st_size
@@ -1483,6 +1682,9 @@ def cmd_run(a: argparse.Namespace) -> int:
         "prompt_file": str(paths["prompt"]), "max_turns": a.max_turns,
         "skip_permissions": a.skip_permissions, "until_date": a.until_date,
         "wall_seconds": a.wall_seconds, "argv": ["<prompt>" if x == prompt else x for x in argv],
+        "seat_session_id": seat_sid, "seat_session_id_source": seat_sid_source,
+        "horizon_end": os.environ.get(HORIZON_END_ENV) or None,
+        "cell": cell, "continuations_cap": a.continuations if cell else None, "continuations": [],
         "start_game_date": br.game_date(sock, link),
     }
     link.close()
@@ -1499,6 +1701,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     rc, stop, how = 1, None, None
     proc = watch = drain = None
     counter = CycleCounter()
+    horizon = HorizonSeen()
     gate = _Gate()
     fh = paths["stream"].open("w", encoding="utf-8")
     err = paths["stderr"].open("w", encoding="utf-8")
@@ -1511,13 +1714,58 @@ def cmd_run(a: argparse.Namespace) -> int:
         finally:
             gate.held = False
         gate.release()
-        drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter)
+        drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter, horizon=horizon)
         drain.start()
-        if a.until_date or a.wall_seconds or a.cycles:
+        if a.until_date or a.wall_seconds or a.cycles or os.environ.get(HORIZON_END_ENV) or cell:
             watch = _Watch(proc, sock, a.until_date, a.wall_seconds, link,
-                           cycles=a.cycles, counter=counter)
+                           cycles=a.cycles, counter=counter, horizon=horizon)
             watch.start()
         rc = proc.wait()
+        # Free running (2026.12.4): a cell's seat that ended before the run
+        # stopped it is brought back, never counted as finished.
+        while cell and watch is not None and not horizon.reached:
+            drain.join(10)                      # the transcript whole before it is read
+            sid, sub, why = last_claude_session(paths["stream"])
+            with watch.lock:
+                # Re-read after the drain: a claude that exited before the drain
+                # fed the server's horizon reply is finished, not resumed (r2 item 2).
+                if watch.reason is not None or horizon.reached:
+                    break
+                if len(manifest["continuations"]) >= a.continuations or not sid:
+                    stop = STOP_CONTINUATIONS_EXHAUSTED if sid else STOP_CONTINUATION_WITHOUT_SESSION
+                    break
+                # Only now, with a resume certain, the old server's records are
+                # consumed: on any break above the teardown reads them (L23
+                # witness r3 item 1). The rulers this seat held when its claude
+                # ended, carried to the resumed claude's NEW server, which
+                # otherwise pre-binds the DECLARED id: after a death and a
+                # rebind that is the dead original (r2 item 1). The old server's
+                # release record (what its session held at exit), else the
+                # session we resume to release, else the seat's lineage sink.
+                carry = carried_rulers(*_release_after(paths, sock, link),
+                                       os.environ.get(LINEAGE_OUT_ENV))
+                with contextlib.suppress(OSError):
+                    paths["release"].unlink()   # the next server writes its own
+                if carry["rulers"] is not None:
+                    env[AGENT_CHARACTER_ENV] = ",".join(str(x) for x in carry["rulers"])
+                manifest["continuations"].append(
+                    {"utc": _now_utc(), "game_date": br.game_date(sock, link),
+                     "claude_stop": "exited", "claude_rc": rc, "result": sub,
+                     "result_stop_reason": why, "resumed_session_id": sid,
+                     "carried_rulers": carry["rulers"], "carried_from": carry["source"]})
+                rargv = resume_argv(argv, prompt, sid)
+                gate.held = True
+                try:
+                    proc = subprocess.Popen(rargv, cwd=play, env=env, stdin=subprocess.DEVNULL,
+                                            stdout=subprocess.PIPE, stderr=err, encoding="utf-8",
+                                            errors="replace")
+                finally:
+                    gate.held = False
+                watch.proc = proc
+            gate.release()
+            drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter, horizon=horizon)
+            drain.start()
+            rc = proc.wait()
     except OSError as e:
         con.fail("cannot start claude", str(e))
     except KeyboardInterrupt:
@@ -1536,14 +1784,20 @@ def cmd_run(a: argparse.Namespace) -> int:
                 watch.join(STOP_GRACE + 2 * TERM_GRACE + 20)
                 stop = stop or watch.reason
                 how = watch.how
+            if not stop and horizon.reached:
+                # The server said horizon and claude ended on its own before
+                # the watch's next poll: the run's stop is still the horizon.
+                stop = "horizon"
             if proc:
                 how = how if how and how != "exited" else _stop_claude(proc, interrupted=stop == "interrupted")
             if drain:
                 drain.join(10)
             fh.close()
             err.close()
-            if stop in ("cycles", "until_date", "wall_seconds"):
+            if stop in ("cycles", "until_date", "wall_seconds", "horizon"):
                 rc = 0
+            elif stop in (STOP_CONTINUATIONS_EXHAUSTED, STOP_CONTINUATION_WITHOUT_SESSION):
+                rc = EXIT_CONTINUATIONS_EXHAUSTED
             try:
                 srec = _load_json(paths["session"]) or {}
                 prebind, prebind_wait = srec.get("prebind"), srec.get("prebind_wait")
@@ -1564,7 +1818,12 @@ def cmd_run(a: argparse.Namespace) -> int:
             with paths["stream"].open(encoding="utf-8", errors="replace") as f:
                 manifest["cycles_recounted"] = count_cycles(f)["cycles_completed"]
             # Asked for, and met: one comparison, here, so no reader re-derives it.
-            manifest["cycles_met"] = manifest["cycles_completed"] >= a.cycles
+            # --cycles 0 asks for no count, so there is nothing to meet (null,
+            # never a vacuous true: L23 witness item 2).
+            manifest["cycles_met"] = manifest["cycles_completed"] >= a.cycles if a.cycles else None
+            manifest["horizon_reached"] = horizon.reached
+            if horizon.reached:
+                manifest["horizon_reached_game_date"] = horizon.game_date
             # The cost is Claude Code's own estimate from its result event (list
             # prices; it includes the side model in model_usage), not a bill.
             manifest["total_cost_usd_source"] = ("claude result event (client-side estimate)"
@@ -1581,7 +1840,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 teardown=[{"step": w, "ok": g, "detail": d} for w, g, d in teardown],
                 tool_surface=_load_tool_surface(paths["tools"]),
                 actions=_copy_range(action_log, log_start, paths["actions"]),
-                rulers=_rulers_record(_declared_rulers(os.environ.get("CK3_AGENT_CHARACTER_ID")),
+                rulers=_rulers_record(_declared_rulers(os.environ.get(AGENT_CHARACTER_ENV)),
                                       prebind, release, resumed, br.held_rulers(sock, link),
                                       wait=prebind_wait))
             link.close()
@@ -1612,6 +1871,10 @@ def cmd_run(a: argparse.Namespace) -> int:
                     + (f" (CK3_AGENT_CHARACTER_ID={rl['declared']!r} is not an id list)"
                        if isinstance(rl["declared"], str) else "")
                     + f"; held at stop {rl['held_at_stop'] or 'none'}")
+            if stop in (STOP_CONTINUATIONS_EXHAUSTED, STOP_CONTINUATION_WITHOUT_SESSION):
+                con.fail("seat ended before the horizon",
+                         f"claude ended {len(manifest['continuations'])} time(s) before the run stopped it "
+                         f"and the cap is {a.continuations} (--continuations); stop {stop}")
             con.say(f"run {stamp} ended (code {rc}{', ' + stop if stop else ''}); manifest {paths['manifest']}")
         finally:
             for s, h in old_signals.items():
@@ -1780,6 +2043,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--model", help="claude --model")
     s.add_argument("--until-date", type=parse_date, metavar="Y.M.D", help="stop at this game date")
     s.add_argument("--wall-seconds", type=int, metavar="N", help="stop after N seconds of wall time")
+    s.add_argument("--continuations", type=int, default=DEFAULT_CONTINUATIONS, metavar="N",
+                   help=f"in an experiment cell (CK3_EPISODE_HORIZON_START set), resume a session that "
+                        f"ends before the run stops it at most N times (default {DEFAULT_CONTINUATIONS})")
     s.add_argument("--dangerously-skip-permissions", dest="skip_permissions", action="store_true",
                    help="no allow-list: Claude may run any tool")
     _alias(s, "--yolo", "skip_permissions")

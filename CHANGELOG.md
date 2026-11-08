@@ -3,6 +3,94 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.4 — 2026-11-08
+
+From the first dry experiment cell on 2026.12.3 (three seats, two cycles of 90
+game-days): what an experiment harness needs from the toolkit to run a cell of
+several seats on one game clock. The cell's waits, stops, continuations and
+speed refusal apply only when a harness sets the experiment variables. These
+apply to every session: `search_characters` is read-only; every `ck3agent run`
+sets `CK3_SESSION_ID` in claude's and the server's environment (the declared
+value or `run-<stamp>`), writes the new manifest keys, and sends the run
+prompt's rewritten END paragraph. The `bound` lineage row is written only when
+a lineage sink is set. The surface is still thirteen tools.
+
+* **In an experiment cell, `session(action="wait")` returns at the end of the
+  cycle.** The cell's seats were taught `wait(seconds=60)`, and a seconds wait
+  was not held to the registered cycle (`CK3_CYCLE_GAME_DAYS`), so a seat's
+  cycle lasted however many game-days the clock ran in its seconds. With
+  `CK3_EPISODE_HORIZON_START` set beside the cadence and the horizon end (an
+  experiment harness sets all three), every wait now arms the bridge's pause
+  alarm at the next cycle boundary, the start plus whole cycles, capped at the
+  horizon end, and returns when the game date reaches it, whatever `seconds` or
+  `game_days` asked. The reply says `stopped: "cycle_end"`, or `"horizon"` with
+  `horizon_reached: true` at the episode's end, beside `game_days_advanced`,
+  `cycle_index` and the `requested_seconds` it was given. All seats of a cell
+  share one schedule, so their waits arm the same boundary; no seat's wait
+  writes a closing pause. A start without the cadence or the horizon end is
+  refused (`cell_schedule_unreadable`). When the game date cannot be read at
+  the end of the wait, `game_days_advanced` and `cycle_index` are null, not 0,
+  and so is `horizon_reached`, not false, unless the wait already read the
+  date at the horizon (`stopped: "horizon"`), which stays true.
+* **In an experiment cell, `ck3agent run` brings a seat back.** The dry
+  cell's two dukes ended their sessions themselves after their first cycle
+  (claude `end_turn` after a summary) while the game ran on, and the run
+  recorded them as finished. With `CK3_EPISODE_HORIZON_START` set, a claude
+  that exits before the run stops it is resumed (`claude --resume`, the same
+  MCP config and flags) with one fixed text: "The game is still running and
+  the run has not stopped you. Continue: observe, decide, act, wait." At most
+  `--continuations` times (default 40); each is a row of the manifest's
+  `continuations` (time, game date, claude's exit and its result, and the
+  rulers carried). Past the cap the run exits 3 with `stop_reason:
+  "continuations_exhausted"`; a claude whose transcript names no session to
+  resume also exits 3, with `stop_reason: "continuation_without_session"`.
+  The resumed claude's new server binds the rulers the seat held when its
+  claude ended (`CK3_AGENT_CHARACTER_ID` is set to them, read from the old
+  server's release record, else the session the run released, else the
+  lineage sink's last row), not the declared one, which after a death and a
+  rebind is the dead original (the bridge refuses that bind `character_dead`);
+  and a server with a lineage sink starts from the sink's rows, so a resumed
+  seat neither writes a second `bound` row nor forgets a rebind. A claude that
+  ended right after the server's horizon reply is not resumed. Without the
+  variable nothing is resumed. The run prompt's END paragraph now says
+  which limits the run stops a session at, and that a cell's session is
+  brought back.
+* **In an experiment cell, `session(action="speed")` is refused
+  (`speed_registered`).** The game speed is the experiment's registered
+  condition; the seats share one clock, so a seat that changed it changed it
+  for every seat. Nothing is written. Outside a cell the action is unchanged.
+* **`ck3agent run` stops itself at the episode's horizon.** The dry cell's
+  runs stopped on `--until-date`, six game-days past the horizon, because
+  nothing capped a wait already running. The run now stops when its ck3
+  server's `session` reply says `horizon_reached: true` (or refuses a wait
+  with `horizon_reached`): `stop_reason: "horizon"`, exit code 0, and the
+  manifest's `horizon_reached` and `horizon_end`. A seat's narration naming
+  the horizon is not the server's reply and stops nothing.
+* **`ck3agent run`'s manifest: `cycles_met` is null under `--cycles 0`, and a
+  resumed run's cost is the sum.** `--cycles 0` asks for no cycle count, and
+  `cycles_met` read true for every such run, including a session that ended
+  after one cycle. It is now null when no count was asked. A run whose claude
+  was resumed writes one result event per claude process; the manifest's
+  `total_cost_usd` and `num_turns` are their sums (`result_events` says how
+  many), not the last process's.
+* **`ck3agent run` names the seat's session (`CK3_SESSION_ID`).** The server
+  writes it into every seat-lineage row as `seat_session_id`, and `run` set
+  none, so every row would have carried null. The run sets it to the value
+  the environment declares, or else `run-<stamp>`, and records it in the
+  manifest (`seat_session_id`, `seat_session_id_source`).
+* **The seat-lineage record has a `bound` row.** A seat's lineage sink
+  (`CK3_SEAT_LINEAGE_OUT`) got rows only at a death, so a seat whose ruler
+  lived to the horizon had no sink, and the record read it `unwitnessed`
+  rather than bound. The first step that holds a ruler now writes one
+  `bound` row (the ruler, the title the lineage follows, the date).
+* **`search_characters` is a read for every bridge session.** It was missing
+  from the bridge's read-only list, so an observe session was refused
+  `observe_mode` (the kingdom census, whose first read it is, had to open a
+  control session), and for every session it counted as a mutation: a session
+  whose decision budget was spent was refused it. It is now read-only: an
+  observe session may call it, and a spent budget no longer gates it (the
+  budget gates mutations only). Its scheduling class is unchanged.
+
 ## 2026.12.3 — 2026-11-07
 
 The third round of toolkit fixes, from the node smoke of the 2026.12.2 draft.

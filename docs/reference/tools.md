@@ -603,7 +603,13 @@ reported (pause_unconfirmed: true). Under
 a registered cadence (CK3_CYCLE_GAME_DAYS) an ask above it is refused
 (cycle_game_days_over_cadence), never clamped. Under a registered horizon
 (CK3_EPISODE_HORIZON_END) a wait made at or past it is refused (horizon_reached):
-the episode is over; pause and report.
+the episode is over; pause and report. In an experiment cell (the harness sets
+CK3_EPISODE_HORIZON_START) every wait returns at the end of the current cycle,
+whatever `seconds` or `game_days` asked (kept as requested_seconds and
+requested_game_days): the reply's stopped is "cycle_end", or "horizon" with
+horizon_reached: true at the episode's end, beside game_days_advanced and
+cycle_index. In a cell action="speed" is refused (speed_registered): the
+speed is the experiment's condition, set by the harness.
 
 With no ruler bound, whoami returns ok=false, blocked.gate='no_ruler_bound',
 controlled=null, and blocked.measured.unbound_reason says why ('heir_is_player':

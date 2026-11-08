@@ -15,8 +15,10 @@ so. With several rulers, follow "Several rulers" in CLAUDE.md: pass
 once per cycle for all of them.
 
 END: play cycles of observe, decide, act, wait until the run stops you. The run
-counts the cycles and ends the session itself, at its cycle count or another
-limit; it pauses the game. Do not release your rulers: the bridge refuses to
+ends the session itself and pauses the game: at its cycle count when it was
+given one, at a game date or a wall-time limit, or in an experiment cell when
+the server says the episode's horizon is reached. In a cell, a session that
+ends before the run stops it is brought back to play on. Do not release your rulers: the bridge refuses to
 empty a control session, and the run frees it on exit. Your narration of each
 cycle is the record: say what changed, the decisions that mattered and what
 you would do next, for each ruler.

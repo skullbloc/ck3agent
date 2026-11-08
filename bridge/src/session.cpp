@@ -1432,6 +1432,14 @@ bool action_is_readonly(const char* action_type) {
         // read — an observe-mode session (the episode harness) must be able to
         // pull it for the bundle.
         "get_budget_state",
+        // 2026.12.4 (cell0 gap 3): the character browser is a read of
+        // CHARACTER_DB (query_handlers.cpp do_search_characters writes
+        // nothing). Unlisted, it was a "mutation" an observe-mode session was
+        // refused (`observe_mode`), so the kingdom census, whose first read it
+        // is, could not run read-only against a live game. Its pipeline
+        // polarity is unchanged: is_game_state_query answers PAUSED before
+        // the mutation rule is consulted (pipeline.cpp classify_polarity).
+        "search_characters",
     };
     for (const char* r : kReadonly) {
         if (strcmp(action_type, r) == 0) return true;

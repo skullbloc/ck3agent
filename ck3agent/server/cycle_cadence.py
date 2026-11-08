@@ -58,6 +58,13 @@ from typing import Any, Mapping, Optional
 
 CYCLE_GAME_DAYS_ENV = "CK3_CYCLE_GAME_DAYS"
 HORIZON_END_ENV = "CK3_EPISODE_HORIZON_END"
+#: 2026.12.4 (cell0 gaps 5+7, PLAN §P decision 1): the registered horizon START,
+#: the same spelling the bridge's episode policy reads. Its presence is what
+#: makes a seat's server a CELL seat (`cell_schedule`): every
+#: `session(action="wait")` then returns at the next cycle boundary, start +
+#: k x cadence, capped at the horizon end, whatever `seconds` it asked for.
+#: Absent = the published wait, unchanged.
+HORIZON_START_ENV = "CK3_EPISODE_HORIZON_START"
 #: §7.2's horizon is 3,650 game-days; an ask beyond one horizon is not a cycle.
 HARD_GAME_DAYS_CEILING = 3650
 #: The first wait of a loop: long enough to measure the rate, short enough
@@ -91,6 +98,11 @@ ALARM_POLL_S = 1
 ALARM_NO_PROGRESS_S = MAX_NO_PROGRESS * PROBE_S
 STOP_NO_PROGRESS = "clock_not_running"
 STOP_MAX_CALLS = "max_calls"
+#: A cell wait's two good ends: the cycle boundary, or the horizon end (which
+#: caps the last cycle; the reply then carries `horizon_reached: true`).
+STOP_CYCLE_END = "cycle_end"
+STOP_HORIZON = "horizon"
+R_CELL_SCHEDULE_UNREADABLE = "cell_schedule_unreadable"
 
 
 def ordinal(date: Any) -> Optional[int]:
@@ -144,6 +156,72 @@ def registered_horizon_end(environ: Optional[dict] = None) -> tuple[Optional[int
     if o is None:
         return None, str(raw), f"{HORIZON_END_ENV}={raw!r} is not a game date (Y.M.D)"
     return o, str(raw).strip(), None
+
+
+@dataclass(frozen=True)
+class CellSchedule:
+    """The cell's cycle boundaries on the game calendar: start + k x cadence
+    (k >= 1), and the horizon end, which caps the last cycle. ONE schedule for
+    every seat of a cell (they share the game clock, so they share the
+    boundaries: a boundary anchored on each seat's own first wait would not)."""
+    start: int
+    end: int
+    cadence: int
+
+    def next_boundary(self, now: int) -> int:
+        """The first boundary strictly after `now`, capped at the horizon end."""
+        if now < self.start:
+            return min(self.start + self.cadence, self.end)
+        k = (now - self.start) // self.cadence + 1
+        return min(self.start + k * self.cadence, self.end)
+
+    @property
+    def n_boundaries(self) -> int:
+        """The boundaries of the whole horizon, the end's included: THE count of
+        cycles a cell has (the runner's plan and v3 §7.2 read it here). 3,650
+        game-days at 90 is 41: forty whole cycles and a last one of 50 days."""
+        return self.cycle_index(self.end)
+
+    def cycle_index(self, at: int) -> int:
+        """Boundaries reached at `at`: 0 in the first cycle, 1 after the first
+        boundary, ...; the horizon end counts as the last one."""
+        if at <= self.start:
+            return 0
+        k = (min(at, self.end) - self.start) // self.cadence
+        if at >= self.end and (self.end - self.start) % self.cadence:
+            k += 1
+        return k
+
+
+def in_cell(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """An experiment cell's seat: HORIZON_START_ENV is set (and non-blank). The
+    one predicate for the cell wait (`cell_schedule`) and the cell's refusal of
+    session(speed) (`speed_registered`); `ck3agent run` mirrors it (cli.in_cell)."""
+    env = os.environ if environ is None else environ
+    return bool(str(env.get(HORIZON_START_ENV) or "").strip())
+
+
+def cell_schedule(environ: Optional[Mapping[str, str]] = None
+                  ) -> tuple[Optional[CellSchedule], Optional[str]]:
+    """(schedule, error). (None, None) when HORIZON_START_ENV is absent: not a
+    cell, the published wait. With it set, the cadence and the horizon end are
+    REQUIRED (refused, never defaulted): (None, why) names what is missing."""
+    env = os.environ if environ is None else environ
+    if not in_cell(env):
+        return None, None
+    raw = env.get(HORIZON_START_ENV)
+    start = ordinal(str(raw).strip())
+    if start is None:
+        return None, f"{HORIZON_START_ENV}={raw!r} is not a game date (Y.M.D)"
+    cadence, c_err = registered_cycle_game_days(env)
+    if c_err or cadence is None:
+        return None, c_err or f"{HORIZON_START_ENV} is set and {CYCLE_GAME_DAYS_ENV} is not"
+    end, _raw, e_err = registered_horizon_end(env)
+    if e_err or end is None:
+        return None, e_err or f"{HORIZON_START_ENV} is set and {HORIZON_END_ENV} is not"
+    if end <= start:
+        return None, f"{HORIZON_END_ENV} is not after {HORIZON_START_ENV}={raw!r}"
+    return CellSchedule(start=start, end=end, cadence=cadence), None
 
 
 def horizon_reached(game_date: Any, horizon_ordinal: Optional[int]) -> Optional[bool]:
@@ -213,6 +291,12 @@ class CycleCounter:
 
     def note(self, action: str, envelope: Any) -> int:
         if not wait_completed(action, envelope):
+            return self.cycle
+        idx = (envelope.get("result") or {}).get("cycle_index")
+        if isinstance(idx, int) and not isinstance(idx, bool):
+            # A cell wait (2026.12.4): the schedule's index is THE index, the
+            # same for every seat of the cell; the counter never runs backwards.
+            self.cycle = max(self.cycle, idx)
             return self.cycle
         if self.cadence_days is None:
             self.cycle += 1

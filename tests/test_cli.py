@@ -858,12 +858,25 @@ if args == ["--help"]:
 if args == ["--version"]:
     print("9.9.9 (Claude Code)"); sys.exit(0)
 mode = os.environ.get("FAKE_MODE", "finish")
+if "--resume" in args:
+    # A cell's continuation: record which session was resumed; with
+    # FAKE_RESUME_HORIZON the resumed session reaches the horizon and plays on.
+    open(os.environ["FAKE_ARGV"] + ".resumes", "a").write(args[args.index("--resume") + 1] + "\n")
+    if os.environ.get("FAKE_RESUME_HORIZON"):
+        os.environ["FAKE_HORIZON"] = "reply"
+        mode = "hang-result"
 open(os.environ["FAKE_ARGV"] + ".pid", "w").write(str(os.getpid()))
 open(os.environ["FAKE_ARGV"], "w").write(json.dumps(args))
-open(os.environ["FAKE_ARGV"] + ".env", "w").write(json.dumps({"CK3_SESSION_OUT": os.environ.get("CK3_SESSION_OUT")}))
+open(os.environ["FAKE_ARGV"] + ".env", "w").write(json.dumps({"CK3_SESSION_OUT": os.environ.get("CK3_SESSION_OUT"),
+                                                              "CK3_SESSION_ID": os.environ.get("CK3_SESSION_ID")}))
 if os.environ.get("FAKE_ACTION_LOG"):
     open(os.environ["FAKE_ACTION_LOG"], "a").write('{"action":"during"}\n')
 cfg = json.load(open(args[args.index("--mcp-config") + 1]))["mcpServers"]["ck3"]
+open(os.environ["FAKE_ARGV"] + ".agent_ids", "a").write(repr(os.environ.get("CK3_AGENT_CHARACTER_ID")) + "\n")
+if os.environ.get("FAKE_HELD") is not None and "--resume" not in args:
+    # The first claude's server, at exit: what its session held (release record).
+    open(cfg["env"]["CK3_RELEASE_ON_EXIT"], "w").write(json.dumps(
+        {"claims": json.loads(os.environ["FAKE_HELD"]), "released": [], "refused": {}, "error": None}))
 server = None
 if os.environ.get("FAKE_SERVE"):
     log = os.environ["FAKE_SERVE"]
@@ -937,6 +950,17 @@ for _ in range(int(os.environ.get("FAKE_CYCLES", "0"))):
     for tool, inp in (("observe", {}), ("session", {"action": "wait"})):
         ev({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": "t", "name": "mcp__ck3__" + tool, "input": inp}]}})
+if os.environ.get("FAKE_HORIZON"):
+    # FAKE_HORIZON=narration: a seat SAYS the word (never a stop); =reply: the
+    # ck3 server's cell wait reply at the horizon (horizon_reached: true).
+    ev({"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "the horizon_reached flag is what ends us"},
+        {"type": "tool_use", "id": "hz", "name": "mcp__ck3__session", "input": {"action": "wait", "seconds": 60}}]}})
+    reply = {"ok": True, "verdict": "applied", "game": {"date": "867.07.02"},
+             "result": {"stopped": "horizon", "horizon_reached": os.environ["FAKE_HORIZON"] == "reply",
+                        "cycle_index": 2, "game_days_advanced": 90}}
+    ev({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "hz", "content": [{"type": "text", "text": json.dumps(reply)}]}]}})
 if mode == "finish":
     ev(RESULT); stop_server(); sys.exit(0)
 if mode == "noresult":
@@ -1527,3 +1551,245 @@ def test_mcp_server_imports_and_registers_tools():
     bootstrap_server()
     import mcp_server  # noqa: F401
     assert mcp_server.mcp is not None
+
+
+def test_the_run_stops_itself_when_its_server_says_the_horizon_is_reached(play, monkeypatch):
+    """2026.12.4 (PLAN §P decision 4): under a cell the stop is the server's
+    `horizon_reached`, not --until-date: a `session` reply of the run's ck3 server
+    carrying `horizon_reached: true` stops the run (stop_reason "horizon", exit 0).
+    The fake would play on; --wall-seconds is only the backstop that ends the base
+    tree's run (red on 08bb8f92: stop_reason "wall_seconds")."""
+    monkeypatch.setenv("FAKE_MODE", "hang-result")
+    monkeypatch.setenv("FAKE_HORIZON", "reply")
+    monkeypatch.setenv("CK3_EPISODE_HORIZON_END", "867.07.02")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    m = manifest_of(play)
+    assert m["stop_reason"] == "horizon" and m["claude_stop"] == "SIGINT", m
+    assert m["horizon_reached"] is True and m["horizon_reached_game_date"] == "867.07.02"
+    assert m["horizon_end"] == "867.07.02" and m["exit_code"] == 0
+
+
+def test_a_seat_saying_horizon_is_not_the_servers_reply(play, monkeypatch):
+    """The control: the same transcript with the reply's flag false and the word in
+    the seat's narration does not stop the run; the backstop does."""
+    monkeypatch.setenv("FAKE_MODE", "hang-result")
+    monkeypatch.setenv("FAKE_HORIZON", "narration")
+    monkeypatch.setenv("CK3_EPISODE_HORIZON_END", "867.07.02")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "3"]) == 0
+    m = manifest_of(play)
+    assert m["stop_reason"] == "wall_seconds" and m["horizon_reached"] is False, m
+
+
+def test_the_run_names_the_seat_session_for_the_lineage_rows(play, tmp_path, monkeypatch):
+    """2026.12.4 (cell0 gap 11): lineage rows carry seat_session_id from
+    CK3_SESSION_ID, and `ck3agent run` set none (null in every row). The run now
+    sets it, to the harness's value when one is declared, else "run-<stamp>"; the
+    server's entry and claude's environment carry the same value, and the manifest
+    says which source. Red on 08bb8f92 (no CK3_SESSION_ID anywhere)."""
+    monkeypatch.delenv("CK3_SESSION_ID", raising=False)
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "1"]) == 0
+    m = manifest_of(play)
+    stamp = Path(m["prompt_file"]).name.split(".")[0]
+    env = json.loads((tmp_path / "argv.json.env").read_text())
+    srv = json.loads((play / "runs" / f"{stamp}.mcp.json").read_text())["mcpServers"]["ck3"]
+    assert env["CK3_SESSION_ID"] == srv["env"]["CK3_SESSION_ID"] == f"run-{stamp}"
+    assert m["seat_session_id"] == f"run-{stamp}" and m["seat_session_id_source"] == "run_stamp"
+
+
+def test_a_declared_seat_session_id_wins(play, tmp_path, monkeypatch):
+    monkeypatch.setenv("CK3_SESSION_ID", "dry-K-13742")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "1"]) == 0
+    m = manifest_of(play)
+    env = json.loads((tmp_path / "argv.json.env").read_text())
+    assert env["CK3_SESSION_ID"] == "dry-K-13742"
+    assert m["seat_session_id"] == "dry-K-13742" and m["seat_session_id_source"] == "environment"
+
+
+def _server_module(name: str):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(f"_{name}_mirror", ROOT / "ck3agent" / "server" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod              # dataclasses resolve their module by name
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return mod
+
+
+def test_the_runs_env_spellings_are_the_servers():
+    """One spelling per variable, each mirror checked: the run's horizon start
+    and end are cycle_cadence's, the seat's session id, lineage sink and sink
+    row kinds are seat_lineage's, the declared rulers are mcp_server's."""
+    cc, sl = _server_module("cycle_cadence"), _server_module("seat_lineage")
+    assert getattr(cli, "LINEAGE_OUT_ENV", None) == sl.LINEAGE_OUT_ENV
+    assert getattr(cli, "LINEAGE_RULER_KINDS", None) == (sl.KIND_BOUND, sl.KIND_REBIND)
+    assert getattr(cli, "LINEAGE_END_KINDS", None) == (sl.KIND_LOST, sl.KIND_UNBOUND)
+    from ck3agent import bootstrap_server
+    bootstrap_server()
+    import mcp_server
+    assert getattr(cli, "AGENT_CHARACTER_ENV", None) == mcp_server.AGENT_CHARACTER_ENV
+    assert cli.HORIZON_END_ENV == cc.HORIZON_END_ENV
+    assert getattr(cli, "HORIZON_START_ENV", None) == cc.HORIZON_START_ENV
+    assert cli.SESSION_ID_ENV == getattr(sl, "SESSION_ID_ENV", None)
+
+
+CELL_ENV = {"CK3_EPISODE_HORIZON_START": "867.01.03", "CK3_EPISODE_HORIZON_END": "867.07.02",
+            "CK3_CYCLE_GAME_DAYS": "90"}
+
+
+def _resumes(tmp_path: Path) -> list[str]:
+    p = tmp_path / "argv.json.resumes"
+    return p.read_text().split() if p.exists() else []
+
+
+def test_a_cell_seat_that_ends_its_session_early_is_resumed(play, tmp_path, monkeypatch):
+    """Free running (owner ruling; L23 witness item 2): the dry cell's dukes ended
+    their sessions (`end_turn` after a cycle summary) at 867.04, and the run
+    recorded them as finished. Under a cell the run now resumes the session
+    (`claude --resume <id>`, the same flags, the continuation text); here the
+    resumed session reaches the horizon and the run stops on it. Red on 85c6dd98:
+    stop_reason None, nothing resumed."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_RESUME_HORIZON", "1")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    m = manifest_of(play)
+    assert m["stop_reason"] == "horizon" and m["horizon_reached"] is True, m
+    assert m["cell"] is True and len(m["continuations"]) == 1
+    c = m["continuations"][0]
+    assert c["claude_stop"] == "exited" and c["claude_rc"] == 0 and c["result"] == "success"
+    assert c["resumed_session_id"] == "s1" and "utc" in c and "game_date" in c
+    assert _resumes(tmp_path) == ["s1"]
+    argv = json.loads((tmp_path / "argv.json").read_text())
+    assert argv[argv.index("-p") + 1] == cli.CONTINUATION_TEXT
+    assert "--strict-mcp-config" in argv and argv[argv.index("--max-turns") + 1] == "400"
+    # two claude processes, two result events: the run's cost and turns are their sums
+    assert m["result_events"] == 2 and m["total_cost_usd"] == 1.0 and m["num_turns"] == 6
+
+
+def test_a_cell_seat_past_its_continuations_cap_is_refused(play, tmp_path, monkeypatch):
+    """The cap: a seat that keeps ending early is resumed --continuations times,
+    then the run exits non-zero with stop_reason continuations_exhausted (never 0,
+    never `horizon`). Red on 85c6dd98: exit 0 after the first session."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(cli, "DEFAULT_CONTINUATIONS", 2, raising=False)
+    rc = cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "30"])
+    m = manifest_of(play)
+    assert rc == getattr(cli, "EXIT_CONTINUATIONS_EXHAUSTED", 3) and m["exit_code"] == rc, m
+    assert m["stop_reason"] == "continuations_exhausted" and m["horizon_reached"] is False
+    assert len(m["continuations"]) == 2 == m["continuations_cap"] and _resumes(tmp_path) == ["s1", "s1"]
+
+
+def _agent_ids(tmp_path: Path) -> list[str]:
+    """CK3_AGENT_CHARACTER_ID as each claude process saw it, one line per process."""
+    p = tmp_path / "argv.json.agent_ids"
+    return p.read_text().splitlines() if p.exists() else []
+
+
+def test_outside_a_cell_a_session_that_ends_early_is_not_resumed(play, tmp_path, monkeypatch):
+    """The behaviour control (r2 item 5): the SAME fake as the resumed test (it
+    ends on its own after its result, and would reach the horizon if resumed),
+    run without the cell's start: exactly one claude process, never resumed."""
+    monkeypatch.delenv("CK3_EPISODE_HORIZON_START", raising=False)
+    monkeypatch.setenv("CK3_EPISODE_HORIZON_END", "867.07.02")
+    monkeypatch.setenv("FAKE_RESUME_HORIZON", "1")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    assert len(_agent_ids(tmp_path)) == 1 and _resumes(tmp_path) == []
+    m = manifest_of(play)
+    assert m["stop_reason"] is None and m["result_events"] == 1 and m["cycles_met"] is None
+
+
+def test_continuations_flag_sets_the_cap(play, tmp_path, monkeypatch):
+    """`--continuations N` itself (r2 item 5): N=1 resumes once, then exit 3."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    rc = cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "30",
+                   "--continuations", "1"])
+    m = manifest_of(play)
+    assert rc == cli.EXIT_CONTINUATIONS_EXHAUSTED and len(m["continuations"]) == 1 == m["continuations_cap"]
+    assert len(_agent_ids(tmp_path)) == 2 and _resumes(tmp_path) == ["s1"]
+
+
+def test_a_resumed_seat_binds_the_ruler_it_held_not_the_declared_one(play, tmp_path, monkeypatch):
+    """r2 item 1: the declared ruler 100 died and the seat was rebound to 300.
+    The resumed claude's NEW server pre-binds CK3_AGENT_CHARACTER_ID; the run
+    now carries what the old server's session held at exit (its release record),
+    so the resumed server binds 300, not the dead 100. Red on b6998ec5: '100'."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "100")
+    monkeypatch.setenv("FAKE_HELD", "[300]")
+    monkeypatch.setenv("FAKE_RESUME_HORIZON", "1")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    assert _agent_ids(tmp_path) == ["'100'", "'300'"]
+    c = manifest_of(play)["continuations"][0]
+    assert c["carried_rulers"] == [300] and c["carried_from"] == "release_record"
+
+
+def test_without_a_release_record_the_sink_names_the_ruler(play, tmp_path, monkeypatch):
+    """r2 item 1, the fallback: no release record (a server killed at exit); the
+    seat's lineage sink's last row is the rebind 100 -> 300, so 300 is carried."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    sink = tmp_path / "seat-K-100.seat_lineage.jsonl"
+    sink.write_text(json.dumps({"kind": "bound", "old_id": 0, "new_id": 100}) + "\n"
+                    + json.dumps({"kind": "rebind", "old_id": 100, "new_id": 300}) + "\n")
+    monkeypatch.setenv("CK3_SEAT_LINEAGE_OUT", str(sink))
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "100")
+    monkeypatch.setenv("FAKE_RESUME_HORIZON", "1")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    assert _agent_ids(tmp_path) == ["'100'", "'300'"]
+    assert manifest_of(play)["continuations"][0]["carried_from"] == "lineage_sink"
+
+
+def test_a_claude_that_exits_before_its_horizon_reply_is_drained_is_not_resumed(play, tmp_path, monkeypatch):
+    """r2 item 2: the loop tested horizon.reached BEFORE the drain had fed the
+    server's horizon reply; the fake writes the reply and exits at once, and the
+    drain is held back until claude has exited. Red on b6998ec5: one continuation."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_HORIZON", "reply")
+    real = cli._Drain._copy
+
+    def slow_copy(self):
+        time.sleep(1.5)                      # claude has exited; the reply is still in the pipe
+        return real(self)
+    monkeypatch.setattr(cli._Drain, "_copy", slow_copy)
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    m = manifest_of(play)
+    assert m["continuations"] == [] and len(_agent_ids(tmp_path)) == 1, m["continuations"]
+    assert m["stop_reason"] == "horizon" and m["horizon_reached"] is True
+
+
+def test_a_cell_seat_that_ends_right_after_the_horizon_reply_is_not_resumed(play, tmp_path, monkeypatch):
+    """The server said horizon and claude ended on its own before the watch's
+    next poll: the run's stop is the horizon, exit 0, and nothing is resumed."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_HORIZON", "reply")          # FAKE_MODE finish: exits right after the reply
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    m = manifest_of(play)
+    assert m["stop_reason"] == "horizon" and m["horizon_reached"] is True, m
+    assert m["continuations"] == [] and _resumes(tmp_path) == []
+
+
+@pytest.mark.parametrize("how", ["wall_seconds", "cap"])
+def test_a_cell_run_that_stops_without_a_resume_keeps_its_rulers_record(play, tmp_path, monkeypatch, how):
+    """L23 witness r3 item 1: the resume loop consumed the old server's release
+    and session records BEFORE deciding not to resume, so a wall stop or an
+    exhausted cap in a cell recorded held_at_stop [] (and waited 5 s). The
+    records are consumed only when a resume is certain. Red on 685cb506: []."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_HELD", "[300]")
+    if how == "wall_seconds":
+        monkeypatch.setenv("FAKE_MODE", "hang-result")
+        argv = ["--wall-seconds", "3"]
+    else:
+        argv = ["--wall-seconds", "30", "--continuations", "0"]
+    cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", *argv])
+    m = manifest_of(play)
+    assert m["continuations"] == [] and len(_agent_ids(tmp_path)) == 1
+    assert m["rulers"]["held_at_stop"] == [300], m["rulers"]

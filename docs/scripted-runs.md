@@ -75,6 +75,7 @@ Run Claude unattended with a goal and a stopping rule, and keep a record.
 | `--max-turns N` | `claude --max-turns`, default 400, `0` for no cap |
 | `--until-date Y.M.D` | stop at this game date, checked every 15 seconds |
 | `--wall-seconds N` | stop after N seconds |
+| `--continuations N` | in an experiment cell only: resume a session that ends before the run stops it at most N times, default 40 (see Experiment cells) |
 | `--model NAME` | `claude --model` |
 | `--play-dir DIR` | another play directory, for example one per condition. Create it with `ck3agent setup --play-dir DIR`; note that setup also makes it the default play directory in `config.toml`, so pass `--play-dir` to every run |
 | `--quiet` | do not echo the session to the terminal |
@@ -84,6 +85,24 @@ Run Claude unattended with a goal and a stopping rule, and keep a record.
 
 A stop by `--until-date` or `--wall-seconds` exits 0. Ctrl-C exits 130,
 SIGTERM 143, SIGHUP 129.
+
+**Experiment cells.** A harness that runs several seats of one game as a cell
+sets `CK3_EPISODE_HORIZON_START`, `CK3_EPISODE_HORIZON_END` and
+`CK3_CYCLE_GAME_DAYS` for each seat's `ck3agent run`. Every
+`session(action="wait")` then returns at the end of the current cycle, and the
+run stops itself when its server says the horizon is reached (stop reason
+`horizon`, exit 0; the manifest's `horizon_reached`). The clock is free
+running, so a seat whose claude ends before then is brought back:
+`claude --resume` with the same flags and one fixed continuation text, at most
+`--continuations N` times (default 40), each recorded in the manifest's
+`continuations`; past the cap the run exits 3 (`stop_reason:
+"continuations_exhausted"`), as it does when the transcript names no session
+to resume (`continuation_without_session`). The resumed claude binds the
+rulers the seat held when it ended (the old server's release record, else the
+lineage sink), not the declared ones. In a cell `session(action="speed")` is refused
+(`speed_registered`): the harness sets the registered speed. `CK3_SESSION_ID`
+names the seat in its lineage rows; without it the run uses `run-<stamp>`
+(the manifest's `seat_session_id`).
 
 ## What a run writes
 
