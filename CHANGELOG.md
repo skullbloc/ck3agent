@@ -3,6 +3,42 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.5 — 2026-11-09
+
+From the first pilot cell on 2026.12.4 (six seats, one game-year): a cell
+seat whose claude was resumed lost its ruler for the rest of the year. One
+fix for that, and one line of the play protocol reworded. The surface is
+still thirteen tools.
+
+* **A resumed seat keeps its ruler: the new server takes over the old
+  session.** In an experiment cell the bridge keeps a seat session's rulers
+  when its connection drops, and refuses to release a control session's last
+  ruler. When a cell seat's claude ended and `ck3agent run` resumed it, the
+  run's release left the ruler with the old session, the resumed claude's
+  new server got a fresh session, and every bind of the ruler was refused
+  `owned_by_other` (the pilot's king, unbound from 867.10.01 to the end of
+  the year). The run now hands the session over: it leaves the session
+  record (`<stamp>.session.json`) in place, waits until the old session has
+  no connection, and the new server presents that record's resume token at
+  its first handshake and resumes the session, rulers and all. Each
+  continuation's manifest row has a `handover` (the session, its state, its
+  rulers, whether it could be resumed). A session that is still connected is
+  never taken over: the new server gets a fresh session and the bind stays
+  refused. On a resumed session the session's own primary ruler is bound
+  first, so the pre-bind does not switch away from it. The session record
+  carries `resumed` and `resume_status` when a handshake presented a token.
+* **A run takes over the seat a dead earlier run left.** A `ck3agent run`
+  killed before its teardown leaves its session record behind, and in a cell
+  that session kept the seat's rulers against the next run. Each run now
+  holds a lock (`<stamp>.run.lock`) while it runs; a new run in the same
+  play directory takes over a left-behind session when its run's lock is
+  free and the bridge shows it without a connection, and records it in the
+  manifest (`adopted_session`). A run still going, a connected session, or a
+  record from a run before this version is left alone.
+* **The play protocol's stalled-war line names no cycle count.** "shows
+  `attacker_not_sieging` ... for two cycles" now reads "cycle after cycle":
+  an experiment does not tell a seat cycle counts.
+
 ## 2026.12.4 — 2026-11-08
 
 From the first dry experiment cell on 2026.12.3 (three seats, two cycles of 90

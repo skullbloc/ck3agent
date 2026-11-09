@@ -154,7 +154,7 @@ across the game).
   that costs you nothing is cheaper left open. Never re-declare a war you have
   just surrendered.
 - **A stalled war.** If a war you attack shows `attacker_not_sieging` in
-  `inspect(subject="war_stance")` for two cycles, the game's AI is not
+  `inspect(subject="war_stance")` cycle after cycle, the game's AI is not
   besieging and this toolkit cannot move the army: the AI sieges only when
   it is above 1.33× the enemy's strength; call allies into the war
   (`call_ally`), or leave it open. Do not re-declare on the same target. Offer white peace if the enemy may take it; if he refuses,

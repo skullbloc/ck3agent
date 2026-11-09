@@ -97,8 +97,16 @@ running, so a seat whose claude ends before then is brought back:
 `--continuations N` times (default 40), each recorded in the manifest's
 `continuations`; past the cap the run exits 3 (`stop_reason:
 "continuations_exhausted"`), as it does when the transcript names no session
-to resume (`continuation_without_session`). The resumed claude binds the
-rulers the seat held when it ended (the old server's release record, else the
+to resume (`continuation_without_session`). The resumed claude's new server
+takes over the old server's bridge session: in a cell the bridge keeps a
+seat's rulers when its connection drops, so the run does not release them but
+leaves the session record in place, waits until the old session has no
+connection, and the new server resumes that session with its resume token,
+rulers and all (the continuation's `handover`: the session, its state, its
+rulers). A session still connected is not taken over: the new server gets a
+fresh session and a ruler the old one holds is refused `owned_by_other`. The
+new server binds the rulers the seat held when it ended (the old server's
+release record, else what the bridge lists for that session, else the
 lineage sink), not the declared ones. In a cell `session(action="speed")` is refused
 (`speed_registered`): the harness sets the registered speed. `CK3_SESSION_ID`
 names the seat in its lineage rows; without it the run uses `run-<stamp>`
@@ -117,7 +125,8 @@ when two runs start in the same second):
 | `<stamp>.stderr.log` | Claude Code's stderr |
 | `<stamp>.tools.json` | the tools the MCP server serves: names, descriptions and input schemas, with a hash of them |
 | `<stamp>.release.json` | the claims the MCP server held at shutdown, and which ones it released |
-| `<stamp>.session.json` | the MCP server's current bridge session id and resume token, rewritten at every handshake including a reconnect. Mode 0600: the token is a credential for that session. How the release works: the bridge frees a session's rulers when the session ends and refuses to release its last ruler before then, so the server releases any extra rulers when Claude Code signals it to stop, its exit frees the last one, and `ck3agent run` then resumes the session with this token to release anything left, and deletes the file. It is left behind only if `ck3agent` itself is SIGKILLed |
+| `<stamp>.session.json` | the MCP server's current bridge session id and resume token, rewritten at every handshake including a reconnect (with `resumed` and `resume_status` when the handshake presented a token). Mode 0600: the token is a credential for that session. How the release works: the bridge frees a session's rulers when the session ends and refuses to release its last ruler before then, so the server releases any extra rulers when Claude Code signals it to stop, its exit frees the last one, and `ck3agent run` then resumes the session with this token to release anything left, and deletes the file. A server that starts while the file exists (a cell's resumed claude) presents its token first and takes that session over. It is left behind only if `ck3agent` itself is SIGKILLed; the next `ck3agent run` in the same play directory then takes it over (the manifest's `adopted_session`) when that run's lock is free and the bridge shows the session without a connection |
+| `<stamp>.run.lock` | held (flock) while the run is going, so a later run can tell a dead run's session record from a live one's |
 | `<stamp>.actions.jsonl` | the bridge action-log lines written during the run |
 | `<stamp>.mcp.json` | the MCP config the run used |
 

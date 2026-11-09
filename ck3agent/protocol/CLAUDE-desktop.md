@@ -76,7 +76,7 @@ if another ruler dies, add its heir yourself.
   casus belli's penalty (2026.11 pilots: 15 to 350 prestige and up to 590
   gold each). A stalled war that costs nothing is cheaper left open; never
   re-declare a war you just surrendered.
-- `attacker_not_sieging` for two cycles: this toolkit cannot move the army;
+- `attacker_not_sieging` cycle after cycle: this toolkit cannot move the army;
   the AI sieges only when it is above 1.33× the enemy's strength; call allies
   into the war, or leave it open.
   Do not re-declare on the same target; offer white peace, else wait.

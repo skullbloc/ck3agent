@@ -6,6 +6,7 @@ still runs normally.
 
 | ck3agent | CK3 build | BuildID |
 |----------|-----------|---------|
+| 2026.12.5 | 1.18.3.1, Linux native (Steam) | `e61ff2642f07094defd140fcc98e078d42541275` |
 | 2026.12.4 | 1.18.3.1, Linux native (Steam) | `e61ff2642f07094defd140fcc98e078d42541275` |
 | 2026.12.3 | 1.18.3.1, Linux native (Steam) | `e61ff2642f07094defd140fcc98e078d42541275` |
 | 2026.12.2 | 1.18.3.1, Linux native (Steam) | `e61ff2642f07094defd140fcc98e078d42541275` |

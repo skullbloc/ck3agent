@@ -1517,6 +1517,120 @@ def _release_after(paths: dict, sock: str, link: br.Link) -> tuple[dict | None, 
     return _wait_for_record(paths["release"], wait), resumed
 
 
+#: The states of a session the next server can resume (session.cpp
+#: resume_by_token: DETACHED and LOST are resumable, ATTACHED is not).
+RESUMABLE = ("detached", "lost")
+
+
+def _handover(paths: dict, sock: str, link: br.Link) -> tuple[dict | None, dict | None]:
+    """2026.12.5: (the old server's release record, the hand-over of its session).
+
+    A continuation HANDS the seat's bridge session to the resumed claude's new
+    server instead of releasing it. Releasing could not work in a cell: the
+    bridge pins a dropped seat's claims and refuses a control session's last
+    claim (`last_claim_of_control_session`), so the old session kept the ruler
+    and the new server's fresh session was refused `owned_by_other` (v3 pilot
+    smoke, K unbound from 867.10.01). The session record (CK3_SESSION_OUT) is
+    left in place: the new server reads its token before its first handshake
+    and resumes that session, claims intact. This waits until the bridge shows
+    the old session not attached, since an attached session is not resumable.
+    The hand-over is None when the old server recorded no session.
+    """
+    try:
+        sess = _load_json(paths["session"])
+    except (ValueError, OSError):
+        sess = {}
+    sid = sess.get("session_id") if isinstance(sess, dict) else None
+    if not (sid and sess.get("resume_token")):
+        # No session record: the server never got a bridge session, so its release record says why.
+        return _wait_for_record(paths["release"], RELEASE_WAIT if paths["tools"].exists() else 0.0), None
+    st = br.wait_not_attached(link, str(sid), RELEASE_WAIT)
+    ho = {"session_id": sid, "session_state": st["state"], "claims": st["claims"],
+          "waited_s": st["waited_s"], "error": st["error"],
+          "resumable": st["state"] in RESUMABLE}
+    # The server has let go: its release record is written or never will be.
+    return _wait_for_record(paths["release"], 0.0), ho
+
+
+#: Beside each run's files: an exclusive flock held for the run's lifetime, so a
+#: later run can tell a run that is still going from one that died.
+RUN_LOCK = ".run.lock"
+SESSION_RECORD = ".session.json"
+
+
+def hold_run_lock(base: Path) -> int | None:
+    """Take this run's lock (`<base>.run.lock`) and keep it until the fd is
+    closed or the process dies. None where flock does not exist."""
+    try:
+        import fcntl
+    except ImportError:                      # not POSIX: no lock, and no adoption either
+        return None
+    fd = os.open(f"{base}{RUN_LOCK}", os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def adopt_stale_session(runs: Path, own: Path, link: br.Link) -> dict | None:
+    """2026.12.5: the bridge session an EARLIER run of this play directory left
+    holding the seat, moved to this run's session record (`own`) so this run's
+    server resumes it; None when there is none.
+
+    A run that died before its teardown (the CLI killed, the host restarted it)
+    leaves `<stamp>.session.json` behind, and in an experiment episode the
+    bridge keeps that session's claims (pinned, detached). Its rulers then
+    refused every bind of the next run's fresh session `owned_by_other`: a
+    stale holder blocking a rebind. Only a DEAD run's session is taken: the
+    other run's lock (`<stamp>.run.lock`) must be free, so a run still going,
+    even between two of its claudes, is never robbed; a record with no lock
+    file (a run before 2026.12.5) is left alone; and the bridge must show the
+    session not attached (an attached one is a live connection). The newest
+    such record wins; the others are left where they are.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    found: list = []
+    held: list[int] = []
+    try:
+        for rec_path in sorted(runs.glob(f"*{SESSION_RECORD}")):
+            if rec_path == own:
+                continue
+            lock = runs / (rec_path.name[: -len(SESSION_RECORD)] + RUN_LOCK)
+            if not lock.exists():
+                continue
+            fd = os.open(lock, os.O_WRONLY)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:                  # that run is alive
+                os.close(fd)
+                continue
+            held.append(fd)
+            try:
+                rec = _load_json(rec_path)
+            except (ValueError, OSError):
+                continue
+            sid = rec.get("session_id") if isinstance(rec, dict) else None
+            if not (sid and rec.get("resume_token")):
+                continue
+            st = br.wait_not_attached(link, str(sid), 0.0)
+            if st["state"] in RESUMABLE:
+                found.append((str(rec.get("written_utc") or ""), rec_path, sid, st))
+        if not found:
+            return None
+        _, rec_path, sid, st = max(found, key=lambda x: (x[0], x[1].name))
+        os.replace(rec_path, own)
+        return {"from": str(rec_path), "session_id": sid, "session_state": st["state"],
+                "claims": st["claims"]}
+    finally:
+        for fd in held:
+            os.close(fd)
+
+
 def _clean(rec: dict | None) -> bool:
     return bool(rec) and not rec.get("error") and not rec.get("refused")
 
@@ -1636,6 +1750,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     runs = play / "runs"
     runs.mkdir(exist_ok=True)
     stamp = _claim_stamp(runs)
+    run_lock = hold_run_lock(runs / stamp)
     base = runs / stamp
     paths = {k: Path(f"{base}{ext}") for k, ext in (
         ("prompt", ".prompt.md"), ("stream", ".jsonl"), ("manifest", ".json"), ("stderr", ".stderr.log"),
@@ -1676,6 +1791,11 @@ def cmd_run(a: argparse.Namespace) -> int:
     # end date and the teardown. Closed between the start and the end unless the
     # watcher holds it: an idle session collects the bridge's pings for hours.
     link = br.Link(sock, mode="control")
+    # 2026.12.5: a dead earlier run's session that still holds this seat is
+    # resumed by this run's server, with the rulers it holds.
+    adopted = adopt_stale_session(runs, paths["session"], link) if run_lock is not None else None
+    if adopted and _id_list(adopted.get("claims")):
+        env[AGENT_CHARACTER_ENV] = ",".join(str(x) for x in adopted["claims"])
     manifest: dict = {
         "ck3agent_version": __version__, "supported_build_id": SUPPORTED_BUILD_ID,
         "started_utc": _now_utc(), "play_dir": str(play), "cycles": a.cycles, "goal": a.goal,
@@ -1686,6 +1806,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         "horizon_end": os.environ.get(HORIZON_END_ENV) or None,
         "cell": cell, "continuations_cap": a.continuations if cell else None, "continuations": [],
         "start_game_date": br.game_date(sock, link),
+        "adopted_session": adopted,
     }
     link.close()
     try:
@@ -1736,14 +1857,17 @@ def cmd_run(a: argparse.Namespace) -> int:
                     break
                 # Only now, with a resume certain, the old server's records are
                 # consumed: on any break above the teardown reads them (L23
-                # witness r3 item 1). The rulers this seat held when its claude
-                # ended, carried to the resumed claude's NEW server, which
-                # otherwise pre-binds the DECLARED id: after a death and a
-                # rebind that is the dead original (r2 item 1). The old server's
-                # release record (what its session held at exit), else the
-                # session we resume to release, else the seat's lineage sink.
-                carry = carried_rulers(*_release_after(paths, sock, link),
-                                       os.environ.get(LINEAGE_OUT_ENV))
+                # witness r3 item 1). 2026.12.5: the old server's bridge session
+                # is HANDED OVER, not released (_handover): its session record
+                # stays for the new server, which resumes that session with
+                # the seat's claims. The rulers this seat held when its claude
+                # ended are still carried to the new server, which otherwise
+                # pre-binds the DECLARED id: after a death and a rebind that is
+                # the dead original (r2 item 1). The old server's release record
+                # (what its session held at exit), else what the bridge lists
+                # for the handed-over session, else the seat's lineage sink.
+                release, handover = _handover(paths, sock, link)
+                carry = carried_rulers(release, handover, os.environ.get(LINEAGE_OUT_ENV))
                 with contextlib.suppress(OSError):
                     paths["release"].unlink()   # the next server writes its own
                 if carry["rulers"] is not None:
@@ -1752,7 +1876,8 @@ def cmd_run(a: argparse.Namespace) -> int:
                     {"utc": _now_utc(), "game_date": br.game_date(sock, link),
                      "claude_stop": "exited", "claude_rc": rc, "result": sub,
                      "result_stop_reason": why, "resumed_session_id": sid,
-                     "carried_rulers": carry["rulers"], "carried_from": carry["source"]})
+                     "carried_rulers": carry["rulers"], "carried_from": carry["source"],
+                     "handover": handover})
                 rargv = resume_argv(argv, prompt, sid)
                 gate.held = True
                 try:
@@ -1880,6 +2005,8 @@ def cmd_run(a: argparse.Namespace) -> int:
             for s, h in old_signals.items():
                 with contextlib.suppress(ValueError, OSError, TypeError):
                     signal.signal(s, h)
+            if run_lock is not None:
+                os.close(run_lock)
     return rc
 
 
