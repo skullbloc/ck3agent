@@ -358,6 +358,41 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None,
     return out
 
 
+#: wait_not_attached's state for a session the bridge does not list.
+GONE = "gone"
+
+
+def wait_not_attached(link: Link, sid: str, wait: float) -> dict:
+    """Wait up to `wait` seconds, on `link`, until the bridge shows session `sid`
+    not attached. Never raises.
+
+    {"state": the row's session_state ("attached", "detached", "lost";
+    session.cpp Session::to_json) or "gone" when get_bridge_state lists no such
+    session, "claims": its claimed_character_ids, "waited_s", "error"}. A
+    session that holds claims and has no connection is resumable by its token;
+    an attached one is not (the bridge mints a fresh session instead).
+    """
+    out: dict = {"state": None, "claims": None, "waited_s": 0.0, "error": None}
+    t0 = time.monotonic()
+    while True:
+        rows = _sessions(link.call("get_bridge_state"))
+        if not rows and link.error:
+            out["error"] = f"bridge: {link.error}"
+            break
+        row = next((r for r in rows if r.get("session_id") == sid), None)
+        if row is None:
+            out["state"], out["claims"] = GONE, []
+            break
+        out["state"] = row.get("session_state")
+        out["claims"] = [int(c) for c in row.get("claimed_character_ids") or []
+                         if isinstance(c, int)]
+        if out["state"] != "attached" or time.monotonic() - t0 >= wait:
+            break
+        time.sleep(0.25)
+    out["waited_s"] = round(time.monotonic() - t0, 2)
+    return out
+
+
 def release_session(sock: str, rec: dict, link: Link, wait: float = 15.0) -> dict:
     """Resume the MCP server's session by its token and release what it still holds.
 
@@ -374,20 +409,14 @@ def release_session(sock: str, rec: dict, link: Link, wait: float = 15.0) -> dic
     if not (sid and tok):
         out["error"] = "session record has no session id or token"
         return out
-    t0 = time.monotonic()
-    while True:
-        rows = _sessions(link.call("get_bridge_state"))
-        if not rows and link.error:
-            out["error"] = f"bridge: {link.error}"
-            return out
-        row = next((r for r in rows if r.get("session_id") == sid), None)
-        if row is None:                    # the bridge dropped it, and its claims with it
-            out["claims"], out["resume_status"] = [], "session_gone"
-            return out
-        if row.get("session_state") != "attached" or time.monotonic() - t0 >= wait:
-            break
-        time.sleep(0.25)
-    out["waited_s"] = round(time.monotonic() - t0, 2)
+    st = wait_not_attached(link, str(sid), wait)
+    if st["error"]:
+        out["error"] = st["error"]
+        return out
+    if st["state"] == GONE:                # the bridge dropped it, and its claims with it
+        out["claims"], out["resume_status"] = [], "session_gone"
+        return out
+    out["waited_s"] = st["waited_s"]
     try:
         with session(sock, "ck3agent-run-release", mode="control", resume_token=tok) as bc:
             ack = bc.handshake_ack or {}

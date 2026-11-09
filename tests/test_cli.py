@@ -1793,3 +1793,118 @@ def test_a_cell_run_that_stops_without_a_resume_keeps_its_rulers_record(play, tm
     m = manifest_of(play)
     assert m["continuations"] == [] and len(_agent_ids(tmp_path)) == 1
     assert m["rulers"]["held_at_stop"] == [300], m["rulers"]
+
+
+# ── 2026.12.5: the seat's bridge session is handed over, never left blocking ──
+#
+# v3 pilot smoke (orders_hom, 2026-11-09): a cell seat's claude ended, the run
+# resumed it, and the resumed claude's NEW server pre-bound the seat's ruler on a
+# fresh session while the old session (pinned by the bridge in an experiment,
+# its last claim unreleasable) still held it: owned_by_other, K unbound for 94
+# game-days. Red on 5718f403: the second bind is made by a different session.
+
+def _binds(fb) -> list:
+    return [(s, p["character_id"]) for s, a, p in fb.log if a == "set_controlled_character"]
+
+
+def test_a_cell_continuation_hands_the_seats_session_to_the_new_server(play, bridge, tmp_path, monkeypatch):
+    """Also the seat's BUDGET identity (signed v3 §6 bounds tokens per seat per
+    game-year): the bridge's budget gate is keyed by the bridge session id
+    (dispatch_router.cpp, budget_ledger().evaluate(session->session_id, ...)),
+    so a continuation on a fresh session restarted the seat's ceiling at 0. The
+    resumed server's every request now carries the FIRST session's id."""
+    fb = bridge(pin_claims=True)
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
+    monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42")
+    monkeypatch.setenv("FAKE_RESUME_HORIZON", "1")
+    assert cli.main(["run", "--quiet", "--cycles", "0", "--wall-seconds", "60"]) == 0
+    m = manifest_of(play)
+    log = (tmp_path / "server.log").read_text()[-3000:]
+    c = m["continuations"]
+    assert len(c) == 1 and m["stop_reason"] == "horizon", (c, m["stop_reason"])
+    binds = _binds(fb)
+    first = binds[0][0]
+    # both servers bound 42, on ONE session: the second took the first's over
+    assert binds == [(first, 42), (first, 42)], (binds, log)
+    assert (f"tok-{first}", True, "ok") in fb.resumes, fb.resumes
+    ho = c[0]["handover"]
+    assert ho["session_id"] == first and ho["session_state"] == "detached" and ho["resumable"] is True
+    assert ho["claims"] == [42] and c[0]["carried_rulers"] == [42]
+    assert fb.owner == {42: first}
+    # every session the seat's servers acted on is the first one (the budget key);
+    # the CLI's own links are client "ck3agent-cli*" and spend nothing
+    seat_sessions = {s for s, a, p in fb.log if fb.sessions.get(s, fb.destroyed.get(s, {}))
+                     .get("client_name") == "ck3agent"}
+    assert seat_sessions == {first}, seat_sessions
+
+
+def _dead_run(play: Path, stamp: str = "20000101-000000", lock: bool = True, keep_open: bool = False):
+    """An earlier run of this play dir that died before its teardown: its server's
+    session claimed 42 and its connection is gone (the fake pins it, detached).
+    Returns (session id, the open client when keep_open)."""
+    sock = os.environ["CK3_BRIDGE_SOCKET"]
+    cm = br.session(sock, "ck3agent", mode="control")
+    bc = cm.__enter__()
+    br.call(bc, "set_controlled_character", {"character_id": 42})
+    sid, tok = bc.handshake_ack["session_id"], bc.handshake_ack["resume_token"]
+    if not keep_open:
+        cm.__exit__(None, None, None)
+        time.sleep(0.2)                       # the fake marks it detached as the socket closes
+    runs = play / "runs"
+    runs.mkdir(exist_ok=True)
+    (runs / f"{stamp}.session.json").write_text(json.dumps(
+        {"session_id": sid, "resume_token": tok, "pid": 1, "written_utc": "2000-01-01T00:00:00Z"}))
+    if lock:
+        (runs / f"{stamp}.run.lock").touch()
+    return sid, (cm if keep_open else None)
+
+
+def test_a_run_takes_over_the_seat_a_dead_earlier_run_left_holding_it(play, bridge, tmp_path, monkeypatch):
+    """The restart case: the stale holder's run is dead (its lock is free) and its
+    session has no connection, so this run's server resumes it and binds 42 there.
+    Red on 5718f403: a fresh session's bind of 42 is refused owned_by_other."""
+    fb = bridge(pin_claims=True)
+    sid, _ = _dead_run(play)
+    monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
+    monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
+    monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42")
+    assert cli.main(["run", "--quiet"]) == 0
+    m = manifest_of(play)
+    assert _binds(fb) == [(sid, 42), (sid, 42)], _binds(fb)
+    assert m["adopted_session"]["session_id"] == sid and m["adopted_session"]["claims"] == [42]
+    assert m["rulers"]["bound_at_start"] == [42] and m["rulers"]["refused_at_start"] == {}
+    assert not (play / "runs" / "20000101-000000.session.json").exists()
+
+
+@pytest.mark.parametrize("why", ["run_alive", "session_attached", "no_lock_file"])
+def test_a_live_or_unknown_holder_is_never_taken_over(play, bridge, tmp_path, monkeypatch, why):
+    """The controls: the other run still holds its lock (alive, maybe between two
+    claudes), or its session is still connected, or the record predates the lock
+    (cannot tell): nothing is adopted, the record stays, and the bind is the
+    bridge's refusal. NON-DISCRIMINATING: green on 5718f403 too (nothing was
+    ever adopted there; `adopted_session` is read with .get for that reason)."""
+    import fcntl
+    fb = bridge(pin_claims=True)
+    sid, cm = _dead_run(play, lock=why != "no_lock_file", keep_open=why == "session_attached")
+    held = None
+    if why == "run_alive":
+        held = os.open(play / "runs" / "20000101-000000.run.lock", os.O_WRONLY)
+        fcntl.flock(held, fcntl.LOCK_EX)
+    try:
+        monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
+        monkeypatch.setenv("FAKE_WAIT_LOG", ARMED)
+        monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "42")
+        cli.main(["run", "--quiet"])
+        m = manifest_of(play)
+        assert m.get("adopted_session") is None
+        assert m["rulers"]["refused_at_start"] == {"42": "owned_by_other"}, m["rulers"]
+        assert fb.owner[42] == sid
+        assert (play / "runs" / "20000101-000000.session.json").exists()
+    finally:
+        if held is not None:
+            os.close(held)
+        if cm is not None:
+            cm.__exit__(None, None, None)

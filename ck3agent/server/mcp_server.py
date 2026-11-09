@@ -346,6 +346,9 @@ class BridgeState:
     game_date: str = "unknown"
     latest_observation: dict = field(default_factory=dict)
     handshake_info: dict = field(default_factory=dict)
+    #: 2026.12.5: this server's handshake presented a resume token and the bridge
+    #: resumed that session (a seat handed over from its previous server).
+    resumed_session: bool = False
     #: ck-ey8p. Frames this listener's type dispatch did not handle, counted by
     #: `type`. THE DICT IS EMPTY UNTIL ONE ARRIVES, never pre-seeded with zeroes:
     #: an absent key means none of that type was seen, and a zero would claim a
@@ -624,6 +627,9 @@ async def bridge_lifespan(server: FastMCP):
     client = AsyncBridgeClient()
     state = BridgeState()
     state._client = client
+    # 2026.12.5: read the predecessor's session BEFORE the wrapper below
+    # overwrites the record with this server's own session.
+    handover = _handover_resume_token()
     _record_session_at_handshake(client)   # rc2 B7: before the pre-bind claims anything
 
     EXPECTED_BRIDGE_VERSION = "v8-2026-03-20"
@@ -631,7 +637,7 @@ async def bridge_lifespan(server: FastMCP):
     connected = await client.connect()
     if connected:
         state.connected = True
-        ack = await _handshake_and_bind(client, state)
+        ack = await _handshake_and_bind(client, state, resume_token=handover)
         if ack:
             state.handshake_info = ack
             # rc2: "bridge_version" is the release version; the wire protocol tag moved to "bridge_protocol".
@@ -953,6 +959,40 @@ async def _try_reconnect(state: BridgeState) -> bool:
     return False
 
 
+def _handover_resume_token() -> Optional[str]:
+    """2026.12.5: the resume token of the session this seat's PREVIOUS server
+    held, read from the session record (CK3_SESSION_OUT) before this server's
+    first handshake overwrites it. None unless release-on-exit is armed
+    (`ck3agent run`) and the record names a token.
+
+    WHY (v3 pilot smoke, orders_hom, 2026-11-09): `ck3agent run` resumes a cell
+    seat's claude when it ends early, and the resumed claude starts a NEW
+    server. In an experiment episode the bridge PINS a dropped control
+    session's claims (ipc_server.cpp release_slot_locked, R3) and refuses to
+    release a control session's last claim (dispatch_router.cpp
+    do_release_character, last_claim_of_control_session), so the old session
+    kept the seat's ruler and the new server's fresh session was refused
+    `owned_by_other` on every bind: K played 94 game-days unbound. The seat is
+    HANDED OVER instead: the new server presents the old session's token and
+    the bridge resumes that session, claims intact (session.cpp
+    resume_by_token). A session still attached to a live connection is not
+    resumable (`session_attached`): the bridge mints a fresh session and a
+    bind of a ruler that session holds is still refused `owned_by_other`, so
+    a live second server never takes a seat."""
+    if not os.environ.get(RELEASE_ON_EXIT_ENV):
+        return None
+    out = os.environ.get(SESSION_OUT_ENV)
+    if not out:
+        return None
+    try:
+        with open(os.path.expanduser(out), encoding="utf-8") as fh:
+            rec = json.loads(fh.read() or "{}")
+    except (OSError, ValueError):
+        return None
+    tok = rec.get("resume_token") if isinstance(rec, dict) else None
+    return tok if isinstance(tok, str) and tok else None
+
+
 def _reconnect_resume_token(old_client) -> Optional[str]:
     """The previous session's resume token, presented on a reconnect ONLY when
     release-on-exit is armed (`ck3agent run`). An experiment episode, which
@@ -1110,8 +1150,14 @@ async def _handshake_and_bind(client, state,
     if not ack:
         return ack
     if resume_token:
-        log.info("reconnect presented its resume token: resumed=%s resume_status=%s session=%s",
+        log.info("handshake presented a resume token: resumed=%s resume_status=%s session=%s",
                  ack.get("resumed"), ack.get("resume_status"), ack.get("session_id"))
+        if ack.get("resumed") is not True:
+            log.warning("the session the token names was not resumed (%s): this server "
+                        "has a fresh session, and a ruler the old one holds stays refused "
+                        "owned_by_other", ack.get("resume_status"))
+    # 2026.12.5: a handed-over session already holds the seat's rulers.
+    state.resumed_session = bool(resume_token) and ack.get("resumed") is True
     ids = _agent_character_ids()
     if not ids:
         return ack                      # nothing declared: unchanged behaviour
@@ -1153,6 +1199,8 @@ async def _prebind_now(state, ids: list[int], wait: dict) -> None:
     in the session record. `wait` says how long the game was waited for
     (`waited_s`, `polls`) and whether it was seen active (`game_active`: True,
     False after a timeout, None when nothing said)."""
+    if getattr(state, "resumed_session", False) and len(ids) > 1:
+        ids = await _resumed_primary_first(state, ids)
     state.prebind = await _prebind_one(state, ids[0], add=False)
     if len(ids) > 1:
         # lane-multi: every further ruler is an ADDED claim (`add: true`), so the
@@ -1162,6 +1210,28 @@ async def _prebind_now(state, ids: list[int], wait: dict) -> None:
         state.prebind["also"] = [await _prebind_one(state, x, add=True) for x in ids[1:]]
     state.prebind["wait"] = dict(wait)
     _record_prebind(state.prebind)
+
+
+async def _resumed_primary_first(state, ids: list[int]) -> list[int]:
+    """2026.12.5: on a RESUMED session, the ruler it already has as its primary
+    goes first. The first pre-bind is a switch (no `add`), and a switch from the
+    session's primary to another ruler it also holds drops the primary
+    (session.cpp swap_character); the carried list is in id order, not primary
+    order. Unchanged when the read fails or the primary is not in the list."""
+    try:
+        bs = await _query_bridge(state, "get_bridge_state", {}, timeout=5.0)
+    except Exception as exc:                                   # noqa: BLE001
+        log.debug("resumed pre-bind: get_bridge_state failed: %s", exc)
+        return ids
+    sid = getattr(state._client, "session_id", None)
+    # session.cpp Session::to_json: session_id, primary_character_id
+    row = next((r for r in (bs or {}).get("sessions") or []
+                if isinstance(r, dict) and r.get("session_id") == sid), None) \
+        if isinstance(bs, dict) else None
+    p = (row or {}).get("primary_character_id")
+    if isinstance(p, int) and p in ids:
+        return [p] + [x for x in ids if x != p]
+    return ids
 
 
 async def _game_active(state) -> Optional[bool]:
@@ -3305,6 +3375,11 @@ def _record_session_at_handshake(client) -> None:
             rec = {"session_id": ack["session_id"], "resume_token": ack["resume_token"],
                    "pid": os.getpid(),
                    "written_utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+            if kw.get("resume_token"):
+                # 2026.12.5: a token was presented (a hand-over or a reconnect):
+                # whether the bridge resumed that session, and its word why not.
+                rec["resumed"] = ack.get("resumed") is True
+                rec["resume_status"] = ack.get("resume_status")
             pth = os.path.expanduser(out)
             tmp = f"{pth}.{os.getpid()}.tmp"
             try:
