@@ -66,6 +66,10 @@ R_BIND_REFUSED = "bind_refused"
 R_HOLDER_HELD_ELSEWHERE = "holder_held_by_another_seat"
 R_SESSION_ROW_ABSENT = "session_row_absent"
 R_RELEASED = "released_without_death"
+#: a rebind this seat's server records when the primary moved with NO heir witness
+#: (heir != the new primary): a swap, not a lineage rebind (v3 §7.5 as amended by the
+#: owner's ruling 2026-11-09). scripts/seat_lineage_record.py imports this one name.
+R_PRIMARY_MOVED = "primary_moved_without_heir_witness"
 R_NO_TITLE = "no_title_to_follow"
 
 
@@ -176,7 +180,7 @@ def decide(prior: Optional[Prior], row: Optional[dict], char_read: Any,
         # The bridge moved this seat: a witnessed handoff (heir == new) or a swap.
         src = SOURCE_BRIDGE if heir == p else SOURCE_EXPLICIT
         return Decision(KIND_REBIND, prior.ruler, p, title, src,
-                        None if heir == p else "primary_moved_without_heir_witness",
+                        None if heir == p else R_PRIMARY_MOVED,
                         refresh_title=registered_title or _primary_title(char_read))
     # p == 0: the seat holds nothing.
     if unbound == R_HEIR_IS_PLAYER:

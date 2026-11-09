@@ -929,6 +929,17 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_vassal_roster PRIVATE -O2 -Wall -Wextra)
 
+    # 2026.12.5: the bridge log's redaction of raw frames (log_redact.h,
+    # header-only; RapidJSON decides whether a frame parses).
+    add_executable(test_log_redact
+        test/test_log_redact.cpp
+    )
+    target_include_directories(test_log_redact PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+    )
+    target_compile_options(test_log_redact PRIVATE -O2 -Wall -Wextra)
+
     # ck-05mg: CK3's real calendar (no twelve-30-day-month rendering).
     add_executable(test_game_date
         test/test_game_date.cpp
@@ -1999,7 +2010,8 @@ endif()
                test_decision_eval_plan  # L22: no failure-key pass on a not-shown decision
                test_diag_dtor      # L20-D: DIAG_OBJECT_DTOR is the engine's dtor
                test_optional_id    # L20 r3: location_id absent -> missing_location_id
-               test_listener_fd)   # L21: the socket lives only in the game process
+               test_listener_fd    # L21: the socket lives only in the game process
+               test_log_redact)    # 2026.12.5: no token reaches the bridge log
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
     # The negative control exits 0 only when exactly its named rows FAIL (see

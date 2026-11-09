@@ -4,6 +4,7 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "log_redact.h"   // 2026.12.5: no token reaches the log
 #include "pause_alarm.h"
 #include "action_log_row.h"
 #include "log_dedupe.h"      // ck-os50
@@ -2695,7 +2696,8 @@ static bool refuse_debug_verb(const char* verb, std::string* response_out) {
 
 bool dispatch_action(const char* action_type, const char* params_json,
                      std::string* response_out) {
-    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Action: %s params: %s\n", action_type, params_json);
+    if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Action: %s params: %s\n", action_type,
+                           bridge::redact_for_log(params_json ? params_json : "").c_str());   // 2026.12.5: log_redact.h
     if (refuse_debug_verb(action_type, response_out)) return false;
 
     // M1: per-session ownership + mode choke point.  Read-only actions are

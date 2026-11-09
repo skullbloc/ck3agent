@@ -3,6 +3,7 @@
 // Background reader thread continuously reads NDJSON from the client
 // and pushes complete messages to a thread-safe queue.
 
+#include "log_redact.h"   // 2026.12.5: no token reaches the log
 #include "instance_paths.h"  // ck-qn03
 #include "listener_fd.h"     // L21: close-on-exec descriptors
 #include "envelope_shape.h"
@@ -1718,7 +1719,9 @@ static void reader_loop() {
                                      line_buf.find("\"actions\"") == std::string::npos);
 
                 if (is_handshake) {
-                    if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Handshake received (slot=%d): %s\n", idx, line_buf.c_str());
+                    // 2026.12.5: a handshake carries the resume token, which never reaches
+                    // a log (log_redact.h); the rest of the line is kept.
+                    if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Handshake received (slot=%d): %s\n", idx, bridge::redact_for_log(line_buf).c_str());
 
                     // M1: parse handshake params and create/attach a session to this slot.
                     HandshakeResult hs_result = handle_handshake_for_slot(idx, cur_gen, line_buf);

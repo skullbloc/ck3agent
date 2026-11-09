@@ -7,8 +7,8 @@ All notable changes to ck3agent. Versions are calendar-based
 
 From the first pilot cell on 2026.12.4 (six seats, one game-year): a cell
 seat whose claude was resumed lost its ruler for the rest of the year. One
-fix for that, and one line of the play protocol reworded. The surface is
-still thirteen tools.
+fix for that, one line of the play protocol reworded, and three fixes the
+smoke of the first draft found. The surface is still thirteen tools.
 
 * **A resumed seat keeps its ruler: the new server takes over the old
   session.** In an experiment cell the bridge keeps a seat session's rulers
@@ -35,6 +35,29 @@ still thirteen tools.
   free and the bridge shows it without a connection, and records it in the
   manifest (`adopted_session`). A run still going, a connected session, or a
   record from a run before this version is left alone.
+* **The bridge log never carries a resume token.** The bridge logged every
+  handshake line verbatim, and a handshake that resumes a session carries
+  that session's resume token, the credential for its rulers. The logged
+  line now replaces with `<redacted>` the whole value, of any type, of every
+  key whose name (read after its escapes are decoded, in any case) is `auth`
+  or names a token, secret, password, API key, authorization or credential,
+  including a secret inside a string that holds JSON; the rest of the line is
+  kept byte for byte. A line that is not valid JSON is cut before the first
+  text that could be a secret. The same rule applies to the action lines the
+  bridge logs.
+* **A session `ck3agent run` cannot read is not "gone".** A
+  `get_bridge_state` reply that carries no session list (a read fault, a
+  refusal) was read as an empty registry: the run's teardown reported a
+  pinned session "already closed, nothing held" while it held the ruler. The
+  run now reads such a reply as unknown: it reads again until its wait is
+  spent and then reports the read failed, and the hand-over, the take-over
+  and the manifest's `held_after_teardown` never treat it as nothing held.
+* **A killed `ck3agent run` takes its claude with it (Linux).** After
+  `kill -9` to the run, its claude played on to the horizon with nothing to
+  stop it. The claude a run starts now receives SIGTERM from the kernel when
+  the run dies. If the kernel refuses that request, claude still starts and
+  its stderr log says so; a Python without `ctypes` starts claude as before.
+  The manifest records which (`claude_dies_with_run`).
 * **The play protocol's stalled-war line names no cycle count.** "shows
   `attacker_not_sieging` ... for two cycles" now reads "cycle after cycle":
   an experiment does not tell a seat cycle counts.

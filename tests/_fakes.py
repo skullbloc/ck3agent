@@ -24,6 +24,11 @@ that client's connection right after answering its FIRST set_controlled_characte
 "pin" leaves the session detached and resumable with its claims (experiment
 mode); "destroy" erases the session, its token and its claims, as the real
 bridge does outside experiment mode (ipc_server.cpp, SessionRegistry::destroy).
+
+`bare_state` maps a client_name to how many of its get_bridge_state calls are
+answered with no session list: `{"error":"memory_access_fault"}`, the bridge's
+MEMORY_ACCESS_FAULT_REPLY (bridge/include/bridge.h), which do_get_bridge_state's
+FaultScope answers when a read faults.
 """
 from __future__ import annotations
 
@@ -42,11 +47,13 @@ LAST_CLAIM_HINT = ("you steer; the AI runs regardless. A control session's last 
 class FakeBridge(threading.Thread):
     def __init__(self, path: str, ack: dict | None = None, replies: dict | None = None,
                  pin_claims: bool = False, delays: dict | None = None,
-                 snapshot_lag: dict | None = None, drop_after_claim: dict | None = None):
+                 snapshot_lag: dict | None = None, drop_after_claim: dict | None = None,
+                 bare_state: dict | None = None):
         super().__init__(daemon=True)
         self.ack, self.replies, self.pin_claims = ack or {"session_state": "active"}, replies or {}, pin_claims
         self.delays, self.snapshot_lag = delays or {}, dict(snapshot_lag or {})
         self.drop_after_claim = dict(drop_after_claim or {})
+        self.bare_state = dict(bare_state or {})
         self.dropped: list = []       # (session_id, how)
         self.seen: list = []          # (action, params)
         self.log: list = []           # (session_id, action, params)
@@ -176,6 +183,9 @@ class FakeBridge(threading.Thread):
         if act == "get_tick_info":
             return {"controlled_character_id": min(self.owner) if self.owner else 0,
                     "game_date": self.game_date, "paused": self.paused}
+        if act == "get_bridge_state" and self.bare_state.get(client, 0) > 0:
+            self.bare_state[client] -= 1
+            return {"error": "memory_access_fault"}
         if act == "get_bridge_state":
             blind = self.snapshot_lag.get(client, 0) > 0
             if blind:

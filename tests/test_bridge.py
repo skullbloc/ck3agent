@@ -298,3 +298,79 @@ def test_watch_stops_a_real_process_that_never_exits(bridge, monkeypatch):
         assert time.monotonic() - t0 < 10
     finally:
         proc.kill()
+
+
+# 2026.12.5 (draft smoke, smoke5 row 2): the teardown read a pinned, detached
+# session as gone ("already closed, nothing held") while it held the ruler. A
+# get_bridge_state reply with no session list (the bridge's fault reply here)
+# was read as an empty registry. Red on e8411492: rows 1 and 3.
+
+def _pinned_session(sock):
+    """A seat session that claimed 42 and dropped its connection (pinned, detached)."""
+    cm = br.session(sock, "ck3agent", mode="control")
+    bc = cm.__enter__()
+    br.call(bc, "set_controlled_character", {"character_id": 42})
+    sid = bc.session_id
+    cm.__exit__(None, None, None)
+    time.sleep(0.2)
+    return sid
+
+
+def test_a_reply_without_a_session_list_is_not_a_gone_session(bridge):
+    fb = bridge(pin_claims=True, bare_state={"ck3agent-cli": 2})
+    sock = br.socket_path()
+    sid = _pinned_session(sock)
+    link = br.Link(sock, mode="control")
+    try:
+        st = br.wait_not_attached(link, sid, 5.0)
+    finally:
+        link.close()
+    assert st["state"] == "detached" and st["claims"] == [42] and st["error"] is None, st
+    assert fb.bare_state["ck3agent-cli"] == 0          # the bare replies were really read
+
+
+def test_a_list_without_the_row_is_still_gone(bridge):
+    """Control (non-discriminating, green on e8411492 too): a reply that carries
+    the list and not the session is the registry's word that it is gone."""
+    bridge(pin_claims=False)
+    sock = br.socket_path()
+    sid = _pinned_session(sock)                         # free play: destroyed on close
+    link = br.Link(sock, mode="control")
+    try:
+        st = br.wait_not_attached(link, sid, 5.0)
+    finally:
+        link.close()
+    assert st["state"] == br.GONE and st["claims"] == [] and st["error"] is None, st
+
+
+def test_unreadable_session_state_is_never_none_held(bridge):
+    """held_rulers and a no-wait read: a list-less reply is unknown (None, an
+    error), never "nothing held"."""
+    bridge(pin_claims=True, bare_state={"ck3agent-cli": 2})
+    sock = br.socket_path()
+    sid = _pinned_session(sock)
+    link = br.Link(sock, mode="control")
+    try:
+        assert br.held_rulers(sock, link) is None
+        st = br.wait_not_attached(link, sid, 0.0)
+    finally:
+        link.close()
+    assert st["state"] is None and st["error"], st
+
+
+def test_owner_labels_an_unread_holder_and_an_unlisted_one_apart(bridge):
+    """r3 witness item 4: `_owner` read a list-less reply as "an unknown session",
+    the same words as a list that names no holder. Now the label says which:
+    unread, or no session listed. (_claims, which had no caller and the same
+    misreading, is deleted.) Red on 5e42c229: both read "an unknown session"."""
+    bridge(pin_claims=True, bare_state={"ck3agent-cli": 1})
+    sock = br.socket_path()
+    link = br.Link(sock, mode="control")
+    try:
+        unread = br._owner(link, 42)
+        unlisted = br._owner(link, 42)
+    finally:
+        link.close()
+    assert "unread" in unread and "no session list" in unread, unread
+    assert unlisted == "no session the bridge lists", unlisted
+    assert not hasattr(br, "_claims")
