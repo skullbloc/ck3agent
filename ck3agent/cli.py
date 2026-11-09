@@ -1717,6 +1717,56 @@ def _bound_when(rl: dict) -> str:
     return out
 
 
+#: 2026.12.5 (draft smoke): a `ck3agent run` SIGKILLed left its claude playing
+#: on to the horizon (~108 s in smoke5) with nobody to stop it. On Linux the
+#: claude the run spawns asks the kernel for SIGTERM when the run dies
+#: (prctl PR_SET_PDEATHSIG, which survives execve), through this shim run as
+#: the child before it execs claude: the pid, the exe and the argv after the
+#: exec are claude's own. A run that died before the shim got there is caught
+#: by the parent-pid check. Elsewhere claude is spawned directly, as before.
+_PDEATHSIG_SHIM = (
+    "import os, signal, sys\n"
+    "try:\n"
+    "    import ctypes\n"
+    "    rc = ctypes.CDLL(None, use_errno=True).prctl(1, int(signal.SIGTERM), 0, 0, 0)\n"
+    "    why = 'errno %d' % ctypes.get_errno() if rc != 0 else ''\n"
+    "except Exception as exc:\n"
+    "    rc, why = -1, type(exc).__name__\n"
+    "if rc != 0:\n"
+    "    sys.stderr.write('%s %s (%s)\\n' % (sys.argv[2], PDEATHSIG_FAILED, why))\n"
+    "    sys.stderr.flush()\n"
+    "if os.getppid() != int(sys.argv[1]):\n"
+    "    sys.exit(143)\n"
+    "os.execvp(sys.argv[3], sys.argv[3:])\n")
+#: The shim's line on claude's stderr (the run's <stamp>.stderr.log) when the
+#: kernel would not take the request (r3 witness item 3: the return used to be
+#: ignored, so the fallback to the old behaviour was silent). It names the
+#: step and the errno or exception class, nothing else.
+PDEATHSIG_FAILED = ("claude will NOT stop when the run dies: prctl(PR_SET_PDEATHSIG) failed; "
+                    "it is spawned as before")
+PDEATHSIG_TAG = "ck3agent-run:"
+
+
+def pdeathsig_shim_available() -> tuple[bool, str]:
+    """(use the shim, why not). Linux with ctypes importable by this Python;
+    anything else spawns claude directly, as before 2026.12.5."""
+    if not sys.platform.startswith("linux"):
+        return False, f"platform {sys.platform}"
+    import importlib.util
+    if importlib.util.find_spec("ctypes") is None:
+        return False, "this Python has no ctypes"
+    return True, ""
+
+
+def dies_with_run(argv: list[str]) -> list[str]:
+    """`argv` behind the parent-death shim when it can work; unchanged otherwise."""
+    ok, _why = pdeathsig_shim_available()
+    if not ok:
+        return list(argv)
+    shim = _PDEATHSIG_SHIM.replace("PDEATHSIG_FAILED", repr(PDEATHSIG_FAILED))
+    return [sys.executable, "-I", "-c", shim, str(os.getpid()), PDEATHSIG_TAG, *argv]
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     claude = shutil.which("claude")
     if not claude:
@@ -1807,6 +1857,9 @@ def cmd_run(a: argparse.Namespace) -> int:
         "cell": cell, "continuations_cap": a.continuations if cell else None, "continuations": [],
         "start_game_date": br.game_date(sock, link),
         "adopted_session": adopted,
+        # 2026.12.5: whether claude is spawned to die with the run (the shim),
+        # and why not; a failed prctl inside the shim is a line on stderr.log
+        "claude_dies_with_run": dict(zip(("shim", "reason"), pdeathsig_shim_available())),
     }
     link.close()
     try:
@@ -1830,7 +1883,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     try:
         gate.held = True
         try:
-            proc = subprocess.Popen(argv, cwd=play, env=env, stdin=subprocess.DEVNULL,
+            proc = subprocess.Popen(dies_with_run(argv), cwd=play, env=env, stdin=subprocess.DEVNULL,
                                     stdout=subprocess.PIPE, stderr=err, encoding="utf-8", errors="replace")
         finally:
             gate.held = False
@@ -1881,7 +1934,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 rargv = resume_argv(argv, prompt, sid)
                 gate.held = True
                 try:
-                    proc = subprocess.Popen(rargv, cwd=play, env=env, stdin=subprocess.DEVNULL,
+                    proc = subprocess.Popen(dies_with_run(rargv), cwd=play, env=env, stdin=subprocess.DEVNULL,
                                             stdout=subprocess.PIPE, stderr=err, encoding="utf-8",
                                             errors="replace")
                 finally:

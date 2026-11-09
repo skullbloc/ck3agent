@@ -225,22 +225,35 @@ def _sessions(r) -> list[dict]:
     return [row for row in bs.get("sessions") or [] if isinstance(row, dict)]
 
 
+def _session_rows(r) -> list[dict] | None:
+    """get_bridge_state's session list, or None when the reply carries none.
+
+    2026.12.5 (the draft smoke, smoke5 row 2): `_sessions` reads a reply with no
+    `sessions` list (a fault or refusal envelope, a frame that is not the
+    get_bridge_state reply) as an EMPTY registry, so a pinned, detached session
+    read as gone and the teardown said "already closed, nothing held" while the
+    same session held the ruler. The bridge builds the list from its registry
+    under one lock (session.cpp sessions_json), so only a reply that carries
+    the list can say a session is absent."""
+    bs = _tick(r)
+    rows = bs.get("sessions") if isinstance(bs, dict) else None
+    if not isinstance(rows, list):
+        return None
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def _owner(link: Link, cid: int) -> str:
-    for row in _sessions(link.call("get_bridge_state")):
+    """Who holds `cid`, for a teardown line. A reply with no session list says
+    nothing about the holder, and is labelled so; a list without `cid` is the
+    bridge's word that no session holds it."""
+    rows = _session_rows(link.call("get_bridge_state"))
+    if rows is None:
+        return "an unread holder (get_bridge_state carried no session list)"
+    for row in rows:
         if cid in (row.get("claimed_character_ids") or []):
             return f"session {row.get('session_id')} ({row.get('session_state') or '?'}, " \
                    f"{row.get('client_name') or '?'})"
-    return "an unknown session"
-
-
-def _claims(link: Link) -> list[int]:
-    """Every character any session holds, in session order."""
-    out: list[int] = []
-    for row in _sessions(link.call("get_bridge_state")):
-        for c in row.get("claimed_character_ids") or []:
-            if isinstance(c, int) and c not in out:
-                out.append(c)
-    return out
+    return "no session the bridge lists"
 
 
 def held_rulers(sock: str, link: Link | None = None) -> list[int] | None:
@@ -250,10 +263,10 @@ def held_rulers(sock: str, link: Link | None = None) -> list[int] | None:
     own = link is None
     link = link or Link(sock, mode="control")
     try:
-        r = link.call("get_bridge_state")
-        if r is None:
+        rows = _session_rows(link.call("get_bridge_state"))
+        if rows is None:                 # no list read: unknown, never "none held"
             return None
-        return [c for row in _sessions(r) for c in row.get("claimed_character_ids") or []
+        return [c for row in rows for c in row.get("claimed_character_ids") or []
                 if isinstance(c, int)]
     except Exception:  # noqa: BLE001
         return None
@@ -312,7 +325,16 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None,
             if t is None or "controlled_character_id" not in t:
                 out.append(("release", False, "no tick info; ruler unknown"))
                 return out
-            rows = _sessions(link.call("get_bridge_state"))
+            rows = _session_rows(link.call("get_bridge_state"))
+            if rows is None:
+                # 2026.12.5: a reply with no session list says nothing about
+                # what is held; never read it as "no ruler bound".
+                if time.monotonic() < deadline:
+                    time.sleep(1.0)
+                    continue
+                out.append(("release", False, "get_bridge_state carried no session list; "
+                                              "rulers unknown"))
+                return out
             if not mine:
                 # L20 r3 (witness item 2): the session record is the only
                 # attribution. Without it every claim would read as another
@@ -375,10 +397,15 @@ def wait_not_attached(link: Link, sid: str, wait: float) -> dict:
     out: dict = {"state": None, "claims": None, "waited_s": 0.0, "error": None}
     t0 = time.monotonic()
     while True:
-        rows = _sessions(link.call("get_bridge_state"))
-        if not rows and link.error:
-            out["error"] = f"bridge: {link.error}"
-            break
+        rows = _session_rows(link.call("get_bridge_state"))
+        if rows is None:
+            # No session list in the reply: nothing is known, so nothing is gone.
+            # Read again until the wait is spent, then say the read failed.
+            if time.monotonic() - t0 >= wait:
+                out["error"] = f"bridge: {link.error or 'get_bridge_state carried no session list'}"
+                break
+            time.sleep(0.25)
+            continue
         row = next((r for r in rows if r.get("session_id") == sid), None)
         if row is None:
             out["state"], out["claims"] = GONE, []

@@ -27,6 +27,7 @@
 #include "snapshot.h"
 #include "action_dispatch_internal.h"
 #include "envelope_shape.h"   // kMaxLineBytes
+#include "log_redact.h"       // 2026.12.5
 
 #include <rapidjson/reader.h>
 
@@ -309,6 +310,80 @@ int main() {
         bridge::g_test_session_state = static_cast<int>(bridge::SessionState::DORMANT);
     }
 
+    // 2026.12.5 (smoke5): a handshake's resume token never reaches the bridge
+    // log. The REAL reader logs the handshake line (ipc_server.cpp "Handshake
+    // received"); before the fix it logged it verbatim, token and all. The
+    // control row: the line is still written, with the client's name, so the
+    // redaction is not a deleted log line. Red on e8411492: presented_token row.
+    // TK5 r5: the log FILE outlives the server's threads. The reader logs the
+    // release of this row's slot ("poll POLLERR/HUP/NVAL") ASYNCHRONOUSLY after
+    // the client closes, so an fclose here raced that fprintf: a use-after-free
+    // of the FILE that aborted 6/300 runs with "free(): invalid pointer"
+    // (gdb: reader_loop -> release_slot_locked -> fprintf, main already in
+    // fork()). The bridge itself opens g_logfile once and never closes it while
+    // its threads run (bridge_init.cpp), so the fix is the test's: g_logfile
+    // stays set and the FILE stays open until stop_ipc_server() has joined
+    // both threads, below.
+    const std::string redact_logpath = dir + "/bridge-redact.log";
+    FILE* redact_lf = std::fopen(redact_logpath.c_str(), "w");
+    {
+        const std::string& logpath = redact_logpath;
+        FILE* lf = redact_lf;
+        bridge::g_logfile = lf;
+        const std::string secret = "tok-SECRET-0123456789abcdef";
+        int fd = dial(sock);
+        std::string seen;
+        const bool ok = lf && fd >= 0 &&
+            send_all(fd, "{\"type\":\"handshake\",\"protocol_version\":2,\"client_name\":\"redact-row\","
+                         "\"mode\":\"observe\",\"resume_token\":\"" + secret + "\"}\n") &&
+            await(fd, "resume_identity_reason", 3000, &seen) == "match";   // the ack's last key
+        // the token the bridge minted for this session, from the ack
+        std::string minted;
+        const size_t k = seen.find("\"resume_token\":\"");
+        if (k != std::string::npos) {
+            const size_t a = k + 16, e = seen.find('"', a);
+            if (e != std::string::npos) minted = seen.substr(a, e - a);
+        }
+        if (fd >= 0) close(fd);
+        std::string logged;
+        if (lf) {
+            // Read through a SEPARATE handle: the server's threads may still be
+            // appending to `lf`, and reading the shared update stream between
+            // their writes needs a seek the writers do not make.
+            std::fflush(lf);
+            if (FILE* rf = std::fopen(logpath.c_str(), "r")) {
+                char buf[4096];
+                size_t m;
+                while ((m = std::fread(buf, 1, sizeof buf, rf)) > 0) logged.append(buf, m);
+                std::fclose(rf);
+            }
+        }   // `lf` is closed and removed after stop_ipc_server(), see above
+        const size_t hl = logged.find("Handshake received (slot=");
+        const std::string hline = hl == std::string::npos ? "" : logged.substr(hl, logged.find('\n', hl) - hl);
+        // CONTROL (green before and after): the line is written, client named.
+        row("handshake_line_still_logged_control",
+            ok && !hline.empty() && hline.find("redact-row") != std::string::npos,
+            hline.substr(0, 160));
+        // THE ROW (red on e8411492: the line carried the token verbatim).
+        row("presented_resume_token_not_in_bridge_log",
+            ok && !logged.empty() && logged.find(secret) == std::string::npos &&
+                logged.find("SECRET-0123456789abcdef") == std::string::npos &&
+                hline.find("\"resume_token\":\"<redacted>\"") != std::string::npos,
+            "the presented token's bytes are absent; the key reads <redacted>");
+        // Guard (green on e8411492 too: the minted token was never logged).
+        row("minted_resume_token_not_in_bridge_log",
+            !minted.empty() && logged.find(minted) == std::string::npos,
+            minted.empty() ? "no token in the ack" : "the ack's token is absent from the log");
+        // the same rule on an action's params (dispatch_router.cpp "Action: ... params:")
+        const std::string p = bridge::redact_for_log(
+            "{\"check_token\":\"abc123\",\"auth\":\"zz9\",\"character_id\":42,\"note\":\"token\"}");
+        row("redact_for_log_keeps_the_rest_of_a_frame",
+            p.find("abc123") == std::string::npos && p.find("zz9") == std::string::npos &&
+                p.find("\"character_id\":42") != std::string::npos &&
+                p.find("\"note\":\"token\"") != std::string::npos,
+            p);
+    }
+
     // B9: the library's default RapidJSON flags are iterative.
     {
         const int rc = iterative_parse_child();
@@ -318,6 +393,10 @@ int main() {
     }
 
     bridge::stop_ipc_server();
+    // both threads are joined: nothing can write the test's log any more
+    bridge::g_logfile = nullptr;
+    if (redact_lf) std::fclose(redact_lf);
+    std::remove(redact_logpath.c_str());
     rmdir((dir + "/ck3agent/telemetry").c_str());
     rmdir((dir + "/ck3agent").c_str());
     rmdir(dir.c_str());

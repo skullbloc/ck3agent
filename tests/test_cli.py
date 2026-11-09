@@ -1908,3 +1908,89 @@ def test_a_live_or_unknown_holder_is_never_taken_over(play, bridge, tmp_path, mo
             os.close(held)
         if cm is not None:
             cm.__exit__(None, None, None)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().split(") ", 1)[1][0] != "Z"
+    except (OSError, IndexError):
+        return False
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux")
+def test_a_killed_run_takes_its_claude_with_it(play, tmp_path, monkeypatch):
+    """2026.12.5 (draft smoke): SIGKILL to `ck3agent run` left its claude
+    playing ~108 s to the horizon. The claude it spawns now gets SIGTERM from the
+    kernel when the run dies (the fake claude exits 143 on SIGTERM). Red on
+    e8411492: the fake claude is still alive after the run is killed. Only
+    processes this test started are signalled, by their own recorded pids."""
+    monkeypatch.setenv("FAKE_MODE", "hang-ignore")
+    pidfile = tmp_path / "argv.json.pid"
+    run = subprocess.Popen([sys.executable, "-m", "ck3agent", "run", "--no-game-check", "--quiet",
+                            "--cycles", "0"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    claude_pid = None
+    try:
+        for _ in range(200):
+            if pidfile.exists() and pidfile.read_text().strip():
+                claude_pid = int(pidfile.read_text())
+                break
+            time.sleep(0.05)
+        assert claude_pid and _alive(claude_pid), "the fake claude never started"
+        # the claude is the run's own child, with claude's argv (not the shim's)
+        assert json.loads((tmp_path / "argv.json").read_text())[0] != "-c"
+        run.send_signal(signal.SIGKILL)
+        run.wait(10)
+        gone = False
+        for _ in range(100):
+            if not _alive(claude_pid):
+                gone = True
+                break
+            time.sleep(0.05)
+        assert gone, f"claude {claude_pid} outlived its killed run"
+    finally:
+        if run.poll() is None:
+            run.kill()
+        if claude_pid and _alive(claude_pid):
+            os.kill(claude_pid, signal.SIGKILL)
+
+
+_NO_CTYPES = "import sys; sys.modules['ctypes'] = None\n"
+_PRCTL_FAILS = ("import ctypes\n"
+                "class _F:\n"
+                "    def prctl(self, *a): return -1\n"
+                "ctypes.CDLL = lambda *a, **k: _F()\n")
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux")
+@pytest.mark.parametrize("case", ["ok", "no_ctypes_in_the_shim", "prctl_fails"])
+def test_the_shim_starts_claude_and_says_when_it_cannot_tie_it_to_the_run(case):
+    """r3 witness item 3. The shim ignored prctl's return (a failure fell back
+    silently) and a Python without ctypes never started claude (rc 1). Now
+    claude starts in every case, and a failure is one stderr line naming the
+    step and the errno or exception class. Red on 5e42c229: no_ctypes (rc 1)
+    and prctl_fails (silent). `ok` is the control (green on both)."""
+    argv = cli.dies_with_run(["/bin/echo", "claude-started"])
+    assert argv[:3] == [sys.executable, "-I", "-c"]
+    pre = {"ok": "", "no_ctypes_in_the_shim": _NO_CTYPES, "prctl_fails": _PRCTL_FAILS}[case]
+    argv[3] = pre + argv[3]
+    r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and r.stdout.strip() == "claude-started", (r.returncode, r.stdout, r.stderr)
+    said = "will NOT stop when the run dies" in r.stderr
+    assert said == (case != "ok"), r.stderr
+    if case != "ok":
+        assert r.stderr.count("\n") == 1 and "PR_SET_PDEATHSIG" in r.stderr
+
+
+def test_a_python_without_ctypes_spawns_claude_directly(monkeypatch):
+    """r3 witness item 3: with no ctypes the run does not wrap claude at all,
+    and the manifest's `claude_dies_with_run` says why."""
+    import importlib.util
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a, **k: None if name == "ctypes" else real(name, *a, **k))
+    argv = ["/bin/echo", "x"]
+    if sys.platform.startswith("linux"):
+        assert cli.pdeathsig_shim_available() == (False, "this Python has no ctypes")
+    assert cli.dies_with_run(argv) == argv
