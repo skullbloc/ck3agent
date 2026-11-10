@@ -68,6 +68,26 @@ KIND_PENDING = "pending"          # dead, succession not yet resolved by the eng
 #: so a count that reset with each process could never reach the bound.
 KIND_READ_FAILED = "read_failed"
 KIND_READS_RECOVERED = "reads_recovered"
+#: 2026.12.7 (owner ruling 2026-11-10; v3pilot5 witness): a NON-TERMINAL note.
+#: The seat asked to claim a character the cell reserved for another seat (or
+#: while the reservation could not be read) and the server refused it before
+#: any bridge call (ck3agent/server/seat_reservations.py). The row names the
+#: attempting seat and the target (`character_id`) so the bundle witnesses the
+#: attempt: in v3pilot5 the king's takes showed only through its held_at_stop
+#: and the dukes' owned_by_other. It changes no status, no ruler and no
+#: failed-read count, and it is not part of the lineage a resumed server seeds
+#: from (`prior_from_sink` skips it).
+KIND_CLAIM_REFUSED = "claim_refused"
+#: 2026.12.7 (witness r1 F1 on 1eaab8ac): a NON-TERMINAL note beside a `bound`
+#: or `rebind` row whose ruler is another seat's DECLARED character (in this
+#: seat's CK3_RESERVED_FOR_OTHER_SEATS). The lineage rebind, the bridge's heir
+#: handoff and a continuation's pre-bind of carried rulers are not refused by
+#: the reservations (only session add/control are); a seat that comes to hold
+#: another seat's ruler that way is witnessed here, not silent. The rebind row
+#: alone names the ruler but not that he is reserved. Changes nothing else.
+KIND_HOLDS_RESERVED = "holds_reserved"
+#: The notes that are not part of the lineage a resumed server seeds from.
+_NOT_LINEAGE = (KIND_CLAIM_REFUSED, KIND_HOLDS_RESERVED)
 SOURCE_BRIDGE = "bridge_handoff"
 SOURCE_EXPLICIT = "explicit_control"
 
@@ -393,7 +413,7 @@ def prior_from_sink(path: Optional[str]) -> Optional[Prior]:
                     r = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(r, dict):
+                if isinstance(r, dict) and r.get("kind") not in _NOT_LINEAGE:
                     rows.append(r)
     except OSError:
         return None
@@ -437,7 +457,54 @@ def _verdict_rows(rows: list) -> list:
     """The rows that are a lineage's verdicts: every row but the non-terminal
     notes (KIND_READ_FAILED, KIND_READS_RECOVERED)."""
     return [r for r in rows if not (isinstance(r, dict)
-                                    and r.get("kind") in (KIND_READ_FAILED, KIND_READS_RECOVERED))]
+                                    and r.get("kind") in (KIND_READ_FAILED, KIND_READS_RECOVERED)
+                                    + _NOT_LINEAGE)]
+
+
+def _reserved_ids() -> frozenset:
+    """This seat's reservations (empty when none or unreadable)."""
+    try:
+        from . import seat_reservations as _resv               # imported as ck3agent.server.*
+    except ImportError:
+        import seat_reservations as _resv                      # imported from the server dir
+    return _resv.read().ids
+
+
+def _note_if_reserved(sink: str, rowd: dict) -> Optional[dict]:
+    """After a bound/rebind row: the KIND_HOLDS_RESERVED note when its ruler is
+    another seat's declared character. Never raises."""
+    try:
+        cid = _i(rowd.get("new_id"))
+        if cid <= 0 or cid not in _reserved_ids():
+            return None
+        note = {"seat_session_id": rowd.get("seat_session_id"), "kind": KIND_HOLDS_RESERVED,
+                "character_id": cid, "via_kind": rowd.get("kind"), "via_source": rowd.get("source"),
+                "old_id": rowd.get("old_id"), "game_date": rowd.get("game_date"),
+                "tick": rowd.get("tick"),
+                "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        append_row(sink, note)
+        _log.warning("seat lineage: this seat now holds %d, another seat's declared ruler (%s)",
+                     cid, rowd.get("kind"))
+        return note
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+def record_claim_refused(sink: Optional[str], *, seat_session_id: Optional[str],
+                         seat_label: Optional[str], character_id: Any, action: str,
+                         reason: str, game: Optional[dict] = None) -> Optional[dict]:
+    """Append the KIND_CLAIM_REFUSED note for one refused claim; the row, or
+    None when the sink is not armed (nothing is written outside a cell)."""
+    if not sink:
+        return None
+    g = game if isinstance(game, dict) else {}
+    row = {"seat_session_id": seat_session_id, "seat_label": seat_label,
+           "kind": KIND_CLAIM_REFUSED, "action": action, "character_id": _i(character_id),
+           "reason": reason, "game_date": g.get("date"), "tick": g.get("tick"),
+           "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if not append_row(sink, row):
+        _log.error("seat lineage: could not write the claim_refused row to %s", sink)
+    return row
 
 
 def _game_of(gw) -> dict:
@@ -580,11 +647,14 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
                     seat_session_id=seat_session_id, game_date=date, tick=tick)
                 append_row(sink, rowd)
                 prior.rows.append(rowd)
+                _note_if_reserved(sink, rowd)
             return prior if prior is not None else Prior(ruler=0, title_id=None)
         if d.kind is not None:
             rowd = d.row(seat_session_id=seat_session_id, game_date=date, tick=tick)
             append_row(sink, rowd)
             prior.rows.append(rowd)
+            if d.kind == KIND_REBIND:
+                _note_if_reserved(sink, rowd)
         if d.kind == KIND_REBIND:
             prior.ruler, prior.title_id = d.new_id, (registered_title or d.refresh_title or d.title_id)
             prior.pending_cycles = 0

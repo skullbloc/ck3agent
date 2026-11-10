@@ -65,6 +65,16 @@ without an id is refused (`missing_character_id`).
 | `observe_mode` | the session is observe-only, as under `CK3_PIPELINE_MODE=null` |
 | `no_session`, `invalid_character`, `ownership_divergence` | reconnect, check the id, or report the last as a bug |
 
+Two more refusals come from the MCP server itself, before any bridge call, and only
+when the harness declares seat reservations (`CK3_RESERVED_FOR_OTHER_SEATS`, set by
+an experiment cell to the other seats' declared rulers, with `CK3_SEAT_DECLARED_CHARACTER_ID`;
+unset, nothing changes):
+
+| Reason | Fix |
+|--------|-----|
+| `reserved_for_another_seat` | `add` or `control` named another seat's ruler; it is not this seat's to claim |
+| `seat_reservations_unreadable` | the reservation list is malformed, lacks `CK3_SEAT_DECLARED_CHARACTER_ID` (the seat's original declared ruler) beside it or has one that is not a positive id, or reserves that ruler; nothing is claimed until the harness fixes it |
+
 In Mode B, check that the reply reports the AI disabled. If the bridge could
 not find the ruler's AI controller, it stays in Mode A.
 

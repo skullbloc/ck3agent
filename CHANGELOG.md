@@ -3,6 +3,57 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.7 — 2026-11-10
+
+From the v3 pilot on 2026.12.6: in two arms the king's seat claimed the
+dukes' rulers before the dukes' seats bound them, and held them to the end.
+The surface is still thirteen tools; `ck3agent run` is unchanged, and so is
+everything outside an experiment cell.
+
+* **A seat cannot claim a ruler the cell reserved for another seat.** In
+  the pilot's weak_orders and weak_intent arms the king's seat called
+  `session(action="add")` on all five dukes' declared characters within its
+  first minute; every duke's seat was then refused `owned_by_other` (one of
+  them 43 times). An experiment cell now tells each seat's server which
+  characters belong to the other seats: `CK3_RESERVED_FOR_OTHER_SEATS`, a
+  comma-separated list of ids, with `CK3_SEAT_DECLARED_CHARACTER_ID`, the
+  seat's own declared ruler, beside it. `session` `add` or `control` of a
+  reserved character is refused `reserved_for_another_seat` by the server
+  itself, before anything is sent to the bridge; it is not retried and does
+  not fall through to `owned_by_other`. `release` is not a claim and is never
+  refused this way, and the seat's own ruler, or an heir who is not another
+  seat's declared ruler, still goes to the bridge as before. If the list is
+  set but cannot be read (not a list of positive ids, no
+  `CK3_SEAT_DECLARED_CHARACTER_ID` beside it, a
+  `CK3_SEAT_DECLARED_CHARACTER_ID` that is not a positive id, or a list that
+  reserves the seat's own declared ruler), every claim is refused `seat_reservations_unreadable`
+  until the cell fixes it: a reservation the server cannot read is not
+  treated as none. With `CK3_RESERVED_FOR_OTHER_SEATS` unset or empty,
+  nothing changes. The `session`
+  tool's description now says so, and `docs/reference/bridge-contract.md`
+  lists both refusals.
+* **The seat's lineage records write two new notes.** In a cell
+  (`CK3_SEAT_LINEAGE_OUT`), a refused claim writes a `claim_refused` row
+  naming the seat, the action, the character and the reason, so the record
+  shows the attempt itself, not just its effect on the other seats. When the
+  seat's lineage records a `bound` or `rebind` row whose ruler (the seat's
+  primary ruler, the one the lineage follows) is another seat's declared
+  ruler, it writes a `holds_reserved` row beside it. This covers the routes
+  that are not a claim: its own ruler's succession, the bridge's heir
+  handoff, or a continuation whose primary carried ruler is another seat's.
+  It does not cover a reserved ruler a continuation carries as a second or
+  later ruler, and it is written only while the seat's reservations can be
+  read: with an unreadable list the note is skipped (claims are refused
+  `seat_reservations_unreadable` instead). Neither note changes the seat's status, its ruler
+  or its count of failed reads, and a resumed seat's server does not read
+  them as lineage.
+* **The cell summary dates each seat.** The research harness's cell summary
+  now gives every seat its `started_utc`, `ended_utc` and `server_release`.
+  In the pilot, two seats both listed the same character as held at their
+  stop; they stopped 26 seconds apart and the first had released him before
+  the second claimed him. The bridge never had two holders; the summary just
+  could not show the order.
+
 ## 2026.12.6 — 2026-11-10
 
 From the v3 pilot on 2026.12.5: a seat that held its ruler was recorded as

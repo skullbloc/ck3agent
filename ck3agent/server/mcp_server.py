@@ -3084,6 +3084,9 @@ async def session(
     ruler held. With several, pass character_id on EVERY call. release frees one;
     the last one is freed when the session ends. CK3_AGENT_CHARACTER_ID pre-binds
     one id or a comma-separated list ("13902,12145"); the first is the primary.
+    In an experiment cell, add or control of a character the cell reserved for
+    another seat is refused (reserved_for_another_seat) and not sent to the
+    bridge: that ruler is another seat's, so do not claim it.
 
     experimental_flags lists the experimental engine flags, all OFF at boot;
     session(action="set_experimental", flag=<name>, enabled=<bool>) arms or disarms ONE
