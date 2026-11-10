@@ -147,6 +147,21 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # lane-multi: session(action="add") against a bridge whose reply lacks
     # `added`: it predates the add path and treated the call as a SWITCH.
     "add_unsupported_by_bridge": {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    # 2026.12.7 (owner ruling 2026-11-10; v3pilot5 weak_orders/weak_intent): the
+    # SERVER's own claim refusals, decided before any bridge call
+    # (seat_reservations.py). Not bridge reasons: no set_controlled_character
+    # reply carries them, so they are not members of CONTROL_REFUSAL_REASONS.
+    # A standing rule of the experiment, like last_claim_of_control_session, and
+    # NOT retryable: the character stays another seat's for the whole episode.
+    # Not GENERIC: claiming a different character can succeed.
+    # CLASS: the server decides these, not the bridge, and the class vocabulary
+    # has no member for that (bridge, channel, pause, resource, steer_vs_control,
+    # target_state, territory, timing). `steer_vs_control` is the closest: the
+    # class of what a seat may control. Not `bridge`: no bridge reply carries them.
+    "reserved_for_another_seat": {"class": "steer_vs_control", "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    # The cell set the reservation and this server cannot read it: nothing is
+    # claimed while it stands (refuse rather than default to "no reservations").
+    "seat_reservations_unreadable": {"class": "steer_vs_control", "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "actor_required":            {"class": "bridge",         "severity": "invalid", "retryable": False},
     # rc2 B6: character_id=0 and the bridge resolved NO character, or this
     # seat's own row holds no primary. Not retryable as sent: bind first.
@@ -793,6 +808,8 @@ GATE_WHY: dict[str, str] = {
     "speed_registered": "in an experiment cell the game speed is the registered condition, set by the harness before the seats start; no seat may change it",
     "unmapped_refusal": "the bridge refused with a code this server does not map; raw_reason carries it",
     "owned_by_other": "another control session already holds that character",
+    "reserved_for_another_seat": "that character belongs to another seat in this experiment; this seat must not claim it",
+    "seat_reservations_unreadable": "CK3_RESERVED_FOR_OTHER_SEATS is set and this server cannot read it (malformed, no CK3_SEAT_DECLARED_CHARACTER_ID beside it, or it names that id); no character was claimed",
     "last_claim_of_control_session": "this is the seat's last character and releasing it is refused",
     "clock_owned_by_pipeline": "the clock belongs to the harness; a session cannot pause, unpause or set speed",
     "actor_not_claimed": "the acting character is not claimed by this session",
@@ -850,6 +867,8 @@ GATE_NEXT: dict[str, str] = {
     "no_ruler_bound": "bind one: session(action='control', character_id=<id>), then session(action='whoami')",
     "actor_unresolved": "check session(action='health'), then session(action='whoami')",
     "owned_by_other": "that character is not free; choose one this seat holds",
+    "reserved_for_another_seat": "do not claim it: play the rulers this seat holds (session(action='whoami'))",
+    "seat_reservations_unreadable": "do not retry: report it; the harness must fix CK3_RESERVED_FOR_OTHER_SEATS or CK3_SEAT_DECLARED_CHARACTER_ID. Play the rulers this seat already holds (session(action='whoami'))",
     "write_unconfirmed": "read the state back before sending the write again",
     "read_timeout": "check session(action='health'), then retry once",
     "bridge_fault": "read the state back where the effect would show before sending it again; session(action='health') says whether the bridge is still answering",
@@ -8086,6 +8105,48 @@ RELEASE_REFUSAL_FIXES = {
 }
 
 
+import seat_reservations as _resv     # noqa: E402  (2026.12.7: the cell's seat reservations, one reader)
+import seat_lineage as _lineage       # noqa: E402  (the sink the refused attempt is written to)
+import os as _os                      # noqa: E402
+import channel as _chan               # noqa: E402  (ENV_SEAT, the seat label's one spelling)
+
+#: What each server-side claim refusal tells the seat (2026.12.7).
+RESERVATION_REFUSAL_SUMMARIES = {
+    _resv.R_RESERVED: ("that character is reserved for another seat in this experiment: it belongs "
+                       "to that seat, and this seat must not claim it. Nothing was sent to the "
+                       "bridge. Play the rulers this seat holds."),
+    _resv.R_UNREADABLE: ("this seat's reservation list (CK3_RESERVED_FOR_OTHER_SEATS, with "
+                         "CK3_SEAT_DECLARED_CHARACTER_ID) is set and cannot be read, so no character "
+                         "may be claimed until the harness fixes it. "
+                         "Nothing was sent to the bridge."),
+}
+
+
+def reserved_claim_refusal(gw, action: str, character_id) -> "Optional[dict]":
+    """The refusal envelope for claiming `character_id` against the cell's
+    reservations, or None when the claim may go to the bridge. (2026.12.7)
+
+    Decided BEFORE any bridge call, with no retry and no fall-through to
+    owned_by_other: in v3pilot5 the king's `add` of the dukes' rulers SUCCEEDED
+    because none of them had bound yet, so the bridge cannot be the check. A
+    refused attempt leaves a `claim_refused` row in the seat's lineage sink
+    (when armed): the attempt is evidence, not noise."""
+    why = _resv.refusal(character_id)
+    if why is None:
+        return None
+    measured = {"character_id": _as_int(character_id), "action": action}
+    if why == _resv.R_UNREADABLE:
+        measured["error"] = _resv.read().error
+    _lineage.record_claim_refused(
+        _lineage.armed(), seat_session_id=_os.environ.get(_lineage.SESSION_ID_ENV),
+        seat_label=_os.environ.get(_chan.ENV_SEAT), character_id=_as_int(character_id),
+        action=action, reason=why, game=gw.game() if callable(getattr(gw, "game", None)) else None)
+    return envelope("session", ok=False, game=gw.game(),
+                    blocked=why_blocked(why, summary=RESERVATION_REFUSAL_SUMMARIES.get(why, why),
+                                        measured=measured),
+                    bridge_health=gw.health)
+
+
 def control_refusal_reason(res) -> "Optional[str]":
     """The refusal code, or None when the bridge WITNESSED a success. (ck-switch)
 
@@ -8708,6 +8769,9 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                          "which the bridge would treat as unbinding. To unbind, "
                                          "use session(action='release', character_id=<id>).")),
                             bridge_health=gw.health)
+        _reserved = reserved_claim_refusal(gw, "control", character_id)
+        if _reserved is not None:
+            return _reserved
         res = await gw.write("set_controlled_character",
                              {"character_id": character_id, "disable_native_ai": disable_native_ai})
         res = res if isinstance(res, dict) else {}
@@ -8819,6 +8883,9 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                 "missing_character_id",
                                 summary="add needs character_id=<id>; it was omitted or 0."),
                             bridge_health=gw.health)
+        _reserved = reserved_claim_refusal(gw, "add", character_id)
+        if _reserved is not None:
+            return _reserved
         res = await gw.write("set_controlled_character",
                              {"character_id": character_id,
                               "disable_native_ai": disable_native_ai, "add": True})
