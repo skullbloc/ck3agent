@@ -3,6 +3,48 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.6 — 2026-11-10
+
+From the v3 pilot on 2026.12.5: a seat that held its ruler was recorded as
+having lost it. The surface is still thirteen tools; `ck3agent run` is
+unchanged.
+
+* **A lineage read that fails is read again, up to three times in a row.**
+  In an experiment cell a seat's server checks its ruler at every `observe`
+  and writes its seat-lineage rows (`CK3_SEAT_LINEAGE_OUT`). Until now a read
+  that failed ended the seat at once: a read of the bridge's sessions that
+  timed out, lost its connection or came back without a session list ended it
+  `seat_unbound` (`session_row_absent`), and a failed read of the ruler or the
+  title ended it `character_read_refused`, `title_read_refused` or even
+  `lost`. Two seats of a pilot cell were ended `session_row_absent` at
+  867.10.22 and 10.23 while each held its ruler on the same bridge session to
+  the end; the pilot kept no log that shows which reply their reads got.
+  Now a read of the sessions, of the ruler (`query_character`) or of the
+  title the lineage follows (`query_title_hierarchy`) that came back empty,
+  timed out, lost its connection (`bridge_disconnected`), was not run in time
+  (`game_thread_timeout`) or faulted (`memory_access_fault`, or a reply the
+  bridge marks `degraded` that lacks what the step reads: the session list,
+  the ruler's `alive`, the title's holder), or a step that raised, writes a
+  non-terminal `read_failed` row, and the next `observe` reads again; the
+  first step that reads again writes `reads_recovered`. A `degraded` reply
+  that carries what the step reads is the bridge's answer and is decided on.
+  The third such step in a row ends the seat `seat_unbound` with the reason
+  `reads_failed_repeatedly`, dated at the first of them (`first_failed_utc`
+  beside it); a resumed seat's new server continues the count from the rows.
+  This counts from the seat's first `observe`, before it has a ruler too, so a
+  seat that never gets a good read is recorded `seat_unbound`, not left
+  unwitnessed. A seat whose own session is read and holds no ruler yet (a
+  pre-bind that has not landed) is counted the same way, and three such reads
+  in a row end it `seat_unbound` with the reason `never_bound`; it used to end
+  `character_read_refused` at its second `observe`. A seat that reads its
+  ruler after such steps is recorded `bound` as its first ruler; one whose
+  rows are only such notes when the episode ends is graded unwitnessed, not
+  bound. A read the
+  bridge made and answered still decides at once: a session list without the
+  seat's session is `session_row_absent`, a ruler or title read the bridge
+  refused is `character_read_refused` or `title_read_refused`, a title the
+  bridge reports not found is `lost`.
+
 ## 2026.12.5 — 2026-11-09
 
 From the first pilot cell on 2026.12.4 (six seats, one game-year): a cell

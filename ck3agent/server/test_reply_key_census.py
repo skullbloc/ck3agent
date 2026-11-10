@@ -217,7 +217,24 @@ def emitted_paths(handler: str) -> tuple[frozenset, list]:
             p = p[1:]
         if p:
             out.add(p)
+    # 2026.12.6: a handler that opens a FaultScope has its reply SPLICED (not
+    # .key()-written) with the keys mark_reply_degraded appends when a read
+    # faulted (action_dispatch_internal.h, FaultScope's destructor). Read from
+    # that splice, never retyped.
+    if re.search(r"\bFaultScope\s+\w+\s*\(", funcs[handler][2]):
+        out |= {(k,) for k in degraded_splice_keys()}
     return frozenset(out | {(k,) for k in ENVELOPE}), unresolved
+
+
+def degraded_splice_keys() -> tuple:
+    """The keys mark_reply_degraded splices into a reply
+    (bridge/include/action_dispatch_internal.h `reply += "\"degraded\":true,..."`)."""
+    text = (REPO / "bridge" / "include" / "action_dispatch_internal.h").read_text(encoding="utf-8")
+    body = text[text.index("inline void mark_reply_degraded("):]
+    body = body[:body.index("\n}")]
+    keys = tuple(re.findall(r'\\"(\w+)\\":', " ".join(re.findall(r'reply \+= "([^;]*)";', body))))
+    assert keys, "mark_reply_degraded splices no key: the census cannot read it"
+    return keys
 
 
 def emitted_keys(handler: str) -> tuple[frozenset, list]:
@@ -852,3 +869,13 @@ def test_CONTROL_an_emitted_double_is_clean():
     found = find_doubles_in(src, "<control>")
     assert len(found) == 5 and all(f[3] for f in found)
     assert [forged(p, a) for _, a, p, _ in found] == [[], [], [], [], []]
+
+
+
+def test_the_degraded_splice_is_read_from_the_bridge():
+    """FaultScope -> mark_reply_degraded appends `degraded` and `fault_count` to
+    a reply whose read faulted; a handler that opens a FaultScope can carry them
+    (query_title_hierarchy, get_bridge_state's sibling reads)."""
+    assert degraded_splice_keys() == ("degraded", "fault_count")
+    keys, _ = emitted_paths("do_query_title_hierarchy")
+    assert ("degraded",) in keys and ("fault_count",) in keys

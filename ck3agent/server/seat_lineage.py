@@ -32,10 +32,13 @@ tested without a bridge; `step` only performs the reads and the write.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+_log = logging.getLogger("ck3-mcp.seat_lineage")
 
 LINEAGE_OUT_ENV = "CK3_SEAT_LINEAGE_OUT"
 #: K's registered title (§7.5 "the king's seat follows K's registered title").
@@ -56,6 +59,15 @@ KIND_REBIND = "rebind"
 KIND_LOST = "lost"
 KIND_UNBOUND = "seat_unbound"
 KIND_PENDING = "pending"          # dead, succession not yet resolved by the engine
+#: 2026.12.6 (owner rulings 2026-11-10): NON-TERMINAL notes. `read_failed` is a
+#: step that gave no verdict because a read failed (`read_failed`, below); it
+#: carries the read, why, and how many such steps are consecutive. The first
+#: verdict-bearing step after them writes `reads_recovered`. The sink carries
+#: them so a resumed seat's NEW server (prior_from_sink) keeps the count: a
+#: seat's server often makes only one or two observes before its claude ends,
+#: so a count that reset with each process could never reach the bound.
+KIND_READ_FAILED = "read_failed"
+KIND_READS_RECOVERED = "reads_recovered"
 SOURCE_BRIDGE = "bridge_handoff"
 SOURCE_EXPLICIT = "explicit_control"
 
@@ -65,6 +77,21 @@ R_CHARACTER_READ_REFUSED = "character_read_refused"
 R_BIND_REFUSED = "bind_refused"
 R_HOLDER_HELD_ELSEWHERE = "holder_held_by_another_seat"
 R_SESSION_ROW_ABSENT = "session_row_absent"
+#: 2026.12.6 (owner, verbatim: "If there are something like multiple timeouts in
+#: a row, that might be fair to call an issue."): the bound on failed reads. The
+#: MAX_CONSECUTIVE_FAILED_READS-th consecutive failed step ends the seat
+#: `seat_unbound` with this reason, DATED at the first of them (game date and
+#: tick; `first_failed_utc` beside), so the unbound span runs from when the seat
+#: stopped seeing.
+R_READS_FAILED_REPEATEDLY = "reads_failed_repeatedly"
+MAX_CONSECUTIVE_FAILED_READS = 3
+#: TK6 witness r2 item 3: the seat's own session row was READ and holds no
+#: ruler, MAX_CONSECUTIVE_FAILED_READS observes in a row, before the seat ever
+#: had one (a prebind that never landed). Counted with the failed reads; the
+#: terminal says `never_bound` when every step of the run was this, and
+#: `reads_failed_repeatedly` when any read in it failed.
+NOT_BOUND_YET = "not_bound_yet"
+R_NEVER_BOUND = "never_bound"
 R_RELEASED = "released_without_death"
 #: a rebind this seat's server records when the primary moved with NO heir witness
 #: (heir != the new primary): a swap, not a lineage rebind (v3 §7.5 as amended by the
@@ -81,6 +108,12 @@ class Prior:
     ended: bool = False
     pending_cycles: int = 0
     rows: list = field(default_factory=list)
+    #: 2026.12.6: consecutive steps with a failed read (no verdict), and the
+    #: first of them (game_date, tick, utc); rebuilt from the sink by a new server.
+    consecutive_failed: int = 0
+    first_failed: Optional[dict] = None
+    #: whether every step of the current run was NOT_BOUND_YET (no read failed)
+    run_only_not_bound: bool = True
 
 
 @dataclass(frozen=True)
@@ -213,6 +246,118 @@ def _through_title(prior: Prior, dead: int, title: Optional[int], title_read: An
     return Decision(KIND_REBIND, dead, holder, title, SOURCE_EXPLICIT, bind_target=holder)
 
 
+def session_rows(reply: Any) -> Optional[list]:
+    """`get_bridge_state`'s session list, or None when the reply carries none.
+
+    2026.12.6 (v3 pilot flat_hom-3: D4 and D5 written `seat_unbound
+    session_row_absent` at 867.10.22/23 while both held their rulers on the same
+    bridge session to the horizon). A read that did not deliver the list says
+    nothing about the seat's row: the gateway answers `{}` for a read that timed
+    out or lost its connection and `{"reason": "bridge_disconnected"}` when hung
+    (mcp_server.BridgeGateway._dispatch), and the bridge answers a faulted read
+    `{"error": "memory_access_fault"}` (bridge.h MEMORY_ACCESS_FAULT_REPLY). The
+    bridge builds the list from its registry under one lock, detached and lost
+    sessions included (session.cpp sessions_json), so only a reply that CARRIES
+    the list can say a session is absent. The same rule as the CLI's
+    `_bridge._session_rows` (test_seat_lineage checks the two agree); the
+    step's failed-read predicate for all three reads is `read_failed`."""
+    rows = reply.get("sessions") if isinstance(reply, dict) else None
+    if not isinstance(rows, list):
+        return None
+    return [r for r in rows if isinstance(r, dict)]
+
+
+#: THE FAILED-READ CODES, defined ONCE (TK6 witness r1 item 1). The server's
+#: gateway and its listener spell their own answers with these constants
+#: (mcp_server.BridgeGateway._dispatch, mcp_server._bridge_listener), so a new
+#: spelling cannot slip past the predicate below:
+#:   BRIDGE_DISCONNECTED   the gateway with no connection ({"reason": ...}) and
+#:                         the listener failing a read IN FLIGHT when the
+#:                         connection drops ({"error": ...})
+#:   GAME_THREAD_TIMEOUT   ipc_server.cpp serve_on_game_thread ("the game-thread
+#:                         drain did not run this read in time ... Nothing was read.")
+#:   MEMORY_ACCESS_FAULT   bridge.h MEMORY_ACCESS_FAULT_REPLY (the read faulted)
+BRIDGE_DISCONNECTED = "bridge_disconnected"
+GAME_THREAD_TIMEOUT = "game_thread_timeout"
+MEMORY_ACCESS_FAULT = "memory_access_fault"
+FAILED_READ_CODES = frozenset({BRIDGE_DISCONNECTED, GAME_THREAD_TIMEOUT, MEMORY_ACCESS_FAULT})
+#: `"degraded": true` marks a reply one of whose memory reads faulted. Where it
+#: is set (TK6 witness r2 item 1):
+#:   query_handlers.cpp:972         emit_degraded on a FULL query_character
+#:                                  profile (id, alive, ...): it "stands
+#:                                  without" the faulted fields
+#:                                  (action_dispatch_internal.h:157)
+#:   action_dispatch_internal.h:213-215  FaultScope -> mark_reply_degraded on any
+#:                                  reply of get_bridge_state
+#:                                  (dispatch_router.cpp:1650) and of
+#:                                  query_title_hierarchy (query_handlers.cpp:3006)
+#:   dispatch_router.cpp:2943       the {"success": false, "action": ...} fill-in
+#:                                  when the handler returned false after a fault
+#: So degraded is a FAILED read only when the reply also lacks the field the
+#: lineage decides on (LOAD_BEARING): the session list; a character's `alive`
+#: (and a degraded success:false is the lookup itself faulting); a title's
+#: holder (a degraded title_not_found is lookup_title_obj faulting). A degraded
+#: reply that carries the field is the bridge's answer and is decided on.
+DEGRADED = "degraded"
+READ_SESSIONS = "get_bridge_state"
+READ_CHARACTER = "query_character"
+READ_TITLE = "query_title_hierarchy"
+
+
+def _load_bearing_missing(reply: dict, read: Optional[str]) -> bool:
+    """Whether `reply` lacks the field the step decides on, for `read`."""
+    if read == READ_SESSIONS:
+        return session_rows(reply) is None
+    if read == READ_CHARACTER:
+        # `alive` is always written by build_char_profile, so a profile whose id
+        # read faulted to 0 still carries it: the id is load-bearing too (TK6
+        # witness r3 item 3; _alive needs id > 0)
+        return reply.get("success") is False or not isinstance(reply.get("alive"), bool) \
+            or _i(reply.get("id")) <= 0
+    if read == READ_TITLE:
+        title = reply.get("title")
+        return reply.get("error") == "title_not_found" or not (
+            isinstance(title, dict) and "holder_id" in title)
+    return True                         # an unnamed read: no field is known to stand
+
+
+def read_failed(reply: Any, read: Optional[str] = None) -> Optional[str]:
+    """Why `reply` to `read` is a FAILED read (no verdict, counted toward the
+    bound), or None when the bridge answered.
+
+    2026.12.6 (owner rulings 2026-11-10: "a failed or list-less read is
+    retried, not counted as an unbind", bounded at MAX_CONSECUTIVE_FAILED_READS).
+    ONE predicate for the step's three reads (READ_SESSIONS, READ_CHARACTER,
+    READ_TITLE):
+      * nothing came back: None, not an object, or `{}` (the gateway's answer to
+        a read that timed out or lost its connection, BridgeGateway._dispatch;
+        a bridge reply is never `{}`: ipc_server injects request_id, tick and
+        game_date into every reply);
+      * a FAILED_READ_CODES code under `error` or `reason`;
+      * for the session read, no session list;
+      * `"degraded": true` AND the read's load-bearing field missing (DEGRADED).
+    Anything else is a READ: for query_character a refusal is a non-degraded
+    `{"success": false, "action": "query_character"}` (do_query_character
+    returned false: dispatch_router.cpp dispatch_action_with_response fills it
+    in), the signed `character_read_refused`; for query_title_hierarchy a
+    non-degraded `{"error": "title_not_found"}` is the title gone (`lost`)."""
+    if reply is None:
+        return "no_reply"
+    if not isinstance(reply, dict):
+        return "not_an_object"
+    if not reply:
+        return "empty_reply"
+    for key in ("error", "reason"):
+        code = reply.get(key)
+        if isinstance(code, str) and code in FAILED_READ_CODES:
+            return code
+    if read == READ_SESSIONS and session_rows(reply) is None:
+        return "no_session_list"
+    if reply.get(DEGRADED) is True and _load_bearing_missing(reply, read):
+        return DEGRADED
+    return None
+
+
 def armed(environ: Optional[dict] = None) -> Optional[str]:
     env = os.environ if environ is None else environ
     out = env.get(LINEAGE_OUT_ENV)
@@ -265,6 +410,17 @@ def prior_from_sink(path: Optional[str]) -> Optional[Prior]:
             prior.ended = True
         elif k == KIND_PENDING:
             prior.pending_cycles += 1
+        if k == KIND_READ_FAILED:
+            prior.consecutive_failed += 1
+            if prior.consecutive_failed == 1:
+                prior.first_failed = {"game_date": r.get("game_date"), "tick": r.get("tick"),
+                                      "utc": r.get("written_utc")}
+                prior.run_only_not_bound = True
+            if not str(r.get("reason") or "").endswith(":" + NOT_BOUND_YET):
+                prior.run_only_not_bound = False
+        else:                       # any other row is a step that gave a verdict
+            prior.consecutive_failed, prior.first_failed = 0, None
+            prior.run_only_not_bound = True
     return prior
 
 
@@ -277,6 +433,73 @@ def append_row(path: str, row: dict) -> bool:
         return False
 
 
+def _verdict_rows(rows: list) -> list:
+    """The rows that are a lineage's verdicts: every row but the non-terminal
+    notes (KIND_READ_FAILED, KIND_READS_RECOVERED)."""
+    return [r for r in rows if not (isinstance(r, dict)
+                                    and r.get("kind") in (KIND_READ_FAILED, KIND_READS_RECOVERED))]
+
+
+def _game_of(gw) -> dict:
+    try:
+        g = gw.game() if callable(getattr(gw, "game", None)) else {}
+    except Exception:                                          # noqa: BLE001
+        g = {}
+    return g if isinstance(g, dict) else {}
+
+
+def _no_verdict(prior: Prior, read: str, why: Optional[str], *, gw, sink: str,
+                seat_session_id: Optional[str]) -> Prior:
+    """A failed read (2026.12.6): a non-terminal `read_failed` row; on the
+    MAX_CONSECUTIVE_FAILED_READS-th in a row, the terminal `seat_unbound
+    reads_failed_repeatedly`, dated at the first of them."""
+    game = _game_of(gw)
+    utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    prior.consecutive_failed += 1
+    if prior.consecutive_failed == 1 or prior.first_failed is None:
+        prior.first_failed = {"game_date": game.get("date"), "tick": game.get("tick"), "utc": utc}
+        prior.run_only_not_bound = True
+    if why != NOT_BOUND_YET:
+        prior.run_only_not_bound = False
+    note = {"seat_session_id": seat_session_id, "kind": KIND_READ_FAILED,
+            "old_id": prior.ruler, "new_id": 0, "title_id": prior.title_id, "source": None,
+            "reason": f"{read}:{why}", "consecutive": prior.consecutive_failed,
+            "game_date": game.get("date"), "tick": game.get("tick"), "written_utc": utc}
+    append_row(sink, note)
+    prior.rows.append(note)
+    _log.warning("seat lineage: %s failed (%s); no verdict (%d of %d in a row)", read, why,
+                 prior.consecutive_failed, MAX_CONSECUTIVE_FAILED_READS)
+    if prior.consecutive_failed >= MAX_CONSECUTIVE_FAILED_READS:
+        first = prior.first_failed or {}
+        end = {"seat_session_id": seat_session_id, "kind": KIND_UNBOUND,
+               "old_id": prior.ruler, "new_id": 0, "title_id": prior.title_id,
+               "source": SOURCE_EXPLICIT,
+               "reason": R_NEVER_BOUND if prior.run_only_not_bound else R_READS_FAILED_REPEATEDLY,
+               "game_date": first.get("game_date"), "tick": first.get("tick"),
+               "first_failed_utc": first.get("utc"), "consecutive": prior.consecutive_failed,
+               "written_utc": utc}
+        append_row(sink, end)
+        prior.rows.append(end)
+        prior.ended = True
+    return prior
+
+
+def _recovered(prior: Prior, *, gw, sink: str, seat_session_id: Optional[str]) -> None:
+    """The first verdict-bearing step after failed reads: say so, reset the count."""
+    if not prior.consecutive_failed:
+        return
+    game = _game_of(gw)
+    note = {"seat_session_id": seat_session_id, "kind": KIND_READS_RECOVERED,
+            "old_id": prior.ruler, "new_id": prior.ruler, "title_id": prior.title_id,
+            "source": None, "reason": None, "after": prior.consecutive_failed,
+            "game_date": game.get("date"), "tick": game.get("tick"),
+            "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    append_row(sink, note)
+    prior.rows.append(note)
+    prior.consecutive_failed, prior.first_failed = 0, None
+    prior.run_only_not_bound = True
+
+
 async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Optional[str],
                registered_title: Optional[int] = None, own_session_id=None,
                own_session_row=None) -> Prior:
@@ -286,16 +509,51 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
     this module imports nothing from redesign (which imports mcp_server's state).
     """
     try:
-        bs = await gw.read("get_bridge_state", {})
+        bs = await gw.read(READ_SESSIONS, {})
         sid = own_session_id(gw) if own_session_id else None
+        # 2026.12.6 (owner rulings 2026-11-10; TK6 witness r1, r2): EVERY seat not
+        # ended counts, whether or not it has had a ruler, so a seat that never
+        # gets a good read ends `reads_failed_repeatedly` ("we looked and could
+        # not see"), never `unwitnessed`. A FAILED read of any of the three reads
+        # (read_failed, one predicate), no own session id, a step that raised,
+        # and (before any ruler) a good read finding no ruler yet are NO VERDICT:
+        # a non-terminal `read_failed` row and the next observe reads again; the
+        # MAX_CONSECUTIVE_FAILED_READS-th in a row ends the seat, dated at the
+        # first (_no_verdict). A read the bridge answered keeps the signed
+        # reasons: a list without this seat's row is `session_row_absent`, a
+        # refused character or title read `character_read_refused` /
+        # `title_read_refused` (decide, below). Note rows are invisible to the
+        # first-sighting rule (_verdict_rows): no false swap.
+        counting = prior is None or not prior.ended
+        miss = read_failed(bs, READ_SESSIONS) or (None if sid else "no_own_session_id")
+        if counting and miss:
+            return _no_verdict(prior or Prior(ruler=0, title_id=None), READ_SESSIONS, miss,
+                               gw=gw, sink=sink, seat_session_id=seat_session_id)
         row = own_session_row(bs, sid) if own_session_row else None
         p = _i((row or {}).get("primary_character_id")) if isinstance(row, dict) else 0
+        no_ruler_yet = prior is None or (prior.ruler == 0 and not prior.ended)
+        if no_ruler_yet and isinstance(row, dict) and p == 0 \
+                and not (isinstance(row.get("unbound_reason"), str) and row.get("unbound_reason")):
+            # the row was read and holds no ruler, and the seat never had one
+            # (a prebind landing late, or never): not a verdict on a lineage
+            # that does not exist yet (TK6 witness r2 item 3)
+            return _no_verdict(prior or Prior(ruler=0, title_id=None), READ_SESSIONS,
+                               NOT_BOUND_YET, gw=gw, sink=sink, seat_session_id=seat_session_id)
         subject = p if (prior is None or p > 0) else prior.ruler
-        char_read = await gw.read("query_character", {"character_id": subject}) if subject else None
+        char_read = await gw.read(READ_CHARACTER, {"character_id": subject}) if subject else None
+        if counting and subject and read_failed(char_read, READ_CHARACTER):
+            return _no_verdict(prior or Prior(ruler=0, title_id=None), READ_CHARACTER,
+                               read_failed(char_read, READ_CHARACTER), gw=gw, sink=sink,
+                               seat_session_id=seat_session_id)
         title = registered_title or (prior.title_id if prior else None)
         title_read = None
         if prior is not None and title and (p == 0 or (p == prior.ruler and _alive(char_read) is False)):
-            title_read = await gw.read("query_title_hierarchy", {"title_id": title})
+            title_read = await gw.read(READ_TITLE, {"title_id": title})
+            if counting and read_failed(title_read, READ_TITLE):
+                return _no_verdict(prior, READ_TITLE, read_failed(title_read, READ_TITLE),
+                                   gw=gw, sink=sink, seat_session_id=seat_session_id)
+        if prior is not None and not prior.ended and prior.ruler > 0:
+            _recovered(prior, gw=gw, sink=sink, seat_session_id=seat_session_id)
         player = _i((bs or {}).get("player_character_id")) if isinstance(bs, dict) else 0
         held = frozenset(
             _i(c) for r in ((bs or {}).get("sessions") or []) if isinstance(r, dict)
@@ -311,7 +569,8 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
             if not ok:
                 d = Decision(KIND_UNBOUND, d.old_id, d.bind_target, d.title_id, SOURCE_EXPLICIT,
                              f"{R_BIND_REFUSED}:{(res or {}).get('reason') if isinstance(res, dict) else 'no_reply'}")
-        if prior is None or (prior.ruler == 0 and p > 0 and not prior.ended and not prior.rows):
+        if prior is None or (prior.ruler == 0 and p > 0 and not prior.ended
+                             and not _verdict_rows(prior.rows)):
             # First sighting (or the first step that finds a ruler after steps
             # that held none): the `bound` row opens the seat's sink, so a seat
             # whose ruler lives to the horizon is witnessed `bound`, not absent.
@@ -337,13 +596,15 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
             prior.title_id = d.refresh_title
         return prior
     except Exception as exc:                                        # noqa: BLE001
-        try:
-            append_row(sink, {"seat_session_id": seat_session_id, "kind": KIND_UNBOUND,
-                              "old_id": prior.ruler if prior else 0, "new_id": 0,
-                              "title_id": prior.title_id if prior else None,
-                              "source": SOURCE_EXPLICIT, "reason": f"step_failed:{type(exc).__name__}",
-                              "game_date": None, "tick": None,
-                              "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-        except Exception:                                           # noqa: BLE001
-            pass
+        # 2026.12.6 (owner rulings 2026-11-10): a step that raised is a failed
+        # read like the others (a `read_failed` row, bounded the same way). It
+        # used to write `seat_unbound step_failed:<exc>` at once (a reason the
+        # signed rule does not list).
+        if prior is None or not prior.ended:
+            try:
+                return _no_verdict(prior or Prior(ruler=0, title_id=None), "step",
+                                   type(exc).__name__, gw=gw, sink=sink,
+                                   seat_session_id=seat_session_id)
+            except Exception:                                    # noqa: BLE001
+                return prior
         return prior if prior is not None else Prior(ruler=0, title_id=None)

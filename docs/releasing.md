@@ -19,7 +19,7 @@ How a version of ck3agent reaches the releases page.
    tag the merge and push the tag:
 
    ```bash
-   git tag -a v2026.12.5 -m "ck3agent 2026.12.5" && git push origin v2026.12.5
+   git tag -a v2026.12.6 -m "ck3agent 2026.12.6" && git push origin v2026.12.6
    ```
 
    The `Release` workflow builds the bridge from a clean checkout, refuses a
@@ -30,7 +30,7 @@ How a version of ck3agent reaches the releases page.
 
    ```bash
    sha256sum -c SHA256SUMS --ignore-missing
-   gh attestation verify ck3agent-2026.12.5-linux-x86_64.tar.gz --repo skullbloc/ck3agent
+   gh attestation verify ck3agent-2026.12.6-linux-x86_64.tar.gz --repo skullbloc/ck3agent
    ```
 
    Do not press "Generate release notes": it replaces the CHANGELOG notes with
