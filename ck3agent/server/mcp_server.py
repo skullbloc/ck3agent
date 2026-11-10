@@ -189,7 +189,7 @@ class BridgeGateway:
     async def _dispatch(self, action: str, params: dict, *, write: bool = False):
         """One bridge call on the path its kind needs. No clock change, no tick wait."""
         if self.health == "hung":
-            return {"reason": "bridge_disconnected"}
+            return {"reason": seat_lineage.BRIDGE_DISCONNECTED}
         # Writes and commands: action path (fabricates sent_no_confirmation on a
         # timeout, never raises).
         if write or action in self._COMMANDS:
@@ -548,7 +548,7 @@ async def _bridge_listener(state: BridgeState):
             state.connected = False
             for req_id, future in list(state.pending_queries.items()):
                 if not future.done():
-                    future.set_result({"error": "bridge_disconnected"})
+                    future.set_result({"error": seat_lineage.BRIDGE_DISCONNECTED})
             state.pending_queries.clear()
             state.pending_acks.clear()
             state.pending_tickets.clear()
