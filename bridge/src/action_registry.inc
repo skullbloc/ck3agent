@@ -172,10 +172,10 @@ BRIDGE_ACTION("query_war_score_breakdown", do_query_war_score_breakdown)
 
 // READ-ONLY per-war AI war-stance / siege-intent (re_query_war_stance.md).
 // Pure memory reads; PAUSED-safe (no engine probe). The true-stance record
-// walk is gated default-OFF behind g_war_stance_record_walk_enabled.
+// walk is gated (default ON since WSTANCE) behind g_war_stance_record_walk_enabled.
 BRIDGE_ACTION("query_war_stance", do_query_war_stance)
 
-// Toggle the (default-OFF) war-stance coordinator record walk at runtime.
+// Toggle the (default-ON since WSTANCE) war-stance coordinator record walk at runtime.
 // { "enabled": <bool> }. Pure flag store — no game-thread reentry.
 BRIDGE_ACTION("set_war_stance_record_walk", case_set_war_stance_record_walk)
 

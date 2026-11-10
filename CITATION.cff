@@ -5,7 +5,7 @@ type: software
 authors:
   - family-names: Stebbins
     given-names: Harrison
-version: 2026.12.7
+version: 2026.12.8
 # stamped at release; must match the release date
 date-released: "2026-11-10"
 license: Apache-2.0

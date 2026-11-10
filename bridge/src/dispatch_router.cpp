@@ -2494,7 +2494,7 @@ static bool case_get_offset_validation(const char* /*params_json*/, std::string*
     return true;
 }
 
-// Toggle the (default-OFF) war-stance coordinator record walk at runtime.
+// Toggle the (default-ON since WSTANCE) war-stance coordinator record walk at runtime.
 // { "enabled": <bool> }. Pure flag store — no game-thread reentry.
 static bool case_set_war_stance_record_walk(const char* params_json, std::string* response_out) {
     // json_get_int cannot read a JSON boolean: {"enabled": false} parsed as an

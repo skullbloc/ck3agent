@@ -480,14 +480,14 @@ bool do_query_war_history(const char* params_json, std::string* out);
 bool do_query_war_score_breakdown(const char* params_json, std::string* out);
 // READ-ONLY per-war AI war-stance / siege-intent visibility (re_query_war_stance.md,
 // limitations 5–7). Pure memory reads: stance-DB 7-slot reverse map (core-confirmed)
-// + (behind g_war_stance_record_walk_enabled, default OFF) the AI-mgr coordinator
+// + (behind g_war_stance_record_walk_enabled, default ON) the AI-mgr coordinator
 // record walk that reads the LIVE chosen stance ptr per war. Derives will_siege/stuck
 // so the agent bails (white-peace) a defensive/occupation-0 war before the bleed.
 bool do_query_war_stance(const char* params_json, std::string* out);
 // Runtime flag: arm the AI-mgr coordinator record walk inside do_query_war_stance.
-// DEFAULT OFF — the record↔war-id match key (rec+0x18) is decompile-confirmed but
-// unprobed live on a known-at-war record (re_query_war_stance.md §6). When OFF
-// the handler still returns occupation-derived stance from the war-score cache.
+// DEFAULT ON since WSTANCE — the record↔war-id match key (rec+0x18) matched live
+// (smokes 17/19/21; re_query_war_stance.md §10). When OFF the handler returns
+// stance "unavailable" and an occupation-derived verdict.
 extern std::atomic<bool> g_war_stance_record_walk_enabled;
 bool do_query_council(const char* params_json, std::string* out);
 bool do_query_factions(const char* params_json, std::string* out);
