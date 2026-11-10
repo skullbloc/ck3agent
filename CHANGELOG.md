@@ -3,6 +3,45 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.8 — 2026-11-10
+
+From the v3 pilots on 2026.12.6 and 2026.12.7: `inspect(subject="war_stance")`
+answered `stance "unavailable"` for 29 of 32 reads, all after the war was
+declared, and labelled that placeholder as the engine's. The surface is
+still thirteen tools; `ck3agent run` is unchanged.
+
+* **The bridge reads the engine's war stance by default.** The per-war
+  stance comes from walking the game AI's war-coordinator records. That walk
+  was off unless something sent `set_war_stance_record_walk`, and nothing in
+  the toolkit did, so every row carried the bridge's placeholder. It is now
+  on from the start (it only reads memory, bounded). `query_war_stance`
+  reports `record_walk_enabled` true on a fresh bridge, and a war the
+  character leads as primary attacker gets the engine's stance name
+  (`attacker_offensive`, ...) with its `will_siege`, `stuck` and `advice`.
+  `set_war_stance_record_walk` still turns it off.
+* **A stance the bridge did not read is no longer shown as the engine's.**
+  A war row is `stance_source: "engine_stance_db"` only when the bridge says
+  it read the stance (`stance_known` true). Otherwise the row is inferred
+  from occupation (`attacker_not_sieging`, `offensive_sieging` or
+  `defending`, with `stance_source: "inferred_from_occupation"` and
+  `will_siege: null`) and carries:
+  - a new key `stance_unread`, `null` when the engine stance was read, else
+    a reason code naming the step that did not run or did not see:
+    `query_war_stance_unserved`, `no_native_row`, `stance_ptr_unmapped`,
+    `no_coordinator_record`, `record_walk_disabled`, `stance_db_unresolved`,
+    `record_walk_not_run`, `walk_status_unreported`;
+  - a limitation `{"code": "stance_unread", "reason_code": ...}`.
+
+  Defender and ally wars always carry `no_native_row`: the bridge lists only
+  wars the character leads as primary attacker. An attacker row at
+  occupation 0 that is not the engine's word now also carries the
+  `war_stalled_no_lever` limitation. The top-level `stance_source` is
+  `engine_stance_db` only when at least one row is (it was whenever the
+  bridge answered at all, even with no wars), and the `note` names
+  `stance_unread`. All of this reaches `inspect(subject="war_stance")`,
+  `observe`'s `war_stance_brief` (rows and `stalled`) and `plan_war`'s
+  `any_stalled`.
+
 ## 2026.12.7 — 2026-11-10
 
 From the v3 pilot on 2026.12.6: in two arms the king's seat claimed the

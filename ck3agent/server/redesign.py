@@ -2806,11 +2806,11 @@ async def _cb_options_for(gw, character_id: int, target_id: int) -> tuple[list, 
 # the 7 stance-DB slots, layered with the cached occupation_score). The earlier "not
 # landed / read-side-unexposed" note was WRONG. The handler ALWAYS serves a per-war
 # occupation view (success:true + a `wars` array, built from the war-score cache) — the
-# record walk that adds engine STANCE LABELS is the only part DEFAULT-OFF behind the bridge
-# flag `set_war_stance_record_walk` (the rec↔war-id key rec+0x18 is static-confirmed but
-# has no live probe on an at-war record — FIXPLAN B2). This Python layer does NOT arm that
-# flag and has no "prefer engine stance over synthesis" switch, so the flag-OFF served response
-# carries occupation but no stance label, and we layer it onto the SYNTHESIZED agent-facing
+# record walk that adds engine STANCE LABELS sits behind the bridge flag
+# `set_war_stance_record_walk`, DEFAULT ON since WSTANCE (it was OFF until rec+0x18 matched
+# live, smokes 17/19/21; re_query_war_stance.md §10). This Python layer does NOT arm that
+# flag. A row the bridge could not label (walk off or unmatched) is not the engine's word:
+# _stance_unread_reason names why, and we layer occupation onto the SYNTHESIZED agent-facing
 # "war stance" view from the two reads the bridge serves UNGATED: get_active_wars (side +
 # war_score) + query_war_score_breakdown (occupation_score, the siege signal).
 # query_war_stance is classified `is_game_state_query` (snapshot.cpp), served paused or
@@ -2846,6 +2846,53 @@ _WAR_STALL_LOSING_SCORE = -25      # losing badly as attacker → also exit-wort
 # NOTE: query_war_stance is is_game_state_query, served paused or running, so the
 # timeout branch below no longer false-caches a capable build into synthesis-only.
 _WAR_STANCE_UNSERVED: set = set()
+
+
+#: Why a war row carries no engine stance (WSTANCE). Each names the step that did not
+#: run or did not see, so "nobody looked" is told from "looked and could not see".
+_STANCE_UNREAD_DETAIL = {
+    "query_war_stance_unserved": "this bridge does not serve query_war_stance; stance inferred from occupation",
+    "no_native_row": "the bridge's stance read has no row for this war (it lists only wars you lead as primary attacker); stance inferred from occupation",
+    "stance_db_unresolved": "the bridge could not read the engine's war-stance table; stance inferred from occupation",
+    "record_walk_disabled": "the bridge's coordinator-record walk is off, so no stance was read (nobody looked); stance inferred from occupation",
+    "record_walk_not_run": ("the coordinator-record walk is on but did not run: the AI manager was not captured, "
+                            "or it held no records, or its record array was unreadable; stance inferred from occupation"),
+    "no_coordinator_record": "the walk ran and found no AI coordinator record for this war on your side (the AI has not planned it yet); stance inferred from occupation",
+    "walk_status_unreported": ("the bridge's stance reply does not say whether it walked the AI's records (an older bridge), "
+                               "so no reason can be given; stance inferred from occupation"),
+    "stance_ptr_unmapped": "the AI's record names a stance that is none of the 7 known; stance inferred from occupation",
+}
+
+#: The bridge's placeholder stance strings for a row it could not label.
+_STANCE_PLACEHOLDERS = frozenset({"unavailable", "unknown", ""})
+
+
+def _stance_unread_reason(native: Optional[dict], ns: dict) -> Optional[str]:
+    """None when `ns` carries an engine stance the bridge says it read; else the
+    reason code (a key of _STANCE_UNREAD_DETAIL). `native` is the whole bridge
+    reply (None when unserved), `ns` this war's row in it ({} when absent)."""
+    if not native:
+        return "query_war_stance_unserved"
+    if not ns:
+        return "no_native_row"
+    stance = str(ns.get("stance") or "")
+    known = ns.get("stance_known")
+    if known is True or (known is None and stance not in _STANCE_PLACEHOLDERS):
+        return None
+    if stance == "unknown":
+        return "stance_ptr_unmapped"
+    # The walk's own result wins when it ran: stance_db_resolved is false for fewer
+    # than 7 mapped slots, yet the walk runs on any mapped DB (query_handlers.cpp).
+    if native.get("record_walk_ran") is True:
+        return "no_coordinator_record"
+    if native.get("record_walk_enabled") is False:
+        return "record_walk_disabled"
+    if native.get("stance_db_resolved") is False:
+        return "stance_db_unresolved"
+    if native.get("record_walk_ran") is False:
+        return "record_walk_not_run"
+    # No walk keys at all: claim nothing that was not reported.
+    return "walk_status_unreported"
 
 
 async def _native_war_stance(gw, character_id: int) -> Optional[dict]:
@@ -2924,6 +2971,14 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
         side_mismatch = bool(ns) and "is_attacker" in ns and bool(ns["is_attacker"]) != is_attacker
         if side_mismatch:
             ns = {}
+        # WSTANCE (v3 pilot, 8/8 K-seat reads): the bridge answers a row it could not
+        # label with stance "unavailable" (record walk off or unmatched) or "unknown"
+        # (pointer outside the 7 slots), and its will_siege is then occupation > 0,
+        # not a stance bit. Those rows were shown as stance_source engine_stance_db.
+        # A row is the engine's word only when the bridge says it read the stance.
+        stance_unread = _stance_unread_reason(native, ns) if not side_mismatch else None
+        if stance_unread:
+            ns = {}
         native_stance = ns.get("stance")
         # will_siege (native): the authoritative "this stance actually sieges" bit.
         will_siege = ns.get("will_siege")
@@ -2974,12 +3029,18 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
                 "detail": ("the AI sieges only when it is above 1.33x the enemy's strength "
                            "(an engine constant; no personality axis or phase moves it); "
                            "call allies into the war (do(intent=\"call_ally\")), or leave it open")})
+        if stance_unread:
+            limitations.append({
+                "code": "stance_unread", "reason_code": stance_unread,
+                "is_known_limitation": True,
+                "detail": _STANCE_UNREAD_DETAIL.get(stance_unread, stance_unread)})
         row = {
             "war_id": wid,
             "name": w.get("name"),
             "side": "attacker" if is_attacker else "defender",
             "stance": stance,
             "stance_source": stance_source,   # engine_stance_db (authoritative) or inferred_from_occupation
+            "stance_unread": stance_unread,   # why the engine stance is absent (None when read or not asked)
             "will_siege": will_siege,         # native bit when served, else None
             "war_score": war_score,
             "occupation_score": my_occ,
@@ -2998,10 +3059,13 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
         "stalled": stalled,
         "any_stalled": bool(stalled),
         "tick": now_tick,
-        "stance_source": ("engine_stance_db" if native_by_war else "inferred_from_occupation"),
-        "note": ("Per-war stance: from the engine CAIWarStance DB when the bridge serves "
-                 "query_war_stance (stance_source=engine_stance_db), else INFERRED from "
-                 "occupation_score (stance_source=inferred_from_occupation). An "
+        "stance_source": ("engine_stance_db"
+                          if any(r["stance_source"] == "engine_stance_db" for r in out_wars)
+                          else "inferred_from_occupation"),
+        "note": ("Per-war stance: from the engine CAIWarStance DB when the bridge read it "
+                 "(stance_source=engine_stance_db), else INFERRED from occupation_score "
+                 "(stance_source=inferred_from_occupation; the row's stance_unread names why "
+                 "the engine stance is absent). An "
                  "attacker_not_sieging war (occupation 0, will_siege!=true) is the documented "
                  "impasse — abandon it via the exit_lever (white-peace) rather than bleeding your "
                  "army across a succession. A controlled ruler whose native AI is disabled "

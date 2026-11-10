@@ -130,6 +130,9 @@ namespace globals {
     // bytes). *(this) = CAIWarStanceDatabase*; setter STANCE_DB_CTOR (FUN_06ed25b0)
     // does _DAT_0c19e380 = new char[0x1020]. Embedded SAIWarStance* slots at +0xfb0
     // (attacker_offensive) .. +0x1010 (ghw_defender). (re_caiwarcoordinator_FINAL.md)
+    // Constructed at load, not lazily on first war: non-null with all 7 slots
+    // distinct+mapped in the 867.01.01 dump (ivar867, no war) as well as the
+    // 1097 dump (re_query_war_stance.md §10, WSTANCE).
     constexpr uintptr_t STANCE_DB_GLOBAL    = 0x0c09e380;  // HIGH
     constexpr uintptr_t CHARACTER_DB        = 0x0becf088;  // CONFIRMED: character hash map (Round 5c-f verified)
     constexpr uintptr_t INTERACTION_DB      = 0x0bed7748;  // ptr: interaction database singleton
@@ -2625,6 +2628,9 @@ namespace war_stance {
                                                        //   record↔war match key. low-24 = WAR_DB slot, high-8 = gen tag;
                                                        //   same value query_wars / query_war_score_breakdown return as war_id.
                                                        //   FUN_04e60920 masks &0xffffff → WarDB slot, validates war+8 == rec+0x18.
+                                                       //   LIVE-MATCHED (WSTANCE mirror): node smokes 17/19/21 walked with
+                                                       //   this key, 30/54/30-of-56/88-of-88 records matched WAR_DB, smoke21
+                                                       //   read attacker_offensive on war 21 (node-smoke21.md §6b).
     constexpr size_t REC_FLAGS              = 0x68;    // HIGH: u16 bitfield; bit2(0x4)=is-attacker side, bit4(0x10)=cond
     constexpr size_t REC_STANCE_PTR         = 0x70;    // HIGH: SAIWarStance* — the LIVE chosen stance for this war ← the slot
     // Re-eval cooldown counters at rec+0x94/+0x98 (MEDIUM; their only reader,

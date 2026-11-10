@@ -38,13 +38,17 @@
 namespace bridge {
 
 // Runtime flag arming the do_query_war_stance AI-mgr coordinator record walk.
-// DEFAULT OFF — the record↔war-id match key (rec+0x18) is decompile-confirmed
-// (FUN_04e60920) but unprobed live on a known-at-war record
-// (re_query_war_stance.md §6). With it OFF the handler still returns occupation-
-// derived stance from the war-score cache; the WALK only adds the true stance
-// name once a live session confirms the match key. Toggle via dispatch_action
-// ("set_war_stance_record_walk" {enabled:bool}) — pure read, no game-thread reentry.
-std::atomic<bool> g_war_stance_record_walk_enabled{false};
+// DEFAULT ON (WSTANCE, 2026-11-10). It was OFF while the record<->war-id match
+// key (rec+0x18) was unprobed live. It has since matched live on at-war records
+// (node smokes 17/19/21: 30, 54, 30/56 and 88/88 matched; smoke21 read
+// attacker_offensive on war 21), and the hang it was once suspected of (ck-26fm)
+// was the SIGSEGV-handler livelock (7ef1039d), which recurred with it disarmed.
+// OFF, nothing armed it outside the ops scripts: the v3 pilots' 8/8
+// inspect(war_stance) reads came back stance "unavailable" because the walk
+// never ran (re_query_war_stance.md §10). The walk is safe_read only
+// (process_vm_readv), bounded, no engine call. Disarm via dispatch_action
+// ("set_war_stance_record_walk" {enabled:false}).
+std::atomic<bool> g_war_stance_record_walk_enabled{true};
 
 // ============================================================================
 // War-declarability honesty helpers (read-side only — ck war_validity_discovery)
@@ -5328,14 +5332,14 @@ bool do_query_war_score_breakdown(const char* params_json, std::string* out) {
 //                stable) + the war-score-cache occupation read. With the record
 //                walk OFF, stance is reported as "unavailable" and the verdict is
 //                derived from occupation alone (conservative).
-//   (flag-gated) g_war_stance_record_walk_enabled (DEFAULT OFF): walk the AI-mgr
+//   (flag-gated) g_war_stance_record_walk_enabled (DEFAULT ON): walk the AI-mgr
 //                coordinator record array (ai_root+0x48 / count +0x54), read each
 //                record's LIVE stance ptr (rec+0x70) + attacker bit (rec+0x68&4),
 //                reverse-map the ptr to a stance name, and cross-validate the
 //                record↔war match key (rec+0x18) against WAR_DB exactly as
 //                FUN_04e60920 does (war+8 == rec+0x18). The match key is decompile-
-//                confirmed but unprobed live on a known-at-war record
-//                (re_query_war_stance.md §6) — hence OFF by default. A wrong key
+//                confirmed and matched live (smokes 17/19/21; re_query_war_stance.md
+//                §6, §10) — ON by default since WSTANCE. A wrong key
 //                degrades to "fewer wars matched", never to garbage or a crash.
 //
 // Input: { "character_id": <uint32> } (the attacker whose wars to inspect),
