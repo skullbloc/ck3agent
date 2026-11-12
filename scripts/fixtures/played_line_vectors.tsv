@@ -1,0 +1,72 @@
+# played_line_vectors.tsv — ONE case table for the played line's two decisions (METERLINE), and for
+# what R(t) reads while the line is followed (line_realm, INTEG item 1).
+# pick_primary/heir: answered by bridge/include/played_line.h (bridge/test/test_played_line.cpp, ctest); the meter
+# reads the bridge's decision (line_watch.h) and keeps no copy of it. Expected values follow from the RULE
+# (bridge_init.cpp check_controlled_handoff, as written before METERLINE), not from either half.
+#   pick_primary  <id:tier,...> in held order ("-" = nothing held); tier -1 = the title did not look up
+#   heir          <raw holder>,<dead id>  (raw holder as the title object carries it, unmasked)
+#   line_realm    <followed id>|<query_realm reply as JSON> -> <status>/<R>/<detail>
+#                 R(t) of a FOLLOWED line character (read alive this sample). Answered by
+#                 scripts/meter_lane.py grade_line_realm (scripts/test_played_line.py); the bridge's
+#                 ctest counts these rows and leaves them to the meter. Keys from the emitter
+#                 (query_handlers.cpp do_query_realm: character_id, has_realm, realm_total_counties,
+#                 realm_total_counties_unresolved only when > 0). Owner ruling 2026-11-11: alive,
+#                 readable and holding no realm is a real zero; an ENDED line never reaches this read
+#                 (realm_growth scores it: R = 0, measured, flag line_ended).
+#   line_end      <cached primary>,<raw holder>,<successor found 0/1>,<dead's titles held now>  -> 1 ended / 0 not
+#                 THE END DECISION (owner ruling 2026-11-12): bridge/include/line_watch.h line_ended (ctest
+#                 test_played_line) and its mirror scripts/study0_fixture_world.py line_ended
+#                 (scripts/test_played_line.py). raw holder as HOLDER_CHAR_ID carries it: 0xFFFFFFFF nobody,
+#                 0 the title did not look up; titles held -1 = unreadable.
+#   realm         <root>,<dead>,<target>,<root_now>,<target_top>  -> in_realm / heir_outside_realm / realm_unresolved
+#                 THE HANDOFF'S REALM GUARD (owner ruling 2026-11-12; v3reg2 s3 D1 moved onto Carloman):
+#                 bridge/include/played_line.h succession_realm_check (ctest test_played_line), called by
+#                 bridge_init.cpp check_controlled_handoff and do_set_controlled_character (dead ruler).
+# fn	args	expect	note
+pick_primary	-	0	nothing held: no primary
+pick_primary	7052:4	7052	one kingdom
+pick_primary	7052:4,105:5	105	an empire gained after the kingdom outranks it (v3reg2 slot 1)
+pick_primary	105:5,7052:4	105	order does not matter when tiers differ
+pick_primary	7054:2,7052:4,7157:2	7052	counties under a kingdom
+pick_primary	7052:4,7060:4	7052	equal tiers: the FIRST in held order stays
+pick_primary	7060:4,7052:4	7060	equal tiers, other order: still the first
+pick_primary	0:5,7052:4	7052	an empty slot is skipped, whatever tier it would carry
+pick_primary	105:-1,7052:4	7052	a title that did not look up is skipped
+pick_primary	105:-1	0	nothing readable held
+pick_primary	7001:1	7001	a barony alone is still the highest tier held
+pick_primary	16777321:5,7052:4	105	the id is masked to 24 bits (0x1000069 -> 105)
+heir	0,12015	0	no holder: no heir
+heir	0xFFFFFFFF,12015	0	the unheld sentinel
+heir	0x00FFFFFF,12015	0	the masked sentinel
+heir	12015,12015	0	the title still names the dead character
+heir	14445,12015	14445	the holder is the heir
+heir	0x1003870,12015	14448	the holder is masked (0x1003870 -> 14448)
+heir	0x1002EEF,12015	0	masked, the holder is the dead character (0x1002EEF -> 12015)
+line_realm	12015|{"character_id":12015,"has_realm":false}	ok/0/line_character_holds_no_realm	alive, followed, holds nothing: a real zero (the ruling)
+line_realm	12015|{"character_id":16789231,"has_realm":false}	ok/0/line_character_holds_no_realm	the reply's id masked (0x1002EEF -> 12015)
+line_realm	12015|{"character_id":14445,"has_realm":false}	partial//holder_has_no_realm:character_id_mismatch	the reply is about somebody else: no zero
+line_realm	12015|{"has_realm":false}	partial//holder_has_no_realm:character_id_absent	the reply names nobody: no zero
+line_realm	12015|{"character_id":12015,"has_realm":true,"realm_total_counties":0}	ok/0/	a ruler whose count is zero (titular): the emitter's own zero
+line_realm	12015|{"character_id":12015,"has_realm":true,"realm_total_counties":89}	ok/89/	a realm
+line_realm	12015|{"character_id":12015,"has_realm":true,"realm_total_counties":89,"realm_total_counties_unresolved":2}	ok/89/	the unresolved count beside it, never folded in
+line_realm	12015|{"character_id":12015,"has_realm":true}	partial//realm_total_counties_absent	a realm without a count: no number
+line_realm	12015|{"error":"game_thread_timeout"}	unavailable//realm_refused:game_thread_timeout	could not read him: unmeasured with its reason
+line_realm	12015|{"error":"game_thread_timeout","has_realm":false}	unavailable//realm_refused:game_thread_timeout	a refusal is never a zero, whatever else it carries
+line_end	7052,0xFFFFFFFF,0,0	1	dead, the title looked up and nobody holds it, no successor, he holds nothing: ended
+line_end	7052,0x00FFFFFF,0,0	1	the masked none sentinel is nobody too
+line_end	7052,0,0,0	0	the title did not look up (0): could not see, pending
+line_end	7052,0xFFFFFFFF,0,-1	0	his own title state unreadable: pending
+line_end	7052,0xFFFFFFFF,0,2	0	titles still on the dead man: the transfer is in flight, pending
+line_end	7052,0xFFFFFFFF,1,0	0	a successor was found: never ended
+line_end	0,0xFFFFFFFF,0,0	0	no primary was ever read: the instrument's gap, pending
+line_end	7052,12015,0,0	0	the title still names someone (the dead man): pending
+realm	0,15000,15319,0,15319	in_realm	no registered root: no guard (the product, an interactive session)
+realm	12015,12015,14445,0,14445	in_realm	the seat IS the realm's line (K): its heir continues it
+realm	12015,15000,15001,12015,12015	in_realm	a duke's heir inside K's realm
+realm	12015,15000,15319,12015,15319	heir_outside_realm	v3reg2 s3 D1: the heir is an independent rival king
+realm	12015,15000,15319,14445,14445	in_realm	K died; the realm's line is his heir 14445, the target his vassal
+realm	12015,15000,14445,14445,14445	in_realm	the target heads the realm now
+realm	12015,15000,15319,14445,15319	heir_outside_realm	K died, the realm passed to 14445; Carloman is outside it
+realm	12015,15000,15001,0,12015	realm_unresolved	who heads the realm now cannot be read (watch pending): retry
+realm	12015,15000,15001,12015,0	realm_unresolved	the target's liege walk failed: retry, never unbind on it
+realm	12015,15000,15001,12015,0xFFFFFF	realm_unresolved	the masked sentinel is no liege read either

@@ -802,6 +802,8 @@ bool do_maa_station(const char* params_json, std::string* out);
 bool do_maa_unstation(const char* params_json, std::string* out);
 bool do_hire_mercenary(const char* params_json, std::string* out);
 bool do_set_doctrine(const char* params_json, std::string* out);
+bool do_script_action(const char* params_json, std::string* out);     // lane v4act
+bool do_query_script_log(const char* params_json, std::string* out);  // lane v4act
 bool do_set_character_faith(const char* params_json, std::string* out);
 bool do_set_character_culture(const char* params_json, std::string* out);
 bool do_set_title_law(const char* params_json, std::string* out);

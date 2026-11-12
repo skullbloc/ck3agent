@@ -157,6 +157,9 @@ std::string Session::to_json() const {
     append_json_string(json, unbound_reason);
     json += ",\"unbound_heir_id\":";
     json += std::to_string(unbound_heir_id);
+    // owner ruling 2026-11-12: the registered realm root the handoff guards (0: none).
+    json += ",\"realm_root_id\":";
+    json += std::to_string(realm_root_id);
     json += "}";
     return json;
 }
@@ -492,6 +495,34 @@ bool SessionRegistry::unbind_for_player_heir(Session* session, uint32_t dead,
                 "its heir %u is the human player. Seat unbound (released=%d); the "
                 "agent must pick another ruler with session control.\n",
                 session->session_id.c_str(), dead, heir, released ? 1 : 0);
+        fflush(g_logfile);
+    }
+    return released;
+}
+
+// owner ruling 2026-11-12: the succession would move the seat outside its
+// registered realm. Refuse and record, as for the player heir.
+bool SessionRegistry::unbind_for_outside_realm(Session* session, uint32_t dead,
+                                               uint32_t heir) {
+    if (!session) return false;
+    const bool released = release_character(session, dead, ReleaseSubjectState::HeirOutsideRealm);
+    uint32_t root = 0;
+    {
+        std::lock_guard<std::mutex> slock(session->mutex);
+        if (!released && session->last_steered_character_id == dead)
+            session->last_release_state = ReleaseSubjectState::HeirOutsideRealm;
+        session->unbound_reason  = "heir_outside_realm";
+        session->unbound_heir_id = heir;
+        session->heir_character_id = 0;
+        session->primary_title_id  = 0;
+        root = session->realm_root_id;
+    }
+    if (g_logfile) {
+        fprintf(g_logfile,
+                "[CK3-Bridge] HANDOFF_REFUSED heir_outside_realm: session %s, %u died and "
+                "the succession's target %u is outside the seat's registered realm (root %u). "
+                "Seat unbound (released=%d), not moved.\n",
+                session->session_id.c_str(), dead, heir, root, released ? 1 : 0);
         fflush(g_logfile);
     }
     return released;

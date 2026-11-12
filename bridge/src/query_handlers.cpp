@@ -15,6 +15,7 @@
 #include "action_dispatch_internal.h"
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
 #include "game_date.h"
+#include "line_watch.h"   // METERLINE: query_character(played_line=1)
 #include "speed_read.h"    // ck-k57a: a faulted speed read is an ABSENCE, not a 1
 #include "pipeline.h"
 #include "budget_ledger.h"
@@ -962,6 +963,46 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
 }
 
 // query_character: detailed character profile
+// METERLINE: the `played_line` object of query_character (keys are the
+// contract scripts/played_line.py reads; study0_fixture_world mirrors them).
+std::string played_line_current_date();   // bridge_init.cpp
+static void emit_played_line(ResponseBuilder& r, uint32_t start_id) {
+    played_line::Watch w;
+    bool armed_now = false;
+    r.key("played_line");
+    r.begin_object();
+    // INTEG: one object, closed once below, both arms inside it (no early
+    // return between begin and end), so a reader of this emitter's nesting
+    // (ck3agent/server/test_reply_key_census.py) sees every key under
+    // `played_line`, as the reply carries it.
+    if (!played_line::watches().arm(start_id, played_line_current_date(), &w, &armed_now)) {
+        r.key("start_character_id"); r.value_uint(start_id);
+        r.key("status"); r.value_string("watch_refused");
+        r.key("reason"); r.value_string("watch_capacity");
+    } else {
+        r.key("start_character_id"); r.value_uint(w.start_id);
+        r.key("line_character_id"); r.value_uint(w.line_id);
+        r.key("previous_character_id"); r.value_uint(w.previous_id);
+        r.key("carrying_title_id"); r.value_uint(w.carrying_title_id);
+        r.key("primary_title_id"); r.value_uint(w.primary_title_id);
+        r.key("successions"); r.value_uint(w.successions);
+        r.key("why"); r.value_string(w.successions ? "succession_to_heir" : "armed");
+        r.key("status"); r.value_string(played_line::status_name(w.status));
+        if (w.status == played_line::WatchStatus::SuccessorPending) {
+            r.key("pending_reason"); r.value_string(played_line::pending_name(w.reason));
+        }
+        // owner ruling 2026-11-12: the line's END is the bridge's observed
+        // decision (line_watch.h line_ended), dated, and terminal.
+        if (w.status == played_line::WatchStatus::LineEnded) {
+            r.key("ended_date"); r.value_string(w.ended_date.c_str(), w.ended_date.size());
+        }
+        r.key("armed_date"); r.value_string(w.armed_date.c_str(), w.armed_date.size());
+        r.key("since_date"); r.value_string(w.since_date.c_str(), w.since_date.size());
+        r.key("armed_this_read"); r.value_bool(armed_now);
+    }
+    r.end_object();
+}
+
 bool do_query_character(const char* params_json, std::string* out) {
     FaultScope fault_scope("query_character", out);   // L14 S4 (audit 3(iii)): nests; a caller's fault record survives this handler
     void* character = resolve_character(params_json);
@@ -973,6 +1014,13 @@ bool do_query_character(const char* params_json, std::string* out) {
     ResponseBuilder r;
     r.begin_object();
     build_char_profile(r, character);
+    // METERLINE: `played_line: 1` names this character as the start of a played
+    // line the bridge follows per tick (line_watch.h, bridge_init.cpp
+    // check_line_watches) and returns that watch's state. Additive: without the
+    // parameter the reply is byte-for-byte what it was.
+    if (json_get_int(params_json, "played_line") == 1) {
+        emit_played_line(r, char_get_id(character) & 0xFFFFFF);
+    }
     if (safe_read_had_fault()) emit_degraded(r, "query_character");
     r.end_object();
 
@@ -2225,6 +2273,15 @@ static uint32_t get_top_realm_ruler_id(uintptr_t char_addr) {
             void* next = lookup_character(id);
             return (!next || is_sentinel(next)) ? 0 : reinterpret_cast<uintptr_t>(next);
         });
+}
+
+// The top liege of a character by id (0: does not look up, or the walk could
+// not be made). The handoff's realm guard reads it (bridge_init.cpp
+// succession_target_realm, owner ruling 2026-11-12).
+uint32_t top_liege_id_of(uint32_t cid) {
+    void* c = lookup_character(cid & 0xFFFFFF);
+    if (!c || is_sentinel(c)) return 0;
+    return get_top_realm_ruler_id(reinterpret_cast<uintptr_t>(c));
 }
 
 // Helper: count a single character's DIRECTLY-held tier-2 (county) titles.

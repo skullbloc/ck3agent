@@ -138,7 +138,9 @@ across the game).
 - Survive first. High stress, a faction above about 80 %, and no heir are emergencies; expansion waits.
 - Partition follows the number of eligible heirs, not realm size.
   `succession_plan` is the verdict (`outcome`: intact, splits with the `breaker`, or
-  undetermined; `passes_intact` true/false/null); `observe` states the same one.
+  undetermined; `passes_intact` true/false/null); `observe` states the same one. It
+  checks every kingdom and empire you hold (`crown_titles`), and covers only the titles
+  held when it was read (`scope`): read it again after you create or gain a title.
 - A bold posture does not make the AI declare the war you want. Take it from
   `plan_war` and call `declare_war`.
 - A war leader ends a war with `do(intent="make_peace", args={"war_id": ...,

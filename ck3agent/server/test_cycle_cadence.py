@@ -131,7 +131,8 @@ def test_an_ask_over_the_registered_cadence_is_refused_never_clamped(monkeypatch
 
 def test_a_bad_game_days_argument_is_invalid_and_a_stalled_clock_stops_the_loop(monkeypatch):
     monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
-    for bad in (-1, cc.HARD_GAME_DAYS_CEILING + 1, "ninety"):
+    assert not hasattr(cc, "HARD_GAME_DAYS_CEILING")     # v4: the horizon is declared, not 3,650
+    for bad in (-1, "ninety"):
         out = _wait(Clock(), monkeypatch, seconds=60, game_days=bad)
         assert out["ok"] is False and out["blocked"]["gate"] == "invalid_argument"
     gw = Clock(rate=1.0, stall_after_s=20)
@@ -140,6 +141,10 @@ def test_a_bad_game_days_argument_is_invalid_and_a_stalled_clock_stops_the_loop(
     assert out["ok"] is False and out["blocked"]["gate"] == "cycle_not_reached"
     assert r["stopped"] == cc.STOP_NO_PROGRESS and r["game_days_advanced"] < 200
     assert len(gw.slept) <= cc.MAX_WAIT_CALLS
+    # v4 (lane v4integ): an ask beyond v3's 3,650 game-days is a wait, not an
+    # invalid argument (red at 2f021e4b: invalid_argument, 0..3650)
+    out = _wait(Clock(rate=1.0, stall_after_s=20), monkeypatch, seconds=60, game_days=4000)
+    assert out["blocked"]["gate"] == "cycle_not_reached"
 
 
 def test_a_wait_at_or_past_the_registered_horizon_is_refused_and_before_it_is_not(monkeypatch):

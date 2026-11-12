@@ -55,6 +55,10 @@ class Gateway:
         return [{} for _ in specs]
 
     async def write(self, action, params=None):
+        # Lane v4act: this write goes through the script layer first; these rows
+        # grade the path it falls back to (a character with no title to name him by).
+        if action == "script_action":
+            return {"success": False, "action": "script_action", "reason": "target_not_script_addressable", "detail": "target_id"}
         return self._reply
 
     def game(self):

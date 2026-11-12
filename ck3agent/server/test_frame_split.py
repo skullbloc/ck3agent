@@ -1,21 +1,21 @@
 """ck-u182 — the frame-split path, tested where the code RUNS.
 
-`acceptance_1qj0_frame_split` owns the pre-fix CONTROL: it stages
-`bridge_client.py` from a pinned blob and proves the defect reproduced. That
-needs git, and the node's checkout is a `git archive` export — so on the node
-the lane exits 3 having graded NOTHING, because its control is its first
-section. Measured during deploy-45 verification.
+`acceptance_1qj0_frame_split` owned the pre-fix CONTROL (it staged
+`bridge_client.py` from a pinned blob and proved the defect reproduced; it
+drove the 1066 episode driver's recovery seals and went with that driver,
+2026-11-12). That needed git, and the node's checkout is a `git archive`
+export — so on the node the lane exited 3 having graded NOTHING. Measured
+during deploy-45 verification.
 
-Meanwhile the split path runs in production on every seat and on the driver
+Meanwhile the split path runs in production on every seat
 (`async_bridge_client` wraps `BridgeClient`; `mcp_server` imports it), and it
 FIRED TWICE in registered-d45 slot 1 — 4 documents recovered from frames of
 109,262 and 135,749 bytes, 0 bytes dropped. This file is that behaviour,
 asserted in the suite CLAUDE.md calls THE gate: no game, no git, no socket.
 
-TWO READERS, TWO LIFETIMES, deliberately. The lane answers "did the fix change
-anything, against the code that was broken". This answers "does the split
-behave, here, now". Neither subsumes the other, and a disagreement between them
-would be a finding rather than a duplicate.
+The lane answered "did the fix change anything, against the code that was
+broken"; this answers "does the split behave, here, now", and is now the only
+reader of it.
 """
 import collections
 import json

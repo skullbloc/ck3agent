@@ -532,8 +532,10 @@ GAME_THREAD_ACTIONS = "is_game_thread_action"
 #: 2026-11-02): board_post, board_read and board_admin were the three
 #: bridge-internal names in snapshot.cpp's safe[] list; no Tier-2 read and no
 #: game-thread action was the board's.
-CLASSIFIER_FLOOR = {"is_bridge_internal_query": 43, "is_game_state_query": 87,
-                    "is_game_thread_action": 22}
+#: Lane v4act: 44 / 87 / 23. query_script_log (bridge-internal: the game's log
+#: files, no game object) and script_action (game-thread action).
+CLASSIFIER_FLOOR = {"is_bridge_internal_query": 44, "is_game_state_query": 87,
+                    "is_game_thread_action": 23}
 
 
 #: L13 D1: what "touches game memory" means for row A0: resolving a character,
@@ -946,7 +948,8 @@ def wide_engine_truth_tests(body: str, aliases: dict[str, str]) -> tuple[list[st
 #: LoopFn cast, src/os/session_pass.cpp, was already counted at os/windows/).
 #: 216 since L16 R3 deleted select_event_option (event_handler.cpp) with
 #: respond_event, and with it its GameCommand__Dispatch cast.
-FNPTR_CAST_FLOOR = 216
+#: 217 since lane v4act's do_script_action (its CMD_EFFECT handler cast).
+FNPTR_CAST_FLOOR = 217
 
 
 def unbounded_on_path(path: list[tuple[str, str, str]]) -> list[str]:
@@ -1106,7 +1109,8 @@ _SETJMP_RE = re.compile(r"\bsigsetjmp\s*\(")
 #: (L14 S4: 22 on a0a2fff3; 23 after round 2 merged S3's
 #: do_query_create_title_cost, 378222e6). Fewer found = a parse that grades
 #: less and passes.
-SCOPE_ARM_FLOOR = 23
+#: 24 since lane v4act's do_script_action.
+SCOPE_ARM_FLOOR = 24
 #: Fail-open floor for G-nest (L14 FB m-13): the BRIDGE_ACTION lines in
 #: action_registry.inc (160 at a1fb8c6b; 156 since L16 R3 deleted the four
 #: event lines: query_event_probabilities, event_probabilities, respond_event,
@@ -1114,7 +1118,8 @@ SCOPE_ARM_FLOOR = 23
 #: either; 152 since cleanup 2026.11 L17 deleted the shared board's three
 #: lines: board_post, board_read, board_admin). A parse that found fewer would
 #: walk fewer closures and pass.
-REGISTRY_FLOOR = 152
+#: 154 since lane v4act added script_action and query_script_log.
+REGISTRY_FLOOR = 154
 
 
 def _crash_span(body: str, jmp: int) -> tuple[int, int] | None:

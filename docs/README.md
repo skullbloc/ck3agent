@@ -9,6 +9,7 @@ Read in this order. Stop when you have what you need.
 3. [Claude Desktop](claude-desktop.md): Desktop instead of Claude Code.
 4. [Troubleshooting](troubleshooting.md): symptom first.
 5. [Your game updated](supported-versions.md): after a CK3 patch.
+5b. [Standing policies](standing-policies.md): what `set_policy` does, and installing the policy mod by hand.
 
 ## Run and study
 

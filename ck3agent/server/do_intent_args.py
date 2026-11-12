@@ -31,6 +31,7 @@ MARKER_OPEN = "ARGUMENTS BY INTENT (read from the code)"
 DEDICATED: dict = {
     "faction": (pathlib.Path(__file__).resolve().parent / "factions.py",
                 ("do_faction", "_respond_demand"), "args"),
+    "set_policy": (REDESIGN, ("_do_set_policy",), "a"),
 }
 
 

@@ -4,6 +4,7 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "played_line.h"
 #include "log_redact.h"   // 2026.12.5: no token reaches the log
 #include "pause_alarm.h"
 #include "action_log_row.h"
@@ -868,6 +869,11 @@ const size_t g_subsystem_toggle_count = sizeof(g_subsystem_toggles) / sizeof(g_s
 // Controlled Character Management (Phase A)
 // =============================================================================
 
+// The handoff's realm guard (bridge_init.cpp succession_target_realm), installed
+// by bridge_init at load. A hook, not a direct call, so the host targets that
+// compile this TU without bridge_init.cpp still link; unset (a host test) = no
+// guard, the same as a session with no registered realm root.
+played_line::RealmCheck (*g_succession_realm_guard)(bridge::Session*, uint32_t, uint32_t) = nullptr;
 bool do_set_controlled_character(const char* params_json, std::string* out) {
     int cid = json_get_int(params_json, "character_id");
     bool disable_ai = json_get_bool(params_json, "disable_native_ai", false);
@@ -979,6 +985,29 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
         {
             std::lock_guard<std::mutex> lk(session->mutex);
             held_primary = session->primary_character_id;
+        }
+        // owner ruling 2026-11-12: a claim made while this session's own ruler
+        // is DEAD is a succession (the seat server's explicit lineage rebind,
+        // ck3agent/server/seat_lineage.py), and the handoff's realm guard holds
+        // for it too: never onto a ruler outside the seat's registered realm.
+        if (held_primary != 0 && !add) {
+            void* hp = lookup_character(held_primary);
+            if (hp && !is_sentinel(hp) && g_char_is_alive && !g_char_is_alive(hp)) {
+                const played_line::RealmCheck rc = g_succession_realm_guard
+                    ? g_succession_realm_guard(session, held_primary, char_id)
+                    : played_line::RealmCheck::InRealm;
+                if (rc != played_line::RealmCheck::InRealm) {
+                    ResponseBuilder r;
+                    r.begin_object();
+                    r.key("success"); r.value_bool(false);
+                    r.key("reason"); r.value_string(played_line::realm_check_name(rc));
+                    r.key("character_id"); r.value_uint(char_id);
+                    r.key("dead_ruler_id"); r.value_uint(held_primary);
+                    r.end_object();
+                    if (out) *out = r.take();
+                    return false;
+                }
+            }
         }
         // ck-6xi6: STAMP THE CAUSE BEFORE THE CLAIM, because the CLAIM is what
         // publishes the new primary — not the legacy-mirror store further down.

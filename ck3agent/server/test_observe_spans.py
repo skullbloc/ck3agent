@@ -88,7 +88,9 @@ class ObserveSpans(unittest.IsolatedAsyncioTestCase):
             encoding="utf-8", errors="replace")
         i = src.index("async def observe_impl")
         body = src[i:i + 9000]
-        batch_start = body.index("read_many([")
+        # lane v4sees names the literal batch (`_reads := [...]`) so its failed
+        # reads can be named (observe_read_failures); it is still one literal
+        batch_start = body.index("read_many(_reads := [")
         batch_end = body.index("])", batch_start)
         in_batch = "get_ai_personality" in body[batch_start:batch_end]
         # and it must no longer have a span of its own on the brief path

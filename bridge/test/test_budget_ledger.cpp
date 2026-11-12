@@ -10,7 +10,7 @@
 //   ./test_budget_ledger --replay events.jsonl # drive the REAL ledger from a
 //                                              # recorded fixture, JSONL out
 //
-// The --replay mode exists so scripts/test_budget_governor.py can feed a
+// The --replay mode exists so scripts/test_budget_enforcement.py can feed a
 // RECORDED CLAUDE-CLI TRANSCRIPT through this exact code rather than through a
 // python re-implementation of it. A second opinion about when an agent is out
 // of budget is precisely what this bead must not ship.

@@ -3,6 +3,78 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.9 — 2026-11-12
+
+From the review of what the v3 seats actually did: every war the game refused
+had been offered by `plan_war` or `cbs`, a succession was called intact from
+the primary title alone while a second kingdom went to another heir, and
+nothing kept a seat inside the realm it started in. Four writes now
+go through the game's own script, guarded by the game's own check; a vassal
+can hold a standing policy between turns (with a small mod that ships in the
+tarball); `observe` gains two blocks. The surface is still thirteen tools.
+
+* **Gift, sway, council tasks and `declare_war` run as the game's own
+  script, behind the game's own check.** The bridge has two new verbs,
+  `script_action` and `query_script_log`. `script_action` takes a fixed
+  template name and ids, never script text: `gift` and `sway` (the
+  interaction with its own validity check), `council_task`, `declare_war`
+  (`start_war`, guarded by `can_declare_war` for exactly that defender,
+  casus belli, claimant and title), `set_policy` and `clear_policy`.
+  `do(intent="interact")` with `gift_interaction` or `sway_interaction`,
+  `do(intent="council_task")` and `declare_war` use it; the reply's result
+  carries `path: "script"`, the `template`, the `guard` (`ran` or
+  `refused`) and `game_errors`, the game's own error text. A war the game's
+  check refuses is `cb_invalid_for_target` (`can_declare_war_false`) with a
+  fix that points at `cbs` and `plan_war`. A script that ran and changed
+  nothing is `write_not_applied` (`silent_no_op`), never applied. A
+  character the game's script cannot name (no held title) still goes the
+  native way. Every other intent is unchanged.
+* **`plan_war` offers only wars `declare_war`'s pre-check passes.**
+  `plan_war` and `cbs` now read the casus belli as your bound ruler (a vassal's call used to
+  be read as the bridge's other controlled ruler) and refuse
+  `actor_unresolved` when he cannot be read. `plan_war` runs `declare_war`'s
+  own pre-check on the casus belli each row offers: the row's `precheck`
+  (`passed`, `as_of`, `not_checked`, `limit`) and `precheck_by_cb` (replacing
+  `ready_to_declare_by_cb`). A casus belli that did not pass, a war on your
+  own liege and a claim whose claimant is not in your court are listed in
+  `excluded`, never offered.
+* **Standing policies.** `do(intent="set_policy", args={"policy": ..., "on":
+  true|false})` sets `join_liege_wars` (join each war your liege leads, when
+  the game's own join-war checks allow it) or `stay_out_of_liege_factions`
+  (leave a faction against him and join no other). The game re-checks a
+  policy every 3 days, between your turns. What holds it is a small mod,
+  `ck3agent_policies`, now in the tarball under `policy_mod/` with the steps
+  to install it by hand (`docs/standing-policies.md`); without it
+  `set_policy` is refused `policy_mod_not_loaded`. `observe` carries
+  `standing_policies`: each policy on or off, `mod_enabled`, and how to set
+  one.
+* **`observe` has a `goal` block.** In an experiment episode it gives the
+  score (the county count of the played line's realm: now, at the open and
+  the change), the horizon, the cycle and, for a duke seat, his own
+  counties. Outside one it reads `{"state": "not_an_experiment_episode"}`.
+* **The succession verdict checks every crown title.** `succession_plan`
+  and `observe`'s succession block list `crown_titles` (each kingdom and
+  empire held, with the heir the simulation and the per-title map each give
+  it; the map's heir for one is a breaker) and `scope` (a title gained after
+  the read is not in the verdict). A crown title with no heir read makes the
+  outcome undetermined.
+* **A seat is never handed a ruler outside its realm.** The bridge records
+  the seat's realm (its ruler's top liege, read alive, `realm_root_id` in
+  the session list). When the ruler dies and his heir is outside that realm,
+  the seat is unbound with `heir_outside_realm` instead of following him; a
+  claim made while the seat's ruler is dead is held to the same check.
+* **The played line can end.** The bridge's watch of a played line
+  (`query_character` with `played_line`) reports `line_ended`, dated
+  (`ended_date`), only when the game gave the line's title to nobody and the
+  dead ruler holds no title any more.
+* **`ck3agent run`** records every turn's prompt (`<stamp>.turns.jsonl`:
+  the game date, the cycle, the text and its sha256, the messages delivered
+  at that turn) and what the live-state hook injected at each prompt
+  (`<stamp>.hook.jsonl`). The manifest's `total_cost_usd` is now the last
+  value of each Claude session, summed over sessions (a resumed session
+  reports its cost cumulatively, so the old sum overcounted), stamped with
+  `total_cost_usd_rule`.
+
 ## 2026.12.8 — 2026-11-10
 
 From the v3 pilots on 2026.12.6 and 2026.12.7: `inspect(subject="war_stance")`

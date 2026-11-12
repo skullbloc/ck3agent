@@ -164,6 +164,12 @@ enum class ReleaseSubjectState : uint8_t {
     //: unbound the seat. Not Corpse, so handoff_subject never recovers it and
     //: the handoff does not retry the player every tick.
     HeirIsPlayer = 4,
+
+    //: owner ruling 2026-11-12 (v3reg2 s3 D1 moved onto Carloman): the ruler
+    //: died and the succession's target is OUTSIDE the seat's registered realm
+    //: (played_line.h succession_realm_check), so the handoff unbound the seat
+    //: instead of moving it. Not Corpse: never recovered, never retried.
+    HeirOutsideRealm = 5,
 };
 
 inline const char* release_subject_state_name(ReleaseSubjectState s) {
@@ -174,6 +180,7 @@ inline const char* release_subject_state_name(ReleaseSubjectState s) {
         case ReleaseSubjectState::Corpse: return "corpse";
         case ReleaseSubjectState::UndoneClaim: return "undone_claim";
         case ReleaseSubjectState::HeirIsPlayer: return "heir_is_player";
+        case ReleaseSubjectState::HeirOutsideRealm: return "heir_outside_realm";
         default:                          return "unknown";
     }
 }

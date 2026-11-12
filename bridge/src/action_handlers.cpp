@@ -18,6 +18,11 @@
 #include "war_side.h"          // which side of a war a character is on
 #include "lobby_view_hook.h"
 #include "observer_data_functions.h"
+#include "script_templates.h"   // lane v4act: the script action layer
+#include <dirent.h>
+#include <map>
+#include <mutex>
+#include <sys/stat.h>
 #include <thread>
 #include <chrono>
 #include <atomic>
@@ -7021,6 +7026,420 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
         *response_out = r.take();
     }
     return applied;
+}
+
+// ===========================================================================
+// THE SCRIPT ACTION LAYER (lane v4act; re/findings/re_console_effect.md).
+//
+// do_script_action carries a write out as one of the game's own script effects,
+// run through the engine's `effect` console handler (CMD_EFFECT) natively, with
+// no mod and no debug mode. The script is composed HERE from one of the fixed
+// templates of script_templates.h; the caller sends a template name and typed
+// parameters (ids and plain keys), never script text. Each template is guarded
+// by the game's own check (can_declare_war; run_interaction's own validity;
+// exists = cp:<seat>) and writes the bridge's token to debug.log on each branch.
+//
+// params: {"template": declare_war|gift|sway|council_task|set_policy|clear_policy,
+//          "actor_id", "target_id", "cb", "cb_title_id", "claimant_id",
+//          "task", "seat", "target_character_id", "target_title_id", "policy"}
+// reply:  {success, action, template, token, script, engine_result, guard
+//          (ran|refused|unseen), errors[] (the game's own script errors for this
+//          call), debug_log_offset, error_log_offset, logs_found}
+// success means the engine's effect handler ran the script; whether the game
+// did the thing is the guard marker plus the caller's read-back (a run_interaction
+// the recipient declines, or an offer_peace, is silent: the server's read-back
+// reports it not applied, never ok).
+//
+// query_script_log (a read, the IPC thread): {token, debug_log_offset,
+// error_log_offset} -> the guard marker and the errors written since, for a
+// marker the logger had not flushed when do_script_action answered; with
+// {"count": "<WORD>"} the number of debug.log lines holding WORD (the policy
+// mod's tick lines) and the last few of them.
+// ===========================================================================
+namespace {
+
+std::atomic<uint32_t> g_script_token{0};
+
+// The standing policies this bridge set, per character (the game holds them
+// as character variables; this is the bridge's own record of what it set and
+// the game read back, for observe). Lives as long as the game process.
+std::mutex g_policy_mu;
+std::map<uint32_t, std::map<std::string, bool>> g_policy_ledger;
+std::atomic<bool> g_policy_mod_seen{false};
+
+// The game's own log files, found by its open descriptors (the game holds
+// debug.log and error.log open for writing under <userdir>/logs/). A -userdir
+// game and the default tree are found the same way.
+struct GameLogs { std::string debug, error; };
+GameLogs find_game_logs() {
+    GameLogs g;
+    DIR* d = opendir("/proc/self/fd");
+    if (!d) return g;
+    char path[64], target[4096];
+    while (struct dirent* e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;
+        snprintf(path, sizeof(path), "/proc/self/fd/%s", e->d_name);
+        ssize_t n = readlink(path, target, sizeof(target) - 1);
+        if (n <= 0) continue;
+        target[n] = 0;
+        std::string_view t(target, (size_t)n);
+        auto ends = [&](std::string_view s) {
+            return t.size() >= s.size() && t.substr(t.size() - s.size()) == s;
+        };
+        if (g.debug.empty() && ends("/logs/debug.log")) g.debug.assign(t);
+        else if (g.error.empty() && ends("/logs/error.log")) g.error.assign(t);
+    }
+    closedir(d);
+    return g;
+}
+
+long long file_size_of(const std::string& p) {
+    struct stat st;
+    if (p.empty() || stat(p.c_str(), &st) != 0) return -1;
+    return (long long)st.st_size;
+}
+
+// At most `cap` bytes of P from OFFSET on (the tail when more were written).
+std::string read_from(const std::string& p, long long offset, size_t cap = 512 * 1024) {
+    std::string out;
+    if (p.empty() || offset < 0) return out;
+    FILE* f = fopen(p.c_str(), "rb");
+    if (!f) return out;
+    long long size = file_size_of(p);
+    if (size > offset + (long long)cap) offset = size - (long long)cap;
+    if (size >= offset && fseeko(f, offset, SEEK_SET) == 0) {
+        char buf[16384];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), f)) > 0 && out.size() < cap) out.append(buf, n);
+    }
+    fclose(f);
+    return out;
+}
+
+// A ruler's script reference: the key of his primary title, the title's holder
+// checked to be him. Empty (with WHY) when he holds no title, so he cannot be
+// addressed in script (character:<id> takes HISTORY ids, probe e12b).
+std::string primary_title_key_of(uint32_t cid, const char** why) {
+    void* ch = lookup_character(cid & 0xFFFFFF);
+    if (!ch || is_sentinel(ch)) { *why = "character_not_found"; return {}; }
+    const uintptr_t realm = resolve_title_realm(reinterpret_cast<uintptr_t>(ch));
+    if (!realm) { *why = "target_not_script_addressable"; return {}; }
+    const int32_t n = safe_read<int32_t>(realm + ck3::title_realm::TITLE_ARRAY_COUNT);
+    const uintptr_t arr = safe_read<uintptr_t>(realm + ck3::title_realm::TITLE_ARRAY_PTR);
+    if (!arr || !is_mapped(arr) || n <= 0) { *why = "target_not_script_addressable"; return {}; }
+    const uint32_t tid = safe_read<uint32_t>(arr);
+    const uintptr_t tobj = lookup_title_obj(tid);
+    if (!tobj) { *why = "target_not_script_addressable"; return {}; }
+    const uint32_t holder = safe_read<uint32_t>(tobj + ck3::title_obj::HOLDER_CHAR_ID) & 0xFFFFFF;
+    if (holder != (cid & 0xFFFFFF)) { *why = "primary_title_holder_mismatch"; return {}; }
+    const uintptr_t type_ptr = safe_read<uintptr_t>(tobj + ck3::title_obj::TITLE_TYPE_PTR);
+    std::string key = (type_ptr && is_mapped(type_ptr))
+        ? ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY) : std::string();
+    if (!bridge::script_tpl::is_ident(key)) { *why = "title_key_unreadable"; return {}; }
+    return key;
+}
+
+std::string title_key_of(uint32_t tid, const char** why) {
+    const uintptr_t tobj = lookup_title_obj(tid);
+    if (!tobj) { *why = "title_not_found"; return {}; }
+    const uintptr_t type_ptr = safe_read<uintptr_t>(tobj + ck3::title_obj::TITLE_TYPE_PTR);
+    std::string key = (type_ptr && is_mapped(type_ptr))
+        ? ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY) : std::string();
+    if (!bridge::script_tpl::is_ident(key)) { *why = "title_key_unreadable"; return {}; }
+    return key;
+}
+
+void emit_errors(ResponseBuilder& r, const std::vector<std::string>& errs) {
+    r.key("errors"); r.begin_array();
+    for (const auto& e : errs) r.value_string(e.c_str(), std::min(e.size(), (size_t)600));
+    r.end_array();
+}
+
+}  // namespace
+
+bool do_script_action(const char* params_json, std::string* response_out) {
+    namespace st = bridge::script_tpl;
+    FaultScope fault_scope("script_action", response_out);
+    auto refuse = [&](const char* why, const char* detail = nullptr) {
+        if (response_out) {
+            ResponseBuilder r; r.begin_object();
+            r.key("success"); r.value_bool(false);
+            r.key("action"); r.value_string("script_action");
+            r.key("reason"); r.value_string(why);
+            if (detail) { r.key("detail"); r.value_string(detail); }
+            r.end_object();
+            *response_out = r.take();
+        }
+        return false;
+    };
+    const char* tname = json_get_string(params_json, "template");
+    const st::Template t = st::template_by_name(tname ? tname : "");
+    if (t == st::Template::kNone) return refuse("unknown_template", tname);
+
+    void* actor = resolve_actor(params_json);
+    if (reject_player_actor(actor, "script_action", response_out)) return false;
+    if (const char* why = actor_refusal(actor)) {
+        if (response_out) *response_out = actor_refusal_reply("script_action", why);
+        return false;
+    }
+    const uint32_t actor_id = char_get_id(actor) & 0xFFFFFF;
+
+    st::Slots s;
+    const char* why = nullptr;
+    s.actor_title = primary_title_key_of(actor_id, &why);
+    if (s.actor_title.empty()) return refuse(why ? why : "actor_not_script_addressable", "actor");
+
+    auto char_key = [&](const char* field, std::string* out, bool required) -> bool {
+        const int id = json_get_int(params_json, field);
+        if (id <= 0) {
+            if (required) { refuse("target_required", field); return false; }
+            return true;
+        }
+        const char* w = nullptr;
+        *out = primary_title_key_of(static_cast<uint32_t>(id), &w);
+        if (out->empty()) { refuse(w ? w : "target_not_script_addressable", field); return false; }
+        return true;
+    };
+    auto key_arg = [&](const char* field, std::string* out) -> bool {
+        const char* v = json_get_string(params_json, field);
+        if (!v || !st::is_ident(v)) { refuse("bad_key", field); return false; }
+        out->assign(v);
+        return true;
+    };
+
+    switch (t) {
+    case st::Template::kDeclareWar: {
+        if (!char_key("target_id", &s.target_title, true)) return false;
+        if (!key_arg("cb", &s.cb)) return false;
+        if (!char_key("claimant_id", &s.claimant_title, false)) return false;
+        const int tid = json_get_int(params_json, "cb_title_id");
+        if (tid > 0) {
+            const char* w = nullptr;
+            s.war_title = title_key_of(static_cast<uint32_t>(tid), &w);
+            if (s.war_title.empty()) return refuse(w ? w : "title_not_found", "cb_title_id");
+        }
+        break;
+    }
+    case st::Template::kGift:
+    case st::Template::kSway:
+        if (!char_key("target_id", &s.target_title, true)) return false;
+        break;
+    case st::Template::kCouncilTask: {
+        const char* task = json_get_string(params_json, "task");
+        if (!task || !st::is_ident(task)) return refuse("bad_key", "task");
+        // The task and its seat from the game's own council-task DB (as
+        // set_council_task resolves them), so a key that is not a task is
+        // refused here and the seat is the engine's.
+        const uintptr_t inst = safe_read_offset<uintptr_t>(ck3::globals::COUNCIL_TASK_TYPE_DB);
+        if (!inst || !is_mapped(inst)) return refuse("task_db_unavailable");
+        const uintptr_t table = safe_read<uintptr_t>(inst + CTT_TABLE_PTR);
+        const uint32_t mask = safe_read<uint32_t>(inst + CTT_MASK);
+        if (!table || !is_mapped(table) || mask == 0 || mask > 0xffff) return refuse("task_db_malformed");
+        const char* seat_arg = json_get_string(params_json, "seat");
+        const auto rows = read_council_task_rows(table, mask);
+        const auto pick = bridge::council_task_family::resolve(rows, task, seat_arg ? seat_arg : "");
+        if (!pick.asked) return refuse("task_not_found", task);
+        if (!pick.chosen) return refuse("seat_cannot_take_task", pick.asked->seat.c_str());
+        s.task = pick.chosen->name;
+        s.seat = pick.chosen->seat;
+        if (!st::is_ident(s.task) || !st::is_ident(s.seat)) return refuse("task_key_unreadable");
+        if (!char_key("target_character_id", &s.task_target_char, false)) return false;
+        const int ttid = json_get_int(params_json, "target_title_id");
+        if (ttid > 0) {
+            const char* w = nullptr;
+            s.task_target_county = title_key_of(static_cast<uint32_t>(ttid), &w);
+            if (s.task_target_county.empty()) return refuse(w ? w : "title_not_found", "target_title_id");
+        }
+        break;
+    }
+    case st::Template::kSetPolicy:
+    case st::Template::kClearPolicy: {
+        const char* p = json_get_string(params_json, "policy");
+        if (!p || !st::policy_variable(p)) return refuse("unknown_policy", p);
+        s.policy = p;
+        break;
+    }
+    default:
+        return refuse("unknown_template");
+    }
+    if (safe_read_had_fault()) return answer_memory_access_fault("script_action", response_out);
+
+    char tok[32];
+    snprintf(tok, sizeof(tok), "%s%u", st::kTokenPrefix, g_script_token.fetch_add(1) + 1);
+    s.token = tok;
+    const st::Composed c = st::compose(t, s);
+    if (!c.ok) return refuse(c.why.c_str());
+
+    const uintptr_t addr = g_base_addr + ck3::console_handlers::CMD_EFFECT;
+    if (!is_mapped(addr)) return refuse("effect_handler_not_mapped");
+    if (bridge::scope_latched()) {
+        bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
+        if (response_out) *response_out = bridge::scope_latched_refusal_json("script_action");
+        return false;
+    }
+    const GameLogs logs = find_game_logs();
+    const long long dbg0 = file_size_of(logs.debug), err0 = file_size_of(logs.error);
+
+    // The handler's ABI (SResult* h(SResult*, const SCommandData*)), the one the
+    // bridge's add_doctrine / set_title_law console calls use: args at +0 (0x20
+    // stride: char*, length), argc at +0xC; out: success byte +0, message +8.
+    struct ArgEntry { const char* data; uint64_t length; uint64_t reserved[2]; };
+    struct CommandData { ArgEntry* args; uint32_t pad_08; int32_t arg_count; uint8_t pad_rest[48]; };
+    struct Result { uint8_t success; uint8_t _pad[7]; std::string message; };
+    auto handler = reinterpret_cast<void* (*)(void*, const void*)>(addr);
+    ArgEntry args[1]; memset(args, 0, sizeof(args));
+    args[0].data = c.script.c_str(); args[0].length = c.script.size();
+    CommandData cmd; memset(&cmd, 0, sizeof(cmd));
+    cmd.args = args; cmd.arg_count = 1;
+    Result result; memset(&result.success, 0, sizeof(result.success) + sizeof(result._pad));
+
+    uint64_t saved_rng = 0;
+    const bool rng_armed = arm_fake_random_scope(&saved_rng);
+    const auto t0 = std::chrono::steady_clock::now();
+    watchdog_arm(5);
+    g_in_protected_region = true;
+    if (sigsetjmp(g_recovery_point, 1) != 0) {
+        if (rng_armed) restore_fake_random_scope(saved_rng);
+        g_in_protected_region = false; watchdog_disarm();
+        return refuse("handler_crashed");
+    }
+    ADLOG("script_action: %s %s (%zu bytes) actor=%u\n", tname, tok, c.script.size(), actor_id);
+    handler(&result, &cmd);
+    if (rng_armed) restore_fake_random_scope(saved_rng);
+    g_in_protected_region = false; watchdog_disarm();
+    const long long us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    const bool ran = result.success != 0;
+    const std::string msg = result.message.substr(0, std::min(result.message.size(), (size_t)1024));
+    // Every template writes its marker last, so once the marker is in debug.log
+    // the script's own errors (run_interaction's reason) are in error.log. The
+    // read is made HERE, on the game thread, where no other script action can
+    // run between the call and the read (so the errors are this call's). Never a
+    // wait here (the drain holds the session mutex): a marker the game's logger
+    // has not written yet is `unseen`, and the caller reads it with
+    // query_script_log.
+    st::Marker m = st::Marker::kUnseen;
+    if (ran && !logs.debug.empty()) m = st::marker_in(read_from(logs.debug, dbg0), s.token);
+    const auto errs = st::console_effect_errors(read_from(logs.error, err0));
+    ADLOG("script_action: %s returned %d guard=%s errors=%zu us=%lld\n", tok, ran ? 1 : 0,
+          st::marker_name(m), errs.size(), us);
+    if (ran && (t == st::Template::kSetPolicy || t == st::Template::kClearPolicy) &&
+        m == st::Marker::kRan) {
+        std::lock_guard<std::mutex> lk(g_policy_mu);
+        g_policy_ledger[actor_id][s.policy] = (t == st::Template::kSetPolicy);
+    }
+    if (response_out) {
+        ResponseBuilder r; r.begin_object();
+        r.key("success"); r.value_bool(ran);
+        r.key("action"); r.value_string("script_action");
+        r.key("template"); r.value_string(tname);
+        r.key("actor_id"); r.value_uint(actor_id);
+        r.key("token"); r.value_string(tok);
+        r.key("script"); r.value_string(c.script.c_str(), c.script.size());
+        r.key("engine_result"); r.value_string(msg.c_str(), msg.size());
+        r.key("guard"); r.value_string(st::marker_name(m));
+        emit_errors(r, errs);
+        r.key("logs_found"); r.value_bool(!logs.debug.empty() && !logs.error.empty());
+        r.key("debug_log_offset"); r.value_int(dbg0);
+        r.key("error_log_offset"); r.value_int(err0);
+        if (!s.seat.empty()) { r.key("seat"); r.value_string(s.seat.c_str()); }
+        if (!s.task.empty()) { r.key("task_used"); r.value_string(s.task.c_str()); }
+        r.key("rng_armed"); r.value_bool(rng_armed);
+        r.key("elapsed_us"); r.value_int(us);
+        if (!ran) { r.key("reason"); r.value_string("effect_handler_refused"); }
+        r.end_object();
+        *response_out = r.take();
+    }
+    return ran;
+}
+
+bool do_query_script_log(const char* params_json, std::string* response_out) {
+    namespace st = bridge::script_tpl;
+    const GameLogs logs = find_game_logs();
+    ResponseBuilder r; r.begin_object();
+    r.key("action"); r.value_string("query_script_log");
+    r.key("logs_found"); r.value_bool(!logs.debug.empty() && !logs.error.empty());
+    const char* count = json_get_string(params_json, "count");
+    if (count && count[0]) {
+        // The policy mod's lines (CK3AGENT_POLICY_*) in the whole debug.log.
+        std::string word(count);
+        if (!st::is_count_word(word)) {
+            r.key("success"); r.value_bool(false);
+            r.key("reason"); r.value_string("bad_count_word");
+            r.end_object();
+            if (response_out) *response_out = r.take();
+            return false;
+        }
+        const std::string text = read_from(logs.debug, 0, 8u * 1024 * 1024);
+        int n = 0;
+        std::vector<std::string> last;
+        for (size_t p = 0; p < text.size();) {
+            size_t e = text.find('\n', p);
+            if (e == std::string::npos) e = text.size();
+            std::string_view line(text.data() + p, e - p);
+            if (line.find(word) != std::string_view::npos) {
+                ++n;
+                last.emplace_back(line);
+                if (last.size() > 8) last.erase(last.begin());
+            }
+            p = e + 1;
+        }
+        r.key("success"); r.value_bool(!logs.debug.empty());
+        r.key("count"); r.value_int(n);
+        r.key("last"); r.begin_array();
+        for (const auto& l : last) r.value_string(l.c_str(), std::min(l.size(), (size_t)400));
+        r.end_array();
+        r.end_object();
+        if (response_out) *response_out = r.take();
+        return true;
+    }
+    const int pcid = json_get_int(params_json, "character_id");
+    if (pcid > 0) {
+        // The standing policies this bridge set for the character, and whether
+        // the game logged the policy mod enabled (scanned until seen once).
+        if (!g_policy_mod_seen.load() && !logs.debug.empty()) {
+            const std::string head = read_from(logs.debug, 0, 4u * 1024 * 1024);
+            if (head.find(st::kPolicyModEnabledLine) != std::string::npos) g_policy_mod_seen.store(true);
+        }
+        r.key("success"); r.value_bool(true);
+        r.key("character_id"); r.value_uint((uint32_t)pcid & 0xFFFFFF);
+        r.key("mod_enabled"); 
+        if (logs.debug.empty()) r.value_null(); else r.value_bool(g_policy_mod_seen.load());
+        r.key("policies"); r.begin_object();
+        {
+            std::lock_guard<std::mutex> lk(g_policy_mu);
+            auto it = g_policy_ledger.find((uint32_t)pcid & 0xFFFFFF);
+            for (const auto& p : st::kPolicies) {
+                r.key(p.policy);
+                if (it != g_policy_ledger.end() && it->second.count(p.policy)) r.value_bool(it->second.at(p.policy));
+                else r.value_bool(false);
+            }
+        }
+        r.end_object();
+        r.end_object();
+        if (response_out) *response_out = r.take();
+        return true;
+    }
+    const char* token = json_get_string(params_json, "token");
+    if (!token || !st::token_ok(token)) {
+        r.key("success"); r.value_bool(false);
+        r.key("reason"); r.value_string("bad_token");
+        r.end_object();
+        if (response_out) *response_out = r.take();
+        return false;
+    }
+    const long long dbg0 = json_get_int(params_json, "debug_log_offset");
+    const long long err0 = json_get_int(params_json, "error_log_offset");
+    const st::Marker m = st::marker_in(read_from(logs.debug, dbg0), token);
+    const auto errs = st::console_effect_errors(read_from(logs.error, err0));
+    r.key("success"); r.value_bool(!logs.debug.empty());
+    r.key("token"); r.value_string(token);
+    r.key("guard"); r.value_string(st::marker_name(m));
+    emit_errors(r, errs);
+    r.end_object();
+    if (response_out) *response_out = r.take();
+    return true;
 }
 
 // ===========================================================================

@@ -1,0 +1,110 @@
+﻿namespace = ck3agent_policy
+
+# ck3agent standing policies (lane v4act). A seat sets a policy once, through
+# do(intent="set_policy") -> the bridge's set_policy script template, which sets
+# one character variable and fires this event once. The event then re-arms
+# itself every 3 days for as long as the character carries any policy variable,
+# and clears ck3agent_policy_armed when none is left.
+#
+#   ck3agent_policy_join_liege_wars   join every war the liege leads, on his side,
+#                                     when the game's own join-war checks allow it
+#                                     (the two scripted triggers the vanilla
+#                                     join_war_interaction uses)
+#   ck3agent_policy_no_liege_factions leave a faction against the liege, and keep
+#                                     the vanilla joining_faction_block flag on so
+#                                     the game's faction AI does not join another
+#
+# Each action writes a CK3AGENT_POLICY_* line to debug.log (with the date and the
+# scopes): the bridge's query_script_log counts them for the seat and the bundle.
+# Variable names: bridge/include/script_templates.h kPolicies (test_policy_mod.py
+# checks the two agree).
+
+ck3agent_policy.1 = {
+	type = character_event
+	hidden = yes
+	immediate = {
+		if = {
+			limit = {
+				OR = {
+					has_variable = ck3agent_policy_join_liege_wars
+					has_variable = ck3agent_policy_no_liege_factions
+				}
+			}
+			debug_log = "CK3AGENT_POLICY_TICK"
+			debug_log_date = yes
+			debug_log_scopes = yes
+			if = {
+				limit = {
+					has_variable = ck3agent_policy_join_liege_wars
+					exists = liege
+					is_imprisoned = no
+				}
+				liege = { save_scope_as = ck3a_liege }
+				scope:ck3a_liege = {
+					every_character_war = {
+						limit = { is_war_leader = scope:ck3a_liege }
+						save_scope_as = target
+						if = {
+							limit = {
+								root = {
+									NOT = { is_participant_in_war = scope:target }
+									NOT = { is_at_war_with = scope:ck3a_liege }
+								}
+								joiner_not_already_in_another_war_with_any_target_war_participants_trigger = {
+									WARRIOR = scope:ck3a_liege
+									JOINER = root
+								}
+								can_join_war_liege_vassal_check_trigger = {
+									WARRIOR = scope:ck3a_liege
+									JOINER = root
+								}
+							}
+							if = {
+								limit = { primary_attacker = scope:ck3a_liege }
+								add_attacker = root
+							}
+							else = {
+								add_defender = root
+							}
+							root = {
+								debug_log = "CK3AGENT_POLICY_JOINED_WAR"
+								debug_log_date = yes
+								debug_log_scopes = yes
+							}
+						}
+					}
+				}
+			}
+			if = {
+				limit = {
+					has_variable = ck3agent_policy_no_liege_factions
+					exists = liege
+				}
+				if = {
+					limit = {
+						exists = joined_faction
+						joined_faction = { faction_target = root.liege }
+					}
+					joined_faction = { save_scope_as = ck3a_faction }
+					leave_faction = scope:ck3a_faction
+					debug_log = "CK3AGENT_POLICY_LEFT_FACTION"
+					debug_log_date = yes
+					debug_log_scopes = yes
+				}
+				add_character_flag = {
+					flag = joining_faction_block
+					days = 10
+				}
+			}
+			trigger_event = {
+				id = ck3agent_policy.1
+				days = 3
+			}
+		}
+		else = {
+			remove_variable = ck3agent_policy_armed
+			debug_log = "CK3AGENT_POLICY_DISARMED"
+			debug_log_scopes = yes
+		}
+	}
+}

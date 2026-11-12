@@ -10,6 +10,9 @@
 #include "log_rotate.h"
 #include "log_archive.h"
 #include "skip_held_heir.h"
+#include "played_line.h"   // METERLINE: the handoff's two decisions, shared with the meter
+#include "line_watch.h"    // METERLINE: the played line followed per tick, seat-independent
+#include "game_date.h"
 #include "ai_enabled_watch.h"
 #include "drain_provenance.h"
 #include "log_stamp.h"
@@ -1732,30 +1735,80 @@ static uint32_t highest_tier_held_title(void* char_obj) {
     if (!arr || !is_mapped(arr)) return 0;
     if (count < 0) count = 0;
     if (count > 64) count = 64;
-    int best_tier = -1; uint32_t best_tid = 0;
+    // METERLINE: the reads stay here; the DECISION is played_line::pick_primary,
+    // the one the meter's mirror answers to (scripts/fixtures/played_line_vectors.tsv).
+    played_line::HeldTitle held[64];
     for (int32_t i = 0; i < count; ++i) {
         uint32_t tid = safe_read<uint32_t>(arr + i * 4) & 0xFFFFFF;
+        held[i] = {tid, -1};
         if (tid == 0) continue;
         uintptr_t tobj = lookup_title_obj(tid);
         if (!tobj || !is_mapped(tobj)) continue;
-        int tier = get_title_tier(tobj);
-        if (tier <= best_tier) continue;
-        best_tier = tier; best_tid = tid;
+        held[i].tier = get_title_tier(tobj);
     }
-    return best_tid;
+    return played_line::pick_primary(held, static_cast<std::size_t>(count));
 }
 
-// title_current_holder(): live holder of a title id, excluding a given id (the
-// dead ruler) and sentinels. The title OBJECT persists across the succession
-// tick and its HOLDER_CHAR_ID updates to the heir — that is the reliable anchor.
-static uint32_t title_current_holder(uint32_t tid, uint32_t exclude_id) {
+// The title OBJECT persists across the succession tick and its HOLDER_CHAR_ID
+// updates to the heir — that is the reliable anchor (the handoff reads the
+// cached primary's holder through played_line::successor).
+// title_raw_holder(): a title's raw HOLDER_CHAR_ID, or 0 when the title does not
+// look up. The DECISION on it is played_line.h's.
+static uint32_t title_raw_holder(uint32_t tid) {
     if (tid == 0) return 0;
     uintptr_t tobj = lookup_title_obj(tid);
     if (!tobj || !is_mapped(tobj)) return 0;
-    uint32_t holder = safe_read<uint32_t>(tobj + ck3::title_obj::HOLDER_CHAR_ID) & 0xFFFFFF;
-    if (holder == 0 || holder == 0xFFFFFF || holder == exclude_id) return 0;
-    return holder;
+    return safe_read<uint32_t>(tobj + ck3::title_obj::HOLDER_CHAR_ID);
 }
+
+// ── THE REALM GUARD (owner ruling 2026-11-12) ──────────────────────────────
+// v3reg2 s3: D1's duke died, his duchy's holder was Carloman (by then an
+// independent rival king) and the handoff moved D1's seat onto him. A succession
+// now never moves a seat outside its REGISTERED REALM (session.h realm_root_id;
+// the decision is played_line.h succession_realm_check, ctest test_played_line).
+uint32_t top_liege_id_of(uint32_t cid);   // query_handlers.cpp
+std::string played_line_current_date();   // below
+
+// Who heads the registered realm now: the root while he lives; after his death
+// the played line's character from him (the watch armed when the root was
+// latched), only when that character reads alive. 0 = cannot be read.
+static uint32_t realm_root_now(uint32_t root) {
+    root &= 0xFFFFFF;
+    if (root == 0) return 0;
+    void* rc = lookup_character(root);
+    if (!rc || is_sentinel(rc)) return 0;
+    if (g_char_is_alive(rc)) return root;
+    played_line::Watch w;
+    if (!played_line::watches().find(root, &w)) return 0;
+    if (w.status != played_line::WatchStatus::Following) return 0;
+    void* lc = lookup_character(w.line_id);
+    if (!lc || is_sentinel(lc) || !g_char_is_alive(lc)) return 0;
+    return w.line_id & 0xFFFFFF;
+}
+
+// The guard, for one session's succession onto `target` (handoff, redirect, or
+// an explicit set_controlled_character while the session's ruler is dead).
+played_line::RealmCheck succession_target_realm(bridge::Session* session, uint32_t dead,
+                                                uint32_t target) {
+    uint32_t root = 0;
+    if (session) {
+        std::lock_guard<std::mutex> lk(session->mutex);
+        root = session->realm_root_id;
+    }
+    if (root == 0) return played_line::RealmCheck::InRealm;
+    return played_line::succession_realm_check(root, dead, target, realm_root_now(root),
+                                               top_liege_id_of(target));
+}
+
+// dispatch_router.cpp's do_set_controlled_character reads the same guard through
+// this hook (set here so host targets without this TU still link).
+extern played_line::RealmCheck (*g_succession_realm_guard)(bridge::Session*, uint32_t, uint32_t);
+namespace {
+struct RealmGuardInstaller {
+    RealmGuardInstaller() { g_succession_realm_guard = &succession_target_realm; }
+};
+}  // namespace
+[[maybe_unused]] static const RealmGuardInstaller g_realm_guard_installed CK3_EARLY_INIT;
 
 // check_controlled_handoff(): per-session primary-character liveness check.  While
 // a control session's primary is alive, cache its highest-tier title so we can find
@@ -1846,13 +1899,57 @@ static void check_controlled_handoff() {
                 std::lock_guard<std::mutex> lk(session->mutex);
                 session->primary_title_id = pt;
             }
+            // owner ruling 2026-11-12: latch the seat's registered realm root
+            // ONCE, from its ruler read alive, and only when the line watch can
+            // follow that root through his own succession (else no guard,
+            // logged: the bridge cannot see the realm, so it does not claim to).
+            bool latch = false;
+            {
+                std::lock_guard<std::mutex> lk(session->mutex);
+                latch = session->realm_root_id == 0;
+            }
+            if (latch) {
+                const uint32_t root = top_liege_id_of(ctrl) & 0xFFFFFF;
+                if (root != 0 && root != 0xFFFFFF) {
+                    if (played_line::watches().arm(root, played_line_current_date(), nullptr, nullptr)) {
+                        std::lock_guard<std::mutex> lk(session->mutex);
+                        session->realm_root_id = root;
+                    } else {
+                        static bool s_logged_full = false;
+                        if (!s_logged_full) {
+                            s_logged_full = true;
+                            blog("[CK3-Bridge] REALM_ROOT_UNLATCHED: session %s root %u: the line "
+                                 "watch registry is full; this seat has no realm guard\n",
+                                 sid.c_str(), root);
+                        }
+                    }
+                }
+            }
             continue;
         }
 
-        // DEAD: resolve heir via cached primary title's current holder.
-        uint32_t heir = title_current_holder(cached_tid, ctrl);
-        if (heir == 0) heir = resolve_controlled_successor(ctrl);  // legacy fallback
+        // DEAD: resolve heir via cached primary title's current holder, else the
+        // legacy fallback. METERLINE: ONE decision, played_line::successor, the
+        // same the line watch applies (check_line_watches below).
+        uint32_t heir = played_line::successor(
+            title_raw_holder(cached_tid), ctrl,
+            [&] { return resolve_controlled_successor(ctrl); });
         if (heir == 0) continue;  // not resolvable yet — retry next tick
+
+        // owner ruling 2026-11-12: never move a seat outside its registered
+        // realm. Outside: refuse and record (the seat is unbound, typed
+        // `heir_outside_realm`). Unresolved: a reading is missing; retry.
+        {
+            const played_line::RealmCheck rc = succession_target_realm(session, ctrl, heir);
+            if (rc == played_line::RealmCheck::OutsideRealm) {
+                council_lock_remove(ctrl);
+                bridge::g_session_registry.unbind_for_outside_realm(session, ctrl, heir);
+                s_handoff_backoff.erase(sid);
+                any_change = true;
+                continue;
+            }
+            if (rc == played_line::RealmCheck::Unresolved) continue;
+        }
 
         // Clear stale council lock for the dead ruler.
         council_lock_remove(ctrl);
@@ -1939,6 +2036,9 @@ static void check_controlled_handoff() {
                         void* cand_cc = lookup_character(cand);
                         if (!cand_cc || is_sentinel(cand_cc)) continue;
                         if (!g_char_is_alive(cand_cc)) continue;
+                        // the realm guard holds for a redirect too
+                        if (succession_target_realm(session, ctrl, cand) !=
+                            played_line::RealmCheck::InRealm) continue;
                         std::string why;
                         // A SWAP HERE TOO. The corpse is still held on this
                         // path as well, so leaving it a plain claim would fix
@@ -2102,6 +2202,70 @@ static void check_controlled_handoff() {
         bridge::g_session_registry.rebuild_legacy_mirrors();
     }
 }
+
+// METERLINE: the PLAYED LINE, followed per tick for every armed watch
+// (line_watch.h). Armed by the meter through `query_character(played_line=1)`;
+// independent of sessions and seats, so an E0 episode is followed the same way.
+// The reads are the handoff's own (highest_tier_held_title, title_raw_holder,
+// resolve_controlled_successor) and so is the decision (played_line::successor).
+// MUST run inside a protected region; the registry lock is never held across a
+// read (snapshot, tick the copies, store back).
+std::string played_line_current_date() {
+    uintptr_t gs = safe_read_offset<uintptr_t>(ck3::globals::GAME_STATE_ROOT);
+    if (!gs) return std::string();
+    int32_t raw_date = safe_read<int32_t>(gs + ck3::game_state::GAME_DATE);
+    int year = 0, month = 0, day = 0;
+    ck3::game_date::raw_to_ymd(raw_date, &year, &month, &day);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%04d.%02d.%02d", year, month, day);
+    return std::string(buf);
+}
+
+// titles_held_now(): how many titles a character holds NOW, as the line watch's
+// end decision reads it (line_watch.h `line_ended`): 0 when the engine's own
+// IsRuler reads false (TITLE_REALM_DATA null, the reading do_query_realm's
+// `has_realm` false rests on), else the held-title array's count; -1 when the
+// realm data is set but does not resolve or the count is not a count (unreadable:
+// the watch stays pending).
+static int titles_held_now(uint32_t cid) {
+    void* cc = lookup_character(cid);
+    if (!cc || is_sentinel(cc)) return -1;
+    const uintptr_t c = reinterpret_cast<uintptr_t>(cc);
+    if (safe_read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA) == 0) return 0;
+    uintptr_t tr = resolve_title_realm(c);
+    if (!tr || !is_mapped(tr)) return -1;
+    int32_t count = safe_read<int32_t>(tr + ck3::title_realm::TITLE_ARRAY_COUNT);
+    if (count < 0 || count > 4096) return -1;
+    return static_cast<int>(count);
+}
+
+static void check_line_watches() {
+    if (!g_char_is_alive) return;
+    if (played_line::watches().size() == 0) return;
+    std::vector<played_line::Watch> ws = played_line::watches().snapshot();
+    std::string date;
+    for (played_line::Watch& w : ws) {
+        void* cc = lookup_character(w.line_id);
+        if (!cc || is_sentinel(cc)) continue;            // unreadable: no reading, no change
+        const bool alive = g_char_is_alive(cc);
+        const uint32_t primary_now = alive ? highest_tier_held_title(cc) : 0;
+        if (date.empty()) date = played_line_current_date();
+        if (played_line::tick(w, alive, primary_now,
+                              [](uint32_t tid) { return title_raw_holder(tid); },
+                              [](uint32_t dead) { return resolve_controlled_successor(dead); },
+                              [](uint32_t dead) { return titles_held_now(dead); },
+                              date)) {
+            played_line::watches().store(w);
+        }
+    }
+}
+
+// A world reload ends every watch: a character id from the previous world names
+// nobody in this one (ck-hxh7).
+void clear_line_watches() { played_line::watches().clear(); }
+[[maybe_unused]] static const bridge::WorldResetRegistrar g_line_watches_world_scoped CK3_EARLY_INIT([] {
+    bridge::register_world_reset("played_line_watches", &clear_line_watches);
+});
 
 // The drain's thread rule. With the session-pass hook live the game thread IS
 // the session thread: the first drain records it and every later call from any
@@ -2538,6 +2702,19 @@ static void drain_game_thread_work_at(DrainSite site) {
         } else {
             blog("[CK3-Bridge] BUILD-B: WARNING: SIGSEGV in check_war_db_tick\n");
             bridge_strict_check_abort("check_war_db_tick");
+        }
+        g_in_protected_region = false;
+
+        // METERLINE: the played line(s) the meter armed, followed per tick. FIRST
+        // (owner ruling 2026-11-12): the handoff's realm guard reads who heads a
+        // seat's registered realm NOW from these watches, so a root and his
+        // vassal dying in one tick see the root's line already moved.
+        g_in_protected_region = true;
+        if (sigsetjmp(g_recovery_point, 1) == 0) {
+            check_line_watches();
+        } else {
+            blog("[CK3-Bridge] BUILD-B: WARNING: SIGSEGV in check_line_watches at tick=%lu\n", tick);
+            bridge_strict_check_abort("check_line_watches");
         }
         g_in_protected_region = false;
 

@@ -34,7 +34,7 @@ SEATS = ("K", "D1", "D2", "D3")
 
 
 def cfg(seat, topology="complete", quota=2, max_bytes=600):
-    return C.ChannelConfig(arm="flat_hom", topology=topology, seats=SEATS, seat=seat,
+    return C.ChannelConfig(arm="council", topology=topology, seats=SEATS, seat=seat,
                            quota_per_cycle=quota, max_text_bytes=max_bytes)
 
 
@@ -50,13 +50,15 @@ def test_complete_is_any_seat_to_any_other_seat(sender, recipient, want):
     assert C.allowed("complete", sender, recipient, SEATS) is want
 
 
-@pytest.mark.parametrize("sender,recipient,want", [
-    ("K", "D1", True), ("K", "D3", True), ("D1", "K", True), ("D3", "K", True),
-    ("D1", "D2", False), ("D2", "D1", False),         # no lateral edge in a star
-    ("K", "K", False), ("K", "D9", False),
-])
-def test_star_is_king_to_each_duke_and_back_never_duke_to_duke(sender, recipient, want):
-    assert C.allowed("star", sender, recipient, SEATS) is want
+def test_star_is_not_a_topology_v4_deleted_it():
+    """v4 §3: COUNCIL's complete topology, or none; v3's star is deleted with the
+    arms that used it. The spelling is unknown to the table and refused at boot."""
+    assert C.TOPOLOGIES == ("complete", "none")
+    assert not any(C.allowed("star", s, r, SEATS) for s in SEATS for r in SEATS)
+    env = dict(FULL, CK3_CHANNEL_TOPOLOGY="star")
+    with pytest.raises(C.ChannelBootRefusal) as e:
+        C.boot(env)
+    assert e.value.reason == C.R_TOPOLOGY_INVALID
 
 
 def test_none_allows_nothing():
@@ -71,7 +73,7 @@ def test_seat_labels_are_K_and_D1_to_Dn():
 
 # ── the declaration at boot ─────────────────────────────────────────────────
 
-FULL = {"CK3_EPISODE_ARM": "flat_hom", "CK3_CHANNEL_TOPOLOGY": "complete",
+FULL = {"CK3_EPISODE_ARM": "council", "CK3_CHANNEL_TOPOLOGY": "complete",
         "CK3_CHANNEL_SEATS": "K,D1,D2", "CK3_SEAT_LABEL": "D1",
         "CK3_CHANNEL_QUOTA_PER_CYCLE": "2", "CK3_CHANNEL_MAX_TEXT_BYTES": "600"}
 
@@ -82,14 +84,14 @@ def test_free_play_declares_no_channel():
 
 def test_an_arm_without_a_topology_is_refused_never_defaulted():
     with pytest.raises(C.ChannelBootRefusal) as ei:
-        C.boot({"CK3_EPISODE_ARM": "flat_hom"})
+        C.boot({"CK3_EPISODE_ARM": "council"})
     assert ei.value.reason == C.R_TOPOLOGY_UNDECLARED
-    assert "channel.topology.flat_hom" in ei.value.detail
+    assert "channel.topology.council" in ei.value.detail
 
 
 def test_an_unknown_topology_is_refused_by_name():
     with pytest.raises(C.ChannelBootRefusal) as ei:
-        C.boot({"CK3_EPISODE_ARM": "flat_hom", "CK3_CHANNEL_TOPOLOGY": "ring"})
+        C.boot({"CK3_EPISODE_ARM": "council", "CK3_CHANNEL_TOPOLOGY": "ring"})
     assert ei.value.reason == C.R_TOPOLOGY_INVALID
 
 
@@ -133,10 +135,10 @@ def test_the_full_declaration_boots_enabled():
 
 
 def test_the_transcription_round_trips_through_boot():
-    env = C.transcription_for("star", quota_per_cycle="2", max_text_bytes="600", n_dukes="5")
+    env = C.transcription_for("complete", quota_per_cycle="2", max_text_bytes="600", n_dukes="5")
     assert env["CK3_CHANNEL_SEATS"] == "K,D1,D2,D3,D4,D5"
-    got = C.boot(dict(env, CK3_EPISODE_ARM="orders_hom", CK3_SEAT_LABEL="K"))
-    assert got.topology == "star" and got.seats == tuple(C.seat_labels(5))
+    got = C.boot(dict(env, CK3_EPISODE_ARM="council", CK3_SEAT_LABEL="K"))
+    assert got.topology == "complete" and got.seats == tuple(C.seat_labels(5))
     assert C.transcription_for("none") == {"CK3_CHANNEL_TOPOLOGY": "none"}
 
 
@@ -192,21 +194,21 @@ def test_a_send_row_carries_every_declared_field(ledger):
 def test_verdict_order_is_topology_then_length_then_quota(ledger):
     long = "x" * 601
     # a denied recipient is refused before the text is looked at
-    r = C.attempt(cfg("D1", "star"), ledger, to="D2", text=long, game_date="d", tick=1, cycle=0)
+    r = C.attempt(cfg("D1", "complete"), ledger, to="D9", text=long, game_date="d", tick=1, cycle=0)
     assert r["verdict"] == C.V_TOPOLOGY_DENIED
     # an over-long text to an allowed recipient is refused before the quota is counted
-    r = C.attempt(cfg("D1", "star"), ledger, to="K", text=long, game_date="d", tick=1, cycle=0)
+    r = C.attempt(cfg("D1", "complete"), ledger, to="K", text=long, game_date="d", tick=1, cycle=0)
     assert r["verdict"] == C.V_TEXT_TOO_LONG
     # refusals spent no quota: two deliveries still fit, the third is the quota
     for _ in range(2):
-        assert C.attempt(cfg("D1", "star"), ledger, to="K", text="ok", game_date="d", tick=1,
+        assert C.attempt(cfg("D1", "complete"), ledger, to="K", text="ok", game_date="d", tick=1,
                          cycle=0)["verdict"] == C.V_DELIVERED
-    r = C.attempt(cfg("D1", "star"), ledger, to="K", text="ok", game_date="d", tick=1, cycle=0)
+    r = C.attempt(cfg("D1", "complete"), ledger, to="K", text="ok", game_date="d", tick=1, cycle=0)
     assert r["verdict"] == C.V_QUOTA_EXCEEDED
     # the next cycle starts a fresh count; another seat's sends never count against this one
-    assert C.attempt(cfg("D1", "star"), ledger, to="K", text="ok", game_date="d", tick=2,
+    assert C.attempt(cfg("D1", "complete"), ledger, to="K", text="ok", game_date="d", tick=2,
                      cycle=1)["verdict"] == C.V_DELIVERED
-    assert C.attempt(cfg("D2", "star"), ledger, to="K", text="ok", game_date="d", tick=2,
+    assert C.attempt(cfg("D2", "complete"), ledger, to="K", text="ok", game_date="d", tick=2,
                      cycle=0)["verdict"] == C.V_DELIVERED
     verdicts = [r["verdict"] for r in C.materialise(ledger.records())]
     assert verdicts == [C.V_TOPOLOGY_DENIED, C.V_TEXT_TOO_LONG, C.V_DELIVERED, C.V_DELIVERED,
@@ -318,6 +320,12 @@ def seat(monkeypatch, tmp_path):
 
         def date(self):
             return roster["get_tick_info"]["game_date"]
+
+        def set_date(self, date):
+            """The bridge's clock now reads `date` (time passed under other seats)."""
+            roster["get_tick_info"]["game_date"] = date
+            state.game_date = date        # the live stamp every bridge reply carries (gw.game())
+            return self
     return Seat()
 
 
@@ -358,7 +366,7 @@ def test_deliver_re_checks_the_topology_on_the_readers_side(ledger):
     not delivered on the stamp's say-so (witness note): it stays unread."""
     C.attempt(cfg("D1", "complete"), ledger, to="D2", text="lateral", game_date="867.1.5", tick=3, cycle=0)
     assert C.materialise(ledger.records())[0]["verdict"] == C.V_DELIVERED
-    assert C.deliver(cfg("D2", "star"), ledger, game_date="867.1.6", tick=4, cycle=0) == []
+    assert C.deliver(cfg("D2", "none"), ledger, game_date="867.1.6", tick=4, cycle=0) == []
     assert C.materialise(ledger.records())[0]["read"] == C.UNREAD
     assert sum(r.get("kind") == C.KIND_RECEIPT for r in ledger.records()) == 0
     # the same row IS delivered to a reader whose table allows the edge
@@ -375,8 +383,8 @@ def test_a_message_only_the_recipient_can_see(seat):
 
 
 def test_refusals_carry_the_ledger_verdict_as_the_gate_and_are_logged(seat):
-    seat.as_seat("D1", "star")
-    env = run(ms.msg_send(to="D2", text="psst"))
+    seat.as_seat("D1", "complete")
+    env = run(ms.msg_send(to="D9", text="psst"))
     assert env["ok"] is False and env["blocked"]["gate"] == "topology_denied"
     env = run(ms.msg_send(to="K", text="x" * 601))
     assert env["blocked"]["gate"] == "text_too_long"
@@ -454,7 +462,7 @@ def test_a_labelless_process_sends_nothing_and_delivers_nothing_by_name(seat, mo
     seat.as_seat("D1")
     run(ms.msg_send(to="K", text="from D1"))
     monkeypatch.setattr(ms, "_CHANNEL", C.ChannelConfig(
-        arm="flat_hom", topology="complete", seats=SEATS, seat="", quota_per_cycle=2,
+        arm="council", topology="complete", seats=SEATS, seat="", quota_per_cycle=2,
         max_text_bytes=600))
     env = run(ms.msg_send(to="K", text="from nobody"))
     assert env["blocked"]["gate"] == C.GATE_UNAVAILABLE
@@ -510,3 +518,72 @@ def test_the_boot_refusal_is_typed_on_stderr_and_exits_3(tmp_path):
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 3
     assert json.loads(r.stderr.strip().splitlines()[-1])["reason"] == C.R_TOPOLOGY_UNDECLARED
+
+
+# ── v4fix B1: the cycle comes from the episode's authority, not the process ──
+
+CELL = {"CK3_EPISODE_HORIZON_START": "867.1.1", "CK3_EPISODE_HORIZON_END": "877.1.1",
+        "CK3_CYCLE_GAME_DAYS": "90"}
+
+
+def _cell(monkeypatch, **over):
+    for k, v in {**CELL, **over}.items():
+        if v is None:
+            monkeypatch.delenv(k, raising=False)
+        else:
+            monkeypatch.setenv(k, v)
+
+
+def test_a_send_before_the_first_wait_of_a_resumed_session_lands_in_the_episodes_cycle(seat, monkeypatch):
+    """seat-review.md problem 3 (v3reg2 block): a resumed session is a NEW server
+    process, whose counter starts at 0 and moves only at its first wait, so every
+    send before that wait was stamped cycle 0 and shared cycle 0's bucket for the
+    whole episode (s3 D2/D4 at 874.xx refused quota_exceeded in "cycle 0").
+    In a cell the stamp is the schedule's index of the bridge's date at the send.
+    Red on 8cef520a: the resumed D1's first send is refused quota_exceeded, cycle 0."""
+    _cell(monkeypatch)
+    seat.as_seat("D1")                                    # 867.2.1: cycle 0 of the cell
+    for _ in range(2):
+        assert run(ms.msg_send(to="K", text="ok"))["result"]["cycle"] == 0
+    assert run(ms.msg_send(to="K", text="no"))["blocked"]["gate"] == "quota_exceeded"
+    # the session ends; the clock runs on under the other seats; D1 is RESUMED (a new
+    # server process: a fresh SeatState) at 867.5.2, 121 days past the start: cycle 1
+    seat.set_date("867.5.2").as_seat("D1")
+    assert ms._SEAT.cycles.cycle == 0                     # the process counter has not moved
+    env = run(ms.msg_send(to="K", text="my liege is now Carloman"))
+    assert env["verdict"] == "applied" and env["result"]["cycle"] == 1, env
+    assert run(ms.msg_send(to="K", text="second"))["verdict"] == "applied"
+    assert run(ms.msg_send(to="K", text="third"))["blocked"]["gate"] == "quota_exceeded"
+    # deep in the horizon (874.2.27, the s3 D4 refusal's date): that cycle's own bucket
+    seat.set_date("874.2.27").as_seat("D1")
+    env = run(ms.msg_send(to="K", text="late"))
+    assert env["verdict"] == "applied" and env["result"]["cycle"] == 29, env
+    rows = C.materialise(seat.ledger().records())
+    assert [r["cycle"] for r in rows] == [0, 0, 0, 1, 1, 1, 29]
+    # the receipt a resumed K's first observe stamps carries the same authority's cycle
+    seat.as_seat("K")
+    run(ms.observe())
+    assert {r["read_cycle"] for r in C.materialise(seat.ledger().records())
+            if r.get("read") == "read"} == {29}
+
+
+@pytest.mark.parametrize("date,over", [
+    ("unknown", {}),                                      # the bridge's date does not read
+    ("867.5.2", {"CK3_CYCLE_GAME_DAYS": None}),           # a cell with no cadence
+])
+def test_a_send_the_authority_cannot_place_is_refused_cycle_unknown_never_cycle_0(seat, monkeypatch,
+                                                                                    date, over):
+    _cell(monkeypatch, **over)
+    seat.set_date(date).as_seat("D1")
+    env = run(ms.msg_send(to="K", text="ok"))
+    assert env["ok"] is False and env["blocked"]["gate"] == C.R_CYCLE_UNKNOWN == "cycle_unknown", env
+    assert seat.ledger().records() == []                  # nothing attempted: no row, no quota spent
+    assert C.R_CYCLE_UNKNOWN in R.GATE_TABLE
+
+
+def test_send_cycle_outside_a_cell_is_the_process_counter():
+    """Free play (no schedule): the published rule, the process's own counter."""
+    c = C.CycleCounter(cycle=3)
+    assert C.send_cycle({}, "867.5.2", c) == (3, None)
+    assert C.send_cycle(CELL, "867.5.2", c) == (1, None)
+    assert C.send_cycle(CELL, "nope", c)[0] is None

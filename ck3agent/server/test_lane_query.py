@@ -53,6 +53,12 @@ class ScriptedGateway:
 
     async def write(self, action, params=None):
         self.writes.append((action, dict(params or {})))
+        if action == "script_action" and action not in self.replies:
+            # Lane v4act: council_task goes through the script layer first; these
+            # rows grade the native path it falls back to (test_script_actions.py
+            # grades the script path, whose `seat` key do_script_action reads).
+            return {"success": False, "action": "script_action",
+                    "reason": "target_not_script_addressable", "detail": "actor"}
         r = self.replies.get(action, {"success": True})
         return r(params) if callable(r) else r
 

@@ -163,7 +163,10 @@ def test_no_bridge_is_bridge_disconnected(tool, monkeypatch, which):
 
 # ── observe ───────────────────────────────────────────────────────────────────
 
-BRIEF = {"de_jure", "standing", "wars", "money", "succession", "posture", "since"}
+#: lane v4sees: `goal` (first; `not_an_experiment_episode` outside a cell);
+#: lane v4act: `standing_policies` (v4 draft section 6)
+BRIEF = {"goal", "de_jure", "standing", "wars", "money", "succession", "posture", "since",
+         "standing_policies"}
 FULL = BRIEF | {"self", "war_brief", "council_brief", "evaluations"}
 
 
