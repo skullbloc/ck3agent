@@ -9,10 +9,13 @@ where the ledger lives. The readers are:
   * `mcp_server.py` — registers `msg_send` only when `boot()` says the seat's
     arm has a topology other than `none`, writes send attempts through
     `attempt()`, and delivers inboxes inside `observe` through `deliver()`;
+  * `ck3agent run` (release/overlay/ck3agent/cli.py) — delivers the inbox at
+    the start of a resumed turn through `deliver(via="resume_prompt")` and
+    `prompt_block()`;
   * `scripts/registered_launch.py` — parses the keys and transcribes the
     launched arm's topology into the child environment (`transcription_for`);
-  * `scripts/episode_bundle.py` / `scripts/episode_driver.py` — declare and
-    adopt the ledger as a sealed artefact (`LEDGER_NAME`, `ledger_path`);
+  * `scripts/episode_bundle.py` / `scripts/dry_cell.py` — declare and
+    collect the ledger as a sealed artefact (`LEDGER_NAME`, `ledger_path`);
   * `scripts/channel_ledger.py` — the section 4.2 process measures, pure
     functions over `materialise()`.
 
@@ -38,9 +41,10 @@ from the two kinds, because stamping a receipt onto an existing line would
 mean rewriting an append-only file.
 
 THE FIXTURE CANNOT FORGE A DELIVERY. `deliver()` is the only writer of receipt
-records and the only reader that returns an inbox, and the only caller of it is
-the server's `observe`. A test that claims a message was read has called
-`observe`.
+records and the only reader that returns an inbox, and it has two callers: the
+server's `observe` (`via="observe"`) and, since lane v4sees, `ck3agent run` at
+the start of a resumed turn (`via="resume_prompt"`, the text in the prompt). A
+test that claims a message was read has called one of the two.
 """
 
 from __future__ import annotations
@@ -59,9 +63,11 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 try:                                    # imported as ck3agent.server.channel (scripts)
     from . import instance as _instance
     from .cycle_cadence import CycleCounter, wait_completed  # noqa: F401
+    from . import cycle_cadence as _cc
 except ImportError:                     # imported flat as `channel` (the server)
     import instance as _instance        # type: ignore[no-redef]
     from cycle_cadence import CycleCounter, wait_completed  # type: ignore[no-redef]  # noqa: F401
+    import cycle_cadence as _cc         # type: ignore[no-redef]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -71,11 +77,11 @@ except ImportError:                     # imported flat as `channel` (the server
 #: The tool's name on the wire (section 5.1: "the 13 and the one").
 TOOL_NAME = "msg_send"
 
-#: Section 5.2's three topologies. `none`: the tool is not registered.
+#: The topologies (v4 §3: COUNCIL's complete topology, or none; v3's star is
+#: deleted with the arms that used it). `none`: the tool is not registered.
 TOPOLOGY_COMPLETE = "complete"
-TOPOLOGY_STAR = "star"
 TOPOLOGY_NONE = "none"
-TOPOLOGIES = (TOPOLOGY_COMPLETE, TOPOLOGY_STAR, TOPOLOGY_NONE)
+TOPOLOGIES = (TOPOLOGY_COMPLETE, TOPOLOGY_NONE)
 
 #: Seat labels (section 3): the king and the dukes D1..Dn.
 KING = "K"
@@ -138,6 +144,13 @@ R_BOUNDS_UNDECLARED = "channel_bounds_undeclared"
 #: ledger cannot be reached: no episode id from the environment or the bridge.
 #: Not a verdict because nothing was attempted against any ledger.
 GATE_UNAVAILABLE = "channel_unavailable"
+#: The tool-call refusal (a `blocked.gate`, NOT a ledger verdict) when the
+#: cycle authority cannot say which cycle the send falls in (`send_cycle`):
+#: the cell's schedule is unreadable or the game date at the send is. Never a
+#: default: the v3reg2 block stamped every send before a resumed session's
+#: first wait "cycle 0" (the session-local counter's start), and 18 of its 19
+#: quota refusals were false (seat-review.md problem 3).
+R_CYCLE_UNKNOWN = "cycle_unknown"
 #: Why `observe` could not deliver (a warning code beside an ABSENT `messages`).
 W_UNREAD = "channel_unread"
 
@@ -184,19 +197,13 @@ def is_duke(label: str) -> bool:
 def allowed(topology: str, sender: str, recipient: str, seats: Sequence[str]) -> bool:
     """Section 5.2's table: may `sender` write to `recipient`?
 
-    complete: any seat to any OTHER seat. star: K to each D and each D to K,
-    no D to D. none: nobody. A recipient that is not a seat (a label outside
+    complete: any seat to any OTHER seat. none: nobody. A recipient that is not a seat (a label outside
     the set, the sender itself, a typo) is outside the table: `topology_denied`.
     There is no broadcast address.
     """
     if sender not in seats or recipient not in seats or sender == recipient:
         return False
-    if topology == TOPOLOGY_COMPLETE:
-        return True
-    if topology == TOPOLOGY_STAR:
-        return ((sender == KING and is_duke(recipient))
-                or (is_duke(sender) and recipient == KING))
-    return False
+    return topology == TOPOLOGY_COMPLETE
 
 
 def text_bytes(text: str) -> int:
@@ -215,6 +222,29 @@ def text_sha256(text: str) -> str:
 #: counter reports, so a seat waiting one day per call does not reset its
 #: quota per call. Re-exported here (the import at the top) so the channel's
 #: readers name one class.
+#:
+#: THE CYCLE A SEND OR A RECEIPT IS STAMPED WITH comes from `send_cycle`, not
+#: from the counter directly. In a cell (`cycle_cadence.in_cell`) the authority
+#: is the cell's schedule over the game date (`CellSchedule.cycle_index`, the
+#: index every seat's wait reports), because the counter is per PROCESS: a
+#: resumed session is a new server whose counter starts at 0 and moves only at
+#: its first wait, so every send before that wait landed in cycle 0's bucket.
+
+
+def send_cycle(environ: Mapping[str, str], game_date: Any,
+               counter: CycleCounter) -> tuple[Optional[int], Optional[str]]:
+    """(cycle, None), or (None, why) when the authority cannot answer.
+
+    A cell seat (CK3_EPISODE_HORIZON_START set): the cell schedule's index of
+    `game_date` (the bridge's clock read at the call), the same for every seat
+    and every session of the episode. A schedule that does not parse, or a date
+    that does not read, is (None, why): the caller refuses `cycle_unknown`
+    rather than stamp a guess. Not a cell (free play, no schedule): the
+    process's own counter, the published rule."""
+    cycle, why = _cc.episode_cycle(environ, game_date)
+    if why == _cc.CYCLE_NOT_A_CELL:
+        return counter.cycle, None
+    return cycle, why
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -446,6 +476,10 @@ def materialise(records: Iterable[Mapping[str, Any]]) -> list[dict]:
                 row["read_cycle"] = rec.get("read_cycle")
                 row["reader"] = rec.get("reader")
                 row["read_utc"] = rec.get("read_utc")
+                # a receipt from before lane v4sees has no `via`: only observe delivered then
+                row["read_via"] = rec.get("via") or VIA_OBSERVE
+                if rec.get("turn") is not None:
+                    row["read_turn"] = rec.get("turn")
         else:
             raise ValueError(f"unknown ledger record kind {kind!r}")
     return rows
@@ -493,15 +527,32 @@ def attempt(cfg: ChannelConfig, ledger: Ledger, *, to: str, text: str,
     return ledger.append(row)
 
 
+#: How a message reached its reader (the receipt's `via`; materialised `read_via`).
+#: `observe`: inside the recipient's observe. `resume_prompt` (lane v4sees): at
+#: the start of the recipient's resumed turn, in the prompt `ck3agent run` sends.
+VIA_OBSERVE = "observe"
+VIA_RESUME_PROMPT = "resume_prompt"
+VIAS = (VIA_OBSERVE, VIA_RESUME_PROMPT)
+
+
 def deliver(cfg: ChannelConfig, ledger: Ledger, *, game_date: Any, tick: Any,
-            cycle: int) -> list[dict]:
+            cycle: Optional[int], via: str = VIA_OBSERVE,
+            turn: Optional[int] = None) -> list[dict]:
     """The recipient's inbox: every DELIVERED, UNREAD message addressed to this
     seat, in ledger order, whose edge the topology ALLOWS re-checked on the
     reader's side (`allowed(topology, sender, me)`; a row the sender's process
     stamped `delivered` under another table, or a hand-edited file, is not
     delivered by trusting the stamp — it stays unread in the ledger, visible to
     the readers); each is stamped read with this observe's clock and the
-    recipient's cycle. The only writer of receipts."""
+    recipient's cycle (`send_cycle`; None when the authority could not say, which
+    the readers count as `read_cycle_unstamped`, never as cycle 0). The only
+    writer of receipts.
+
+    `via` names the path (VIAS): the same inbox, the same receipt, so a message
+    is delivered ONCE whichever path reads it first; `turn` is the resumed
+    turn's number when `via` is `resume_prompt`."""
+    if via not in VIAS:
+        raise ValueError(f"via {via!r} is not one of {VIAS}")
     inbox = [r for r in materialise(ledger.records())
              if r.get("recipient") == cfg.seat and r.get("verdict") == V_DELIVERED
              and r.get("read") == UNREAD
@@ -511,7 +562,8 @@ def deliver(cfg: ChannelConfig, ledger: Ledger, *, game_date: Any, tick: Any,
         ledger.append({
             "kind": KIND_RECEIPT, "msg_id": r["msg_id"], "reader": cfg.seat,
             "read_game_date": game_date, "read_tick": tick, "read_cycle": cycle,
-            "read_utc": utc_now_iso(),
+            "read_utc": utc_now_iso(), "via": via,
+            **({"turn": turn} if turn is not None else {}),
         })
         out.append({"sender": r.get("sender"), "game_date": r.get("game_date"),
                     "tick": r.get("tick"), "text": r.get("text"), "msg_id": r["msg_id"]})
@@ -546,3 +598,25 @@ class SeatState:
                     self.episode_id, self.episode_id_source = bid.strip(), "bridge"
                     return self.episode_id
         return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 6. DELIVERY IN THE RESUME PROMPT (lane v4sees)
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: The heading of the block `ck3agent run` appends to a resumed turn's prompt.
+PROMPT_HEADING = ("Messages delivered to you at the start of this turn (each is delivered once; "
+                  "observe will not show them again):")
+
+
+def prompt_block(messages: Sequence[Mapping[str, Any]]) -> str:
+    """The text a resumed turn's prompt carries for `deliver()`'s inbox: each
+    message's own text, verbatim, with its sender and the game date it was
+    sent. Empty when there is nothing to deliver (the prompt is then the bare
+    continuation text)."""
+    if not messages:
+        return ""
+    lines = [PROMPT_HEADING]
+    for m in messages:
+        lines.append(f"- from {m.get('sender')} (sent {m.get('game_date')}): {m.get('text')}")
+    return "\n".join(lines)

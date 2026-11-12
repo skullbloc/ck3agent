@@ -841,6 +841,16 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_council_task_family_prefix_control PRIVATE FAMILY_PREFIX_CONTROL)
 
+    # lane v4act: the script action layer's fixed templates (script_templates.h).
+    # The raw control is the probe's channel (the caller's text is the script)
+    # and must fail (WILL_FAIL).
+    foreach(_v test_script_templates test_script_templates_raw_control)
+        add_executable(${_v} test/test_script_templates.cpp)
+        target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_script_templates_raw_control PRIVATE SCRIPT_TPL_RAW_CONTROL)
+
     # L21 (node smoke18): CrashReporter inherited the listening socket and kept
     # it answering. The control is the pre-L21 calls and must fail (WILL_FAIL).
     foreach(_v test_listener_fd test_listener_fd_legacy_control)
@@ -968,6 +978,27 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_compile_options(test_liege_walk PRIVATE -O2 -Wall -Wextra)
+
+    # METERLINE: the heir handoff's two decisions (played_line.h, header-only)
+    # against the ONE case table the meter's Python mirror also answers to.
+    add_executable(test_played_line
+        test/test_played_line.cpp
+    )
+    target_include_directories(test_played_line PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_definitions(test_played_line PRIVATE
+        PLAYED_LINE_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/played_line_vectors.tsv")
+    target_compile_options(test_played_line PRIVATE -O2 -Wall -Wextra)
+
+    # METERLINE: the played line followed per tick (line_watch.h, header-only).
+    add_executable(test_line_watch
+        test/test_line_watch.cpp
+    )
+    target_include_directories(test_line_watch PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_options(test_line_watch PRIVATE -O2 -Wall -Wextra)
 
     # cleanup 2026.11 F16: a faction's war as the game reads it (faction_war.h).
     # HEADER-ONLY and engine-free: WAR_DB is a stand-in, so the rule (the whole
@@ -1321,7 +1352,7 @@ if(BUILD_BRIDGE_TESTS)
     # ck-6kvq.13 (R6): the decision-budget governor's ENFORCING half. Pure by
     # construction — no engine, no game, no stub global — because "is this agent
     # out of budget" must be provable without a running game. Also carries the
-    # --replay mode scripts/test_budget_governor.py drives a recorded transcript
+    # --replay mode scripts/test_budget_enforcement.py drives a recorded transcript
     # through, so there is exactly one implementation of the rule.
     add_executable(test_budget_ledger
         test/test_budget_ledger.cpp
@@ -1999,13 +2030,14 @@ endif()
     # Engine-free tests that run standalone and exit 0; `ctest` runs them.
     enable_testing()
     foreach(_t test_json_helpers test_instance_paths
-               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_liege_walk test_engine_bool
+               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_liege_walk test_played_line test_line_watch test_engine_bool
                test_flush_scheduler test_pipeline
                test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_intent_lookup test_handoff_player
                add_claim_probe name_pending_probe tls_prologue_scan_probe
                latch_guarded_rows_probe
                test_action_args    # L18-B: built since ck-6kvq.15, never run by ctest
                test_war_scope test_pause_alarm test_council_task_family     # L20-A
+               test_script_templates   # lane v4act
                test_war_stance_record   # L22: a stance row reads its own side's record
                test_decision_eval_plan  # L22: no failure-key pass on a not-shown decision
                test_diag_dtor      # L20-D: DIAG_OBJECT_DTOR is the engine's dtor
@@ -2037,6 +2069,8 @@ endif()
     set_tests_properties(test_debug_verbs_negative_control PROPERTIES WILL_FAIL TRUE)
     add_test(NAME test_council_task_family_prefix_control COMMAND test_council_task_family_prefix_control)
     set_tests_properties(test_council_task_family_prefix_control PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME test_script_templates_raw_control COMMAND test_script_templates_raw_control)
+    set_tests_properties(test_script_templates_raw_control PROPERTIES WILL_FAIL TRUE)
     # L20-A: the pre-fix war scope read must fail the same rows.
     add_test(NAME test_war_scope_prefix_control COMMAND test_war_scope_prefix_control)
     set_tests_properties(test_war_scope_prefix_control PROPERTIES WILL_FAIL TRUE)

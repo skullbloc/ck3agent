@@ -1,6 +1,7 @@
 """CLI tests. No game, no bridge binary; conftest.py makes HOME and XDG private."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -938,6 +939,11 @@ RESULT = {"type": "result", "subtype": "success", "is_error": False, "duration_m
           "duration_api_ms": 900, "num_turns": 3, "result": "done", "session_id": "s1",
           "total_cost_usd": 0.5, "usage": {"input_tokens": 10, "output_tokens": 4},
           "modelUsage": {"claude-x": {"inputTokens": 10}}, "permission_denials": [], "uuid": "u2"}
+if "--resume" in args:
+    # claude reports total_cost_usd CUMULATIVE over a resumed session (the v3reg2
+    # bundles: one session id, 0.21, 0.24 ... 1.575 over 40 processes): each
+    # continuation of s1 costs 0.3 more than the last report.
+    RESULT["total_cost_usd"] = 0.5 + 0.3 * len(open(os.environ["FAKE_ARGV"] + ".resumes").read().split())
 ev({"type": "system", "subtype": "init", "cwd": os.getcwd(), "session_id": "s1",
     "tools": ["Bash", "mcp__ck3__observe"], "mcp_servers": [{"name": "ck3", "status": "connected"}],
     "model": "claude-x", "permissionMode": "default", "slash_commands": [], "apiKeySource": "none",
@@ -1544,6 +1550,30 @@ def test_summarize_stream_reads_real_event_shapes():
     assert "result_event" not in cli.summarize_stream([json.dumps(init)])
 
 
+def _results(*rows):
+    return [json.dumps({"type": "result", "subtype": "success", "session_id": sid,
+                        "total_cost_usd": cost, "num_turns": turns}) for sid, cost, turns in rows]
+
+
+def test_a_resumed_sessions_cost_is_its_last_cumulative_value_not_the_sum():
+    """seat-review.md problem 15: summary.json showed resumed seats at 20-30x their
+    cost because every result event's CUMULATIVE total_cost_usd was summed. The
+    numbers are seat K of the sealed v3reg2-flat_hom-s3 bundle (one session
+    0649e4ae, two processes: 0.8999130 then 1.6094637; turns 71 then 46); the
+    bundle's summary recorded K at 2.5093767, their sum. Red on 8cef520a: 2.5093767."""
+    m = cli.summarize_stream(_results(("0649e4ae", 0.8999129999999997, 71), ("0649e4ae", 1.6094637, 46)))
+    assert m["total_cost_usd"] == 1.6094637 and m["num_turns"] == 117
+    assert m["total_cost_usd_rule"] == cli.COST_RULE
+    # two sessions (a fresh start after a lost one): each session's last value, summed
+    m = cli.summarize_stream(_results(("a", 0.2, 3), ("a", 0.5, 3), ("b", 0.1, 2), ("b", 0.4, 2)))
+    assert abs(m["total_cost_usd"] - 0.9) < 1e-9 and m["num_turns"] == 10
+
+
+def test_a_session_whose_cost_goes_down_is_not_established_never_a_number():
+    m = cli.summarize_stream(_results(("a", 0.5, 3), ("a", 0.2, 3)))
+    assert isinstance(m["total_cost_usd"], str) and m["total_cost_usd"].startswith("not_established")
+
+
 # ── server import ────────────────────────────────────────────────────────────
 
 def test_mcp_server_imports_and_registers_tools():
@@ -1664,8 +1694,86 @@ def test_a_cell_seat_that_ends_its_session_early_is_resumed(play, tmp_path, monk
     argv = json.loads((tmp_path / "argv.json").read_text())
     assert argv[argv.index("-p") + 1] == cli.CONTINUATION_TEXT
     assert "--strict-mcp-config" in argv and argv[argv.index("--max-turns") + 1] == "400"
-    # two claude processes, two result events: the run's cost and turns are their sums
-    assert m["result_events"] == 2 and m["total_cost_usd"] == 1.0 and m["num_turns"] == 6
+    # two claude processes, two result events of ONE session: the turns are their sum,
+    # the cost is the session's last cumulative value (cli.COST_RULE), not 0.5 + 0.8
+    assert m["result_events"] == 2 and m["num_turns"] == 6
+    assert m["total_cost_usd"] == 0.8 and m["total_cost_usd_rule"] == cli.COST_RULE
+
+
+def _turns(play: Path) -> list[dict]:
+    files = list((play / "runs").glob("*" + cli.TURNS_SUFFIX))
+    assert len(files) == 1, files
+    return [json.loads(x) for x in files[0].read_text().splitlines() if x.strip()]
+
+
+def test_every_turns_prompt_is_recorded_beside_the_transcript(play, tmp_path, monkeypatch):
+    """Lane v4sees (seat review problem 11: the seat review could not see what a
+    resumed seat was told). Turn 0 is the run's prompt, turn k the k-th
+    continuation's, each verbatim with its sha256, game date and cycle; the
+    manifest names the file and counts its rows. Red on 8cef520a: no
+    TURNS_SUFFIX, no record."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_RESUME_HORIZON", "1")
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    m = manifest_of(play)
+    rows = _turns(play)
+    assert [r["turn"] for r in rows] == [0, 1] and [r["kind"] for r in rows] == ["initial", "continuation"]
+    assert rows[0]["text"] == Path(m["prompt_file"]).read_text(encoding="utf-8")
+    assert rows[1]["text"] == cli.CONTINUATION_TEXT and rows[1]["resumed_session_id"] == "s1"
+    for r in rows:
+        assert r["text_sha256"] == hashlib.sha256(r["text"].encode()).hexdigest()
+        assert "cycle" in r and "game_date" in r and r["cycle_state"]
+    assert rows[1]["delivery"] == {"state": "no_channel"} and rows[1]["messages_delivered"] == []
+    assert m["turns_file"].endswith(cli.TURNS_SUFFIX) and m["turns_recorded"] == 2
+    assert m["hook_file"].endswith(cli.HOOK_SUFFIX)
+    assert m["continuations"][0]["turn"] == 1 and m["continuations"][0]["delivery"] == "no_channel"
+
+
+def test_a_resumed_turn_carries_the_seats_pending_messages_once(play, tmp_path, monkeypatch):
+    """Lane v4sees (seat review problem 9: messages reached a seat only inside
+    observe; s6 D1 read one 530 days late). A resumed turn's prompt carries the
+    seat's pending messages after the continuation text, through the channel's
+    one delivery function, which stamps the receipt (via resume_prompt, the
+    turn): observe never shows them again. Red on 8cef520a: the prompt is the
+    bare continuation text and the message stays unread."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    eid = "ep-20261111T000000Z-turns-0badf00d"
+    for k, v in {"CK3_EPISODE_ARM": "council", "CK3_CHANNEL_TOPOLOGY": "complete",
+                 "CK3_CHANNEL_QUOTA_PER_CYCLE": "2", "CK3_CHANNEL_MAX_TEXT_BYTES": "600",
+                 "CK3_CHANNEL_SEATS": "K,D1", "CK3_SEAT_LABEL": "D1", "CK3_EPISODE_ID": eid,
+                 "CK3_INSTANCE_ID": "turns-test", "CK3_INSTANCE_ROOT": str(tmp_path / "inst")}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_RESUME_HORIZON", "1")
+    from ck3agent import bootstrap_server
+    bootstrap_server()
+    import channel
+    king = channel.ChannelConfig(arm="council", topology="complete", seats=("K", "D1"), seat="K",
+                                 quota_per_cycle=2, max_text_bytes=600)
+    ledger = channel.Ledger(channel.ledger_path(eid), episode_id=eid)
+    sent = channel.attempt(king, ledger, to="D1", text="join my war on Ludwig", game_date="869.03.01",
+                           tick=5, cycle=7)
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "20"]) == 0
+    argv = json.loads((tmp_path / "argv.json").read_text())
+    text = argv[argv.index("-p") + 1]
+    assert text.startswith(cli.CONTINUATION_TEXT + "\n\n" + channel.PROMPT_HEADING)
+    assert "from K (sent 869.03.01): join my war on Ludwig" in text
+    rows = _turns(play)
+    assert rows[1]["text"] == text and rows[1]["messages_delivered"] == [sent["msg_id"]]
+    assert rows[1]["delivery"] == {"state": "delivered", "count": 1}
+    row = channel.materialise(ledger.records())[0]
+    assert (row["read"], row["read_via"], row["read_turn"], row["reader"]) == ("read", "resume_prompt", 1, "D1")
+    # delivered once: the inbox is empty now, for observe or a later turn alike
+    assert channel.deliver(channel.ChannelConfig(arm="council", topology="complete", seats=("K", "D1"),
+                                                 seat="D1", quota_per_cycle=2, max_text_bytes=600),
+                           ledger, game_date="869.04.03", tick=9, cycle=8) == []
+
+
+def test_the_hooks_sink_variable_is_the_runs():
+    """One spelling: the run sets HOOK_STATE_OUT_ENV, the hook reads it."""
+    src = (ROOT / "ck3agent" / "hooks" / "inject_state.py").read_text(encoding="utf-8")
+    assert f'HOOK_STATE_OUT_ENV = "{cli.HOOK_STATE_OUT_ENV}"' in src
 
 
 def test_a_cell_seat_past_its_continuations_cap_is_refused(play, tmp_path, monkeypatch):

@@ -13,7 +13,7 @@ The 13 tools `ck3agent serve` registers. Bridge verbs behind them: [bridge-actio
 | [`observe`](#observe) | Your situation report: call it first every cycle. |
 | [`plan_war`](#plan_war) | "What is my single best next war?" Returns a RANKED list of targets that are ALREADY declarable, ally-free, and goal-advancing — each row carries a `declare_args` object you pass to declare_war VERBATIM. |
 | [`declare_war`](#declare_war) | Declare ONE war. |
-| [`succession_plan`](#succession_plan) | "Will my realm pass through my heir's succession INTACT?" Returns one verdict: `outcome` intact (passes_intact true), splits (false, with the `breaker`: the heir who takes titles away) or undetermined (null, with `undetermined_reason` and the `succession_undetermined` warning: no heir was read, or the reads say it does not pass intact and name no breaker), the eligible heir count, and the per-title map (which heir takes which title, under which law). |
+| [`succession_plan`](#succession_plan) | "Will my realm pass through my heir's succession INTACT?" Returns one verdict: `outcome` intact (passes_intact true), splits (false, with the `breaker`: the heir who takes titles away) or undetermined (null, with `undetermined_reason` and the `succession_undetermined` warning: no heir was read, the reads say it does not pass intact and name no breaker, or a kingdom/empire held beside the primary has no heir read), the eligible heir count, `crown_titles` (every held kingdom/empire with the heir the simulation and the per-title map each give it; the map's heir for one is a breaker), `scope` (a title created or gained after the read is not in the verdict), and the per-title map (which heir takes which title, under which law). |
 | [`set_phase`](#set_phase) | Assert your strategic posture by NAME instead of hand-tuning nine integers. |
 | [`do`](#do) | Perform one concrete game action that is NOT a war (wars use declare_war), OR enumerate what you can do. |
 | [`inspect`](#inspect) | Deep, typed read of ONE subject. |
@@ -272,11 +272,18 @@ whether you are at war), the personality genome (`posture`), and what changed
 since the last call (`since`; `delta` is your own share of it). `de_jure` counts
 counties and `self.counties_held` counts yours.
 
+In an experiment episode `goal` comes first: the score `R` (the county count of
+the played line's realm, `now`, `at_open`, `change`), the `horizon` (`end_date`,
+`days_left`), the `cycle` (`index`, `total`, `left`) and, for a duke seat,
+`own_counties`. Outside one it reads `{"state": "not_an_experiment_episode"}`.
+
 Also folds in a `succession` block with succession_plan's verdict, computed the
 same way: `outcome` (intact, splits, or undetermined when the reads name no heir
-who takes a title), `passes_intact` (true, false, null when undetermined), the
-`breaker` (the first other heir who takes titles, and which), `eligible_heir_count`. The
-per-title map and the levers are succession_plan's.
+who takes a title or a held kingdom/empire beside the primary has no heir read),
+`passes_intact` (true, false, null when undetermined), the `breaker` (the first
+other heir who takes titles, and which), `eligible_heir_count`, `crown_titles`
+(each held kingdom/empire with both reads' heirs) and `scope` (titles gained after
+the read are not in it). The per-title map and the levers are succession_plan's.
 
 Args:
     character_id: ruler to reason about (0 = controlled primary; REQUIRED in multi-actor).
@@ -293,7 +300,12 @@ Args:
 "What is my single best next war?" Returns a RANKED list of targets that are
 ALREADY declarable, ally-free, and goal-advancing — each row carries a `declare_args`
 object you pass to declare_war VERBATIM. You never name a casus_belli string or hunt
-a claimant. Each row passed the game's own declare-war check for that target. A claim
+a claimant. Each row's CB passed declare_war's own pre-check (the game's casus-belli
+check for you against that target) when plan_war read it: `precheck` gives that
+date and the gates the pre-check does not cover; the game's start check runs only
+when declare_war sends the war, and a refusal there comes back with its reason. A row
+whose CB did not pass, a war on your own liege, and a claim whose claimant is not in
+your court are listed in `excluded`, never offered. A claim
 CB is offered only on a pressed claim (`claim_pressed: true`, with the claimed title
 and the claimant); an unpressed claim is listed in `excluded` as claim_not_pressed.
 Empty list ⇒ `empty_reason` names the commonest
@@ -365,9 +377,12 @@ Args:
 "Will my realm pass through my heir's succession INTACT?" Returns one verdict:
 `outcome` intact (passes_intact true), splits (false, with the `breaker`: the heir
 who takes titles away) or undetermined (null, with `undetermined_reason` and the
-`succession_undetermined` warning: no heir was read, or the reads say it does not
-pass intact and name no breaker), the eligible heir count, and the per-title map (which heir takes which
-title, under which law). observe's succession block and the live-state hook
+`succession_undetermined` warning: no heir was read, the reads say it does not
+pass intact and name no breaker, or a kingdom/empire held beside the primary has
+no heir read), the eligible heir count, `crown_titles` (every held kingdom/empire
+with the heir the simulation and the per-title map each give it; the map's heir for
+one is a breaker), `scope` (a title created or gained after the read is not in the
+verdict), and the per-title map (which heir takes which title, under which law). observe's succession block and the live-state hook
 state the same verdict from the same function. `levers` lists what this ruler can pull, each with its
 do() call and its read-back: designate_heir (available, the children it can
 name, the prestige cost), disinherit (only the dynasty head; sent only at your
@@ -483,7 +498,7 @@ Args:
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `intent` | enum: `mint_title`, `take_decision`, `interact`, `convert_faith`, `convert_culture`, `set_doctrine`, `change_law`, `council_task`, `appoint`, `lifestyle`, `set_education_focus`, `build`, `men_at_arms`, `hire_merc`, `move_capital`, `set_obligation`, `scheme`, `make_peace`, `call_ally`, `join_war`, `cancel_pending`, `faction` or null |  | `null` | The one action to execute; null with action_class enumerates. |
+| `intent` | enum: `mint_title`, `take_decision`, `interact`, `convert_faith`, `convert_culture`, `set_doctrine`, `change_law`, `council_task`, `appoint`, `lifestyle`, `set_education_focus`, `build`, `men_at_arms`, `hire_merc`, `move_capital`, `set_obligation`, `scheme`, `make_peace`, `call_ally`, `join_war`, `cancel_pending`, `faction`, `set_policy` or null |  | `null` | The one action to execute; null with action_class enumerates. |
 | `action_class` | enum: `interactions`, `decisions`, `council_tasks`, `laws`, `fabricate_targets`, `mercenaries`, `factions_to_join`, `buildings`, `imprison_targets`, `formable_titles`, `men_at_arms` or null |  | `null` | What to enumerate (enumerate mode only). |
 | `candidates` | array[any] |  | `null` |  |
 | `character_id` | integer |  | `0` |  |
@@ -513,6 +528,7 @@ Intent-specific keys. ARGUMENTS BY INTENT (read from the code):
   set_doctrine: args.{doctrine}
   set_education_focus: args.{focus}
   set_obligation: args.{vassal_id, level, obligation}
+  set_policy: args.{on, policy}
   take_decision: args.{decision}
 ```
 

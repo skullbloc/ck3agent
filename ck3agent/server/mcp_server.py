@@ -60,6 +60,8 @@ import pipeline_correlation as _pcorr
 # file only registers the tool when the seat's arm declares a topology other
 # than `none`, and delivers inboxes inside `observe`.
 import channel as _channel
+# v4 §6 (lane v4sees): the goal block an experiment seat's observe carries.
+import goal_block as _goal_block
 
 log = logging.getLogger("ck3-mcp")
 
@@ -76,6 +78,51 @@ except _channel.ChannelBootRefusal as _exc:
     sys.stderr.flush()
     raise SystemExit(3)
 _SEAT = _channel.SeatState()
+
+# v4 (lane v4note): the seats' notepads, `note_read` / `note_write`, served by
+# this server like msg_send and declared per arm (notepad.py is the one
+# definition). None when the environment declares no notepad: the tools are
+# absent, and the seat-surface pin refuses a seat whose arm declared them and
+# was not shown them. A malformed declaration refuses the boot, typed.
+import notepad as _notepad
+try:
+    _NOTEPAD = _notepad.boot(os.environ)
+except _notepad.NotepadBootRefusal as _exc:
+    sys.stderr.write(json.dumps({"refused": "notepad", **_exc.as_dict()}) + "\n")
+    sys.stderr.flush()
+    raise SystemExit(3)
+
+# v4 (lane v4instr): the guide, `guide_read(topic)`, served like the notepad
+# and declared by the manifest's sha (guide.py is the one definition). None
+# when the environment declares none: the tool is absent. A declaration whose
+# content does not match its sha refuses the boot, typed. Where a guide is
+# declared, `observe` also carries the pushed warnings (pushed_warnings.py),
+# each naming a guide topic.
+import guide as _guide
+import pushed_warnings as _pw
+try:
+    _GUIDE = _guide.boot(os.environ)
+except _guide.GuideBootRefusal as _exc:
+    sys.stderr.write(json.dumps({"refused": "guide", **_exc.as_dict()}) + "\n")
+    sys.stderr.flush()
+    raise SystemExit(3)
+
+
+def _telemetry_dir() -> Optional[str]:
+    try:
+        import instance as _inst
+        return str(_inst.resolve(env=os.environ).telemetry_dir)
+    except Exception:                                           # noqa: BLE001
+        return None
+
+
+#: The seat's action memory (pushed_warnings.ActionMemory): in a guided seat,
+#: kept in a file beside the guide log so a resumed session remembers.
+_ACTIONS = (_pw.ActionMemory(_pw.memory_path(os.environ, _telemetry_dir() or "")
+                             if _telemetry_dir() else None)
+            if _GUIDE is not None else None)
+#: The vassal reads of the pushed warnings, once per cycle (cycle index, vassal ids).
+_PUSH_CACHE: dict = {}
 
 
 # ---------------------------------------------------------------------------
@@ -2647,11 +2694,18 @@ async def observe(
     since the last call (`since`; `delta` is your own share of it). `de_jure` counts
     counties and `self.counties_held` counts yours.
 
+    In an experiment episode `goal` comes first: the score `R` (the county count of
+    the played line's realm, `now`, `at_open`, `change`), the `horizon` (`end_date`,
+    `days_left`), the `cycle` (`index`, `total`, `left`) and, for a duke seat,
+    `own_counties`. Outside one it reads `{"state": "not_an_experiment_episode"}`.
+
     Also folds in a `succession` block with succession_plan's verdict, computed the
     same way: `outcome` (intact, splits, or undetermined when the reads name no heir
-    who takes a title), `passes_intact` (true, false, null when undetermined), the
-    `breaker` (the first other heir who takes titles, and which), `eligible_heir_count`. The
-    per-title map and the levers are succession_plan's.
+    who takes a title or a held kingdom/empire beside the primary has no heir read),
+    `passes_intact` (true, false, null when undetermined), the `breaker` (the first
+    other heir who takes titles, and which), `eligible_heir_count`, `crown_titles`
+    (each held kingdom/empire with both reads' heirs) and `scope` (titles gained after
+    the read are not in it). The per-title map and the levers are succession_plan's.
 
     Args:
         character_id: ruler to reason about (0 = controlled primary; REQUIRED in multi-actor).
@@ -2677,9 +2731,63 @@ async def observe(
             seat_session_id=os.environ.get(seat_lineage.SESSION_ID_ENV),
             registered_title=seat_lineage.registered_title_from_env(),
             own_session_id=redesign.own_session_id, own_session_row=redesign.own_session_row)
-    env = await redesign.observe_impl(gw, character_id=character_id, depth=depth)
+    facts: dict = {}
+    # the raw reads the pushed warnings judge, asked for only in a guided seat
+    env = await (redesign.observe_impl(gw, character_id=character_id, depth=depth, facts_out=facts)
+                 if _GUIDE is not None else redesign.observe_impl(gw, character_id=character_id, depth=depth))
     if _CHANNEL is not None and _CHANNEL.enabled:
         env = await _deliver_inbox(gw, env)
+    if isinstance(env.get("result"), dict) and not env.get("blocked"):
+        env = await _attach_goal(gw, env)
+        if _GUIDE is not None:
+            env = await _attach_pushed(gw, env, facts)
+    return env
+
+
+async def _attach_pushed(gw, env: dict[str, Any], facts: dict) -> dict[str, Any]:
+    """v4 (lane v4instr): `result.warnings`, after `goal`: the pushed warnings
+    (pushed_warnings.compose), each from a trigger of its table and naming a
+    guide topic. The vassal reads (one query_realm per direct vassal) are
+    taken once per cycle. A read that fails leaves its trigger silent and a
+    diagnostic in the envelope's `warnings`, never an invented line."""
+    res = env["result"]
+    goal = res.get("goal") if isinstance(res.get("goal"), dict) else {}
+    idx = (goal.get("cycle") or {}).get("index") if isinstance(goal.get("cycle"), dict) else None
+    realm = facts.get("realm") if isinstance(facts.get("realm"), dict) else {}
+    vids = _pw.vassal_ids(realm)
+    key = (idx, tuple(vids))
+    if idx is not None and _PUSH_CACHE.get("key") == key:
+        vassal_realms = _PUSH_CACHE["vassal_realms"]
+    else:
+        try:
+            replies = await gw.read_many([("query_realm", {"character_id": v}) for v in vids]) if vids else []
+            vassal_realms = dict(zip(vids, replies))
+        except Exception as exc:                                # noqa: BLE001
+            vassal_realms = {}
+            env.setdefault("warnings", []).append(
+                {"code": "vassal_realms_unread", "detail": f"{type(exc).__name__}: {exc}"})
+        _PUSH_CACHE.update(key=key, vassal_realms=vassal_realms)
+    briefing, why = _pw.read_briefing(os.environ)
+    if why:
+        env.setdefault("warnings", []).append({"code": _pw.W_BRIEFING_UNREAD, "detail": why})
+    items = _pw.compose(succession=res.get("succession"), character=facts.get("character"), realm=realm,
+                        vassal_realms=vassal_realms, memory=_ACTIONS, briefing=briefing, cycle_index=idx)
+    rest = {k: v for k, v in res.items() if k not in ("goal", "warnings")}
+    env["result"] = {**({"goal": res["goal"]} if "goal" in res else {}), "warnings": items, **rest}
+    return env
+
+
+async def _attach_goal(gw, env: dict[str, Any]) -> dict[str, Any]:
+    """v4 §6 (lane v4sees): the goal block FIRST in `result`
+    (goal_block.goal_block). Outside an experiment cell it is stated absent
+    (`{"state": "not_an_experiment_episode"}`), never zeros."""
+    actor = env.get("actor") if isinstance(env.get("actor"), dict) else {}
+    try:
+        goal = await _goal_block.goal_block(gw, actor_id=actor.get("id"),
+                                            game_date=gw.game().get("date"))
+    except Exception as exc:                                    # noqa: BLE001
+        goal = {"state": "unread", "detail": f"{type(exc).__name__}: {exc}"}
+    env["result"] = {"goal": goal, **{k: v for k, v in env["result"].items() if k != "goal"}}
     return env
 
 
@@ -2697,9 +2805,10 @@ async def _deliver_inbox(gw, env: dict[str, Any]) -> dict[str, Any]:
         if ledger is None:
             raise RuntimeError("no episode id from the environment or the bridge")
         game = gw.game()
+        read_cycle, _why = _channel.send_cycle(os.environ, game.get("date"), _SEAT.cycles)
         env.setdefault("result", {})["messages"] = _channel.deliver(
             _CHANNEL, ledger, game_date=game.get("date"), tick=game.get("tick"),
-            cycle=_SEAT.cycles.cycle)
+            cycle=read_cycle)
     except Exception as exc:                                    # noqa: BLE001
         env.setdefault("warnings", []).append(
             {"code": _channel.W_UNREAD,
@@ -2735,7 +2844,12 @@ async def plan_war(character_id: int = 0, goal_scoped: bool = True,
     """"What is my single best next war?" Returns a RANKED list of targets that are
     ALREADY declarable, ally-free, and goal-advancing — each row carries a `declare_args`
     object you pass to declare_war VERBATIM. You never name a casus_belli string or hunt
-    a claimant. Each row passed the game's own declare-war check for that target. A claim
+    a claimant. Each row's CB passed declare_war's own pre-check (the game's casus-belli
+    check for you against that target) when plan_war read it: `precheck` gives that
+    date and the gates the pre-check does not cover; the game's start check runs only
+    when declare_war sends the war, and a refusal there comes back with its reason. A row
+    whose CB did not pass, a war on your own liege, and a claim whose claimant is not in
+    your court are listed in `excluded`, never offered. A claim
     CB is offered only on a pressed claim (`claim_pressed: true`, with the claimed title
     and the claimant); an unpressed claim is listed in `excluded` as claim_not_pressed.
     Empty list ⇒ `empty_reason` names the commonest
@@ -2808,9 +2922,12 @@ async def succession_plan(character_id: int = 0) -> dict[str, Any]:
     """"Will my realm pass through my heir's succession INTACT?" Returns one verdict:
     `outcome` intact (passes_intact true), splits (false, with the `breaker`: the heir
     who takes titles away) or undetermined (null, with `undetermined_reason` and the
-    `succession_undetermined` warning: no heir was read, or the reads say it does not
-    pass intact and name no breaker), the eligible heir count, and the per-title map (which heir takes which
-    title, under which law). observe's succession block and the live-state hook
+    `succession_undetermined` warning: no heir was read, the reads say it does not
+    pass intact and name no breaker, or a kingdom/empire held beside the primary has
+    no heir read), the eligible heir count, `crown_titles` (every held kingdom/empire
+    with the heir the simulation and the per-title map each give it; the map's heir for
+    one is a breaker), `scope` (a title created or gained after the read is not in the
+    verdict), and the per-title map (which heir takes which title, under which law). observe's succession block and the live-state hook
     state the same verdict from the same function. `levers` lists what this ruler can pull, each with its
     do() call and its read-back: designate_heir (available, the children it can
     name, the prestige cost), disinherit (only the dynasty head; sent only at your
@@ -3164,9 +3281,19 @@ async def msg_send(to: str, text: str) -> dict[str, Any]:
                         "get_tick_info pipeline.episode_id names the episode, so "
                         "there is no ledger to write to; nothing was sent")
     game = gw.game()
+    # The cycle comes from the episode's authority (channel.send_cycle: in a
+    # cell, the schedule over the bridge's date at this call), never from this
+    # process's counter, which a resumed session starts at 0 (seat-review
+    # problem 3). An authority that cannot answer is a refusal, not cycle 0.
+    cycle, why = _channel.send_cycle(os.environ, game.get("date"), _SEAT.cycles)
+    if cycle is None:
+        return _blocked("msg_send", state, _channel.R_CYCLE_UNKNOWN,
+                        f"the cycle this send falls in cannot be established ({why}); "
+                        "nothing was sent and no quota was spent",
+                        measured={"reason": _channel.R_CYCLE_UNKNOWN, "game_date": game.get("date")})
     row = _channel.attempt(_CHANNEL, ledger, to=str(to or ""), text=str(text or ""),
                            game_date=game.get("date"), tick=game.get("tick"),
-                           cycle=_SEAT.cycles.cycle)
+                           cycle=cycle)
     shown = {k: row[k] for k in ("msg_id", "sender", "recipient", "cycle", "bytes",
                                  "text_sha256", "verdict", "game_date", "tick")}
     if row["verdict"] == _channel.V_DELIVERED:
@@ -3194,6 +3321,202 @@ async def msg_send(to: str, text: str) -> dict[str, Any]:
 # refused (the ruling the deleted arm.py recorded, G5 option A2, carried).
 if _CHANNEL is not None and _CHANNEL.enabled:
     mcp.add_tool(msg_send)
+
+
+# ---------------------------------------------------------------------------
+# note_read / note_write — pre-registration v4 draft sections 3 and 7 (v4note)
+# ---------------------------------------------------------------------------
+
+async def _notepad_call(tool: str):
+    """(state, gw, store, game, cycle) for a notepad call, or (refusal, ...)
+    when the call cannot reach a log: no declaration, no seat label, no
+    episode id. The cycle is the cycle authority's at the bridge's date
+    (`notepad.cycle_at`); None is decided by the log (`notepad_cycle_unknown`)."""
+    state = _get_state()
+    err = await _ensure_connected(state, tool)
+    if err:
+        return err, None, None, None, None
+    gw = await _gateway_now()
+    if _NOTEPAD is None or not _NOTEPAD.enabled:
+        return _blocked(tool, state, _notepad.GATE_UNAVAILABLE,
+                        "this seat's arm declares no notepad"), None, None, None, None
+    if _NOTEPAD.seat_refusal():
+        return _blocked(tool, state, _notepad.GATE_UNAVAILABLE,
+                        f"{_NOTEPAD.seat_refusal()}: this process has no {_notepad.ENV_SEAT}, "
+                        "so it is nobody's seat and has no pad",
+                        measured={"reason": _NOTEPAD.seat_refusal()}), None, None, None, None
+    eid = _SEAT.episode_id or _SEAT.resolve_episode_id(os.environ, await gw.read("get_tick_info", {}))
+    if not eid:
+        return _blocked(tool, state, _notepad.GATE_UNAVAILABLE,
+                        "no episode id: neither CK3_EPISODE_ID nor the bridge's get_tick_info "
+                        "pipeline.episode_id names the episode, so there is no notepad log; "
+                        "nothing was read or written"), None, None, None, None
+    store = _notepad.Store(_notepad.log_path(eid, os.environ), episode_id=eid,
+                           instance_id=_instance_id())
+    game = gw.game()
+    return None, gw, store, game, _notepad.cycle_at(game.get("date"))
+
+
+_NOTE_REFUSAL_DETAIL = {
+    _notepad.V_PAD_UNKNOWN: "pad must be 'private' or 'council'",
+    _notepad.V_PAD_NOT_DECLARED: "this arm declares no such pad for its seats",
+    _notepad.V_MODE_INVALID: "mode must be 'replace' or 'append'",
+    _notepad.V_CYCLE_UNKNOWN: ("the episode's cycle could not be read from the cycle schedule "
+                               "at the bridge's game date; nothing was done"),
+    _notepad.V_WRITE_TOO_LONG: "the text exceeds the declared bytes per write; nothing was written or truncated",
+    _notepad.V_VERSION_REQUIRED: "a replace names the pad version you last read (note_read's `version`)",
+    _notepad.V_VERSION_STALE: ("the pad changed since the version you read; note_read it again and "
+                               "write against the new version (or append)"),
+    _notepad.V_PAD_FULL: "the pad would exceed its declared size; nothing was written or truncated",
+}
+
+
+async def note_read(
+    pad: Annotated[str, Field(description="'private' or 'council'.",
+                              json_schema_extra={"enum": list(_notepad.PADS)})],
+) -> dict[str, Any]:
+    """Read one of your notepads, whole. `pad` is `private` (yours alone; it
+    persists across your turns and resumes) or `council` (one pad shared by
+    every seat of the council, where your arm has one). The reply carries the
+    text, its `version` (pass it to note_write to replace the pad), its bytes
+    and the declared maximum. Every read is logged.
+
+    Args:
+        pad: 'private' or 'council'.
+    """
+    err, gw, store, game, cycle = await _notepad_call("note_read")
+    if err:
+        return err
+    rec, view = _notepad.note_read_attempt(_NOTEPAD, store, pad=str(pad or ""), game_date=game.get("date"),
+                              tick=game.get("tick"), cycle=cycle)
+    shown = {k: rec.get(k) for k in ("pad", "seat", "cycle", "game_date", "verdict")}
+    if view is not None:
+        shown.update(text=view["text"], version=view["version"], bytes=view["bytes"],
+                     max_bytes=_NOTEPAD.max_bytes(rec["pad"]), updated_by=view["updated_by"],
+                     updated_game_date=view["updated_game_date"])
+        return redesign.envelope("note_read", result=shown, game=game, bridge_health=gw.health)
+    return redesign.envelope("note_read", ok=False, verdict="rejected", result=shown,
+                             blocked=redesign.why_blocked(rec["verdict"],
+                                                          summary=_NOTE_REFUSAL_DETAIL[rec["verdict"]]),
+                             game=game, bridge_health=gw.health)
+
+
+async def note_write(
+    pad: Annotated[str, Field(description="'private' or 'council'.",
+                              json_schema_extra={"enum": list(_notepad.PADS)})],
+    text: str,
+    mode: Annotated[str, Field(description="'append' or 'replace' (no default).",
+                               json_schema_extra={"enum": list(_notepad.MODES)})],
+    version: Optional[int] = None,
+) -> dict[str, Any]:
+    """Write to one of your notepads. `mode` is required: `append` adds `text`
+    to the end of the pad exactly as given (start it with a newline if you want
+    one); `replace` sets the pad to `text` and must name the `version` you last
+    read, and is refused `notepad_version_stale` if the pad changed since
+    (another seat wrote to the council pad): read again and retry. A write
+    over the declared bytes per write, or one that would take the pad over its
+    declared size, is refused, never truncated. Every write is logged.
+
+    Args:
+        pad: 'private' or 'council'.
+        text: the text to append, or the pad's new whole text.
+        mode: 'append' or 'replace'.
+        version: for replace, the version note_read returned.
+    """
+    err, gw, store, game, cycle = await _notepad_call("note_write")
+    if err:
+        return err
+    rec = _notepad.note_write_attempt(_NOTEPAD, store, pad=str(pad or ""), text=str(text or ""), mode=str(mode or ""),
+                         version=version if isinstance(version, int) and not isinstance(version, bool) else None,
+                         game_date=game.get("date"), tick=game.get("tick"), cycle=cycle)
+    shown = {k: rec.get(k) for k in ("pad", "seat", "mode", "cycle", "game_date", "bytes", "verdict",
+                                     "version_before", "version_after", "pad_bytes_after")}
+    if rec["verdict"] == _notepad.V_APPLIED:
+        return redesign.envelope("note_write", verdict="applied", result=shown, game=game,
+                                 bridge_health=gw.health)
+    return redesign.envelope("note_write", ok=False, verdict="rejected", result=shown,
+                             blocked=redesign.why_blocked(rec["verdict"],
+                                                          summary=_NOTE_REFUSAL_DETAIL[rec["verdict"]]),
+                             game=game, bridge_health=gw.health)
+
+
+# REGISTERED ONLY WHEN THE ARM DECLARES A PAD: absent otherwise, never
+# present-and-refused (msg_send's rule).
+if _NOTEPAD is not None and _NOTEPAD.enabled:
+    mcp.add_tool(note_read)
+    mcp.add_tool(note_write)
+
+
+# ---------------------------------------------------------------------------
+# guide_read — pre-registration v4 draft section 6 (v4instr)
+# ---------------------------------------------------------------------------
+
+async def guide_read(
+    topic: Annotated[str, Field(description="A topic from the guide's index; an unknown topic returns the index.")] = "index",
+) -> dict[str, Any]:
+    """Read one page of the guide. `topic` is a name from the index (your play
+    file lists each with when to open it); a page may name deeper topics to
+    read next. An unknown topic returns the index. Every read is logged.
+
+    Args:
+        topic: the page to read, or 'index'.
+    """
+    state = _get_state()
+    err = await _ensure_connected(state, "guide_read")
+    if err:
+        return err
+    gw = await _gateway_now()
+    if _GUIDE is None:
+        return _blocked("guide_read", state, _guide.GATE_UNAVAILABLE, "this seat declares no guide")
+    eid = _SEAT.episode_id or _SEAT.resolve_episode_id(os.environ, await gw.read("get_tick_info", {}))
+    if not eid:
+        return _blocked("guide_read", state, _guide.GATE_UNAVAILABLE,
+                        "no episode id: neither CK3_EPISODE_ID nor the bridge's get_tick_info "
+                        "pipeline.episode_id names the episode, so there is no guide log; nothing was read")
+    game = gw.game()
+    cycle, why = _guide.cycle_at(game.get("date"))
+    rec, text = _guide.read_attempt(_GUIDE, topic=topic, game_date=game.get("date"), tick=game.get("tick"),
+                                    cycle=cycle, cycle_why=why, episode_id=eid, instance_id=_instance_id(),
+                                    log=_guide.log_path(eid, os.environ))
+    shown = {k: rec.get(k) for k in ("topic_asked", "topic_served", "verdict", "bytes", "cycle", "game_date")}
+    if text is None:
+        return redesign.envelope("guide_read", ok=False, verdict="rejected", result=shown,
+                                 blocked=redesign.why_blocked(rec["verdict"], summary=rec.get("detail") or ""),
+                                 game=game, bridge_health=gw.health)
+    shown["text"] = text
+    return redesign.envelope("guide_read", result=shown, game=game, bridge_health=gw.health)
+
+
+# REGISTERED ONLY WHEN THE SEAT'S ENVIRONMENT DECLARES A GUIDE (msg_send's rule).
+if _GUIDE is not None:
+    mcp.add_tool(guide_read)
+
+
+def _remember_actions() -> None:
+    """v4 (lane v4instr): every action tool's call goes through the seat's
+    action memory (the `refusal_repeated` trigger). Wrapped at the tool
+    manager so the tools themselves are untouched."""
+    import functools
+    for name in _pw.ACTION_TOOLS:
+        tool = mcp._tool_manager.get_tool(name)
+        if tool is None:
+            continue
+
+        def wrap(fn, tool_name):
+            @functools.wraps(fn)
+            async def recorded(**kwargs):
+                env = await fn(**kwargs)
+                try:
+                    _ACTIONS.record(tool_name, kwargs, env)
+                except Exception:                               # noqa: BLE001
+                    pass
+                return env
+            return recorded
+        tool.fn = wrap(tool.fn, name)
+
+
+if _ACTIONS is not None:
+    _remember_actions()
 
 
 def registered_tool_definitions() -> list[dict]:

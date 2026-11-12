@@ -915,6 +915,31 @@ def _gap_lines(puller, gaps, lines):
         lines.append("- _Not seeing: %s._" % "; ".join(gaps))
 
 
+#: Lane v4sees (seat review problem 11: the status header injected at each
+#: resume was not recorded). When `ck3agent run` sets this (its run's
+#: `<stamp>.hook.jsonl`; release/overlay/ck3agent/cli.py HOOK_STATE_OUT_ENV, the
+#: mirror checked), every block this hook prints is also appended there as one
+#: JSON row {utc, text, text_sha256}. Unset: print only, as before. A sink that
+#: cannot be written never costs the turn its block.
+HOOK_STATE_OUT_ENV = "CK3_HOOK_STATE_OUT"
+
+
+def emit(text):
+    """Print the block for Claude Code, and record it when a run asked."""
+    print(text)
+    out = os.environ.get(HOOK_STATE_OUT_ENV)
+    if not out:
+        return
+    try:
+        import hashlib
+        row = {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "text": text,
+               "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
+        with open(out, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, sort_keys=True) + "\n")
+    except Exception:  # noqa: BLE001 - the sink never costs the turn its block
+        pass
+
+
 def run():
     deadline = time.monotonic() + TOTAL_BUDGET
     puller = BridgePuller(deadline)
@@ -926,11 +951,11 @@ def run():
         else:
             why = ("bridge offline (socket missing, refused, or not ours). Is CK3 "
                    "running with the bridge loaded? `ck3agent doctor` checks")
-        print(frame("## Live game state (fresh this turn)\n"
-                    "- _Not seeing: %s._" % why))
+        emit(frame("## Live game state (fresh this turn)\n"
+                   "- _Not seeing: %s._" % why))
         return
     try:
-        print(frame(build_report(puller)))
+        emit(frame(build_report(puller)))
     finally:
         puller.close()
 
@@ -941,8 +966,8 @@ if __name__ == "__main__":
     except Exception:
         # Never raise out of the hook.
         try:
-            print(frame("## Live game state (fresh this turn)\n"
-                        "- _Not seeing: report failed unexpectedly._"))
+            emit(frame("## Live game state (fresh this turn)\n"
+                       "- _Not seeing: report failed unexpectedly._"))
         except Exception:
             pass
     sys.exit(0)

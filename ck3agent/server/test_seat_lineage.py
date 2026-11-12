@@ -994,3 +994,242 @@ def test_a_degraded_profile_whose_id_faulted_to_zero_is_a_failed_read(tmp_path):
     rows = _rows_of(sink)
     assert [r["kind"] for r in rows] == ["read_failed"] and rows[0]["reason"] == "query_character:degraded"
     assert not prior.ended
+
+
+# ── INTEG item 2 (owner ruling 2026-11-11): K's seat follows the PLAYED LINE ──
+# K's seat reads the bridge's line watch (query_handlers.cpp emit_played_line:
+# start_character_id, line_character_id, previous_character_id,
+# carrying_title_id, primary_title_id, successions, why, status,
+# pending_reason when pending, armed_date, since_date, armed_this_read), the
+# decision the growth meter reads. Red on 749a3ff9: K's seat followed the
+# registered title (holder 0 -> `lost`; holder X -> rebind to X).
+
+K_FRANCE, E_HRE = 7052, 105
+
+
+def _watch(line, status="following", start=5, *, carrying=0, previous=0, pending=None):
+    w = {"start_character_id": start, "line_character_id": line, "previous_character_id": previous,
+         "carrying_title_id": carrying, "primary_title_id": E_HRE, "successions": 1 if previous else 0,
+         "why": "succession_to_heir" if previous else "armed", "status": status,
+         "armed_date": "867.1.3", "since_date": "872.12.4", "armed_this_read": False,
+         **({"pending_reason": pending} if pending is not None else {})}
+    return {"id": start, "alive": False, "primary_title_id": 0, "played_line": w}
+
+
+def _kprior():
+    return sl.Prior(5, K_FRANCE, line_start=5)
+
+
+def test_K_dead_registered_title_unheld_follows_the_line_not_lost():
+    """The v3reg2 block-1 shape: K took e_hre, k_france went holderless; K dies
+    and the line goes to e_hre's holder 12. The title rule read `lost`."""
+    d = sl.decide(_kprior(), _row(), {"id": 5, "alive": False}, _title(None),
+                  registered_title=K_FRANCE, watch_read=_watch(12, carrying=E_HRE, previous=5))
+    assert (d.kind, d.old_id, d.new_id, d.bind_target, d.title_id, d.source, d.reason) == \
+        ("rebind", 5, 12, 12, E_HRE, "explicit_control", None)
+
+
+def test_K_dead_registered_title_held_by_another_follows_the_line_not_the_holder():
+    d = sl.decide(_kprior(), _row(), {"id": 5, "alive": False}, _title(99),
+                  registered_title=K_FRANCE, watch_read=_watch(12, carrying=E_HRE, previous=5))
+    assert d.kind == "rebind" and d.bind_target == 12
+
+
+def test_K_no_heir_yet_is_pending_never_lost_mid_run():
+    for reason in ("primary_title_unheld", "holder_is_the_dead", "no_primary_title"):
+        d = sl.decide(_kprior(), _row(primary_character_id=0), {"id": 5, "alive": False}, None,
+                      registered_title=K_FRANCE,
+                      watch_read=_watch(5, "successor_pending", pending=reason))
+        assert (d.kind, d.reason) == ("pending", f"successor_pending:{reason}")
+    d = sl.decide(_kprior(), _row(), {"id": 5, "alive": False}, None, registered_title=K_FRANCE,
+                  watch_read=_watch(5))
+    assert (d.kind, d.reason) == ("pending", sl.R_DIED_SINCE_TICK)
+
+
+def test_K_the_bridge_says_the_line_ENDED_the_seat_is_lost():
+    """Owner ruling 2026-11-12: `pending` only while the bridge has not named an
+    heir; once its line watch says `line_ended`, the seat is LOST. Red on
+    8cef520a (the watch reader refused the status: seat_unbound
+    line_watch_unreadable:watch_malformed)."""
+    ended = _watch(5, "line_ended")
+    ended["played_line"]["ended_date"] = "870.1.4"
+    for row in (_row(), _row(primary_character_id=0)):
+        d = sl.decide(_kprior(), row, {"id": 5, "alive": False}, None, registered_title=K_FRANCE,
+                      watch_read=ended)
+        assert (d.kind, d.reason, d.source, d.bind_target) == ("lost", sl.R_LINE_ENDED, "bridge_handoff", 0)
+    # the bridge moved the seat, but the line itself ended: still lost, never rebound off the line
+    moved = sl.decide(_kprior(), _row(primary_character_id=30, heir_character_id=30),
+                      {"id": 30, "alive": True}, None, registered_title=K_FRANCE, watch_read=ended)
+    assert (moved.kind, moved.reason) == ("lost", sl.R_LINE_ENDED)
+
+
+def test_K_step_pending_then_ended_is_lost(tmp_path):
+    """(the count of such a seat as LOST is scripts/test_played_line.py's
+    test_an_ended_K_seat_counts_as_a_lost_seat: seat_lineage_record does not ship)"""
+    sink = tmp_path / "seat.jsonl"
+    gw = _LineGW(_row(), alive=True, holder=None)
+    prior = _kstep(gw, None, sink)                                   # bound, watch armed
+    gw.alive = False
+    gw.watch = _watch(5, "successor_pending", pending="primary_title_unheld")
+    prior = _kstep(gw, prior, sink)
+    assert not prior.ended
+    gw.watch = _watch(5, "line_ended")
+    prior = _kstep(gw, prior, sink)
+    rows = _rows_of(sink)
+    assert [r["kind"] for r in rows] == ["bound", "pending", "lost"]
+    assert rows[-1]["reason"] == "line_ended" and prior.ended
+    assert gw.writes == [], "nothing is bound for an ended line"
+    assert sl.prior_from_sink(str(sink)).ended, "a resumed server keeps the seat ended"
+
+
+def test_K_a_bridge_handoff_on_the_line_is_witnessed_one_off_it_is_corrected_to_the_line():
+    on = sl.decide(_kprior(), _row(primary_character_id=12, heir_character_id=12),
+                   {"id": 12, "alive": True}, None, registered_title=K_FRANCE,
+                   watch_read=_watch(12, carrying=E_HRE, previous=5))
+    assert (on.kind, on.new_id, on.source, on.reason, on.bind_target, on.title_id) == \
+        ("rebind", 12, "bridge_handoff", None, 0, E_HRE)
+    off = sl.decide(_kprior(), _row(primary_character_id=30, heir_character_id=30),
+                    {"id": 30, "alive": True}, None, registered_title=K_FRANCE,
+                    watch_read=_watch(12, carrying=E_HRE, previous=5))
+    assert (off.kind, off.new_id, off.bind_target, off.source, off.reason) == \
+        ("rebind", 12, 12, "explicit_control", None)
+    # the line has not moved: the title rule's swap reading stands
+    swap = sl.decide(_kprior(), _row(primary_character_id=30, heir_character_id=0),
+                     {"id": 30, "alive": True}, None, registered_title=K_FRANCE, watch_read=_watch(5))
+    assert swap.reason == sl.R_PRIMARY_MOVED
+
+
+def test_K_an_unreadable_watch_is_the_instruments_never_a_guessed_heir():
+    for wr, why in (({"id": 5, "alive": False}, "watch_absent"),
+                    ({"error": "character_not_found"}, "watch_read:character_not_found"),
+                    ({"id": 5, "alive": False, "played_line": {"status": "watch_refused",
+                                                              "reason": "watch_capacity"}},
+                     "watch_refused:watch_capacity")):
+        d = sl.decide(_kprior(), _row(), {"id": 5, "alive": False}, _title(12),
+                      registered_title=K_FRANCE, watch_read=wr)
+        assert (d.kind, d.reason) == ("seat_unbound", f"{sl.R_LINE_WATCH_UNREADABLE}:{why}")
+    d = sl.decide(sl.Prior(5, K_FRANCE), _row(), {"id": 5, "alive": False}, _title(12),
+                  registered_title=K_FRANCE, watch_read=_watch(12))
+    assert (d.kind, d.reason) == ("seat_unbound", sl.R_NO_LINE_START)
+
+
+def test_K_the_line_heir_is_the_player_or_held_elsewhere_is_unbound():
+    w = _watch(12, carrying=E_HRE, previous=5)
+    assert sl.decide(_kprior(), _row(), {"id": 5, "alive": False}, None, registered_title=K_FRANCE,
+                     watch_read=w, player_id=12).reason == sl.R_HEIR_IS_PLAYER
+    assert sl.decide(_kprior(), _row(), {"id": 5, "alive": False}, None, registered_title=K_FRANCE,
+                     watch_read=w, held_elsewhere=frozenset({12})).reason == sl.R_HOLDER_HELD_ELSEWHERE
+
+
+def test_a_duke_keeps_the_title_rule():
+    d = sl.decide(sl.Prior(5, 9), _row(), {"id": 5, "alive": False}, _title(None),
+                  watch_read=_watch(12, carrying=E_HRE, previous=5))
+    assert d.kind == "lost", "a duke's seat never reads the K line"
+
+
+class _LineGW(_GW):
+    """The fake gateway with the bridge's watch: query_character with
+    `played_line` answers the profile of the start plus the watch object."""
+
+    def __init__(self, *a, watch=None, **kw):
+        super().__init__(*a, **kw)
+        self.watch = watch
+        self.reads = []
+
+    async def read(self, action, params=None):
+        self.reads.append((action, dict(params or {})))
+        if action == "query_character" and (params or {}).get("played_line") == 1:
+            cid = params["character_id"]
+            w = self.watch if self.watch is not None else _watch(cid, "following", cid)
+            return {**w, "id": params["character_id"], "alive": self.alive}
+        return await self.answer(action, params)
+
+
+def _kstep(gw, prior, sink):
+    return asyncio.run(sl.step(gw, prior, sink=str(sink), seat_session_id="seat-K-5",
+                               registered_title=K_FRANCE,
+                               own_session_id=lambda g: "s1",
+                               own_session_row=lambda bs, sid: next(
+                                   (r for r in bs.get("sessions", []) if r["session_id"] == sid), None)))
+
+
+def test_K_step_arms_the_watch_at_bound_and_follows_the_line_through_a_resume(tmp_path):
+    sink = tmp_path / "seat.jsonl"
+    gw = _LineGW(_row(), alive=True, holder=None)
+    prior = _kstep(gw, None, sink)
+    assert gw.reads[1] == ("query_character", {"character_id": 5, "played_line": 1}), "armed at bound"
+    rows = [json.loads(ln) for ln in sink.read_text().splitlines()]
+    assert rows[0]["kind"] == "bound" and rows[0]["line_start_id"] == 5 and rows[0]["line_watch_armed"] is True
+    assert prior.line_start == 5
+    # a resumed server knows the line's start from the sink
+    prior = sl.prior_from_sink(str(sink))
+    assert prior.line_start == 5
+    # K dies; the registered title is unheld (holder None); the line went to 12
+    gw.alive, gw.reads = False, []
+    gw.watch = _watch(12, carrying=E_HRE, previous=5)
+    prior = _kstep(gw, prior, sink)
+    assert ("query_character", {"character_id": 5, "played_line": 1}) in gw.reads
+    assert not [r for r in gw.reads if r[0] == "query_title_hierarchy"], "K's seat never reads the title"
+    assert gw.writes == [("set_controlled_character", {"character_id": 12, "disable_native_ai": False})]
+    rows = [json.loads(ln) for ln in sink.read_text().splitlines()]
+    assert [r["kind"] for r in rows] == ["bound", "rebind"]
+    assert (rows[1]["new_id"], rows[1]["title_id"], rows[1]["reason"]) == (12, E_HRE, None)
+    assert prior.ruler == 12 and prior.line_start == 5 and not prior.ended
+
+
+def test_K_step_a_failed_watch_read_is_no_verdict(tmp_path):
+    class Flaky(_LineGW):
+        async def read(self, action, params=None):
+            if (params or {}).get("played_line") == 1:
+                return {"error": "game_thread_timeout"}
+            return await self.answer(action, params)
+    sink = tmp_path / "seat.jsonl"
+    prior = _kstep(Flaky(_row(), alive=False, holder=None), _kprior(), sink)
+    rows = [json.loads(ln) for ln in sink.read_text().splitlines()]
+    assert [r["kind"] for r in rows] == ["read_failed"]
+    assert rows[0]["reason"] == "query_character:played_line:game_thread_timeout"
+    assert prior.ruler == 5 and not prior.ended
+
+
+# ── owner ruling 2026-11-12 (v3reg2 s3 D1 moved onto the rival king Carloman):
+# a succession never moves a seat outside its registered realm; the bridge
+# refuses and the seat records it `lost heir_outside_realm`. Keys from the
+# emitters: session.cpp sessions_json (unbound_reason, unbound_heir_id,
+# realm_root_id) and dispatch_router.cpp do_set_controlled_character's realm
+# refusal (success false, reason, character_id, dead_ruler_id).
+
+CARLOMAN = 15319
+
+
+def test_the_bridge_refused_an_outside_realm_heir_the_seat_is_lost_and_recorded():
+    """Red on 8cef520a: an unbound_reason other than heir_is_player fell through
+    to `seat_unbound released_without_death` (an instrument verdict)."""
+    row = _row(primary_character_id=0, claimed_character_ids=[], unbound_reason="heir_outside_realm",
+               unbound_heir_id=CARLOMAN, realm_root_id=12015)
+    d = sl.decide(sl.Prior(5, 9), row, {"id": 5, "alive": False}, None)
+    assert (d.kind, d.old_id, d.new_id, d.reason, d.source, d.bind_target) == \
+        ("lost", 5, CARLOMAN, "heir_outside_realm", "bridge_handoff", 0)
+
+
+def test_an_explicit_rebind_the_realm_guard_refuses_is_lost_not_unbound(tmp_path):
+    sink = tmp_path / "seat.jsonl"
+    refusal = {"success": False, "reason": "heir_outside_realm", "character_id": CARLOMAN,
+               "dead_ruler_id": 5}
+    gw = _GW(_row(), alive=False, holder=CARLOMAN, bind_reply=refusal)
+    prior = _step(gw, sl.Prior(5, 9), sink)
+    rows = _rows_of(sink)
+    assert [(r["kind"], r["reason"], r["new_id"]) for r in rows] == [("lost", "heir_outside_realm", CARLOMAN)]
+    assert prior.ended and prior.ruler == 5, "never moved onto the rival"
+
+
+def test_an_unresolved_realm_is_pending_and_retried(tmp_path):
+    sink = tmp_path / "seat.jsonl"
+    gw = _GW(_row(), alive=False, holder=12,
+             bind_reply={"success": False, "reason": "realm_unresolved", "character_id": 12,
+                         "dead_ruler_id": 5})
+    prior = _step(gw, sl.Prior(5, 9), sink)
+    assert [(r["kind"], r["reason"]) for r in _rows_of(sink)] == [("pending", "realm_unresolved")]
+    assert not prior.ended
+    gw.bind_reply = {"success": True}
+    prior = _step(gw, prior, sink)
+    assert _rows_of(sink)[-1]["kind"] == "rebind" and prior.ruler == 12

@@ -65,6 +65,8 @@ class Bridge:
                         **(replies or {})}
         self.health = "ok"
         self.writes = []
+        # Lane v4act: a write the fake answers in its own shape (script_action).
+        self.write_replies = {}
 
     async def actor_gate(self):
         return None
@@ -95,6 +97,8 @@ class Bridge:
 
     async def write(self, action, params=None):
         self.writes.append((action, dict(params or {})))
+        if action in self.write_replies:
+            return self.write_replies[action]
         return self.send_reply
 
     async def clock(self):
@@ -117,6 +121,9 @@ def run(coro):
 _WAR = {"war_id": WAR, "name": "War", "primary_attacker": ME, "primary_defender": FOE,
         "attackers": [ME], "defenders": [FOE]}
 
+_UNADDRESSABLE = {"success": False, "action": "script_action",
+                  "reason": "target_not_script_addressable", "detail": "target_id"}
+
 #: Each write path that sends a write the GAME can refuse, driven to that refusal.
 DRIVERS = {
     "do_impl": lambda gw: R.do_impl(gw, intent="interact", character_id=ME,
@@ -127,8 +134,12 @@ DRIVERS = {
                                              "target_id": FOE}),
     "_do_war_intent": lambda gw: R.do_impl(gw, intent="make_peace", character_id=ME,
                                            args={"war_id": WAR, "terms": "enforce_demands"}),
-    "declare_war_impl": lambda gw: R.declare_war_impl(gw, ME, target_id=FOE, cb="claim_cb",
-                                                      confirm_straddle=True),
+    # Lane v4act: declare_war goes through the script layer first; this row drives
+    # its native fallback (the bridge says the defender holds no title to address
+    # him by), which is the path whose refusal rides the intent ring.
+    "declare_war_impl": lambda gw: (gw.write_replies.update(script_action=_UNADDRESSABLE),
+                                    R.declare_war_impl(gw, ME, target_id=FOE, cb="claim_cb",
+                                                       confirm_straddle=True))[1],
     "_confirm_intent_write": lambda gw: R.do_impl(gw, intent="mint_title", character_id=ME,
                                                   args={"title_key": "k_york"}),
 }
@@ -136,6 +147,11 @@ DRIVERS = {
 #: Write paths whose refusal is never the game's sentence, and why. They still
 #: build `blocked` through write_blocked (the structural test below).
 NOT_THE_GAMES = {
+    "_do_scripted": ("the script layer (lane v4act): the game's words come from error.log in the "
+                     "script_action reply, not the intent ring; test_script_actions.py drives them "
+                     "into blocked.detail"),
+    "_do_set_policy": ("the script layer's set_policy (lane v4act); its words come from error.log, "
+                       "driven in test_script_actions.py"),
     "_do_cancel_pending": "the bridge's own queue answers a cancel (not_found), not the game",
     "_set_experimental_flag": "a bridge switch; the game is not asked",
     "set_phase_impl": "writes personality weights and a bridge flag; the bridge refuses with its own codes",
@@ -149,10 +165,10 @@ NOT_THE_GAMES = {
 }
 
 #: The machinery every path above goes through (not a path of its own).
-MACHINERY = {"confirm_write", "settle_write", "_confirm_write", "write"}
+MACHINERY = {"confirm_write", "settle_write", "_confirm_write", "write", "_script_write"}
 
 _WRITE_CALLS = {"settle_write", "await_drain", "_confirm_write", "confirmed_write", "write",
-                "confirm_write"}
+                "confirm_write", "_script_write"}
 
 
 def _functions():
@@ -191,7 +207,7 @@ def test_no_write_path_builds_its_refusal_around_write_blocked():
 # ── L14 FF1 m-8: every server module, and why_blocked as well as map_raw_reason ──
 #: The builders themselves (they are where a refusal is built).
 _BUILDERS = {"write_blocked", "_with_words", "lever_absent_block", "settle_write",
-             "confirm_write", "_confirm_write", "write"}
+             "confirm_write", "_confirm_write", "write", "_script_write"}
 _HAND_BUILT = ("why_blocked", "map_raw_reason")
 
 

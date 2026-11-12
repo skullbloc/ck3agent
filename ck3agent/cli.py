@@ -1127,13 +1127,88 @@ def last_claude_session(path: Path) -> tuple[str | None, str | None, str | None]
     return sid, sub, why
 
 
-def resume_argv(argv: list[str], prompt: str, session_id: str) -> list[str]:
-    """The run's own claude argv with the continuation text for its prompt and
-    `--resume <session_id>`: the same MCP config, model, turn limit and flags."""
+def resume_argv(argv: list[str], prompt: str, session_id: str, text: str = CONTINUATION_TEXT) -> list[str]:
+    """The run's own claude argv with the continuation text (and, since lane
+    v4sees, any messages delivered at the turn's start: `turn_prompt`) for its
+    prompt and `--resume <session_id>`: the same MCP config, model, turn limit
+    and flags."""
     out = list(argv)
     i = out.index(prompt)
-    out[i] = CONTINUATION_TEXT
+    out[i] = text
     return out[:i + 1] + ["--resume", session_id] + out[i + 1:]
+
+
+#: Lane v4sees (seat review problem 11: "the per-cycle resume text is not
+#: recorded"). Every turn's prompt is a row of `<stamp>.turns.jsonl` beside the
+#: transcript: turn 0 the run's prompt, turn k the k-th continuation, each with
+#: the game date, the cycle (cycle_cadence.schedule_position, the cell's cycle
+#: authority), the text verbatim and its sha256, and the messages delivered in
+#: it. The live-state hook writes what it injected at each prompt to
+#: `<stamp>.hook.jsonl` (HOOK_STATE_OUT_ENV, read by ck3agent/hooks/inject_state.py;
+#: the mirror is checked). The cell bundles both (scripts/dry_cell.py `collect`).
+TURNS_SUFFIX = ".turns.jsonl"
+HOOK_SUFFIX = ".hook.jsonl"
+HOOK_STATE_OUT_ENV = "CK3_HOOK_STATE_OUT"
+TURN_INITIAL = "initial"
+TURN_CONTINUATION = "continuation"
+
+
+def turn_position(game_date: str | None, environ) -> dict:
+    """The turn's place on the cell's schedule: cycle_cadence.schedule_position."""
+    bootstrap_server()
+    import cycle_cadence  # noqa: WPS433  (server module, bare import by design)
+    return cycle_cadence.schedule_position(game_date, environ)
+
+
+def deliver_for_turn(environ, *, game_date: str | None, tick, cycle, turn: int) -> tuple[list, dict]:
+    """(messages, delivery record) for a resumed turn's start: the seat's inbox
+    through the channel's one delivery function (`channel.deliver`,
+    via="resume_prompt"), so a message read here is never shown again by
+    observe. No channel, no seat label or no episode id: nothing delivered,
+    the state named."""
+    bootstrap_server()
+    import channel  # noqa: WPS433
+    import instance  # noqa: WPS433
+    try:
+        cfg = channel.boot(environ)
+    except channel.ChannelBootRefusal as e:
+        return [], {"state": "channel_refused", "detail": str(e)}
+    if cfg is None or not cfg.enabled:
+        return [], {"state": "no_channel"}
+    if cfg.seat_refusal():
+        return [], {"state": cfg.seat_refusal()}
+    eid = str(environ.get(channel.ENV_EPISODE_ID) or "").strip()
+    if not eid:
+        return [], {"state": "no_episode_id"}
+    try:
+        ledger = channel.Ledger(channel.ledger_path(eid, environ), episode_id=eid,
+                                instance_id=instance.current_id(environ))
+        msgs = channel.deliver(cfg, ledger, game_date=game_date, tick=tick, cycle=cycle,
+                               via=channel.VIA_RESUME_PROMPT, turn=turn)
+    except Exception as e:  # noqa: BLE001  (a ledger that cannot be read: said, the turn still runs)
+        return [], {"state": "ledger_unread", "detail": f"{type(e).__name__}: {e}"}
+    return msgs, {"state": "delivered", "count": len(msgs)}
+
+
+def turn_prompt(messages: list) -> str:
+    """CONTINUATION_TEXT, then the delivered messages' block (channel.prompt_block)."""
+    if not messages:
+        return CONTINUATION_TEXT
+    bootstrap_server()
+    import channel  # noqa: WPS433
+    return CONTINUATION_TEXT + "\n\n" + channel.prompt_block(messages)
+
+
+def record_turn(path: Path, row: dict) -> None:
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def turn_row(turn: int, kind: str, text: str, game_date: str | None, environ, **extra) -> dict:
+    pos = turn_position(game_date, environ)
+    return {"turn": turn, "kind": kind, "utc": _now_utc(), "game_date": game_date,
+            "cycle": pos.get("cycle"), "cycle_state": pos.get("state"),
+            "text": text, "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), **extra}
 
 
 class HorizonSeen:
@@ -1208,9 +1283,44 @@ def count_cycles(lines) -> dict:
     return c.result()
 
 
+#: THE RULE the manifest's `total_cost_usd` is computed under, stamped beside it
+#: (`total_cost_usd_rule`) so a reader can tell a value summed under the old rule
+#: from one computed under this one. Established from the v3reg2 bundles' own
+#: result events (seat-review.md problem 15): a resumed claude session (`--resume
+#: <id>`, one result event per process) reports `total_cost_usd` CUMULATIVE over
+#: the session (s3 D1: 40 events, one session id, 0.21, 0.24, 0.26 ... 1.575),
+#: while `num_turns` is the process's own (8, 3, 3 ... 5; K: 71 then 46). So the
+#: run's cost is the LAST value of each session, summed over its sessions; the
+#: turns stay a sum over processes. The old rule summed every event's cost (s3 D1
+#: 32.16 for a session that cost 1.575). A session whose values go DOWN is not
+#: cumulative and its cost is not established: the field then says so (a string,
+#: never a number a reader would add up). The ck3bench collect mirrors this name
+#: (scripts/dry_cell.py COST_RULE, checked by scripts/test_dry_cell.py).
+COST_RULE = "last_cumulative_per_claude_session/v1"
+
+
+def run_cost(events):
+    """The run's `total_cost_usd` under COST_RULE from its result events, in
+    stream order: the sum over session ids of each session's last cumulative
+    value; None when no event carried a number; a `not_established: ...` string
+    when a session's values decrease (not cumulative, so neither rule holds)."""
+    last: dict = {}
+    for ev in events:
+        c = ev.get("total_cost_usd")
+        if isinstance(c, bool) or not isinstance(c, (int, float)):
+            continue
+        sid = ev.get("session_id")
+        if sid in last and c < last[sid]:
+            return (f"not_established: session {sid!r} total_cost_usd went down "
+                    f"({last[sid]} -> {c}); the result events are not cumulative")
+        last[sid] = c
+    return sum(last.values()) if last else None
+
+
 def summarize_stream(lines) -> dict:
     """Pull the init and result events out of stream-json lines."""
     m: dict = {}
+    results: list = []
     for line in lines:
         try:
             ev = json.loads(line)
@@ -1225,16 +1335,18 @@ def summarize_stream(lines) -> dict:
                      mcp_servers=ev.get("mcp_servers"), init_tools=ev.get("tools"))
         elif ev.get("type") == "result":
             n = m.get("result_events", 0)
-            prev = (m.get("total_cost_usd"), m.get("num_turns")) if n else (None, None)
+            prev = m.get("num_turns") if n else None
+            results.append(ev)
             m.update(result=ev.get("subtype"), is_error=ev.get("is_error"),
-                     num_turns=ev.get("num_turns"), total_cost_usd=ev.get("total_cost_usd"),
+                     num_turns=ev.get("num_turns"), total_cost_usd=run_cost(results),
+                     total_cost_usd_rule=COST_RULE,
                      usage=ev.get("usage"), model_usage=ev.get("modelUsage"),
                      duration_ms=ev.get("duration_ms"))
             # A resumed run (a cell's continuations) writes one result event per
-            # claude process, each counting its own process: the run's are the sums.
-            for k, old in zip(("total_cost_usd", "num_turns"), prev):
-                if isinstance(old, (int, float)) and isinstance(m.get(k), (int, float)):
-                    m[k] = old + m[k]
+            # claude process: num_turns counts its own process (the run's is the
+            # sum); total_cost_usd is cumulative per session (COST_RULE, run_cost).
+            if isinstance(prev, (int, float)) and isinstance(m.get("num_turns"), (int, float)):
+                m["num_turns"] = prev + m["num_turns"]
             m["session_id"] = m.get("session_id") or ev.get("session_id")
             m["result_event"] = True
             m["result_events"] = n + 1
@@ -1805,7 +1917,8 @@ def cmd_run(a: argparse.Namespace) -> int:
     paths = {k: Path(f"{base}{ext}") for k, ext in (
         ("prompt", ".prompt.md"), ("stream", ".jsonl"), ("manifest", ".json"), ("stderr", ".stderr.log"),
         ("tools", ".tools.json"), ("actions", ".actions.jsonl"), ("mcp", ".mcp.json"),
-        ("release", ".release.json"), ("session", ".session.json"))}
+        ("release", ".release.json"), ("session", ".session.json"),
+        ("turns", TURNS_SUFFIX), ("hook", HOOK_SUFFIX))}
     paths["prompt"].write_text(prompt, encoding="utf-8")
     # 2026.12.4 (cell0 gap 11): the seat's session id, which the server writes
     # into every lineage row (seat_session_id). A harness's declared id wins;
@@ -1832,6 +1945,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                CK3_SESSION_OUT=str(paths["session"]),
                CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS="0")
     env[SESSION_ID_ENV] = seat_sid
+    env[HOOK_STATE_OUT_ENV] = str(paths["hook"])
     action_log = Path(br.action_log_path())
     try:
         log_start = action_log.stat().st_size
@@ -1856,6 +1970,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         "horizon_end": os.environ.get(HORIZON_END_ENV) or None,
         "cell": cell, "continuations_cap": a.continuations if cell else None, "continuations": [],
         "start_game_date": br.game_date(sock, link),
+        "turns_file": str(paths["turns"]), "hook_file": str(paths["hook"]),
         "adopted_session": adopted,
         # 2026.12.5: whether claude is spawned to die with the run (the shim),
         # and why not; a failed prctl inside the shim is a line on stderr.log
@@ -1880,6 +1995,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     fh = paths["stream"].open("w", encoding="utf-8")
     err = paths["stderr"].open("w", encoding="utf-8")
     old_signals = _set_signals(gate, with_int=signal.getsignal(signal.SIGINT) is signal.default_int_handler)
+    record_turn(paths["turns"], turn_row(0, TURN_INITIAL, prompt, manifest["start_game_date"], env))
     try:
         gate.held = True
         try:
@@ -1925,13 +2041,24 @@ def cmd_run(a: argparse.Namespace) -> int:
                     paths["release"].unlink()   # the next server writes its own
                 if carry["rulers"] is not None:
                     env[AGENT_CHARACTER_ENV] = ",".join(str(x) for x in carry["rulers"])
+                tinfo = br.tick_info(sock, link)
+                gdate = br._date(tinfo)
+                turn = len(manifest["continuations"]) + 1
+                pos = turn_position(gdate, env)
+                msgs, delivery = deliver_for_turn(env, game_date=gdate, tick=(tinfo or {}).get("tick_id"),
+                                                  cycle=pos.get("cycle"), turn=turn)
+                text = turn_prompt(msgs)
+                record_turn(paths["turns"], turn_row(
+                    turn, TURN_CONTINUATION, text, gdate, env, resumed_session_id=sid,
+                    messages_delivered=[m.get("msg_id") for m in msgs], delivery=delivery))
                 manifest["continuations"].append(
-                    {"utc": _now_utc(), "game_date": br.game_date(sock, link),
+                    {"utc": _now_utc(), "game_date": gdate, "turn": turn,
+                     "messages_delivered": len(msgs), "delivery": delivery["state"],
                      "claude_stop": "exited", "claude_rc": rc, "result": sub,
                      "result_stop_reason": why, "resumed_session_id": sid,
                      "carried_rulers": carry["rulers"], "carried_from": carry["source"],
                      "handover": handover})
-                rargv = resume_argv(argv, prompt, sid)
+                rargv = resume_argv(argv, prompt, sid, text)
                 gate.held = True
                 try:
                     proc = subprocess.Popen(dies_with_run(rargv), cwd=play, env=env, stdin=subprocess.DEVNULL,
@@ -2000,6 +2127,9 @@ def cmd_run(a: argparse.Namespace) -> int:
             # never a vacuous true: L23 witness item 2).
             manifest["cycles_met"] = manifest["cycles_completed"] >= a.cycles if a.cycles else None
             manifest["horizon_reached"] = horizon.reached
+            with contextlib.suppress(OSError):
+                with paths["turns"].open(encoding="utf-8") as f:
+                    manifest["turns_recorded"] = sum(1 for line in f if line.strip())
             if horizon.reached:
                 manifest["horizon_reached_game_date"] = horizon.game_date
             # The cost is Claude Code's own estimate from its result event (list

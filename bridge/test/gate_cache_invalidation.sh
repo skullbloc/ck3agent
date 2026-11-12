@@ -33,6 +33,7 @@ CLEARS=(
     reset_war_history                             # ck-sd4d's ended-war ledger
     quarantine_personality_locks_on_world_reset   # ck-9fc3's write hazard
     world_identity_on_world_reset                 # ck-9fc3's save identity
+    clear_line_watches                            # METERLINE: the played-line watches
 )
 
 # Print "file:line: code" for every CODE occurrence of $1 — line comments are

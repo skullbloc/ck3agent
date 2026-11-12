@@ -81,26 +81,45 @@ def _probe(env: dict) -> tuple[int, list, str]:
     return r.returncode, names, r.stderr
 
 
-CHANNEL_DECLARED = {"CK3_EPISODE_ARM": "flat_hom", "CK3_CHANNEL_TOPOLOGY": "complete",
+CHANNEL_DECLARED = {"CK3_EPISODE_ARM": "council", "CK3_CHANNEL_TOPOLOGY": "complete",
                     "CK3_CHANNEL_SEATS": "K,D1,D2,D3,D4,D5", "CK3_SEAT_LABEL": "D2",
                     "CK3_CHANNEL_QUOTA_PER_CYCLE": "2", "CK3_CHANNEL_MAX_TEXT_BYTES": "600"}
 
 
 def test_msg_send_is_registered_exactly_when_a_topology_is_declared():
-    """Pre-registration v3 section 5.1: the 13 and the one. `msg_send` is on the
+    """Pre-registration v4 (v3 section 5.1 by reference): the 13 and the one. `msg_send` is on the
     wire only under a declared topology other than `none`; in E0, K1 and free
     play the NAME IS ABSENT, not present-and-refused; an arm with no topology
     key does not boot at all (channel_topology_undeclared)."""
     rc, names, _ = _probe({})
     assert rc == 0 and set(names) == THE_13                       # free play
-    rc, names, _ = _probe(dict(CHANNEL_DECLARED, CK3_CHANNEL_TOPOLOGY="star"))
-    assert rc == 0 and set(names) == THE_13 | {"msg_send"}
     rc, names, _ = _probe(CHANNEL_DECLARED)
     assert rc == 0 and set(names) == THE_13 | {"msg_send"}
     rc, names, _ = _probe({"CK3_EPISODE_ARM": "k1", "CK3_CHANNEL_TOPOLOGY": "none"})
     assert rc == 0 and set(names) == THE_13                       # declared off: absent
-    rc, names, err = _probe({"CK3_EPISODE_ARM": "flat_hom"})
+    rc, names, err = _probe({"CK3_EPISODE_ARM": "council"})
     assert rc == 3 and names == [] and "channel_topology_undeclared" in err
+
+
+NOTEPAD_DECLARED = {"CK3_NOTEPAD_PRIVATE_MAX_BYTES": "4096", "CK3_NOTEPAD_COUNCIL_MAX_BYTES": "8192",
+                    "CK3_NOTEPAD_MAX_WRITE_BYTES": "1024"}
+
+
+def test_the_notepad_tools_are_registered_exactly_when_the_arm_declares_a_pad():
+    """v4 draft §5/§7 (lane v4note): the 13, msg_send where a topology is
+    declared, and note_read/note_write where pads are declared, each a
+    declared per-arm addition; absent (not present-and-refused) otherwise."""
+    both = {"note_read", "note_write"}
+    rc, names, _ = _probe({"CK3_EPISODE_ARM": "k1", "CK3_CHANNEL_TOPOLOGY": "none",
+                           "CK3_NOTEPAD_PADS": "private", "CK3_SEAT_LABEL": "K", **NOTEPAD_DECLARED})
+    assert rc == 0 and set(names) == THE_13 | both                # K1: private pad, no channel
+    rc, names, _ = _probe(dict(CHANNEL_DECLARED, CK3_NOTEPAD_PADS="private,council", **NOTEPAD_DECLARED))
+    assert rc == 0 and set(names) == THE_13 | {"msg_send"} | both   # COUNCIL
+    rc, names, _ = _probe({"CK3_EPISODE_ARM": "k1", "CK3_CHANNEL_TOPOLOGY": "none",
+                           "CK3_NOTEPAD_PADS": "none"})
+    assert rc == 0 and set(names) == THE_13                       # declared off: absent
+    rc, names, err = _probe({"CK3_NOTEPAD_PADS": "private"})
+    assert rc == 3 and names == [] and "notepad_bounds_undeclared" in err
 
 
 def test_no_retired_tool_or_handler_is_left_in_the_server():
@@ -147,7 +166,7 @@ def test_both_gateways_carry_everything_redesign_calls():
 
 def test_do_intent_enum_is_INTENTS_and_every_intent_has_a_route():
     assert _enum("do", "intent") == list(R.INTENTS)
-    dedicated = {R._CANCEL_PENDING_INTENT, R._FACTION_INTENT}
+    dedicated = {R._CANCEL_PENDING_INTENT, R._FACTION_INTENT, R._POLICY_INTENT}
     assert set(R.INTENTS) == set(R.INTENT_TO_ACT) | dedicated
     for intent in R.INTENT_TO_ACT:
         resolved = T.resolve_act(R._intent_to_act_params(intent, {}, 1)) \
@@ -155,7 +174,7 @@ def test_do_intent_enum_is_INTENTS_and_every_intent_has_a_route():
         assert resolved is not None, f"intent {intent} resolves to no bridge action"
     src = Path(R.__file__).read_text(encoding="utf-8")
     fn = src[src.index("async def do_impl("):]
-    for name in ("_CANCEL_PENDING_INTENT", "_FACTION_INTENT"):
+    for name in ("_CANCEL_PENDING_INTENT", "_FACTION_INTENT", "_POLICY_INTENT"):
         assert f"if intent == {name}:" in fn, f"dedicated intent {name} has no branch in do_impl"
 
 

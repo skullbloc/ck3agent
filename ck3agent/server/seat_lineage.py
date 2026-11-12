@@ -1,10 +1,30 @@
 """seat_lineage.py — §7.5 of pre-registration v3: a seat is a LINEAGE.
 
 When a seat's ruler dies the seat continues on the primary heir of the ruler's
-primary title (the king's seat follows K's REGISTERED title, a duke's its own
-primary title), under the same fragments; a lineage with no landed heir or a
-destroyed title ends the seat as `lost`; a rebind that fails for an INSTRUMENT
+primary title, under the same fragments; a duke's lineage with no landed heir or
+a destroyed title ends the seat as `lost`; a rebind that fails for an INSTRUMENT
 reason is `seat_unbound`.
+
+THE KING'S SEAT FOLLOWS THE PLAYED LINE (INTEG item 2, owner ruling
+2026-11-11). Until then K's seat followed K's REGISTERED title's holder while
+the growth meter followed the played line (scripts/played_line.py), and the two
+could disagree (v3reg2 block 1: king 12015 took e_hre and k_france went
+holderless; his death would have ended the seat `lost` while the line went on
+through e_hre). Now K's seat reads the SAME decision the meter reads: the
+bridge's line watch (bridge/include/line_watch.h, the heir handoff's own
+`played_line::successor`), armed on the seat's first ruler by an additive
+`played_line: 1` on the step's own `query_character` read and read back
+through `query_character(character_id=<line start>, played_line=1)` whenever
+the seat's ruler is dead or the bridge moved the seat. The registered title
+(`CK3_SEAT_LINEAGE_TITLE_ID`) now only marks the seat as K's and is recorded
+beside its rows. While the watch has not yet named an heir the K seat is
+`pending` (the watch retries every tick); once the watch says the line ENDED
+(`line_ended`: the bridge's observed decision, line_watch.h `line_ended`, owner
+ruling 2026-11-12) the seat is `lost` (reason `line_ended`), terminal, and
+counts as a lost seat wherever seats remaining are counted
+(scripts/seat_lineage_record.py `lineage_block`). The watch reply is read by
+`read_watch`, a checked mirror of `scripts/played_line.py` `read_watch`
+(scripts/test_played_line.py). Dukes keep the title rule.
 
 WHERE THIS LIVES. A seat's binding is owned by the seat's own MCP server
 (`mcp_server._prebind_one` claims `CK3_AGENT_CHARACTER_ID` at connect), and
@@ -92,6 +112,16 @@ SOURCE_BRIDGE = "bridge_handoff"
 SOURCE_EXPLICIT = "explicit_control"
 
 R_HEIR_IS_PLAYER = "heir_is_player"
+#: owner ruling 2026-11-12 (v3reg2 s3 D1 moved onto the rival king Carloman):
+#: the bridge REFUSED to move the seat because the succession's target is
+#: outside the seat's registered realm (bridge/include/played_line.h
+#: succession_realm_check; session unbound_reason, or the refusal reason of an
+#: explicit rebind). The seat ends `lost` with this reason: the seat's line left
+#: the realm, a world outcome, recorded, never followed.
+R_HEIR_OUTSIDE_REALM = "heir_outside_realm"
+#: the bridge could not read who heads the registered realm now, or the
+#: target's liege: no rebind this cycle, the seat stays `pending`.
+R_REALM_UNRESOLVED = "realm_unresolved"
 R_TITLE_READ_REFUSED = "title_read_refused"
 R_CHARACTER_READ_REFUSED = "character_read_refused"
 R_BIND_REFUSED = "bind_refused"
@@ -119,6 +149,64 @@ R_RELEASED = "released_without_death"
 R_PRIMARY_MOVED = "primary_moved_without_heir_witness"
 R_NO_TITLE = "no_title_to_follow"
 
+# ── K's seat: the bridge's played-line watch (INTEG item 2) ─────────────────
+#: The additive query_character parameter that arms (first time) and reads
+#: (every time) the bridge's watch (query_handlers.cpp emit_played_line).
+#: MIRRORED from scripts/played_line.py (WATCH_PARAM, WATCH_*; the private
+#: tree's test checks every constant and `read_watch` reply by reply).
+WATCH_PARAM = "played_line"
+WATCH_FOLLOWING = "following"
+WATCH_PENDING = "successor_pending"
+WATCH_ENDED = "line_ended"
+WATCH_REFUSED = "watch_refused"
+#: K's seat could not read the watch's decision (old bridge, refused read, a
+#: full registry): the instrument's, never a guessed heir.
+R_LINE_WATCH_UNREADABLE = "line_watch_unreadable"
+#: K's seat has no line start to read the watch by (a sink with no bound row).
+R_NO_LINE_START = "no_line_start"
+#: The watch still follows the dead ruler: he died after its last tick.
+R_DIED_SINCE_TICK = "died_since_last_tick"
+#: K's seat is LOST: the bridge's watch decided the played line ended (owner
+#: ruling 2026-11-12). The same word the meter flags G with.
+R_LINE_ENDED = "line_ended"
+_WATCH_ID_MASK = 0xFFFFFF
+
+
+def watch_request(character_id: int) -> dict:
+    """query_character params that arm and read the watch on `character_id`."""
+    return {"character_id": int(character_id), WATCH_PARAM: 1}
+
+
+def _watch_refusal(reply: Any) -> Optional[str]:
+    if not isinstance(reply, dict):
+        return "response_not_an_object"
+    for key in ("error", "reason"):
+        if reply.get(key):
+            return str(reply[key])
+    if reply.get("success") is False:
+        return "success_false"
+    return None
+
+
+def read_watch(reply: Any) -> tuple:
+    """(the watch object, why-not) from `query_character(played_line=1)`.
+    MIRROR of scripts/played_line.py `read_watch`: None when there is no
+    decision to read (a refused read, a bridge without the watch, a full
+    registry, an object without the keys the decision needs)."""
+    why = _watch_refusal(reply)
+    if why is not None:
+        return None, f"watch_read:{why}"
+    w = reply.get(WATCH_PARAM)
+    if not isinstance(w, dict):
+        return None, "watch_absent"
+    if w.get("status") == WATCH_REFUSED:
+        return None, f"watch_refused:{w.get('reason')}"
+    lc = w.get("line_character_id")
+    if not isinstance(lc, int) or isinstance(lc, bool) \
+            or w.get("status") not in (WATCH_FOLLOWING, WATCH_PENDING, WATCH_ENDED):
+        return None, "watch_malformed"
+    return w, ""
+
 
 @dataclass
 class Prior:
@@ -134,6 +222,9 @@ class Prior:
     first_failed: Optional[dict] = None
     #: whether every step of the current run was NOT_BOUND_YET (no read failed)
     run_only_not_bound: bool = True
+    #: K's seat (INTEG item 2): the character the bridge's line watch was armed
+    #: on (the seat's first ruler; its `bound` row's `line_start_id`). 0: a duke.
+    line_start: int = 0
 
 
 @dataclass(frozen=True)
@@ -196,13 +287,16 @@ def _holder(title_read: Any) -> Optional[int]:
 
 def decide(prior: Optional[Prior], row: Optional[dict], char_read: Any,
            title_read: Any, *, player_id: int = 0, held_elsewhere: frozenset = frozenset(),
-           registered_title: Optional[int] = None) -> Decision:
+           registered_title: Optional[int] = None, watch_read: Any = None) -> Decision:
     """ONE cycle's verdict. PURE.
 
     `row`        this seat's own session row (get_bridge_state.sessions[]):
                  primary_character_id, heir_character_id, unbound_reason.
     `char_read`  query_character of the ruler in question (prior's, or the row's).
-    `title_read` query_title_hierarchy of the title the lineage follows.
+    `title_read` query_title_hierarchy of the title a DUKE's lineage follows.
+    `watch_read` K's seat (`registered_title` given): query_character(<line
+                 start>, played_line=1), the bridge's played-line decision
+                 (INTEG item 2); read only when the ruler is dead or moved.
     """
     if prior is not None and prior.ended:
         return Decision(None)
@@ -220,6 +314,7 @@ def decide(prior: Optional[Prior], row: Optional[dict], char_read: Any,
             return Decision(None)
         return Decision(None, refresh_title=registered_title or _primary_title(char_read))
     title = registered_title or prior.title_id
+    on_line = registered_title is not None
     if p == prior.ruler and p > 0:
         alive = _alive(char_read)
         if alive is True:
@@ -227,20 +322,30 @@ def decide(prior: Optional[Prior], row: Optional[dict], char_read: Any,
             return Decision(None, refresh_title=registered_title or _primary_title(char_read))
         if alive is None:
             return Decision(KIND_UNBOUND, p, 0, title, SOURCE_EXPLICIT, R_CHARACTER_READ_REFUSED)
-        # DEAD and the bridge has not moved the claim: resolve through the title.
+        # DEAD and the bridge has not moved the claim: K's seat resolves through
+        # the bridge's played line, a duke's through his title.
+        if on_line:
+            return _through_line(prior, p, title, watch_read, player_id, held_elsewhere)
         return _through_title(prior, p, title, title_read, player_id, held_elsewhere)
     if p > 0 and p != prior.ruler:
+        if on_line:
+            return _moved_on_line(prior, p, heir, title, watch_read, player_id, held_elsewhere)
         # The bridge moved this seat: a witnessed handoff (heir == new) or a swap.
         src = SOURCE_BRIDGE if heir == p else SOURCE_EXPLICIT
         return Decision(KIND_REBIND, prior.ruler, p, title, src,
                         None if heir == p else R_PRIMARY_MOVED,
                         refresh_title=registered_title or _primary_title(char_read))
     # p == 0: the seat holds nothing.
+    if unbound == R_HEIR_OUTSIDE_REALM:
+        return Decision(KIND_LOST, prior.ruler, _i(row.get("unbound_heir_id")), title,
+                        SOURCE_BRIDGE, R_HEIR_OUTSIDE_REALM)
     if unbound == R_HEIR_IS_PLAYER:
         return Decision(KIND_UNBOUND, prior.ruler, _i(row.get("unbound_heir_id")), title,
                         SOURCE_EXPLICIT, R_HEIR_IS_PLAYER)
     alive = _alive(char_read)
     if alive is False:
+        if on_line:
+            return _through_line(prior, prior.ruler, title, watch_read, player_id, held_elsewhere)
         return _through_title(prior, prior.ruler, title, title_read, player_id, held_elsewhere)
     if alive is None:
         return Decision(KIND_UNBOUND, prior.ruler, 0, title, SOURCE_EXPLICIT,
@@ -264,6 +369,70 @@ def _through_title(prior: Prior, dead: int, title: Optional[int], title_read: An
     if holder in held_elsewhere:
         return Decision(KIND_UNBOUND, dead, holder, title, SOURCE_EXPLICIT, R_HOLDER_HELD_ELSEWHERE)
     return Decision(KIND_REBIND, dead, holder, title, SOURCE_EXPLICIT, bind_target=holder)
+
+
+def _line_target(prior: Prior, dead: int, title: Optional[int], watch_read: Any):
+    """K's seat: (the watch, the line's character, a Decision when there is
+    nothing to bind) from the bridge's played-line decision."""
+    if prior.line_start <= 0:
+        return None, 0, Decision(KIND_UNBOUND, dead, 0, title, SOURCE_EXPLICIT, R_NO_LINE_START)
+    w, why = read_watch(watch_read)
+    if w is None:
+        return None, 0, Decision(KIND_UNBOUND, dead, 0, title, SOURCE_EXPLICIT,
+                                 f"{R_LINE_WATCH_UNREADABLE}:{why}")
+    if w.get("status") == WATCH_ENDED:
+        # The bridge DECIDED the line ended (dead, no successor): the seat is
+        # lost, never on a default (owner ruling 2026-11-12).
+        return w, 0, Decision(KIND_LOST, dead, 0, title, SOURCE_BRIDGE, R_LINE_ENDED)
+    if w.get("status") == WATCH_PENDING:
+        # No heir named yet: the bridge retries every tick; `pending`, not lost.
+        return w, 0, Decision(KIND_PENDING, dead, 0, title, SOURCE_EXPLICIT,
+                              f"{WATCH_PENDING}:{w.get('pending_reason') or ''}")
+    return w, _i(w.get("line_character_id")) & _WATCH_ID_MASK, None
+
+
+def _through_line(prior: Prior, dead: int, title: Optional[int], watch_read: Any,
+                  player_id: int, held_elsewhere: frozenset) -> Decision:
+    """K's seat, ruler dead and the bridge did not move the seat: bind the
+    line's character the bridge's watch names (INTEG item 2)."""
+    w, line, d = _line_target(prior, dead, title, watch_read)
+    if d is not None:
+        return d
+    if line == (dead & _WATCH_ID_MASK):
+        return Decision(KIND_PENDING, dead, 0, title, SOURCE_EXPLICIT, R_DIED_SINCE_TICK)
+    carried = _i(w.get("carrying_title_id")) or title
+    if player_id and line == (player_id & _WATCH_ID_MASK):
+        return Decision(KIND_UNBOUND, dead, line, carried, SOURCE_EXPLICIT, R_HEIR_IS_PLAYER)
+    if line in held_elsewhere:
+        return Decision(KIND_UNBOUND, dead, line, carried, SOURCE_EXPLICIT, R_HOLDER_HELD_ELSEWHERE)
+    return Decision(KIND_REBIND, dead, line, carried, SOURCE_EXPLICIT, bind_target=line)
+
+
+def _moved_on_line(prior: Prior, p: int, heir: int, title: Optional[int], watch_read: Any,
+                   player_id: int, held_elsewhere: frozenset) -> Decision:
+    """K's seat, the bridge moved the seat to `p`: a handoff ON the line (the
+    watch names `p`) is witnessed `bridge_handoff`; a move OFF the line is
+    corrected to the line's character, explicitly (INTEG item 2)."""
+    w, line, d = _line_target(prior, prior.ruler, title, watch_read)
+    if d is not None:
+        return d
+    carried = _i(w.get("carrying_title_id")) or title
+    if line == (p & _WATCH_ID_MASK):
+        # The line names the bridge's choice: the heir witness under this rule.
+        return Decision(KIND_REBIND, prior.ruler, p, carried, SOURCE_BRIDGE, None,
+                        refresh_title=title)
+    if line == (prior.ruler & _WATCH_ID_MASK):
+        # The line has not moved: the seat's move is no succession on it. The
+        # title rule's own reading of a move (a witnessed handoff or a swap,
+        # `primary_moved_without_heir_witness`), unchanged.
+        return Decision(KIND_REBIND, prior.ruler, p, title,
+                        SOURCE_BRIDGE if heir == p else SOURCE_EXPLICIT,
+                        None if heir == p else R_PRIMARY_MOVED, refresh_title=title)
+    if player_id and line == (player_id & _WATCH_ID_MASK):
+        return Decision(KIND_UNBOUND, prior.ruler, line, carried, SOURCE_EXPLICIT, R_HEIR_IS_PLAYER)
+    if line in held_elsewhere:
+        return Decision(KIND_UNBOUND, prior.ruler, line, carried, SOURCE_EXPLICIT, R_HOLDER_HELD_ELSEWHERE)
+    return Decision(KIND_REBIND, prior.ruler, line, carried, SOURCE_EXPLICIT, bind_target=line)
 
 
 def session_rows(reply: Any) -> Optional[list]:
@@ -422,6 +591,8 @@ def prior_from_sink(path: Optional[str]) -> Optional[Prior]:
     prior = Prior(ruler=0, title_id=None, rows=rows)
     for r in rows:
         k = r.get("kind")
+        if k == KIND_BOUND and not prior.line_start:
+            prior.line_start = _i(r.get("line_start_id"))
         if k in (KIND_BOUND, KIND_REBIND):
             prior.ruler = _i(r.get("new_id"))
             prior.title_id = r.get("title_id") if isinstance(r.get("title_id"), int) else prior.title_id
@@ -607,18 +778,38 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
             return _no_verdict(prior or Prior(ruler=0, title_id=None), READ_SESSIONS,
                                NOT_BOUND_YET, gw=gw, sink=sink, seat_session_id=seat_session_id)
         subject = p if (prior is None or p > 0) else prior.ruler
-        char_read = await gw.read(READ_CHARACTER, {"character_id": subject}) if subject else None
+        # K's seat (INTEG item 2): the read that finds the seat's first ruler
+        # also ARMS the bridge's line watch on him (an additive parameter of
+        # the same read; idempotent, so the meter's arming on the same
+        # character is the same watch).
+        arm = registered_title is not None and no_ruler_yet and subject and p > 0
+        char_read = await gw.read(READ_CHARACTER, watch_request(subject) if arm
+                                  else {"character_id": subject}) if subject else None
         if counting and subject and read_failed(char_read, READ_CHARACTER):
             return _no_verdict(prior or Prior(ruler=0, title_id=None), READ_CHARACTER,
                                read_failed(char_read, READ_CHARACTER), gw=gw, sink=sink,
                                seat_session_id=seat_session_id)
         title = registered_title or (prior.title_id if prior else None)
         title_read = None
-        if prior is not None and title and (p == 0 or (p == prior.ruler and _alive(char_read) is False)):
+        if prior is not None and title and registered_title is None \
+                and (p == 0 or (p == prior.ruler and _alive(char_read) is False)):
+            # a DUKE's lineage reads its title; K's reads the line (below)
             title_read = await gw.read(READ_TITLE, {"title_id": title})
             if counting and read_failed(title_read, READ_TITLE):
                 return _no_verdict(prior, READ_TITLE, read_failed(title_read, READ_TITLE),
                                    gw=gw, sink=sink, seat_session_id=seat_session_id)
+        # K's seat: the bridge's played-line decision, read whenever the ruler
+        # is dead or the bridge moved the seat (INTEG item 2), by the line's
+        # START (the watch's key), never by the current ruler.
+        watch_read = None
+        if registered_title is not None and prior is not None and not prior.ended and prior.ruler > 0 \
+                and prior.line_start > 0 \
+                and ((p > 0 and p != prior.ruler) or _alive(char_read) is False):
+            watch_read = await gw.read(READ_CHARACTER, watch_request(prior.line_start))
+            if counting and read_failed(watch_read, READ_CHARACTER):
+                return _no_verdict(prior, READ_CHARACTER + ":" + WATCH_PARAM,
+                                   read_failed(watch_read, READ_CHARACTER), gw=gw, sink=sink,
+                                   seat_session_id=seat_session_id)
         if prior is not None and not prior.ended and prior.ruler > 0:
             _recovered(prior, gw=gw, sink=sink, seat_session_id=seat_session_id)
         player = _i((bs or {}).get("player_character_id")) if isinstance(bs, dict) else 0
@@ -626,14 +817,22 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
             _i(c) for r in ((bs or {}).get("sessions") or []) if isinstance(r, dict)
             and r.get("session_id") != sid for c in (r.get("claimed_character_ids") or []))
         d = decide(prior, row if isinstance(row, dict) else None, char_read, title_read,
-                   player_id=player, held_elsewhere=held, registered_title=registered_title)
+                   player_id=player, held_elsewhere=held, registered_title=registered_title,
+                   watch_read=watch_read)
         game = gw.game() if callable(getattr(gw, "game", None)) else {}
         date, tick = (game or {}).get("date"), (game or {}).get("tick")
         if d.bind_target:
             res = await gw.write("set_controlled_character",
                                  {"character_id": d.bind_target, "disable_native_ai": False})
             ok = isinstance(res, dict) and res.get("success", True) and not res.get("reason")
-            if not ok:
+            why = (res or {}).get("reason") if isinstance(res, dict) else None
+            if not ok and why == R_HEIR_OUTSIDE_REALM:
+                # the bridge's realm guard refused the rebind: lost, recorded
+                d = Decision(KIND_LOST, d.old_id, d.bind_target, d.title_id, SOURCE_BRIDGE,
+                             R_HEIR_OUTSIDE_REALM)
+            elif not ok and why == R_REALM_UNRESOLVED:
+                d = Decision(KIND_PENDING, d.old_id, 0, d.title_id, SOURCE_EXPLICIT, R_REALM_UNRESOLVED)
+            elif not ok:
                 d = Decision(KIND_UNBOUND, d.old_id, d.bind_target, d.title_id, SOURCE_EXPLICIT,
                              f"{R_BIND_REFUSED}:{(res or {}).get('reason') if isinstance(res, dict) else 'no_reply'}")
         if prior is None or (prior.ruler == 0 and p > 0 and not prior.ended
@@ -642,9 +841,16 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
             # that held none): the `bound` row opens the seat's sink, so a seat
             # whose ruler lives to the horizon is witnessed `bound`, not absent.
             if p > 0:
-                prior = Prior(ruler=p, title_id=d.refresh_title)
+                prior = Prior(ruler=p, title_id=d.refresh_title,
+                              line_start=p if registered_title is not None else 0)
                 rowd = Decision(KIND_BOUND, 0, p, d.refresh_title).row(
                     seat_session_id=seat_session_id, game_date=date, tick=tick)
+                if registered_title is not None:
+                    # the line's start, and whether the bridge's watch answered
+                    # the arming read (None: a bridge without the watch)
+                    w, _why = read_watch(char_read)
+                    rowd["line_start_id"] = p
+                    rowd["line_watch_armed"] = w is not None
                 append_row(sink, rowd)
                 prior.rows.append(rowd)
                 _note_if_reserved(sink, rowd)

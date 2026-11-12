@@ -154,6 +154,13 @@ public:
     //: the next successful claim. Published in sessions_json and get_tick_info.
     std::string unbound_reason;
     uint32_t    unbound_heir_id = 0;
+    //: owner ruling 2026-11-12: the seat's REGISTERED REALM ROOT, the top liege
+    //: of the seat's ruler as the handoff first read him alive (latched once,
+    //: only when the bridge's line watch could be armed on it, so the realm can
+    //: be followed through the root's own succession). 0 = none registered: no
+    //: realm guard. Published in sessions_json. bridge_init.cpp
+    //: check_controlled_handoff / succession_target_realm.
+    uint32_t    realm_root_id = 0;
 
     // Monotonic claim sequence — the order in which this session acquired its
     // CURRENT run of claims.  Assigned by SessionRegistry from a monotonic
@@ -536,6 +543,11 @@ public:
     //: never recovered, never retried) and set unbound_reason="heir_is_player",
     //: unbound_heir_id=heir. Returns whether `dead` was held.
     bool unbind_for_player_heir(Session* session, uint32_t dead, uint32_t heir);
+    //: owner ruling 2026-11-12: the succession's target is outside the seat's
+    //: registered realm. Release `dead` (state HeirOutsideRealm: never recovered,
+    //: never retried) and set unbound_reason="heir_outside_realm",
+    //: unbound_heir_id=heir. Returns whether `dead` was held.
+    bool unbind_for_outside_realm(Session* session, uint32_t dead, uint32_t heir);
 
 private:
     std::atomic<PlayerCharacterSource> player_src_{nullptr};

@@ -315,6 +315,8 @@ bool is_bridge_internal_query(const char* action_type) {
         "get_budget_state",
         "query_intents",
         "query_intent_results",
+        // lane v4act: the game's log files, read for a script action's marker
+        "query_script_log",
         "cancel_intent",
         "clear_intents",
         "pause_game",
@@ -615,6 +617,9 @@ bool is_game_thread_action(const char* action_type) {
         "maa_unstation",
         "hire_mercenary",
         "set_doctrine",
+        // lane v4act: runs a fixed-template script effect through the engine's
+        // own `effect` console handler (CMD_EFFECT) — a game-thread mutation.
+        "script_action",
         // Calls SET_FAITH (SetFaithOnCharacter) — converts the actor's own faith;
         // fires on_faith_conversion + recalc, a game-thread mutation.
         // (convert-own-faith lever, 20260624)

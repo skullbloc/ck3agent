@@ -6298,6 +6298,23 @@ namespace console_handlers {
     // Character info/state
     constexpr uintptr_t CMD_CHARINFO           = 0x040f7c70;  // HIGH: charinfo (toggle debug info)
     constexpr uintptr_t CMD_SET_SEXUALITY      = 0x040fae90;  // HIGH: set_sexuality
+
+    // Script console commands (lane MODPROBE 2026-11-11, ported by lane v4act;
+    // re/findings/re_console_effect.md). Registration (RegisterConsoleCommands
+    // body, ELF 0x1906f40): name lea then handler lea, read with objdump:
+    // "effect"@0x8d2a0c1 -> 0x040f59a0, "run"@0x8d0f6c2 -> 0x040f5f50,
+    // "trigger"@0x8d5123e -> 0x040f61f0. Handler bodies decompiled (Ghidra =
+    // these + 0x100000): each checks only g_GameStateRoot != 0 ("No game state");
+    // no debug-mode test in the body. LIVE (node, lane modprobe e12c/e3a, no
+    // -debug_mode): CMD_EFFECT ran set_global_variable, add_gold, run_interaction,
+    // start_war and set_council_task. Refutes
+    // re_console_effect_no_handler_ck-zvu5l.2.md (it searched "\0effect\0"; the
+    // name is tail-merged into a longer literal). The bridge calls CMD_EFFECT only
+    // (do_script_action, fixed templates: bridge/include/script_templates.h).
+    constexpr uintptr_t CMD_EFFECT             = 0x040f59a0;  // HIGH (registration lea + decompile string "effect console command" + live e12c): effect <script...>; args joined by " "
+    constexpr uintptr_t CMD_RUN                = 0x040f5f50;  // HIGH (registration lea + decompile "No such file in run/" + live e12c): run <name>; reads run/<name>.txt, argc must be 1
+    constexpr uintptr_t CMD_TRIGGER            = 0x040f61f0;  // HIGH (registration lea + decompile "Trigger returned: TRUE/FALSE"): trigger <script...>; rooted on the PLAYER character (an observer game has none: FALSE for everything, live e12b)
+    constexpr uintptr_t SCRIPT_EFFECT_EXECUTE  = 0x040f52d0;  // MEDIUM (one decompile, callees not all read): the core CMD_EFFECT and CMD_RUN share (parse, root = player char else the first character, execute); not called by the bridge
     constexpr uintptr_t CMD_KNOW_SCHEMES       = 0x040f76b0;  // HIGH: know_schemes
     constexpr uintptr_t CMD_END_SCHEMES        = 0x040f7740;  // HIGH: end_schemes
 

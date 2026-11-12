@@ -134,6 +134,10 @@ maa_station tick_write 1
 maa_unstation tick_write 1
 hire_mercenary tick_write 1
 set_doctrine tick_write 1
+# lane v4act (v4 draft section 7, the script action layer): two rows added, the
+# classifier's own answers for them (a game-thread write; a bridge-internal read).
+script_action tick_write 1
+query_script_log any 0
 set_character_faith tick_write 1
 set_character_culture tick_write 1
 set_title_law tick_write 1

@@ -11,7 +11,7 @@ rate is a property of the host.
 
 THE ONE DEFINITION of five things, read by the server (`redesign.session_impl`
 `wait`; `mcp_server.session` counts the cycle; the channel's quota is keyed on
-it), the launcher (`episode_driver.seat_fleet_environment` sets the env from
+it), the launcher (the cell's seat env, `dry_cell.build_plan`, sets the env from
 the block and the episode's horizon) and the bundle's lineage reader
 (`scripts/seat_lineage_record`):
 
@@ -65,8 +65,11 @@ HORIZON_END_ENV = "CK3_EPISODE_HORIZON_END"
 #: k x cadence, capped at the horizon end, whatever `seconds` it asked for.
 #: Absent = the published wait, unchanged.
 HORIZON_START_ENV = "CK3_EPISODE_HORIZON_START"
-#: §7.2's horizon is 3,650 game-days; an ask beyond one horizon is not a cycle.
-HARD_GAME_DAYS_CEILING = 3650
+#: (v4, lane v4integ: the fixed 3,650-game-day ceiling on a `game_days` ask is
+#: deleted. It was v3's ten-year horizon, and v4's horizon is declared per
+#: registration (up to 150 game-years for the unsteered pilot). An ask is bounded
+#: by the registered cadence when one is declared (`R_OVER_CADENCE`), by the
+#: horizon (`R_HORIZON_REACHED`, the cell schedule) and by MAX_WAIT_CALLS.)
 #: The first wait of a loop: long enough to measure the rate, short enough
 #: that a fast clock does not overshoot a 90-day cycle in the probe.
 PROBE_S = 15
@@ -222,6 +225,78 @@ def cell_schedule(environ: Optional[Mapping[str, str]] = None
     if end <= start:
         return None, f"{HORIZON_END_ENV} is not after {HORIZON_START_ENV}={raw!r}"
     return CellSchedule(start=start, end=end, cadence=cadence), None
+
+
+#: `episode_cycle`'s why when there is no schedule at all (free play): the
+#: callers decide what that means (the channel: the process's own counter; the
+#: notepad and the guide log: no cycle).
+CYCLE_NOT_A_CELL = "not_a_cell"
+
+
+def episode_cycle(environ: Optional[Mapping[str, str]], game_date: Any
+                  ) -> tuple[Optional[int], Optional[str]]:
+    """THE EPISODE CYCLE at `game_date` (lane v4instr item 4a): `(index, None)`
+    by the cell's one schedule (`cell_schedule(...).cycle_index`), or
+    `(None, why)`: `CYCLE_NOT_A_CELL` when no schedule is declared, else what
+    could not be read (the schedule, or the date). The one derivation every
+    stamp reads: `channel.send_cycle` (a message's cycle) and
+    `notepad.cycle_at` (a pad record's, and the guide log's) both call it, and
+    test_cycle_authority checks that neither derives it another way."""
+    sched, err = cell_schedule(environ)
+    if sched is None and err is None:
+        return None, CYCLE_NOT_A_CELL
+    if err is not None:
+        return None, f"the cell's schedule is unreadable: {err}"
+    o = ordinal(game_date)
+    if o is None:
+        return None, f"the game date at the call ({game_date!r}) does not read as Y.M.D"
+    return sched.cycle_index(o), None
+
+
+#: `schedule_position`'s states: no cell (free play, nothing to say), a cell whose
+#: schedule cannot be read (refused, named), a date that cannot be read, or read.
+POS_NOT_A_CELL = "not_an_experiment_episode"
+POS_SCHEDULE_UNREADABLE = R_CELL_SCHEDULE_UNREADABLE
+POS_DATE_UNREAD = "game_date_unread"
+POS_READ = "read"
+
+
+def schedule_position(game_date: Any, environ: Optional[Mapping[str, str]] = None) -> dict:
+    """Where `game_date` sits on the cell's schedule (v4 §6, lane v4sees): THE
+    position both readers state, `observe`'s goal block and `ck3agent run`'s
+    per-turn record. Every number comes from `cell_schedule` (the cycle
+    authority the cell wait and the channel's cycle stamp use); none is
+    re-derived. Keys, when `state` is `read`:
+
+      * `cycle`: `CellSchedule.cycle_index(now)`, 0 in the first cycle (the
+        index the cell wait's `cycle_index` and every ledger row carry);
+      * `cycles_total`: `n_boundaries` (41 for ten years at 90 days);
+      * `cycles_left`: `cycles_total - cycle` (the boundaries still to come,
+        the horizon end's included);
+      * `cycle_game_days`, `horizon_start`, `horizon_end` (the env's own
+        spelling), `days_left` (game-days to the horizon end, never negative),
+        `horizon_reached`.
+
+    Not a cell: `{"state": "not_an_experiment_episode"}`, nothing else (no
+    zeros). A cell whose schedule is unreadable or a date that is not Y.M.D:
+    the state names it and carries no numbers."""
+    env = os.environ if environ is None else environ
+    sched, err = cell_schedule(env)
+    if sched is None and err is None:
+        return {"state": POS_NOT_A_CELL}
+    if sched is None:
+        return {"state": POS_SCHEDULE_UNREADABLE, "detail": err}
+    now = ordinal(game_date)
+    base = {"horizon_start": str(env.get(HORIZON_START_ENV)).strip(),
+            "horizon_end": str(env.get(HORIZON_END_ENV)).strip(),
+            "cycle_game_days": sched.cadence}
+    if now is None:
+        return {"state": POS_DATE_UNREAD, "game_date": game_date, **base}
+    idx = sched.cycle_index(now)
+    return {"state": POS_READ, "game_date": game_date, **base,
+            "cycle": idx, "cycles_total": sched.n_boundaries,
+            "cycles_left": max(0, sched.n_boundaries - idx),
+            "days_left": max(0, sched.end - now), "horizon_reached": now >= sched.end}
 
 
 def horizon_reached(game_date: Any, horizon_ordinal: Optional[int]) -> Optional[bool]:
