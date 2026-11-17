@@ -161,7 +161,35 @@ def test_C3_CONTROL_a_conquest_cb_row_keeps_the_county():
     (row,) = env["result"]["targets"]
     assert row["declare_args"] == {"target_id": LOTHAR, "cb": "county_conquest_cb",
                                    "cb_title_id": C_VENAISSIN, "claimant_id": None}, row
-    assert row["claim_pressed"] is False
+    # lane peace: a conquest row reads no claims, so its claim_pressed is null
+    # (v4 pilot 2 K1 1083: false on William's rows beside a pressed claim on
+    # d_normandy). Red on 29c8e303: False.
+    assert row["claim_pressed"] is None
+
+
+def test_a_de_jure_row_reads_no_claims_so_its_claim_pressed_is_null():
+    """lane peace (v4 pilot 2, K1 1083 plan_war toward d_normandy): William's de
+    jure rows said claim_pressed:false while the bridge read a PRESSED claim on
+    d_normandy (discover war_targets, the same turn), and the king declared that
+    claim war. A row that reads no claims says null. Red on 29c8e303: False."""
+    conquest = _venaissin_conquest()
+    rc = conquest["duchies"][0]["remaining_counties"][0]
+    rc.update(conquerable_now=True, block_reason="",
+              declare={"casus_belli": "county_conquest_cb", "target_id": LOTHAR, "cb_title_id": C_VENAISSIN})
+    strict = _strict("county_conquest_cb")
+    strict["results"].append({"cb_index": 2, "cb_name": "individual_county_de_jure_cb", "target_mode": "title",
+                              "outer_status": "pass", "inner_status": "pass", "declarable": True})
+    cc = {"cb_key": "county_conquest_cb", "family": "conquest", "valid": True, "scope": "county",
+          "cb_title_id": 0, "needs_cb_title_id": True, "target_mode": 1, "cost_prestige": 100,
+          "cost_piety": 0, "affordable": True}
+    dj = dict(cc, cb_key="individual_county_de_jure_cb", family="de_jure", cb_title_id=C_VENAISSIN)
+    gw = _gw(query_conquest_targets=conquest, query_cb_validity_strict=strict,
+             query_cbs_for_target=_cbs([cc, dj]))
+    env = _run(R.plan_war_impl(gw, character_id=CHARLES, goal_scoped=False, ally_free_only=False))
+    rows = {t["declare_args"]["cb"]: t for t in env["result"]["targets"]}
+    assert set(rows) == {"county_conquest_cb", "individual_county_de_jure_cb"}, rows
+    assert rows["individual_county_de_jure_cb"]["claim_pressed"] is None
+    assert rows["county_conquest_cb"]["claim_pressed"] is None
 
 
 def test_C4_the_enumerators_rows_reach_the_strict_probe():
@@ -233,12 +261,39 @@ def test_C7_CONTROL_a_pressed_claim_row_with_no_cbs_options_is_offered():
     assert row["declare_args"]["cb"] == "claim_cb" and row["claim_pressed"] is True, row
 
 
-def test_C8_every_offered_claim_row_is_pressed():
-    """The property over the module's tests' shapes: no offered row needs a
-    claimant with claim_pressed false (C1, C3, C6, C7 replies)."""
-    shapes = [_gw(), _gw(query_cbs_for_target=_cbs([]))]
+def _own_unpressed_vt():
+    # do_query_valid_war_targets row (r.key("pressed"), r.key("declarable")): the
+    # actor's own claim, unpressed, which the bridge now reads declarable
+    # (bridge/include/claim_rule.h)
+    return {"action": "query_valid_war_targets", "actor_id": CHARLES, "targets": [
+        {"target_char_id": LOTHAR, "target_name": "Lothar", "title_id": K_ITALY,
+         "title_name": "Italy", "tier": 4, "tier_name": "kingdom", "cb_type": "claim",
+         "pressed": False, "implicit": False, "target_independent": True,
+         "target_imprisoned": False, "target_in_alliance": False, "target_in_truce": False,
+         "already_at_war_opposing": False, "declarable": True}]}
+
+
+def test_C9_the_actors_own_unpressed_claim_is_offered():
+    """Live run i11s3 (the peace lane's row 4): script_action declare_war claim_cb by
+    35156 on his OWN UNPRESSED claim (c_berestye) - the game's can_declare_war RAN and
+    the war started; plan_war culled the row claim_not_pressed."""
+    gw = _gw(query_valid_war_targets=_own_unpressed_vt(), query_conquest_targets={"duchies": []},
+             query_cbs_for_target=_cbs([]))
+    res = _run(R.plan_war_impl(gw, character_id=CHARLES, goal_scoped=False, ally_free_only=False))["result"]
+    (row,) = res["targets"]
+    assert row["declare_args"]["cb"] == "claim_cb" and row["claim_pressed"] is False, row
+    assert row["declare_args"].get("claimant_id") in (None, CHARLES), row
+
+
+def test_C8_every_offered_claim_row_is_usable():
+    """The property over the module's tests' shapes: an offered row that needs a
+    claimant is pressed, or the actor's own claim (C1, C3, C6, C7, C9 replies)."""
+    shapes = [_gw(), _gw(query_cbs_for_target=_cbs([])),
+              _gw(query_valid_war_targets=_own_unpressed_vt(), query_conquest_targets={"duchies": []},
+                  query_cbs_for_target=_cbs([]))]
     for gw in shapes:
         res = _run(R.plan_war_impl(gw, character_id=CHARLES, goal_scoped=False, ally_free_only=False))["result"]
         for t in res["targets"]:
             if R.is_claim_cb_name(t["declare_args"]["cb"]):
-                assert t["claim_pressed"] is True, t
+                assert t["claim_pressed"] is True or \
+                    t["declare_args"].get("claimant_id") in (None, CHARLES), t

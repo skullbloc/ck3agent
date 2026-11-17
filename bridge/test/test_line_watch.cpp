@@ -187,6 +187,40 @@ int main() {
         CHECK(played_line::watches().size() == played_line::watches().size(), "the global registry exists");
     }
 
+    {   // fix10 defect 2: one watch per seated line (K and five dukes), independent.
+        // The registry carries kMaxWatches (8) watches, so a COUNCIL episode's six
+        // lines need no extension; a duke's death moves the duke's watch to its
+        // heir and leaves the K watch exactly as it was (the K's behaviour is
+        // unchanged by watching more lines).
+        played_line::WatchRegistry reg;
+        const uint32_t KING = 37067, DUKES[5] = {31808, 31466, 29249, 29247, 36151};
+        const uint32_t D3_HEIR = 35886, D3_TITLE = 7173;
+        CHECK(played_line::kMaxWatches >= 6, "the registry holds a COUNCIL episode's six lines");
+        played_line::Watch kw, before;
+        bool now = false;
+        CHECK(reg.arm(KING, "1066.09.15", &kw, &now) && now, "the K watch arms");
+        for (uint32_t d : DUKES) CHECK(reg.arm(d, "1066.09.15", nullptr, &now) && now, "a duke watch arms");
+        CHECK(reg.size() == 6, "six watches");
+        before = kw;
+        // D3 (29249, d_champagne 7173) dies 1072.07.24; the title passes to 35886
+        // (the bridge's own handoff did exactly this for the session holding him).
+        World wd;
+        wd.holder = {{D3_TITLE, D3_HEIR}};
+        played_line::Watch d3;
+        reg.find(29249, &d3);
+        d3.primary_title_id = D3_TITLE;
+        CHECK(wd.tick(d3, false, 0, "1072.07.24") && d3.line_id == D3_HEIR && d3.successions == 1,
+              "the dead duke's watch follows his title's heir");
+        reg.store(d3);
+        played_line::Watch k_after;
+        CHECK(reg.find(KING, &k_after) && k_after.line_id == before.line_id
+              && k_after.successions == before.successions && k_after.status == before.status
+              && k_after.armed_date == before.armed_date, "the K watch is untouched by a duke's succession");
+        played_line::Watch d3_after;
+        CHECK(reg.find(29249, &d3_after) && d3_after.line_id == D3_HEIR, "keyed by the line's start, read by it");
+        CHECK(!reg.find(D3_HEIR, &d3_after), "the heir is the line's, not a new watch");
+    }
+
     std::printf("test_line_watch: %d failure(s)\n", g_fail);
     return g_fail ? 1 : 0;
 }

@@ -59,6 +59,8 @@ testpaths = ["ck3agent/server", "tests"]
 #   reads agent.py, the retired loop, which does not ship
 # deselected: ck3agent/server/test_no_clock_advice_in_prose.py::test_every_allowed_line_still_exists_and_still_matches
 #   its allowed lines are in research-tree docs (docs/campaign-bug-backlog.md, ...), which do not ship
+# deselected: ck3agent/server/test_proposals.py::test_the_classes_mirror_the_generators_first_set_and_the_design_table
+#   reads scripts/proposal_overrides.py (shipped renamed, ck3agent/proposal_mod/) and docs/design/incoming-proposals.md (does not ship); the overlay's tests/test_proposal_mod.py checks the same mirror on the shipped generator
 # deselected: ck3agent/server/test_reply_key_census.py::test_CONTROL_live_replies_sit_inside_the_parse
 #   reads ck3agent/hooks/fixtures (raw replies of a research live867 launch), which do not ship
-addopts = "-q -p no:cacheprovider --deselect ck3agent/server/test_handshake_observer_kwarg.py::test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it --deselect ck3agent/server/test_seat_declaration.py::TheSeatDeclaration::test_agent_py_deliberately_does_NOT_declare --deselect ck3agent/server/test_no_clock_advice_in_prose.py::test_every_allowed_line_still_exists_and_still_matches --deselect ck3agent/server/test_reply_key_census.py::test_CONTROL_live_replies_sit_inside_the_parse"
+addopts = "-q -p no:cacheprovider --deselect ck3agent/server/test_handshake_observer_kwarg.py::test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it --deselect ck3agent/server/test_seat_declaration.py::TheSeatDeclaration::test_agent_py_deliberately_does_NOT_declare --deselect ck3agent/server/test_no_clock_advice_in_prose.py::test_every_allowed_line_still_exists_and_still_matches --deselect ck3agent/server/test_proposals.py::test_the_classes_mirror_the_generators_first_set_and_the_design_table --deselect ck3agent/server/test_reply_key_census.py::test_CONTROL_live_replies_sit_inside_the_parse"

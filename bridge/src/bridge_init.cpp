@@ -2,6 +2,7 @@
 // Resolves ASLR base, installs hooks, starts IPC server.
 
 #include "action_log_row.h"   // L18-A: emit_action_outcome_log
+#include "ck3_compiler.h"   // CK3_PRINTF_FMT (cl.exe has no __attribute__)
 #include "thread_registry.h"
 #include "claim_event_log.h"   //: ck-jij9
 #include "primary_cause.h"   //: ck-6xi6 cause register
@@ -77,7 +78,7 @@ using bridge::g_logfile;
 // ~190MB/session of log growth.
 namespace bridge { bool g_trace = false; }
 
-static void blog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void blog(const char* fmt, ...) CK3_PRINTF_FMT(1, 2);
 static void blog(const char* fmt, ...) {
     // ck-55dx: one spelling of the prefix, shared with the reply records so
     // both land on the same timeline. Was inline here, where nothing outside

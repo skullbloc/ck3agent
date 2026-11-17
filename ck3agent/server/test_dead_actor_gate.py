@@ -191,7 +191,14 @@ def test_the_bridge_answers_a_missing_actor_and_a_dead_one_apart():
     import pytest
     if not (BRIDGE / "include" / "action_dispatch_internal.h").is_file():
         pytest.skip("no bridge sources in this layout")
-    assert _actor_refusal_reasons() == ["actor_not_found", "actor_not_alive"]
+    # lane ACTOR: "no_actor" first — a null actor whose resolve was REFUSED (a
+    # write, or a seat's read, naming no actor of its own: actor_resolve.h).
+    # lane ACTORKEY: "actor_key_not_read" first, a refused resolve whose actor was
+    # named under the key the verb does not read (actor_resolve.h rule 0).
+    assert _actor_refusal_reasons() == ["actor_key_not_read", "no_actor", "actor_not_found",
+                                        "actor_not_alive"]
+    assert R.RAW_REASON_TO_GATE["actor_key_not_read"] == "invalid_argument"
+    assert R.RAW_REASON_TO_GATE["no_actor"] == "character_not_found"
     assert R.RAW_REASON_TO_GATE["actor_not_found"] == "character_not_found"
     assert R.RAW_REASON_TO_GATE["actor_not_alive"] == "character_dead"
     assert R.map_raw_reason("actor_not_found")["retry"] == "never"

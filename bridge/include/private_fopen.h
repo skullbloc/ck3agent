@@ -14,9 +14,11 @@
 
 #include <cstdio>
 
+#include "ck3_compiler.h"   // CK3_WEAK
+
 namespace bridge {
 
-FILE* instance_fopen_private(const char* path, const char* mode) __attribute__((weak));
+FILE* instance_fopen_private(const char* path, const char* mode) CK3_WEAK;
 
 inline FILE* private_fopen(const char* path, const char* mode) {
     return instance_fopen_private ? instance_fopen_private(path, mode)

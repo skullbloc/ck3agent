@@ -110,12 +110,29 @@ ENV_SHAPE = re.compile(r'"((?:CK3|BRIDGE_)[A-Z0-9_]*|XDG_[A-Z_]+|HOME|DISPLAY|TM
 WRAPPER_PARAMS = {"name", "key", "k", "kGameSpeedEnv"}
 
 
+#: lane QMOD: the incoming-proposal mod's debug.log WORDS share the CK3 shape
+#: (script_templates.h kProposalLogWords, the line parser's prefix); they are
+#: text the bridge reads in the game's log, not variables it reads from its
+#: environment. Excluded by prefix, and only while no getenv-shaped call names one.
+LOG_WORDS = re.compile(r"^CK3AGENT_PROPOSAL_")
+
+
 def bridge_env_census() -> dict:
     found: dict = {}
     for p, src in _bridge_sources():
         for m in ENV_SHAPE.finditer(src):
+            if LOG_WORDS.match(m.group(1)):
+                continue
             found.setdefault(m.group(1), set()).add(p.name)
     return found
+
+
+def test_the_log_word_exclusion_names_no_environment_read():
+    words = 0
+    for p, src in _bridge_sources():
+        words += len([m for m in ENV_SHAPE.finditer(src) if LOG_WORDS.match(m.group(1))])
+        assert not re.search(r'getenv[a-z_]*\s*\(\s*"CK3AGENT_PROPOSAL_', src), p.name
+    assert words > 0, "the exclusion is stale: no bridge source carries a proposal log word"
 
 
 def test_env_table_lists_exactly_what_the_bridge_reads():

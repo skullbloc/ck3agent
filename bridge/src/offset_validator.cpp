@@ -3,6 +3,7 @@
 // If >30% of groups fail, the bridge enters degraded mode (read-only, no hooks).
 
 #include "bridge.h"
+#include "ck3_compiler.h"   // CK3_PRINTF_FMT (cl.exe has no __attribute__)
 #include "ck3_offsets.h"
 #ifdef _WIN32
 #include "windows/ck3_offsets_win.h"   // the MSVC-only names the Windows rows check (P6)
@@ -15,7 +16,7 @@
 // Use bridge log
 extern FILE* bridge::g_logfile;
 
-static void vlog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void vlog(const char* fmt, ...) CK3_PRINTF_FMT(1, 2);
 static void vlog(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);

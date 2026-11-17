@@ -166,7 +166,8 @@ def test_both_gateways_carry_everything_redesign_calls():
 
 def test_do_intent_enum_is_INTENTS_and_every_intent_has_a_route():
     assert _enum("do", "intent") == list(R.INTENTS)
-    dedicated = {R._CANCEL_PENDING_INTENT, R._FACTION_INTENT, R._POLICY_INTENT}
+    dedicated = {R._CANCEL_PENDING_INTENT, R._FACTION_INTENT, R._POLICY_INTENT, R._PROPOSAL_INTENT,
+                 R._END_WAR_INTENT}
     assert set(R.INTENTS) == set(R.INTENT_TO_ACT) | dedicated
     for intent in R.INTENT_TO_ACT:
         resolved = T.resolve_act(R._intent_to_act_params(intent, {}, 1)) \
@@ -174,7 +175,8 @@ def test_do_intent_enum_is_INTENTS_and_every_intent_has_a_route():
         assert resolved is not None, f"intent {intent} resolves to no bridge action"
     src = Path(R.__file__).read_text(encoding="utf-8")
     fn = src[src.index("async def do_impl("):]
-    for name in ("_CANCEL_PENDING_INTENT", "_FACTION_INTENT", "_POLICY_INTENT"):
+    for name in ("_CANCEL_PENDING_INTENT", "_FACTION_INTENT", "_POLICY_INTENT", "_PROPOSAL_INTENT",
+                 "_END_WAR_INTENT"):
         assert f"if intent == {name}:" in fn, f"dedicated intent {name} has no branch in do_impl"
 
 

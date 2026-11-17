@@ -307,6 +307,21 @@ namespace globals {
     constexpr uintptr_t COUNCIL_TASK_TYPE_DB      = 0x0bed76d8;  // HIGH: CCouncilTaskTypeDatabase singleton ptr
     constexpr uintptr_t NO_TARGET_SCOPE           = 0x0befa4a0;  // HIGH: DAT_0bffa4a0 — global "no target" scope singleton (BUILD_TARGET_SCOPE default)
 
+    // The native council-task AI's two numbers (lane COUNCILRE, re/findings/re_council_ai.md).
+    // Read from ck3_20260625_152901_ivar867 on 2026-11-14 with re/coredump/core_reader.py.
+    // SWITCH FACTOR: int64 fixed-point /100000. FUN_04dc9fc0 takes the current task's
+    // score (clamped at 0) x this / 100000 (the 0x29f16b11c6d1e109 >>14 multiply) and
+    // keeps only candidates scoring STRICTLY above it. Dump: 125000 = 1.25. HIGH
+    // (decompile + dump). A current score <= 0 lets any positive candidate win.
+    constexpr uintptr_t AI_COUNCIL_SWITCH_FACTOR_DEFINE = 0x0c06dfe0;  // HIGH: int64 /100000, 125000 in the 867 dump
+    // BUCKET-3 PERIOD: ptr to int32[8], days, indexed by FUN_067632a0(ruler) (the
+    // primary title's tier via GetTitleTier). The per-character dispatcher sets the
+    // ruler's ext+0x274 countdown (ai_ctrl::TICK_COUNTER_3) to it at its end
+    // (FUN_04e1f860/FUN_04e1f840 with category 3); CAIManager_MainTick decrements it
+    // daily (FUN_04e1f6b0). Dump: [180,720,360,180,180,180,180,0]. Values HIGH; the
+    // index -> tier name (1 barony 720, 2 county 360, 3+ duke and up 180) MEDIUM.
+    constexpr uintptr_t AI_BUCKET3_PERIOD_TABLE   = 0x0c06d508;  // HIGH value / MEDIUM index: int32[8] days per tier
+
     // Council position type database (R10-1: CCouncilPositionType hash DB)
     constexpr uintptr_t POSITION_TYPE_DB          = 0x0bf32ea0;  // HIGH: CCouncilPositionType hash DB (R10-1)
 
@@ -791,12 +806,18 @@ namespace funcs {
     // this constant was meant to point at. Do not trust the label.
     constexpr uintptr_t AI_CHAR_EVAL_SECONDARY     = 0x04d22cb0;  // SEE ABOVE - label unverified
     constexpr uintptr_t AI_IS_ELIGIBLE             = 0x04d19160;  // (state>1)&&(flags&2)&&!suspended
-    constexpr uintptr_t AI_IS_SUSPENDED            = 0x04d1f2e0;  // returns *(ai_ctrl+0x2A)
+    constexpr uintptr_t AI_IS_SUSPENDED            = 0x04d1f2e0;  // returns *(ai_ctrl+0x2A); COUNCILRE: 0 on all 4594 AI objects of the 867 observer dump; the one writer of 1 is FUN_04deedd0 (player attach). ~50 'AI handles X' predicates (FUN_04e18eb0..FUN_04e19470) and the council pass gate FUN_04e18fb0 return !this. MEDIUM: = 'a human holds this character'
     constexpr uintptr_t AI_IS_ACTIVE               = 0x0574f860;  // char is landed + in active DB
 
     // AI dispatch functions (per-character subsystem dispatchers)
     // R14: 11 dispatchers total, we currently hook 2
     constexpr uintptr_t AI_MARRIAGES_DISPATCH      = 0x04c88fe0;  // R14: checks +0x02,+0x13,+0x00,+0x17,+0x18,+0x1D,+0x08,+0x20,+0x25
+    // COUNCILRE 2026-11-14: the label is narrow. FUN_04d89360(CAIStrategy* ai, p2)
+    // is the per-character SUBSYSTEM dispatcher of AI bucket 3 (callers FUN_04ded5f0
+    // and its job thunk FUN_04df0010): a flat list of `if (DAT_0bfa5c8X) subsystem()`
+    // calls, council tasks (DAT_0bfa5c83 -> AI_COUNCIL_TASKS_PER_RULER) among them;
+    // the "+0x.." in the comment are the gate bytes' offsets from 0x0bfa5c80. Value
+    // unchanged (HIGH: is_entry, size 464). re/findings/re_council_ai.md.
     constexpr uintptr_t AI_INTERACTIONS_DISPATCH    = 0x04c89360;  // R14: checks +0x12,+0x0F,+0x08,+0x0B,+0x0C,+0x14,+0x15,+0x16,+0x19,+0x1A,+0x1B,+0x1C,+0x10,+0x11,+0x1F,+0x23
     // THE +0x1A FIELD IS UNCHANGED AND WAS NEVER IN DOUBT: it comes from the R14
     // static field list above, which is the only evidence for it.
@@ -1898,19 +1919,36 @@ namespace funcs {
     // (FUN_05c83430) passes. scope_buf = COUNCIL_TASK_SCOPE_PREP(buf, ctxB, ctxA, target).
     constexpr uintptr_t COUNCIL_TASK_STORE         = 0x05bc8660;  // HIGH: FUN_05cc8660 (VA 0x5cc8660-0x100000) → FUN_05cc9970 store
 
-    // ── PER-RULER COUNCIL-AI re-assignment routine (L20 stickiness target) ──
-    // FUN_04dca2a0(CCharacter* char_ptr, undefined4 param2): the per-ruler
-    // CouncilTasks AI routine called behind the GLOBAL gate DAT_0bfa5c83 from
-    // FUN_04d89360 (per-char AI dispatcher). It loops the ruler's council
-    // positions (via COUNCIL_POSITION_DB) and calls FUN_04dc9fc0 per position,
-    // which re-assigns each task through the same FUN_05cc8660/FUN_05cc9970 store
-    // — overwriting any bridge-set council task every AI tick. The bridge installs
-    // a per-ruler suppression hook here (council_suppress_hook.cpp): if the
-    // char_ptr's id is in g_council_locked it returns WITHOUT calling the
-    // original, freezing only that ruler's council AI (vs. the global toggle
-    // which freezes every realm). HIGH — decompile-verified callee behind the
-    // DAT_0bfa5c83 gate; VA 0x04dca2a0 - 0x100000.
-    constexpr uintptr_t AI_COUNCIL_TASKS_PER_RULER = 0x04cca2a0;  // HIGH: FUN_04dca2a0 per-ruler council-AI re-assign (VA 0x4dca2a0-0x100000)
+    // ── THE NATIVE COUNCIL-TASK AI PASS (lane COUNCILRE, re/findings/re_council_ai.md) ──
+    // CAIManager::PostExecute (AI_MANAGER_POST_EXECUTE) -> FUN_04ded5f0 (bucket 3:
+    // ai_mgr+0x138, one CAIStrategy per ruler whose ext+0x274 countdown ran out)
+    // -> FUN_04d89360(CAIStrategy* ai, p2), the per-character subsystem dispatcher
+    // (mislabelled AI_INTERACTIONS_DISPATCH below; it resets that countdown from
+    // AI_BUCKET3_PERIOD_TABLE at its end) -> [DAT_0bfa5c83] FUN_04dca2a0.
+    //
+    // CORRECTED 2026-11-14 (was: "FUN_04dca2a0(CCharacter* char_ptr, ...)"): the
+    // first argument is the CAIStrategy (ai_ctrl), NOT a CCharacter. Its +0x18 is
+    // the CCharacter* (ai_ctrl::CHARACTER_PTR): FUN_04dca2a0 hands *(arg+0x18) to
+    // FUN_067e2ae0, which reads +0x1b8 (CHAR_COUNCIL_INSTANCE); both callers of the
+    // dispatcher hash *(*(x+0x18)+0x18) as a character id (FUN_04ded5f0,
+    // FUN_04df0010); 867 dump: 4593 of 4593 landed rulers' AI objects hold their own
+    // CCharacter* at +0x18. The pre-COUNCILRE lock hook read the id at arg+0x18 and
+    // so never matched (0 of 4593). Guard inside: FUN_04e18fb0 = !AI_IS_SUSPENDED
+    // (ai+0x2a, written 1 only by the player-attach FUN_04deedd0). It then calls
+    // AI_COUNCIL_TASK_SELECT_FOR_POSITION once per position of the ruler's council.
+    // Not hooked since COUNCILRE. HIGH (decompile x4 + dump).
+    constexpr uintptr_t AI_COUNCIL_TASKS_PER_RULER = 0x04cca2a0;  // HIGH: FUN_04dca2a0(CAIStrategy*, p2), per-ruler council-task AI loop (VA 0x4dca2a0-0x100000)
+    // FUN_04dc9fc0(CCharacter* ruler, council position* pos, u32 p2, taskDB*):
+    // the per-SEAT task selection. Only caller FUN_04dca2a0 (0x4dca320). Reads the
+    // councillor at pos+0x38 (vacant -> nothing), scores the current task and every
+    // task of that seat (FUN_05cb8c90), keeps candidates scoring ABOVE current x
+    // AI_COUNCIL_SWITCH_FACTOR_DEFINE / 100000, and tries them best-first through
+    // AI_CouncilLogic (0x4dc89e0, which builds + dispatches the change command).
+    // No player check, no lock flag, no cooldown read inside. The council-task pin
+    // hook sits here (council_suppress_hook.cpp, council_pin.h): ruler id at
+    // ruler+0x18, position id at pos+0x10 (COUNCIL_POS_KEY). Prologue: 6 pushes +
+    // sub rsp,0xe8 (17 bytes, no RIP-relative). HIGH (decompile + caller + dump).
+    constexpr uintptr_t AI_COUNCIL_TASK_SELECT_FOR_POSITION = 0x04cc9fc0;  // HIGH: FUN_04dc9fc0 per-seat council-task AI selection (VA 0x4dc9fc0-0x100000)
 
     // ── COUNCIL APPOINT (L29: seat/replace a councillor, fill a vacant seat) ──
     // re/findings/re_appoint_councillor.md (2026-06-18). The WRITE TARGET and the
@@ -3734,7 +3772,7 @@ namespace ai_ctrl {
     // subject; the entry, the size and the store are true either way.
     constexpr size_t AI_ENABLED         = 0x28;   // byte: AI enabled for this character (checked in MainTick)
     constexpr size_t DAILY_FLAG         = 0x29;   // byte: if 0, forces daily category bucket
-    constexpr size_t IS_SUSPENDED       = 0x2A;   // byte: if 1, IsEligible returns false
+    constexpr size_t IS_SUSPENDED       = 0x2A;   // byte: if 1, IsEligible returns false; COUNCILRE: set to 1 only by FUN_04deedd0 (a player object attaching), so MEDIUM = 'human-held'. Gates ~50 AI subsystems: NOT a per-seat council switch (re_council_ai.md, candidate C)
     // Extended state offsets (relative to *(ai_ctrl + EXT_STATE_PTR))
     constexpr size_t EXT_WAR_TARGET_LIST = 0x98;  // CPdxArray: war targets. +0x00=data_ptr, +0x0C=count
     constexpr size_t EXT_WAR_EVAL       = 0xB8;   // war evaluation context struct
@@ -5302,7 +5340,7 @@ namespace c_pending_character_interaction {
     constexpr uintptr_t CONSTRUCT              = 0x061e88c0;  // HIGH: builds object (Ghidra 0x062e88c0; 224B)
     constexpr uintptr_t POOL_ALLOC             = 0x061eb4e0;  // HIGH: 2-level paged slot pool (Ghidra 0x062eb4e0)
     constexpr uintptr_t DTOR                   = 0x061e9200;  // HIGH: in-place dtor (vfunc[0]; Ghidra 0x062e9200)
-    constexpr uintptr_t DELETE                 = 0x061e92b0;  // HIGH: dtor + operator delete (vfunc[1]; Ghidra 0x062e92b0)
+    constexpr uintptr_t DELETING_DTOR          = 0x061e92b0;  // HIGH: dtor + operator delete (vfunc[1]; Ghidra 0x062e92b0). Not named DELETE: winnt.h defines that as a macro
     constexpr uintptr_t SAVE                   = 0x061e4a00;  // HIGH: serialize fields by tag (vfunc[3]; Ghidra 0x062e4a00)
     constexpr uintptr_t LOAD                   = 0x061e4ba0;  // HIGH: per-tag deserializer (vfunc[5]; Ghidra 0x062e4ba0)
     constexpr uintptr_t SAVE_WRAPPER           = 0x0818cef0;  // HIGH: shared CPersistent::Save (vfunc[2]; Ghidra 0x0828cef0) — wraps SAVE in begin/end_object

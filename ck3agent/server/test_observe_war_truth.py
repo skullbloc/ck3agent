@@ -212,7 +212,7 @@ class ObserveWarRowKeys(unittest.TestCase):
         seen = set()
         for w in REAL_REPLY_DUKE["wars"] + REAL_REPLY_ZERO["wars"] + [REAL_ROW_NO_SCORE]:
             seen |= set(w)
-        self.assertEqual(seen | {"war_score_stale", "cb_type", "target_titles"},
+        self.assertEqual(seen | {"war_score_stale", "cb_type", "target_titles", "attackers", "defenders"},
                          _emitted_war_keys())
 
     def test_the_reply_names_each_wars_cb(self):
@@ -234,6 +234,16 @@ class ObserveMySide(unittest.TestCase):
     def test_my_side_is_read_from_is_attacker(self):
         self.assertEqual(_block(REAL_REPLY_DUKE["wars"])["active"][0]["my_side"], "defender")
         self.assertEqual(_block(REAL_REPLY_ZERO["wars"])["active"][0]["my_side"], "attacker")
+
+    def test_every_participant_of_each_side_reaches_observe(self):
+        """fix10 (v4 pilot 2 check h: whether a duke with join_liege_wars joined
+        the king's war was NOT established, no participant read). The emitter
+        writes `attackers` / `defenders` (war_side::ids) and observe's war row
+        carries them. Red on 5e506f28: neither key emitted nor passed through."""
+        self.assertTrue({"attackers", "defenders"} <= _emitted_war_keys())
+        row = {**REAL_REPLY_DUKE["wars"][0], "attackers": [37067, 29247], "defenders": [31808]}
+        out = _block([row])["active"][0]
+        self.assertEqual((out["attackers"], out["defenders"]), ([37067, 29247], [31808]))
 
     def test_control_a_row_that_does_not_say_is_not_guessed(self):
         row = {"war_id": 3, "name": "W", "war_score": 0}

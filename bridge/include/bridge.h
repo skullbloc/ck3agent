@@ -1024,7 +1024,7 @@ void init_marriage_observation_hook();
 // Initialize council task assignment observer hook (called during first-tick deferred init)
 void init_council_task_hook();
 
-// Initialize per-ruler council-AI suppression hook (L20 stickiness; first-tick deferred init)
+// Initialize the per-seat council-task pin hook (council_pin.h; first-tick deferred init)
 void init_council_suppress_hook();
 
 // Initialize per-character off-goal routine-war veto hook (re_offgoal_veto_FINAL.md;
@@ -1035,9 +1035,9 @@ void init_offgoal_war_veto_hook();
 // first-tick deferred init). Inert until set_faction_demand_response names a liege.
 void init_faction_demand_hook();
 
-// Per-ruler council-lock release (council_suppress_hook.cpp). Declared here too so
-// the on_tick dead-ruler handoff path (bridge_init.cpp) can clear a stale lock when
-// a controlled ruler dies — not only on explicit release_character.
+// Releases every council-task pin of a ruler (council_suppress_hook.cpp). Declared
+// here too so the on_tick dead-ruler handoff path (bridge_init.cpp) can clear a
+// stale pin when a controlled ruler dies — not only on explicit release_character.
 void council_lock_remove(uint32_t char_id);
 
 // Query cached breakdown for a single war (thread-safe, read lock)

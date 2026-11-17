@@ -10,4 +10,5 @@ If something fails: `ck3agent doctor`, then docs/troubleshooting.md.
 Docs, in this directory: docs/getting-started.md; the tools: docs/reference/tools.md;
 paths and saves: docs/reference/files-and-paths.md.
 policy_mod/ holds the standing-policy mod; install it by hand: docs/standing-policies.md.
+proposal_mod/ holds the incoming-proposal mod and its generator; install it by hand: docs/incoming-proposals.md.
 Online: https://github.com/skullbloc/ck3agent/blob/main/docs/getting-started.md

@@ -153,17 +153,14 @@ def test_a_new_server_takes_over_the_session_its_predecessor_left(seat):
     assert rec["session_id"] == "old7" and rec["resumed"] is True and rec["resume_status"] == "ok"
 
 
-@pytest.mark.parametrize("held", ["attached", "unknown"])
-def test_a_session_that_cannot_be_taken_over_is_not_and_says_why(seat, held):
+def test_an_unknown_token_starts_fresh_and_says_why(seat):
     """Row 2 (red on 5718f403: no token presented; the bind's outcome is the
-    same before and after, which is the point). A LIVE session (attached elsewhere) is not
-    resumable: the bridge mints a fresh one, and a bind of a ruler the live one
-    holds stays the bridge's refusal. An unknown token (the bridge dropped the
-    session) is the same fresh start. Never a steal."""
+    same before and after, which is the point). An unknown token (the bridge
+    dropped the session) is a fresh start: the bridge mints a fresh session and
+    the pre-bind lands on it. Never a steal. (Row 2's `attached` half moved to
+    test_a_session_still_attached_is_retried_not_abandoned, fix10.)"""
     ses, sent, _ = seat
     ses.write_text(json.dumps({"session_id": "live3", "resume_token": "tok-live3"}))
-    if held == "attached":
-        _Client.attached["tok-live3"] = "live3"
     st = _start_server()
     assert _Client.made[0].handshake_kwargs.get("resume_token") == "tok-live3"
     assert st.resumed_session is False
@@ -171,7 +168,113 @@ def test_a_session_that_cannot_be_taken_over_is_not_and_says_why(seat, held):
     assert sid != "live3" and _binds(sent) == [(sid, 42, False)]
     rec = json.loads(ses.read_text())
     assert rec["session_id"] == sid and rec["resumed"] is False
-    assert rec["resume_status"] == ("session_attached" if held == "attached" else "unknown_token")
+    assert rec["resume_status"] == "unknown_token"
+
+
+def _start_then_call(n_calls=1, between=None):
+    """Enter the lifespan, then make `n_calls` tool-entry reconnect checks
+    (_ensure_connected, what every tool runs first); `between(i)` runs before
+    call i. Returns (state, [refusal or None per call])."""
+    async def go():
+        out = []
+        async with mcp_server.bridge_lifespan(None) as st:
+            await asyncio.sleep(0)
+            for i in range(n_calls):
+                if between:
+                    between(i)
+                out.append(await mcp_server._ensure_connected(st, "observe"))
+                await asyncio.sleep(0)
+            return st, out
+    return _run(go())
+
+
+def test_a_lost_startup_handshake_keeps_the_seats_session(seat, monkeypatch):
+    """fix10 row A (v4 pilot 2 COUNCIL D2/D3). The startup handshake gets no
+    ack (the bridge's reader thread is behind): the server must not keep that
+    socket as its session. It closes it, keeps the predecessor's token, binds
+    nothing, and the first tool call reconnects presenting the token: the
+    seat's own session is resumed with its claims. Red on 5e506f28: the server
+    stays `connected` on the unacked socket, no reconnect happens, the token is
+    dropped, nothing is pre-bound (the agent's later control lands on a session
+    nobody can resume)."""
+    ses, sent, _ = seat
+    ses.write_text(json.dumps({"session_id": "old7", "resume_token": "tok-old7"}))
+    _Client.detached["tok-old7"] = "old7"
+    real = _Client.handshake
+    calls = {"n": 0}
+
+    async def flaky(self, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            self.handshake_kwargs = kw
+            return None                  # no handshake_ack within the timeout
+        return await real(self, *a, **kw)
+    monkeypatch.setattr(_Client, "handshake", flaky)
+    st, refusals = _start_then_call(1)
+    assert _binds(sent)[:1] != [(None, 42, False)]
+    assert len(_Client.made) == 2, "the unacked connection was used instead of replaced"
+    assert _Client.made[1].handshake_kwargs.get("resume_token") == "tok-old7"
+    assert refusals == [None] and st.connected is True and st.resumed_session is True
+    assert _binds(sent) == [("old7", 42, False)]
+    assert st.pending_resume_token is None
+    assert json.loads(ses.read_text())["session_id"] == "old7"
+
+
+def test_a_lost_first_handshake_with_no_predecessor_binds_on_reconnect(seat, monkeypatch):
+    """fix10 row B: the seat's FIRST server (no record) loses its handshake:
+    the reconnect mints a fresh session and pre-binds the declared ruler on it,
+    so the session holding the ruler is the one the record names. Red on
+    5e506f28: nothing is pre-bound and no session record is written."""
+    ses, sent, _ = seat
+    real = _Client.handshake
+    calls = {"n": 0}
+
+    async def flaky(self, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return await real(self, *a, **kw)
+    monkeypatch.setattr(_Client, "handshake", flaky)
+    st, refusals = _start_then_call(1)
+    sid = _Client.made[-1].session_id
+    assert refusals == [None] and _binds(sent) == [(sid, 42, False)]
+    assert json.loads(ses.read_text())["session_id"] == sid
+
+
+def test_a_session_still_attached_is_retried_not_abandoned(seat):
+    """fix10 row C. The predecessor's server has not let go yet (its session is
+    still attached): the bridge refuses the resume `session_attached`. The new
+    server binds nothing on the fresh session it was handed, drops it, and the
+    next tool call resumes the seat's session once it is detached. Red on
+    5e506f28: the fresh session pre-binds 42 (refused owned_by_other on the
+    bridge) and the token is never presented again."""
+    ses, sent, _ = seat
+    ses.write_text(json.dumps({"session_id": "live3", "resume_token": "tok-live3"}))
+    _Client.attached["tok-live3"] = "live3"
+
+    def detach(i):
+        if i == 1:                      # the old server exits between the first and second call
+            _Client.attached.pop("tok-live3", None)
+            _Client.detached["tok-live3"] = "live3"
+    st, refusals = _start_then_call(2, between=detach)
+    assert _binds(sent) == [("live3", 42, False)]
+    assert refusals[0] is not None and refusals[0]["blocked"]["gate"] == "bridge_disconnected"
+    assert refusals[1] is None and st.resumed_session is True
+    assert all(c.handshake_kwargs.get("resume_token") == "tok-live3" for c in _Client.made)
+
+
+def test_attached_retries_are_bounded(seat):
+    """fix10 row D (bound): a predecessor that never lets go costs at most
+    RESUME_ATTACHED_RETRIES refused calls; then the fresh session is kept and
+    bound, and the bridge's own owned_by_other is what the seat reads."""
+    ses, sent, _ = seat
+    ses.write_text(json.dumps({"session_id": "live3", "resume_token": "tok-live3"}))
+    _Client.attached["tok-live3"] = "live3"
+    n = mcp_server.RESUME_ATTACHED_RETRIES
+    st, refusals = _start_then_call(n)
+    assert all(r is not None for r in refusals[:n - 1]) and refusals[-1] is None
+    sid = _Client.made[-1].session_id
+    assert sid != "live3" and _binds(sent) == [(sid, 42, False)]
 
 
 @pytest.mark.parametrize("case", ["no_record", "not_a_run"])

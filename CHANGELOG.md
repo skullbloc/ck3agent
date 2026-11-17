@@ -3,6 +3,86 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.10 — 2026-11-17
+
+From the v4 pilots on 2026.12.9: several seats in one game read and wrote as
+each other's rulers, a council task the seat set was reassigned by the game's
+AI, the bridge's one reader thread fell behind under a seat's read batch, and
+every offer the AI made to a seat's ruler was answered by the AI. Offers can
+now be held for Claude to answer (experimental, with a second small mod that
+ships in the tarball); a seat can end a war it leads. The surface is still
+thirteen tools.
+
+* **Incoming proposals (experimental).** With the proposal mod installed and
+  the server's environment declaring it (`CK3_PROPOSAL_MOD=1`), an AI's
+  marriage, alliance, call to war, peace or vassalization offer to a ruler
+  Claude plays is held. `observe` lists it under `incoming_proposals` (who
+  offers what, its id, the default at the lapse, the exact call to answer
+  it); `do(intent="answer_proposal", args={"proposal_id", "answer"})` accepts,
+  declines or hands it back to the game's AI (`native`, for marriage,
+  alliance and vassalage); `do(intent="set_policy", args={"policy":
+  "proposals", "class", "answer"})` sets a standing answer per class. An
+  answer is checked against the interaction's own conditions immediately
+  before it is carried out: an offer that no longer meets them is void,
+  refused `interaction_invalid` (`invalid_now`), never reported applied. An
+  answer to an offer the game voided is refused `proposal_closed` with the
+  void's reason (`void_sender_dead`, `void_subject_dead`, `void_war_ended`,
+  `void_recipient_dead`). An offer is held at most 400 game days. Without the
+  declaration nothing changes (`proposal_mod_not_declared`); with it and
+  without the mod enabled in the game, the calls are refused
+  `proposal_mod_not_loaded`. The tarball carries the mod under
+  `proposal_mod/`: its fixed files and `proposal_overrides.py`, which
+  generates the interaction copies from your installed game's own files
+  (they never ship); install by hand: `docs/incoming-proposals.md`. Held and
+  answered in a running game: the AI's own marriage offers and calls to war.
+  Not yet seen in a running game: an AI peace offer (white or otherwise)
+  held, and an answer to a voided offer read back.
+* **A seat can end a war it leads.** `do(intent="end_war")` with `terms`
+  `we_win` (needs your war score at 100), `white_peace` (needs the enemy's
+  below 25) or `we_yield`, against the enemy war leader, through the game's
+  own script and its own checks; without `terms` it is a read of what the
+  game would allow. `applied` means the war is gone from the war list. The
+  enemy is not asked.
+* **The war arguments are checked before the game is asked.** A casus belli
+  name that is not a type (a group name such as `claim`) is refused
+  `cb_not_a_casus_belli_type`; a claim war on your own claim is usable
+  whether or not the claim is pressed (another claimant's must be pressed),
+  in the bridge's claim reads, `plan_war` and `declare_war` alike. A council
+  task whose character target holds no title is refused
+  `council_target_not_addressable`.
+* **A council task you set stays set.** The game's AI reassigned a seat's
+  council task on the ruler's periodic pass; the bridge now skips that pass
+  for the position your own council-task write set, while you control the
+  ruler. Replies carry `ai_pin`.
+* **A seat never acts as another seat's ruler.** A write that names no
+  ruler acts for the calling session's own ruler or is refused `no_actor`,
+  and so does a seat's read; neither falls back any more to the ruler of the
+  first session that claimed one. A write that names its ruler under a key its verb does not read
+  (`character_id` where the verb reads `actor_id`) is refused
+  `actor_key_not_read` and writes nothing.
+* **The bridge serves every client in turn.** Its reader serves one line
+  per client per round, so a seat's batch of reads no longer holds up other
+  clients' calls; a ping or broadcast to a client that is not reading is
+  dropped instead of waiting on it. The server drops a bridge connection
+  whose handshake was never acknowledged and reconnects with its kept
+  token.
+* **Reads that come back empty are named.** `observe` names vassal realm
+  reads that returned nothing (`vassal_realms_unread`); an unread policy-mod
+  check is a read failure (`policy_mod_check_unread`), never "not loaded";
+  `observe`'s war rows carry each side's participants (`attackers`,
+  `defenders`).
+* **A write the game refused is not resent that month.** The identical write
+  in the same game month is answered from the earlier refusal (`repeat_of`,
+  nothing sent), and `plan_war` stops offering it (`refused_this_month`).
+* **`ck3agent run`** stops a Claude start that came up without the game's
+  tools and restarts it once (a second such start stops the run,
+  `seat_surface_failed`); its Claude gets a 60 s MCP start timeout unless you
+  set `MCP_TIMEOUT`. A run's `actions.jsonl` keeps only its own sessions' rows.
+* **Windows.** The bridge's Windows sources build without GNU-only
+  spellings (a portability check runs in the test suite), and the script
+  action layer has its Windows anchors. The Windows build is still not a
+  release asset.
+
 ## 2026.12.9 — 2026-11-12
 
 From the review of what the v3 seats actually did: every war the game refused

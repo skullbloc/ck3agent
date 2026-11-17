@@ -276,6 +276,26 @@ def test_set_policy_is_refused_without_the_mod():
     assert scripts_sent(gw) == []
 
 
+def test_an_unread_mod_check_is_a_read_failure_not_mod_absent(monkeypatch):
+    """fix10 (v4 pilot 2, council-a D1's second set_policy at 1066.09.15): the
+    mod check's read did not come back (`query_script_log_failed`) and the seat
+    was told `policy_mod_not_loaded` while the mod was witnessed agreed. Red on
+    5e506f28: raw_reason policy_mod_not_loaded. Nothing is sent either way."""
+    gw = Gw(ran("set_policy"))
+    real = gw.read
+
+    async def read(action, params=None):
+        if action == "query_script_log":
+            return {"success": False, "reason": "read_timeout"}
+        return await real(action, params)
+    monkeypatch.setattr(gw, "read", read)
+    env = run(R.do_impl(gw, intent="set_policy", character_id=ME,
+                        args={"policy": "join_liege_wars", "on": True}))
+    assert env["verdict"] == "rejected" and env["blocked"]["gate"] == "read_timeout"
+    assert env["blocked"]["raw_reason"] == "policy_mod_check_unread" and env["blocked"]["retryable"] is True
+    assert scripts_sent(gw) == []
+
+
 def test_set_policy_applies_when_the_game_reads_the_variable_back():
     def ledger(st, p):
         st["policies"][p["policy"]] = p["template"] == "set_policy"
@@ -323,3 +343,35 @@ def test_observe_carries_the_standing_policies():
     view = run(R.policies_of(Gw(None, state={"policies": {"join_liege_wars": True}}), ME))
     assert view["policies"] == {"join_liege_wars": True, "stay_out_of_liege_factions": False}
     assert view["mod_enabled"] is True and "set_policy" in view["set_with"]
+
+
+# lane COUNCILRE: the bridge pins the seat a seat set (council_pin.h) and says so
+# in `ai_pin`; the council task's standing warning carries that word, and a reply
+# without it reads None, never "pinned".
+def _council_warning(env):
+    (w,) = [w for w in env["warnings"] if w["code"] == "may_revert_ai_reasserts"]
+    return w
+
+
+def test_the_council_warning_carries_the_bridges_pin_word():
+    def set_task(st, _p):
+        st["council"][0]["current_task"] = "task_find_secrets"
+    gw = Gw(ran("council_task", seat="councillor_spymaster", task_used="task_find_secrets",
+                ai_pin="pinned"), on_write=set_task)
+    env = run(R.do_impl(gw, intent="council_task", character_id=ME,
+                        args={"task": "task_find_secrets", "target_character_id": FOE}))
+    assert env["verdict"] == "applied", env
+    w = _council_warning(env)
+    assert w["ai_pin"] == "pinned", w
+    assert w["is_known_limitation"] is True   # unproven live: still a limitation
+
+
+def test_a_reply_without_the_pin_word_is_none_not_pinned():
+    def set_task(st, _p):
+        st["council"][0]["current_task"] = "task_find_secrets"
+    gw = Gw(ran("council_task", seat="councillor_spymaster", task_used="task_find_secrets"),
+            on_write=set_task)
+    env = run(R.do_impl(gw, intent="council_task", character_id=ME,
+                        args={"task": "task_find_secrets", "target_character_id": FOE}))
+    w = _council_warning(env)
+    assert "ai_pin" in w and w["ai_pin"] is None, w

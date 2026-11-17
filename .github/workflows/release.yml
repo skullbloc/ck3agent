@@ -111,6 +111,8 @@ jobs:
           cp -R docs "$d/docs"
           # the standing-policy mod, installed by hand (docs/standing-policies.md)
           cp -R ck3agent/policy_mod "$d/policy_mod"
+          # the incoming-proposal mod's static half and its generator (docs/incoming-proposals.md)
+          cp -R ck3agent/proposal_mod "$d/proposal_mod"
           chmod +x "$d"/*.sh
           # reproducible: fixed order, owner and mtime (tagged commit time), no gzip timestamp
           tar -C stage --owner=0 --group=0 --numeric-owner --sort=name \
@@ -120,7 +122,9 @@ jobs:
           for f in README.txt VERSION install.sh uninstall.sh lib/libck3_bridge.so docs/getting-started.md \
                    docs/reference/tools.md docs/reference/files-and-paths.md docs/troubleshooting.md \
                    docs/standing-policies.md policy_mod/ck3agent_policies/descriptor.mod \
-                   policy_mod/ck3agent_policies/events/ck3agent_policy_events.txt; do
+                   policy_mod/ck3agent_policies/events/ck3agent_policy_events.txt \
+                   docs/incoming-proposals.md proposal_mod/proposal_overrides.py \
+                   proposal_mod/ck3agent_proposals/descriptor.mod; do
             grep -qxF "$name/$f" <<<"$listing" || { echo "::error::tarball lacks $f"; exit 1; }
           done
           cp bridge/build/libck3_bridge.so.debug "out/libck3_bridge-${VER}.so.debug"

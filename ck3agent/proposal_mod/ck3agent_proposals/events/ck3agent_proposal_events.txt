@@ -1,0 +1,30 @@
+﻿namespace = ck3agent_proposal
+
+# ck3agent incoming-proposal queue (lane QMOD): the rule answer. Armed by the
+# capture effect one day after it held an offer whose class policy is accept
+# or decline (codes 1, 2). It re-reads each open offer's class policy now, so a
+# rule the seat changed in between is the rule applied, and answers through the
+# one apply effect with by = 2 (rule). Its RESOLVED line names the rule:
+# class_policy:<class>=<answer> (the bridge composes the words from the codes).
+ck3agent_proposal.1 = {
+	type = character_event
+	hidden = yes
+	immediate = {
+		every_owned_story = {
+			limit = {
+				story_type = ck3agent_proposal
+				ck3agent_proposal_open_trigger = yes
+			}
+			ck3agent_proposal_restore_scopes_effect = yes
+			ck3agent_proposal_story_policy_effect = yes
+			if = {
+				limit = { scope:ck3a_policy = 1 }
+				ck3agent_proposal_answer_effect = { ANSWER = 1 BY = 2 }
+			}
+			else_if = {
+				limit = { scope:ck3a_policy = 2 }
+				ck3agent_proposal_answer_effect = { ANSWER = 2 BY = 2 }
+			}
+		}
+	}
+}

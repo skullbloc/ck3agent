@@ -2,6 +2,7 @@
 //
 // Runs on the ACCEPT THREAD, never the game thread. See the header for why.
 #include "log_archive.h"
+#include "ck3_compiler.h"   // CK3_WEAK (cl.exe has no __attribute__)
 
 #include <cerrno>
 #include <cstdlib>
@@ -15,7 +16,7 @@ extern char** environ;
 namespace bridge {
 
 // instance_paths.cpp; weak so host targets that do not link it still link.
-mode_t instance_file_mode() __attribute__((weak));
+mode_t instance_file_mode() CK3_WEAK;
 
 namespace {
 

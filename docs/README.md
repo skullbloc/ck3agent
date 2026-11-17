@@ -10,6 +10,7 @@ Read in this order. Stop when you have what you need.
 4. [Troubleshooting](troubleshooting.md): symptom first.
 5. [Your game updated](supported-versions.md): after a CK3 patch.
 5b. [Standing policies](standing-policies.md): what `set_policy` does, and installing the policy mod by hand.
+5c. [Incoming proposals](incoming-proposals.md): offers the game holds for Claude to answer, and installing the proposal mod by hand (experimental).
 
 ## Run and study
 

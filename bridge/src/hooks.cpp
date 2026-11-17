@@ -8,11 +8,13 @@
 // Expands short branches (rel8) to near branches (rel32) when relocating.
 
 #include "bridge.h"
+#include "ck3_compiler.h"   // CK3_PRINTF_FMT (cl.exe has no __attribute__)
 
 #include <cerrno>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -25,7 +27,7 @@
 #endif
 
 // Log to the bridge log file only (stderr is unsafe in pressure-vessel)
-static void hlog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void hlog(const char* fmt, ...) CK3_PRINTF_FMT(1, 2);
 static void hlog(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -243,6 +245,9 @@ static const uint32_t kWinReviewedHookRvas[] = {
     ck3_win::funcs::INTERACTION_TRY_SEND,  // on_interaction_try_send(uintptr_t* ctx, long extra) -> char
     ck3_win::funcs::WAR_SCORE_UPDATE,   // on_war_score_update(void* war); components adapted in war_score_hook.cpp
     ck3_win::funcs::LOBBY_VIEW_CTOR,    // lobby_view_ctor_hook(this, a2, a3) -> this (MSVC ctor)
+    // WINRE: on_war_decl_handler(void* req, void* ctx), diagnostic; the Windows body reads
+    // req+8/+0x10/+0x28 and ctx+0x2D8/+0x2DC, the hook's fields (ck3_offsets_win.h).
+    ck3_win::funcs::DECLARE_WAR_SPECIAL_HANDLER,
 };
 
 // The INT3-first install's window. Linux has a SIGTRAP handler for a thread that
@@ -598,7 +603,7 @@ void* install_hook(uintptr_t target_addr, void* hook_fn) {
 #endif
         // Step 1: INT3 at byte 0 — atomically traps any thread entering
         target_bytes[0] = 0xCC;
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
 
         // Step 2: Write the rest of the JMP sequence (bytes 1-11)
         // Prepare the full 12-byte sequence in a local buffer
@@ -617,12 +622,12 @@ void* install_hook(uintptr_t target_addr, void* hook_fn) {
             target_bytes[i] = 0x90; // NOP
         }
 
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
 
         // Step 3: Write byte 0 with the real opcode — hook is now live
         target_bytes[0] = 0x48;  // REX.W prefix of MOV RAX, imm64
 #ifdef _WIN32
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
         g_install_hi.store(0);
         g_install_lo.store(0);
 #endif

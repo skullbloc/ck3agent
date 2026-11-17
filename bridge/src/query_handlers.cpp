@@ -3,6 +3,7 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "claim_rule.h"
 #include "war_scope.h"
 #include "war_stance_record.h"   // which coordinator record a war_stance row reads
 #include "decision_eval_plan.h"   // the decision eval plan and the typed skip list
@@ -115,7 +116,9 @@ static bool attacker_has_pressed_claim_on(uintptr_t attacker_addr, uint32_t defe
     if (!data || !is_mapped(data)) return false;
     for (int32_t j = 0; j < cnt; j++) {
         uintptr_t entry = data + j * ck3::claim_entry::ENTRY_SIZE;
-        if (safe_read<uint8_t>(entry + ck3::claim_entry::PRESSED) == 0) continue;
+        // lane integ11 (claim_rule.h): the ACTOR's own claim counts pressed or not
+        if (!claim_rule::claim_usable(true, safe_read<uint8_t>(entry + ck3::claim_entry::PRESSED) != 0,
+                                      /*claimant_is_actor=*/true)) continue;
         uint32_t tid = safe_read<uint32_t>(entry + ck3::claim_entry::TITLE_ID) & 0xFFFFFF;
         uintptr_t tobj = lookup_title_obj(tid);
         if (!tobj) continue;
@@ -143,7 +146,9 @@ static uint32_t resolve_pressed_claim_title(uintptr_t actor_addr, uint32_t defen
     if (!data || !is_mapped(data)) return 0;
     for (int32_t j = 0; j < cnt; j++) {
         uintptr_t entry = data + j * ck3::claim_entry::ENTRY_SIZE;
-        if (safe_read<uint8_t>(entry + ck3::claim_entry::PRESSED) == 0) continue;
+        // lane integ11 (claim_rule.h): the ACTOR's own claim counts pressed or not
+        if (!claim_rule::claim_usable(true, safe_read<uint8_t>(entry + ck3::claim_entry::PRESSED) != 0,
+                                      /*claimant_is_actor=*/true)) continue;
         uint32_t tid = safe_read<uint32_t>(entry + ck3::claim_entry::TITLE_ID) & 0xFFFFFF;
         uintptr_t tobj = lookup_title_obj(tid);
         if (!tobj) continue;
@@ -2804,11 +2809,13 @@ bool do_query_claims(const char* params_json, std::string* out) {
                 r.key("holder_in_alliance"); r.value_bool(in_alliance);
                 r.key("holder_in_truce"); r.value_bool(in_truce);
                 r.key("already_at_war_opposing"); r.value_bool(opp);
-                bool declarable = (pressed != 0) && !is_self && ds.independent
+                // lane integ11 (claim_rule.h): these are the character's OWN claims
+                const bool usable = claim_rule::claim_usable(true, pressed != 0, /*claimant_is_actor=*/true);
+                bool declarable = usable && !is_self && ds.independent
                                   && !ds.imprisoned && !in_alliance && !in_truce && !opp;
                 r.key("declarable"); r.value_bool(declarable);
                 if (!declarable) {
-                    const char* reason = (pressed == 0) ? "claim_not_pressed"
+                    const char* reason = (!usable) ? "claim_not_pressed"
                                        : (is_self) ? "target_is_self"
                                        : (!ds.independent) ? "target_not_independent"
                                        : (ds.imprisoned) ? "target_imprisoned"
@@ -4925,6 +4932,21 @@ bool do_get_active_wars(const char* params_json, std::string* out) {
             const bool is_attacker = war_side::of(war_ptr, my_id) == war_side::Side::Attacker;
             r.key("is_attacker"); r.value_bool(is_attacker);
 
+            // fix10: every participant of each side (war_side::ids, the arrays
+            // war_side::of reads), so a reader can tell whether a vassal with
+            // `join_liege_wars` joined its liege's war (v4 pilot 2 had no read).
+            {
+                uint32_t ids[war_side::kMaxParticipants];
+                int n = war_side::ids(war_ptr, ck3::war_obj::ATK_PARTICIPANT, ids, war_side::kMaxParticipants);
+                r.key("attackers"); r.begin_array();
+                for (int k = 0; k < n; k++) r.value_uint(ids[k]);
+                r.end_array();
+                n = war_side::ids(war_ptr, ck3::war_obj::DEF_PARTICIPANT, ids, war_side::kMaxParticipants);
+                r.key("defenders"); r.begin_array();
+                for (int k = 0; k < n; k++) r.value_uint(ids[k]);
+                r.end_array();
+            }
+
             // war_score + favored_side ONLY if the breakdown cache has a FRESH
             // entry. A stale entry (hook refreshes rejected — ck-xwlg) is a
             // fossil, typically the all-zero day-one breakdown; flag it instead
@@ -5424,9 +5446,11 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
     int actor_id = json_get_int(params_json, "character_id");
     if (actor_id <= 0) actor_id = json_get_int(params_json, "attacker_id");
     if (actor_id <= 0) {
-        uint32_t ctrl = g_controlled_primary.load(std::memory_order_relaxed);
-        if (ctrl == 0) ctrl = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
-        actor_id = static_cast<int>(ctrl & 0xFFFFFF);
+        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // historical chain, kept for a session that declared no seat, is
+        // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
+        // a typed no_actor refusal, never another seat's ruler.
+        actor_id = static_cast<int>(resolve_actor_id(0, LegacyChain::MirrorThenPlayer).id);
     }
     if (actor_id <= 0) {
         if (out) *out = R"json({"success":false,"error":"no_actor_available","hint":"Provide character_id"})json";
@@ -7396,9 +7420,11 @@ bool do_query_interaction_acceptance(const char* params_json, std::string* out) 
     // Resolve actor_id (defaults to controlled character)
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id <= 0) {
-        uint32_t ctrl = g_controlled_primary.load(std::memory_order_relaxed);
-        if (ctrl == 0) ctrl = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
-        actor_id = static_cast<int>(ctrl & 0xFFFFFF);
+        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // historical chain, kept for a session that declared no seat, is
+        // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
+        // a typed no_actor refusal, never another seat's ruler.
+        actor_id = static_cast<int>(resolve_actor_id(0, LegacyChain::MirrorThenPlayer).id);
     }
     if (actor_id <= 0) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] query_interaction_acceptance: no actor available\n");
@@ -8448,12 +8474,10 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
     }
     g_in_protected_region = false;
 
-    // Resolve character: explicit id → controlled → player.
+    // The character was resolved by the caller, submit_decision_eval, on the
+    // requesting thread (lane ACTOR: actor_resolve.h needs the request's session,
+    // which the game thread that runs this does not carry).
     uint32_t use_id = char_id & 0xFFFFFF;
-    if (use_id == 0) {
-        use_id = g_controlled_primary.load(std::memory_order_relaxed) & 0xFFFFFF;
-        if (use_id == 0) use_id = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID) & 0xFFFFFF;
-    }
     void* character = (use_id != 0) ? lookup_character(use_id) : nullptr;
     if (!character || is_sentinel(character)) {
         ResponseBuilder e; e.begin_object();
@@ -8816,7 +8840,16 @@ static bool submit_decision_eval(const char* params_json, bool valid_only, std::
     int st = g_decision_eval_query.state.load(std::memory_order_acquire);
     if (st == 1 || st == 4) { *out = R"({"error":"decision_eval_busy","hint":"Another decisions query is pending; retry shortly."})"; return true; }
     if (st == 2 || st == 3) g_decision_eval_query.state.store(0, std::memory_order_release);
-    g_decision_eval_query.char_id    = (cid > 0) ? static_cast<uint32_t>(cid) : 0;
+    // lane ACTOR: resolved HERE, where the request's session is installed (the
+    // eval runs on the game thread). Historical chain: global mirror, then
+    // PLAYER_CHAR_ID; a seat gets its own primary or a typed no_actor refusal.
+    const uint32_t eval_char = resolve_actor_id(cid > 0 ? static_cast<uint32_t>(cid) : 0,
+                                                LegacyChain::MirrorThenPlayer).id;
+    if (eval_char == 0 && last_actor_refusal()) {
+        *out = R"({"error":"no_actor_available","hint":"Provide character_id"})";
+        return true;
+    }
+    g_decision_eval_query.char_id    = eval_char;
     g_decision_eval_query.valid_only = valid_only;
     g_decision_eval_query.req_hashes = std::move(req_hashes);
     g_decision_eval_query.req_names  = std::move(req_names);
@@ -9582,9 +9615,11 @@ bool do_query_valid_cbs(const char* params_json, std::string* out) {
     // Resolve actor_id (defaults to controlled character)
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id <= 0) {
-        uint32_t ctrl = g_controlled_primary.load(std::memory_order_relaxed);
-        if (ctrl == 0) ctrl = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
-        actor_id = static_cast<int>(ctrl & 0xFFFFFF);
+        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // historical chain, kept for a session that declared no seat, is
+        // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
+        // a typed no_actor refusal, never another seat's ruler.
+        actor_id = static_cast<int>(resolve_actor_id(0, LegacyChain::MirrorThenPlayer).id);
     }
     if (actor_id <= 0) {
         if (out) *out = R"({"error":"no_actor_available"})";
@@ -10036,9 +10071,11 @@ bool do_query_cb_validity_strict(const char* params_json, std::string* out) {
     FaultScope fault_scope("query_cb_validity_strict", out);
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id <= 0) {
-        uint32_t ctrl = g_controlled_primary.load(std::memory_order_relaxed);
-        if (ctrl == 0) ctrl = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
-        actor_id = static_cast<int>(ctrl & 0xFFFFFF);
+        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // historical chain, kept for a session that declared no seat, is
+        // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
+        // a typed no_actor refusal, never another seat's ruler.
+        actor_id = static_cast<int>(resolve_actor_id(0, LegacyChain::MirrorThenPlayer).id);
     }
     if (actor_id <= 0) {
         if (out) *out = R"({"error":"no_actor_available"})";
@@ -10620,9 +10657,11 @@ bool do_query_cbs_for_target(const char* params_json, std::string* out) {
     int actor_id = json_get_int(params_json, "attacker_id");
     if (actor_id <= 0) actor_id = json_get_int(params_json, "character_id");
     if (actor_id <= 0) {
-        uint32_t ctrl = g_controlled_primary.load(std::memory_order_relaxed);
-        if (ctrl == 0) ctrl = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
-        actor_id = static_cast<int>(ctrl & 0xFFFFFF);
+        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // historical chain, kept for a session that declared no seat, is
+        // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
+        // a typed no_actor refusal, never another seat's ruler.
+        actor_id = static_cast<int>(resolve_actor_id(0, LegacyChain::MirrorThenPlayer).id);
     }
     if (actor_id <= 0) {
         if (out) *out = R"json({"error":"no_actor_available","hint":"Provide attacker_id (or character_id)"})json";
@@ -10686,9 +10725,11 @@ bool do_query_cbs_for_targets(const char* params_json, std::string* out) {
     int actor_id = json_get_int(params_json, "attacker_id");
     if (actor_id <= 0) actor_id = json_get_int(params_json, "character_id");
     if (actor_id <= 0) {
-        uint32_t ctrl = g_controlled_primary.load(std::memory_order_relaxed);
-        if (ctrl == 0) ctrl = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
-        actor_id = static_cast<int>(ctrl & 0xFFFFFF);
+        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // historical chain, kept for a session that declared no seat, is
+        // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
+        // a typed no_actor refusal, never another seat's ruler.
+        actor_id = static_cast<int>(resolve_actor_id(0, LegacyChain::MirrorThenPlayer).id);
     }
     if (actor_id <= 0) {
         if (out) *out = R"json({"error":"no_actor_available","hint":"Provide attacker_id (or character_id)"})json";
@@ -11760,7 +11801,8 @@ bool do_query_marriage_candidates(const char* params_json, std::string* out) {
     int actor_param = json_get_int(params_json, "character_id");
     if (actor_param < 0) actor_param = 0;
     uint32_t actor_id = static_cast<uint32_t>(actor_param) & 0xFFFFFF;
-    if (actor_id == 0) actor_id = g_controlled_primary.load(std::memory_order_relaxed) & 0xFFFFFF;
+    // lane ACTOR: the one resolver; historical chain the global mirror only.
+    if (actor_id == 0) actor_id = resolve_actor_id(0, LegacyChain::MirrorOnly).id & 0xFFFFFF;
 
     const char* sort_str = json_get_string(params_json, "sort");
     if (!sort_str || !sort_str[0]) sort_str = "military";
@@ -12139,10 +12181,12 @@ bool do_query_title_claimants(const char* params_json, std::string* out) {
                                  (holder_state.independent && !holder_state.imprisoned
                                   && !holder_in_alliance && !holder_in_truce
                                   && !holder_already_at_war);
-                bool backable = pressed && in_court && holder_ok;
+                // lane integ11 (claim_rule.h): pressed, or the attacker's OWN claim
+                const bool usable = claim_rule::claim_usable(true, pressed, char_id == atk_id);
+                bool backable = usable && in_court && holder_ok;
                 r.key("backable_by_attacker"); r.value_bool(backable);
                 if (!backable) {
-                    const char* reason = (!pressed) ? "claim_not_pressed"
+                    const char* reason = (!usable) ? "claim_not_pressed"
                                        : (!in_court) ? "claimant_not_in_court"
                                        : (holder_present && !holder_state.independent) ? "target_not_independent"
                                        : (holder_present && holder_state.imprisoned) ? "target_imprisoned"
@@ -12587,11 +12631,13 @@ bool do_query_valid_war_targets(const char* params_json, std::string* out) {
             r.key("target_in_alliance"); r.value_bool(t_in_alliance);
             r.key("target_in_truce"); r.value_bool(t_in_truce);
             r.key("already_at_war_opposing"); r.value_bool(t_opp);
-            bool declarable = (pressed != 0) && ds.independent && !ds.imprisoned
+            // lane integ11 (claim_rule.h): the actor's OWN claim
+            const bool usable = claim_rule::claim_usable(true, pressed != 0, /*claimant_is_actor=*/true);
+            bool declarable = usable && ds.independent && !ds.imprisoned
                               && !t_in_alliance && !t_in_truce && !t_opp;
             r.key("declarable"); r.value_bool(declarable);
             if (!declarable) {
-                const char* reason = (pressed == 0) ? "claim_not_pressed"
+                const char* reason = (!usable) ? "claim_not_pressed"
                                    : (!ds.independent) ? "target_not_independent"
                                    : (ds.imprisoned) ? "target_imprisoned"
                                    : (t_in_alliance) ? "target_in_alliance"
@@ -13879,9 +13925,11 @@ bool do_query_cb_options(const char* params_json, std::string* out) {
     // --- Parse parameters ---
     int actor_id_param = json_get_int(params_json, "actor_id");
     if (actor_id_param <= 0) {
-        uint32_t ctrl = g_controlled_primary.load(std::memory_order_relaxed);
-        if (ctrl == 0) ctrl = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
-        actor_id_param = static_cast<int>(ctrl & 0xFFFFFF);
+        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // historical chain, kept for a session that declared no seat, is
+        // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
+        // a typed no_actor refusal, never another seat's ruler.
+        actor_id_param = static_cast<int>(resolve_actor_id(0, LegacyChain::MirrorThenPlayer).id);
     }
     if (actor_id_param <= 0) {
         if (out) *out = R"({"error":"no_actor_available"})";
@@ -17029,9 +17077,11 @@ bool do_query_trigger_result(const char* params_json, std::string* out) {
 
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id <= 0) {
-        uint32_t ctrl = g_controlled_primary.load(std::memory_order_relaxed);
-        if (ctrl == 0) ctrl = safe_read_offset<uint32_t>(ck3::globals::PLAYER_CHAR_ID);
-        actor_id = static_cast<int>(ctrl & 0xFFFFFF);
+        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // historical chain, kept for a session that declared no seat, is
+        // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
+        // a typed no_actor refusal, never another seat's ruler.
+        actor_id = static_cast<int>(resolve_actor_id(0, LegacyChain::MirrorThenPlayer).id);
     }
     if (actor_id <= 0) {
         if (out) *out = R"({"error":"no_actor_available"})";

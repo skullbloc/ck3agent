@@ -6,6 +6,7 @@
 #include "log_redact.h"   // 2026.12.5: no token reaches the log
 #include "instance_paths.h"  // ck-qn03
 #include "listener_fd.h"     // L21: close-on-exec descriptors
+#include "init_order.h"      // CK3_EARLY_INIT (ck3_compiler.h: empty under MSVC)
 #include "envelope_shape.h"
 #include "observation_route.h"   //: ck-h4pn
 #include "inflight.h"
@@ -136,6 +137,9 @@ static bool ck3_ipc_token_ok(const std::string& line) {
     return diff == 0;
 }
 #endif
+// After the Winsock mapping above, never before it: frame_send.h spells poll, send and
+// getsockopt the POSIX way and relies on this file's mapping on Windows.
+#include "frame_send.h"
 
 namespace bridge {
 
@@ -148,8 +152,8 @@ static int g_server_fd = -1;
 // start_ipc_server(), which dll_init calls before this TU's default-priority
 // initializers would otherwise run (which would then clobber the handles and
 // silently turn stop_ipc_server()'s join into a no-op).
-static std::thread g_server_thread __attribute__((init_priority(101)));
-static std::thread g_reader_thread __attribute__((init_priority(101)));
+static std::thread g_server_thread CK3_EARLY_INIT;
+static std::thread g_reader_thread CK3_EARLY_INIT;
 static std::mutex g_client_mutex;
 static std::atomic<bool> g_server_running{false};
 static char g_socket_path[256] = {};
@@ -239,7 +243,7 @@ std::string build_envelope_clock_fragment() {
 // The other init_priority(101) globals of this TU are g_server_thread,
 // g_reader_thread (above), g_queue_cv and g_msg_queue (below) — every object
 // here that start_ipc_server() or the threads it spawns can touch.
-static ClientSlot g_clients[MAX_CLIENTS] __attribute__((init_priority(101)));
+static ClientSlot g_clients[MAX_CLIENTS] CK3_EARLY_INIT;
 
 // Reader-thread response routing: set to the originating slot (idx + its gen
 // snapshot) while processing that slot's inbound lines, so send_observation()
@@ -255,8 +259,8 @@ static thread_local uint32_t g_send_target_gen  = 0;
 // from a thread dll_init started would be written into raw .bss and then
 // dropped on the floor when the real constructor finally ran.
 static std::mutex g_queue_mutex;
-static std::condition_variable g_queue_cv __attribute__((init_priority(101)));
-static std::deque<std::string> g_msg_queue __attribute__((init_priority(101)));
+static std::condition_variable g_queue_cv CK3_EARLY_INIT;
+static std::deque<std::string> g_msg_queue CK3_EARLY_INIT;
 
 // --- Accept-loop liveness diagnostics (ck-7tzu) ---
 // Monotonic seconds since bridge load, updated by server_loop after poll() returns
@@ -982,8 +986,12 @@ static constexpr int BACKPRESSURE_THRESHOLD = 8 * LARGEST_OBSERVED_REPLY_BYTES;
 // ck-jh76: `out` (optional) records WHICH exit fired and how far the body got.
 // Every `return false` below sets it, so an unset stage in a failure record
 // means this function was not the one that failed — never "we did not look".
+// fix10: `best_effort` (a keepalive ping, a broadcast: frames nobody waits on)
+// writes only when the whole frame has room now and otherwise drops it whole,
+// counted as backpressure; it never waits on a client that is not reading
+// (frame_send.h has the measured stall this closes).
 static bool send_to_slot(int idx, uint32_t gen, const char* json_data, size_t len,
-                         bridge::SendOutcome* out = nullptr) {
+                         bridge::SendOutcome* out = nullptr, bool best_effort = false) {
     auto fail = [&](bridge::SendStage st, size_t written, int e) {
         if (out) { out->stage = st; out->bytes_written = written;
                    out->bytes_total = len; out->err = e; }
@@ -1024,34 +1032,12 @@ static bool send_to_slot(int idx, uint32_t gen, const char* json_data, size_t le
         return fail(bridge::SendStage::kBackpressure, 0, 0);
     }
 
-    ssize_t sent = 0;
-    while (sent < static_cast<ssize_t>(len)) {
-        struct pollfd pfd = {static_cast<decltype(pollfd::fd)>(fd), POLLOUT, 0};
-        int pr = poll(&pfd, 1, g_send_timeout_ms);
-        if (pr <= 0 || !(pfd.revents & POLLOUT))
-            return fail(sent > 0 ? bridge::SendStage::kSendError
-                                 : bridge::SendStage::kPollTimeout,
-                        (size_t)sent, 0);  // drop; reader reaps if dead
-        ssize_t n = send(fd, json_data + sent, len - sent, MSG_NOSIGNAL);
-        if (n <= 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
-            // peer write failed; reader's poll() will HUP and release
-            return fail(bridge::SendStage::kSendError, (size_t)sent, errno);
-        }
-        sent += n;
-    }
-    // The trailing newline IS the frame terminator for a line-framed client.
-    // Failing here is not a dropped reply: the body is already in the client's
-    // buffer and its reader will never yield it.
-    struct pollfd pfd = {static_cast<decltype(pollfd::fd)>(fd), POLLOUT, 0};
-    int pr = poll(&pfd, 1, g_send_timeout_ms);
-    if (pr <= 0 || !(pfd.revents & POLLOUT))
-        return fail(bridge::SendStage::kNewlineFailed, (size_t)sent, 0);
-    char nl = '\n';
-    if (send(fd, &nl, 1, MSG_NOSIGNAL) <= 0)
-        return fail(bridge::SendStage::kNewlineFailed, (size_t)sent, errno);
-    if (out) { out->stage = bridge::SendStage::kOk; out->bytes_written = (size_t)sent; }
-    return true;
+    bridge::SendOutcome local;
+    const bool ok = bridge::write_frame(fd, json_data, len, g_send_timeout_ms, best_effort,
+                                        out ? out : &local);
+    if (!ok && best_effort && (out ? out : &local)->stage == bridge::SendStage::kBackpressure)
+        bridge::g_backpressure_drops.fetch_add(1, std::memory_order_relaxed);
+    return ok;
 }
 
 // Try to serve an envelope from the IPC thread. Returns true if processed
@@ -1497,6 +1483,26 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
 // Background reader thread — polls ALL connected client slots, reads NDJSON,
 // answers inline (routing the reply to the originating slot via the
 // thread-local target) or queues mutating actions for on_tick.
+//
+// WAVE 13 (lane METER): ONE LINE PER SLOT PER ROUND. This thread is the only
+// one that serves any client, and a Tier-2 read blocks it until the game-thread
+// drain has run that read (serve_on_game_thread, up to kGameThreadReadWaitMs
+// each). It used to serve EVERY complete line of a slot's read() chunk before it
+// looked at another slot, so a client that issued a batch of reads together held
+// every other client for the whole batch. In a seated episode that was the
+// seat's observe: its pushed-warnings step reads query_realm once per direct
+// vassal, concurrently (32 for the king of France), and the meter's
+// get_tick_info -- a Tier-1 read that needs no game thread -- waited behind the
+// batch and timed out at the meter's 15 s on 47 of 51 observes of pilot 2's K1
+// (docs/cleanup-2026.11/evidence/v4meter13/README.md). Now complete lines go to
+// a per-slot FIFO and each round serves at most one line of each slot, starting
+// one slot further on each round, so a waiting client is held for at most one
+// line of each other busy client. Within a slot the order is unchanged. A slot
+// with queued lines is not read again until they are served, so the FIFO holds
+// at most one read() of lines and a flooding client is still pushed back by its
+// socket. A slot that hangs up, errors or overruns a line has its queued lines
+// served before it is released: every line taken off the socket runs, as when
+// they ran at read time (test_reader_fairness).
 static void reader_loop() {
     bridge::register_thread(bridge::ThreadRole::IpcReader);   // ck-duv5
     // Mask SIGALRM on this thread — the watchdog timer targets the game thread
@@ -1516,15 +1522,366 @@ static void reader_loop() {
     // slot reuse (a released slot re-adopted by a new client) and resets the
     // accumulator so frames from the old and new client never run together.
     std::string line_bufs[MAX_CLIENTS];
+    std::deque<std::string> queued[MAX_CLIENTS];   // complete lines not yet served
     int idle_cycles[MAX_CLIENTS] = {0};
     uint32_t seen_gen[MAX_CLIENTS] = {0};
+    int round_start = 0;
 
     auto reset_if_reused = [&](int idx, uint32_t cur_gen) {
         if (seen_gen[idx] != cur_gen) {
             seen_gen[idx] = cur_gen;
             line_bufs[idx].clear();
+            queued[idx].clear();
             idle_cycles[idx] = 0;
         }
+    };
+
+    // Serve ONE complete line of slot idx. Returns true when the slot was
+    // released while serving it (the Windows token gate), so the caller stops
+    // serving that slot.
+    auto serve_line = [&](int idx, int cur_fd, uint32_t cur_gen, const std::string& line_buf) -> bool {
+        (void)cur_fd;   // read only by the Windows token gate
+        // rc2 B9: deep nesting overflows the stack in RapidJSON's
+        // recursive Accept(). Refuse the line before any parse.
+        if (bridge::json_depth_exceeds(line_buf.data(), line_buf.size(),
+                                       bridge::kMaxJsonDepth)) {
+            if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                "[CK3-Bridge] slot=%d line refused: nesting deeper than %d\n",
+                idx, bridge::kMaxJsonDepth);
+            static const char kTooDeep[] =
+                "{\"type\":\"error\",\"error\":\"json_too_deep\"}";
+            send_to_slot(idx, cur_gen, kTooDeep, sizeof(kTooDeep) - 1);
+            return false;
+        }
+
+        // N2 (surface audit 2026-08-01): an ACTIONS envelope is never a
+        // handshake. Without the "actions" exclusion, a misframed
+        // {"actions":[{"action":"handshake",...}]} whose text also
+        // contained "type" matched this substring test, got a plain
+        // handshake_ack (no request_id), and the caller stalled forever
+        // waiting for a request_id-matched reply — in ANY pause state.
+        // Such envelopes now flow down the normal action path, where the
+        // unregistered-name guard answers them with a typed redirect.
+#ifdef _WIN32
+        // The token gate: a slot that has not authenticated may send
+        // exactly one line, and it must be {"auth":"<token>"}.
+        {
+            bool authed;
+            {
+                std::lock_guard<std::mutex> lock(g_client_mutex);
+                authed = g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen &&
+                         g_clients[idx].authed;
+            }
+            if (!authed) {
+                const bool ok = ck3_ipc_token_ok(line_buf);
+                {
+                    std::lock_guard<std::mutex> lock(g_client_mutex);
+                    if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen) {
+                        if (ok) g_clients[idx].authed = true;
+                    }
+                }
+                if (ok) {
+                    static const char kOk[] = "{\"type\":\"auth_ok\"}";
+                    send_observation(kOk, sizeof(kOk) - 1);
+                    if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                        "[CK3-Bridge] slot=%d authenticated (endpoint token)\n", idx);
+                    return false;
+                }
+                static const char kNo[] = "{\"type\":\"error\",\"error\":\"auth_refused\","
+                    "\"hint\":\"send {\\\"auth\\\":\\\"<token from endpoint.json>\\\"} as the first line\"}";
+                send_observation(kNo, sizeof(kNo) - 1);
+                if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                    "[CK3-Bridge] REFUSED slot=%d: first line is not the endpoint token\n", idx);
+                std::lock_guard<std::mutex> lock(g_client_mutex);
+                if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen)
+                    release_slot_locked(idx, "auth refused");
+                return true;
+            }
+        }
+#endif
+        bool is_handshake = (line_buf.find("\"type\"") != std::string::npos &&
+                             line_buf.find("\"handshake\"") != std::string::npos &&
+                             line_buf.find("\"handshake_ack\"") == std::string::npos &&
+                             line_buf.find("\"actions\"") == std::string::npos);
+
+        if (is_handshake) {
+            // 2026.12.5: a handshake carries the resume token, which never reaches
+            // a log (log_redact.h); the rest of the line is kept.
+            if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Handshake received (slot=%d): %s\n", idx, bridge::redact_for_log(line_buf).c_str());
+
+            // M1: parse handshake params and create/attach a session to this slot.
+            HandshakeResult hs_result = handle_handshake_for_slot(idx, cur_gen, line_buf);
+            const char* session_id = hs_result.session ? hs_result.session->session_id.c_str() : "";
+            // ck-6kvq.6: echo the mode the bridge ACTUALLY minted. A v1
+            // (legacy) handshake always yields "control" even if it named a
+            // mode, so a client cannot otherwise tell whether its observe
+            // request was honoured. Empty when no session was minted.
+            const char* session_mode = hs_result.session
+                ? bridge::session_mode_to_string(hs_result.session->mode) : "";
+            // ck-6kvq.5: hand back the SERVER-MINTED resume token.  A
+            // client cannot resume a session whose token it was never
+            // given, which is the point — the token is an authorisation
+            // over a claim set, not a label.
+            const char* resume_token = hs_result.session
+                ? hs_result.session->resume_token.c_str() : "";
+
+            // ck-nkyc leg (e): WHAT WE ACTUALLY SAW, beside what we
+            // expected. `binary_build_id` keeps its name and its
+            // meaning — ck3_version::BUILD_ID_HEX, the EXPECTED
+            // constant the offsets were cut against — because renaming
+            // a wire field is its own hazard. `observed_build_id` is
+            // the new one, and it is the only value in this ack that is
+            // unique to WHAT RAN rather than to a tree.
+            const bridge::BuildIdWitness& bidw = bridge::build_id_witness();
+
+            // Grown from 2048 with the six ck-nkyc fields: a truncated
+            // ack is a SILENT provenance failure, which is the exact
+            // class of defect this bead exists to end.
+            char ack_buf[4096];
+            const int ack_len = snprintf(ack_buf, sizeof(ack_buf),
+                "{\"type\":\"handshake_ack\","
+                "\"binary_build_id\":\"%s\","
+                "\"observed_build_id\":\"%s\","
+                "\"build_id_status\":\"%s\","
+                "\"build_id_strict_effective\":%s,"
+                "\"build_id_strict_compiled\":%s,"
+                "\"build_id_strict_env\":\"%s\","
+                "\"build_id_loosen_attempted\":%s,"
+                "\"offset_revision\":%d,"
+                "\"offset_date\":\"%s\","
+                "\"build_git_sha\":\"%s\","
+                "\"build_git_branch\":\"%s\","
+                "\"build_git_dirty\":\"%s\","
+                "\"build_offsets_md5\":\"%s\","
+                "\"build_time\":\"%s\","
+                "\"status\":\"%s\","
+                "\"reason\":\"%s\","
+                "\"session_id\":\"%s\","
+                "\"session_mode\":\"%s\","
+                // ck-1ek9: WHICH MODE MINTED THAT session_mode.
+                // `session_mode` alone cannot answer the question a
+                // client actually has, which is "can I act?" — an
+                // observe session in `null` MAY set the clock
+                // (mode_admits_observer_clock_verbs) and one in any
+                // other mode may not. Without this field the only way
+                // to tell those apart is to ISSUE A VERB AND SEE, and
+                // a client that must act to discover it cannot refuse
+                // before acting. The mode is not a secret — it is
+                // already on every get_tick_info — this just puts it
+                // where the decision is made.
+                "\"pipeline_mode\":\"%s\","
+                "\"session_state\":\"%s\","
+                "\"resume_token\":\"%s\","
+                "\"resumed\":%s,"
+                "\"resume_status\":\"%s\","
+                "\"resume_identity_reason\":\"%s\"}",
+                ck3_version::BUILD_ID_HEX,
+                bidw.observed_hex.c_str(),
+                bridge::build_id_check_string(bidw.status),
+                bidw.strict_effective ? "true" : "false",
+                bidw.strict_compiled ? "true" : "false",
+                bidw.strict_env.c_str(),
+                bidw.loosen_attempted ? "true" : "false",
+                ck3_version::OFFSET_REVISION,
+                ck3_version::OFFSET_DATE,
+                bridge_provenance::GIT_SHA,
+                bridge_provenance::GIT_BRANCH,
+                bridge_provenance::GIT_DIRTY,
+                bridge_provenance::OFFSETS_MD5,
+                bridge_provenance::BUILD_TIME,
+                hs_result.status,
+                hs_result.reason,
+                session_id,
+                session_mode,
+                bridge::pipeline_mode_name(bridge::pipeline_mode()),
+                session_state_string(),
+                resume_token,
+                hs_result.resumed ? "true" : "false",
+                hs_result.resume_status,
+                hs_result.identity_reason);
+            // ck-nkyc: a TRUNCATED ack is a silent provenance failure —
+            // the client would parse a partial JSON object, or none, and
+            // the gate that is supposed to refuse the episode would
+            // instead see "the bridge reported nothing". snprintf tells
+            // us what it WOULD have written, so say so out loud.
+            if (ack_len < 0 || (size_t)ack_len >= sizeof(ack_buf)) {
+                if (bridge::g_logfile)
+                    fprintf(bridge::g_logfile,
+                            "[CK3-Bridge] FATAL: handshake_ack TRUNCATED "
+                            "(needed %d bytes, buffer %zu) — the client "
+                            "will see no build provenance\n",
+                            ack_len, sizeof(ack_buf));
+            }
+            // rc2: splice the provenance fields in after "type". Built
+            // separately because env values are unbounded.
+            static const char kAckHead[] = "{\"type\":\"handshake_ack\",";
+            std::string ack(kAckHead);
+            ack += handshake_provenance_fields();
+            ack += ',';
+            ack += ack_buf + (sizeof(kAckHead) - 1);
+            // Targeted reply to the connecting slot only (not broadcast).
+            send_to_slot(idx, cur_gen, ack.data(), ack.size());
+            if (hs_result.session) {
+                std::lock_guard<std::mutex> lock(g_client_mutex);
+                if (g_clients[idx].gen == cur_gen) g_clients[idx].handshaked = true;
+            }
+            if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Handshake acknowledged (slot=%d, status=%s, session=%s)\n", idx, hs_result.status, session_id);
+
+            // Refused handshakes close the slot after the error ack is sent.
+            if (strcmp(hs_result.status, "ok") != 0) {
+                std::lock_guard<std::mutex> lock(g_client_mutex);
+                if (g_clients[idx].gen == cur_gen) release_slot_locked(idx, "handshake refused");
+            }
+        } else {
+            // M1: install the slot's session as the current request context
+            // for any inline dispatch (read-only queries resolve to the
+            // session's primary; queued mutations carry session_id and are
+            // reinstalled on the game thread).
+            bridge::Session* slot_session = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(g_client_mutex);
+                if (g_clients[idx].gen == cur_gen) slot_session = g_clients[idx].session;
+            }
+            bridge::ClientContext ctx;
+            ctx.session = slot_session;
+            ctx.slot = nullptr;  // IPC thread; no slot back-pointer needed here
+            bridge::ClientContextGuard ctx_guard(&ctx);
+
+            // §2.7: ANY submission OR read from a control session resets
+            // its silence. Before the legacy/pipeline fork on purpose —
+            // a read served by the synchronous fast path is still
+            // activity, and an experiment must not record a hole that
+            // exists only because the agent polled instead of acting.
+            bridge::pipeline_note_session_activity(slot_session);
+
+            // ck-6kvq.9: the pipeline conductor's first stop. In
+            // LEGACY mode (the default, G11) this is one relaxed atomic
+            // load and a `return false`, so the ladder below runs
+            // exactly as it did before — that indistinguishability is
+            // the acceptance gate for the bead, not an aspiration.
+            // In pipeline mode it buffers the call and returns a ticket,
+            // EXCEPT for ANY-polarity calls, which fall through to the
+            // synchronous inline path below because the whole ops ladder
+            // polls them (ck3_game_selfheal.sh, operator_page.sh,
+            // overlay_poller.py, run_monitor.py).
+            // ── ck-dzxr: REFUSE A MALFORMED ENVELOPE, DO NOT QUEUE IT ──
+            // Every handler in the ladder below requires a top-level
+            // "actions" ARRAY. An envelope without one — a bare
+            // {"action":"..."}, an {"action_type":...}, a typo in the key
+            // — failed all of them and fell through to g_msg_queue, where
+            // it sat until the game thread drained it and produced
+            // nothing the sender could match.
+            //
+            // WHY THAT IS WORSE THAN AN ERROR. The queue's replies are
+            // BROADCAST (the game thread has no send target; clients match
+            // by request_id). So a caller whose envelope was never
+            // understood does not get silence — it gets the NEXT
+            // broadcast, which is another request's answer, well-formed
+            // and complete and about something else entirely.
+            //
+            // ck-zgh4 hit exactly this probing a live world: two malformed
+            // envelopes each came back with a full query_character payload
+            // for Harold Godwinson. They read a field off it, wrote the
+            // OPPOSITE of the truth into a report, and caught it only
+            // because they recognised the character name. A protocol that
+            // answers a question you did not ask, in the right shape, is
+            // the plausible-wrong-answer family at the transport layer.
+            //
+            // The refusal names the key that was missing, so the caller
+            // learns what to fix rather than that "something" was wrong.
+            if (!bridge::envelope_has_actions_array(line_buf.c_str())) {
+                char err[320];
+                snprintf(err, sizeof err,
+                    "{\"success\":false,\"error\":\"malformed_envelope\","
+                    "\"reason\":\"no top-level \\\"actions\\\" array\","
+                    "\"hint\":\"send {\\\"actions\\\":[{\\\"action\\\":...,"
+                    "\\\"params\\\":...,\\\"request_id\\\":...}]} after the "
+                    "handshake; replies are matched by request_id\"}");
+                send_observation(err, strlen(err));
+                if (bridge::g_logfile) fprintf(bridge::g_logfile,
+                    "[CK3-Bridge] REFUSED a malformed envelope on slot=%d "
+                    "(no \"actions\" array) — refusing rather than queueing, "
+                    "because a queued envelope's caller reads the next "
+                    "BROADCAST as its own answer (ck-dzxr)\n", idx);
+            } else if (bridge::pipeline_handle_envelope(line_buf, slot_session)) {
+                // Buffered + acknowledged (or answered, for `check`).
+            } else if (try_inline_safe_query(line_buf, slot_session)) {
+                // Processed inline — reply already routed to this slot.
+            } else {
+                SessionState state = get_session_state();
+                if (state != SessionState::ACTIVE) {
+                    char err_buf[256];
+                    snprintf(err_buf, sizeof(err_buf),
+                        "{\"error\":\"game_not_loaded\",\"state\":\"%s\"}",
+                        session_state_string());
+                    send_observation(err_buf, strlen(err_buf));
+                    if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Rejected action (slot=%d state=%s)\n",
+                            idx, session_state_string());
+                } else if (try_queue_fallthrough_rejection(line_buf)) {
+                    // D1-C/N2: an envelope of unregistered names
+                    // answered inline with unknown_action.
+                } else {
+                    // Queue for the game-thread drain. The drained response is broadcast
+                    // (game thread has no send target); the originating
+                    // client matches it by request_id.
+                    std::string session_id;
+                    {
+                        std::lock_guard<std::mutex> lock(g_client_mutex);
+                        if (g_clients[idx].gen == cur_gen && g_clients[idx].session)
+                            session_id = g_clients[idx].session->session_id;
+                    }
+                    std::string tagged = embed_session_id(line_buf, session_id.c_str());
+                    std::lock_guard<std::mutex> lock(g_queue_mutex);
+                    g_msg_queue.push_back(std::move(tagged));
+                    g_queue_cv.notify_one();
+                }
+            }
+
+            // R1c (ck-6kvq.10, design §2.9): the READER-THREAD anchor of
+            // the pulse ledger. This envelope's inline dispatch is over,
+            // so any pulse THIS thread still has open is leaked — the
+            // same argument as the drain anchor in bridge_init.cpp, and
+            // the one that covers the ~21 ALLOW_RANDOM_IN_SCOPE pulses
+            // that happen on this thread (eight of which cannot restore
+            // on their own crash path at all, because they arm AFTER
+            // their sigsetjmp).
+            bridge::pulse_sweep_ipc();
+        }
+
+        return false;
+    };
+
+    // Serve the head of slot idx's FIFO with the reply routed to that slot.
+    // False when the slot no longer holds the client the line came from.
+    auto serve_queued_head = [&](int idx) -> bool {
+        int cur_fd; uint32_t cur_gen;
+        {
+            std::lock_guard<std::mutex> lock(g_client_mutex);
+            cur_fd = bridge::slot_is_open(g_clients[idx]) ? g_clients[idx].fd : -1;
+            cur_gen = g_clients[idx].gen;
+        }
+        if (cur_fd < 0 || cur_gen != seen_gen[idx]) {   // released or reused: its client is gone
+            queued[idx].clear();
+            return false;
+        }
+        std::string line = std::move(queued[idx].front());
+        queued[idx].pop_front();
+        g_send_target_slot = idx;
+        g_send_target_gen = cur_gen;
+        const bool released = serve_line(idx, cur_fd, cur_gen, line);
+        g_send_target_slot = -1;
+        if (released) queued[idx].clear();
+        return !released;
+    };
+
+    // A slot that is going away: serve what it already sent, then release it.
+    auto drain_and_release = [&](int idx, int cur_fd, uint32_t cur_gen, const char* reason) {
+        while (!queued[idx].empty() && serve_queued_head(idx)) {}
+        queued[idx].clear();
+        std::lock_guard<std::mutex> lock(g_client_mutex);
+        if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen)
+            release_slot_locked(idx, reason);
+        std::string().swap(line_bufs[idx]);
     };
 
     while (g_server_running.load()) {
@@ -1533,10 +1890,13 @@ static void reader_loop() {
         int      slot_of[MAX_CLIENTS];
         uint32_t gen_of[MAX_CLIENTS];
         int npf = 0;
+        bool any_queued = false;
         {
             std::lock_guard<std::mutex> lock(g_client_mutex);
             for (int i = 0; i < MAX_CLIENTS; i++) {
                 if (bridge::slot_is_open(g_clients[i])) {
+                    reset_if_reused(i, g_clients[i].gen);
+                    any_queued |= !queued[i].empty();
                     pfds[npf].fd = g_clients[i].fd;
                     pfds[npf].events = POLLIN;
                     pfds[npf].revents = 0;
@@ -1551,12 +1911,13 @@ static void reader_loop() {
             continue;
         }
 
-        int ret = poll(pfds, npf, 200);  // 200ms timeout
+        // Lines waiting to be served: look at the sockets without waiting.
+        int ret = poll(pfds, npf, any_queued ? 0 : 200);  // 200ms timeout
         if (ret < 0) {
             if (errno == EINTR) continue;
             break;
         }
-        if (ret == 0) {
+        if (ret == 0 && !any_queued) {
             // Keepalive sweep: bump each live slot's idle counter; every ~5s
             // (25 * 200ms) probe peer liveness and ping. Collect ping targets
             // under the lock, then send without it (send_to_slot takes send_mtx
@@ -1587,14 +1948,14 @@ static void reader_loop() {
             for (int i = 0; i < np; i++) {
                 bridge::SendOutcome po;
                 const bool ok = send_to_slot(ping_idx[i], ping_gen[i], ping_msg,
-                                             sizeof(ping_msg) - 1, &po);
+                                             sizeof(ping_msg) - 1, &po, /*best_effort=*/true);
                 bridge::record_ping(ping_idx[i], ok, po);
             }
             continue;
         }
 
-        // Data ready on one or more slots — service each.
-        for (int p = 0; p < npf; p++) {
+        // Data ready on one or more slots: take complete lines into the FIFOs.
+        for (int p = 0; p < npf && ret > 0; p++) {
             int idx = slot_of[p];
             short re = pfds[p].revents;
             if (re == 0) continue;
@@ -1610,31 +1971,21 @@ static void reader_loop() {
             reset_if_reused(idx, cur_gen);
 
             if (re & (POLLERR | POLLHUP | POLLNVAL)) {
-                std::lock_guard<std::mutex> lock(g_client_mutex);
-                if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen)
-                    release_slot_locked(idx, "poll POLLERR/HUP/NVAL");
-                line_bufs[idx].clear();
+                drain_and_release(idx, cur_fd, cur_gen, "poll POLLERR/HUP/NVAL");
                 continue;
             }
             if (!(re & POLLIN)) continue;
+            // Still serving what it sent last time: leave the rest in its socket.
+            if (!queued[idx].empty()) continue;
 
             ssize_t n = ::read(cur_fd, read_buf, sizeof(read_buf));
             if (n <= 0) {
-                std::lock_guard<std::mutex> lock(g_client_mutex);
-                if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen)
-                    release_slot_locked(idx, "reader EOF / error");
-                line_bufs[idx].clear();
+                drain_and_release(idx, cur_fd, cur_gen, "reader EOF / error");
                 continue;
             }
             idle_cycles[idx] = 0;
 
-            // Route every response produced while processing this slot's lines
-            // back to this slot (handshake_ack, inline query results, errors).
-            g_send_target_slot = idx;
-            g_send_target_gen = cur_gen;
             std::string& line_buf = line_bufs[idx];
-
-            bool dropped = false;
             for (ssize_t i = 0; i < n; i++) {
                 if (read_buf[i] != '\n') {
                     line_buf += read_buf[i];
@@ -1643,329 +1994,24 @@ static void reader_loop() {
                         if (bridge::g_logfile) fprintf(bridge::g_logfile,
                             "[CK3-Bridge] slot=%d dropped: line exceeds %zu bytes\n",
                             idx, bridge::kMaxLineBytes);
-                        std::lock_guard<std::mutex> lock(g_client_mutex);
-                        if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen)
-                            release_slot_locked(idx, "line too long");
-                        dropped = true;
+                        drain_and_release(idx, cur_fd, cur_gen, "line too long");
                         break;
                     }
                     continue;
                 }
                 if (line_buf.empty()) continue;
-                // rc2 B9: deep nesting overflows the stack in RapidJSON's
-                // recursive Accept(). Refuse the line before any parse.
-                if (bridge::json_depth_exceeds(line_buf.data(), line_buf.size(),
-                                               bridge::kMaxJsonDepth)) {
-                    if (bridge::g_logfile) fprintf(bridge::g_logfile,
-                        "[CK3-Bridge] slot=%d line refused: nesting deeper than %d\n",
-                        idx, bridge::kMaxJsonDepth);
-                    static const char kTooDeep[] =
-                        "{\"type\":\"error\",\"error\":\"json_too_deep\"}";
-                    send_to_slot(idx, cur_gen, kTooDeep, sizeof(kTooDeep) - 1);
-                    line_buf.clear();
-                    continue;
-                }
-
-                // N2 (surface audit 2026-08-01): an ACTIONS envelope is never a
-                // handshake. Without the "actions" exclusion, a misframed
-                // {"actions":[{"action":"handshake",...}]} whose text also
-                // contained "type" matched this substring test, got a plain
-                // handshake_ack (no request_id), and the caller stalled forever
-                // waiting for a request_id-matched reply — in ANY pause state.
-                // Such envelopes now flow down the normal action path, where the
-                // unregistered-name guard answers them with a typed redirect.
-#ifdef _WIN32
-                // The token gate: a slot that has not authenticated may send
-                // exactly one line, and it must be {"auth":"<token>"}.
-                {
-                    bool authed;
-                    {
-                        std::lock_guard<std::mutex> lock(g_client_mutex);
-                        authed = g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen &&
-                                 g_clients[idx].authed;
-                    }
-                    if (!authed) {
-                        const bool ok = ck3_ipc_token_ok(line_buf);
-                        {
-                            std::lock_guard<std::mutex> lock(g_client_mutex);
-                            if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen) {
-                                if (ok) g_clients[idx].authed = true;
-                            }
-                        }
-                        if (ok) {
-                            static const char kOk[] = "{\"type\":\"auth_ok\"}";
-                            send_observation(kOk, sizeof(kOk) - 1);
-                            if (bridge::g_logfile) fprintf(bridge::g_logfile,
-                                "[CK3-Bridge] slot=%d authenticated (endpoint token)\n", idx);
-                            line_buf.clear();
-                            continue;
-                        }
-                        static const char kNo[] = "{\"type\":\"error\",\"error\":\"auth_refused\","
-                            "\"hint\":\"send {\\\"auth\\\":\\\"<token from endpoint.json>\\\"} as the first line\"}";
-                        send_observation(kNo, sizeof(kNo) - 1);
-                        if (bridge::g_logfile) fprintf(bridge::g_logfile,
-                            "[CK3-Bridge] REFUSED slot=%d: first line is not the endpoint token\n", idx);
-                        std::lock_guard<std::mutex> lock(g_client_mutex);
-                        if (g_clients[idx].fd == cur_fd && g_clients[idx].gen == cur_gen)
-                            release_slot_locked(idx, "auth refused");
-                        dropped = true;
-                        break;
-                    }
-                }
-#endif
-                bool is_handshake = (line_buf.find("\"type\"") != std::string::npos &&
-                                     line_buf.find("\"handshake\"") != std::string::npos &&
-                                     line_buf.find("\"handshake_ack\"") == std::string::npos &&
-                                     line_buf.find("\"actions\"") == std::string::npos);
-
-                if (is_handshake) {
-                    // 2026.12.5: a handshake carries the resume token, which never reaches
-                    // a log (log_redact.h); the rest of the line is kept.
-                    if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Handshake received (slot=%d): %s\n", idx, bridge::redact_for_log(line_buf).c_str());
-
-                    // M1: parse handshake params and create/attach a session to this slot.
-                    HandshakeResult hs_result = handle_handshake_for_slot(idx, cur_gen, line_buf);
-                    const char* session_id = hs_result.session ? hs_result.session->session_id.c_str() : "";
-                    // ck-6kvq.6: echo the mode the bridge ACTUALLY minted. A v1
-                    // (legacy) handshake always yields "control" even if it named a
-                    // mode, so a client cannot otherwise tell whether its observe
-                    // request was honoured. Empty when no session was minted.
-                    const char* session_mode = hs_result.session
-                        ? bridge::session_mode_to_string(hs_result.session->mode) : "";
-                    // ck-6kvq.5: hand back the SERVER-MINTED resume token.  A
-                    // client cannot resume a session whose token it was never
-                    // given, which is the point — the token is an authorisation
-                    // over a claim set, not a label.
-                    const char* resume_token = hs_result.session
-                        ? hs_result.session->resume_token.c_str() : "";
-
-                    // ck-nkyc leg (e): WHAT WE ACTUALLY SAW, beside what we
-                    // expected. `binary_build_id` keeps its name and its
-                    // meaning — ck3_version::BUILD_ID_HEX, the EXPECTED
-                    // constant the offsets were cut against — because renaming
-                    // a wire field is its own hazard. `observed_build_id` is
-                    // the new one, and it is the only value in this ack that is
-                    // unique to WHAT RAN rather than to a tree.
-                    const bridge::BuildIdWitness& bidw = bridge::build_id_witness();
-
-                    // Grown from 2048 with the six ck-nkyc fields: a truncated
-                    // ack is a SILENT provenance failure, which is the exact
-                    // class of defect this bead exists to end.
-                    char ack_buf[4096];
-                    const int ack_len = snprintf(ack_buf, sizeof(ack_buf),
-                        "{\"type\":\"handshake_ack\","
-                        "\"binary_build_id\":\"%s\","
-                        "\"observed_build_id\":\"%s\","
-                        "\"build_id_status\":\"%s\","
-                        "\"build_id_strict_effective\":%s,"
-                        "\"build_id_strict_compiled\":%s,"
-                        "\"build_id_strict_env\":\"%s\","
-                        "\"build_id_loosen_attempted\":%s,"
-                        "\"offset_revision\":%d,"
-                        "\"offset_date\":\"%s\","
-                        "\"build_git_sha\":\"%s\","
-                        "\"build_git_branch\":\"%s\","
-                        "\"build_git_dirty\":\"%s\","
-                        "\"build_offsets_md5\":\"%s\","
-                        "\"build_time\":\"%s\","
-                        "\"status\":\"%s\","
-                        "\"reason\":\"%s\","
-                        "\"session_id\":\"%s\","
-                        "\"session_mode\":\"%s\","
-                        // ck-1ek9: WHICH MODE MINTED THAT session_mode.
-                        // `session_mode` alone cannot answer the question a
-                        // client actually has, which is "can I act?" — an
-                        // observe session in `null` MAY set the clock
-                        // (mode_admits_observer_clock_verbs) and one in any
-                        // other mode may not. Without this field the only way
-                        // to tell those apart is to ISSUE A VERB AND SEE, and
-                        // a client that must act to discover it cannot refuse
-                        // before acting. The mode is not a secret — it is
-                        // already on every get_tick_info — this just puts it
-                        // where the decision is made.
-                        "\"pipeline_mode\":\"%s\","
-                        "\"session_state\":\"%s\","
-                        "\"resume_token\":\"%s\","
-                        "\"resumed\":%s,"
-                        "\"resume_status\":\"%s\","
-                        "\"resume_identity_reason\":\"%s\"}",
-                        ck3_version::BUILD_ID_HEX,
-                        bidw.observed_hex.c_str(),
-                        bridge::build_id_check_string(bidw.status),
-                        bidw.strict_effective ? "true" : "false",
-                        bidw.strict_compiled ? "true" : "false",
-                        bidw.strict_env.c_str(),
-                        bidw.loosen_attempted ? "true" : "false",
-                        ck3_version::OFFSET_REVISION,
-                        ck3_version::OFFSET_DATE,
-                        bridge_provenance::GIT_SHA,
-                        bridge_provenance::GIT_BRANCH,
-                        bridge_provenance::GIT_DIRTY,
-                        bridge_provenance::OFFSETS_MD5,
-                        bridge_provenance::BUILD_TIME,
-                        hs_result.status,
-                        hs_result.reason,
-                        session_id,
-                        session_mode,
-                        bridge::pipeline_mode_name(bridge::pipeline_mode()),
-                        session_state_string(),
-                        resume_token,
-                        hs_result.resumed ? "true" : "false",
-                        hs_result.resume_status,
-                        hs_result.identity_reason);
-                    // ck-nkyc: a TRUNCATED ack is a silent provenance failure —
-                    // the client would parse a partial JSON object, or none, and
-                    // the gate that is supposed to refuse the episode would
-                    // instead see "the bridge reported nothing". snprintf tells
-                    // us what it WOULD have written, so say so out loud.
-                    if (ack_len < 0 || (size_t)ack_len >= sizeof(ack_buf)) {
-                        if (bridge::g_logfile)
-                            fprintf(bridge::g_logfile,
-                                    "[CK3-Bridge] FATAL: handshake_ack TRUNCATED "
-                                    "(needed %d bytes, buffer %zu) — the client "
-                                    "will see no build provenance\n",
-                                    ack_len, sizeof(ack_buf));
-                    }
-                    // rc2: splice the provenance fields in after "type". Built
-                    // separately because env values are unbounded.
-                    static const char kAckHead[] = "{\"type\":\"handshake_ack\",";
-                    std::string ack(kAckHead);
-                    ack += handshake_provenance_fields();
-                    ack += ',';
-                    ack += ack_buf + (sizeof(kAckHead) - 1);
-                    // Targeted reply to the connecting slot only (not broadcast).
-                    send_to_slot(idx, cur_gen, ack.data(), ack.size());
-                    if (hs_result.session) {
-                        std::lock_guard<std::mutex> lock(g_client_mutex);
-                        if (g_clients[idx].gen == cur_gen) g_clients[idx].handshaked = true;
-                    }
-                    if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Handshake acknowledged (slot=%d, status=%s, session=%s)\n", idx, hs_result.status, session_id);
-
-                    // Refused handshakes close the slot after the error ack is sent.
-                    if (strcmp(hs_result.status, "ok") != 0) {
-                        std::lock_guard<std::mutex> lock(g_client_mutex);
-                        if (g_clients[idx].gen == cur_gen) release_slot_locked(idx, "handshake refused");
-                    }
-                } else {
-                    // M1: install the slot's session as the current request context
-                    // for any inline dispatch (read-only queries resolve to the
-                    // session's primary; queued mutations carry session_id and are
-                    // reinstalled on the game thread).
-                    bridge::Session* slot_session = nullptr;
-                    {
-                        std::lock_guard<std::mutex> lock(g_client_mutex);
-                        if (g_clients[idx].gen == cur_gen) slot_session = g_clients[idx].session;
-                    }
-                    bridge::ClientContext ctx;
-                    ctx.session = slot_session;
-                    ctx.slot = nullptr;  // IPC thread; no slot back-pointer needed here
-                    bridge::ClientContextGuard ctx_guard(&ctx);
-
-                    // §2.7: ANY submission OR read from a control session resets
-                    // its silence. Before the legacy/pipeline fork on purpose —
-                    // a read served by the synchronous fast path is still
-                    // activity, and an experiment must not record a hole that
-                    // exists only because the agent polled instead of acting.
-                    bridge::pipeline_note_session_activity(slot_session);
-
-                    // ck-6kvq.9: the pipeline conductor's first stop. In
-                    // LEGACY mode (the default, G11) this is one relaxed atomic
-                    // load and a `return false`, so the ladder below runs
-                    // exactly as it did before — that indistinguishability is
-                    // the acceptance gate for the bead, not an aspiration.
-                    // In pipeline mode it buffers the call and returns a ticket,
-                    // EXCEPT for ANY-polarity calls, which fall through to the
-                    // synchronous inline path below because the whole ops ladder
-                    // polls them (ck3_game_selfheal.sh, operator_page.sh,
-                    // overlay_poller.py, run_monitor.py).
-                    // ── ck-dzxr: REFUSE A MALFORMED ENVELOPE, DO NOT QUEUE IT ──
-                    // Every handler in the ladder below requires a top-level
-                    // "actions" ARRAY. An envelope without one — a bare
-                    // {"action":"..."}, an {"action_type":...}, a typo in the key
-                    // — failed all of them and fell through to g_msg_queue, where
-                    // it sat until the game thread drained it and produced
-                    // nothing the sender could match.
-                    //
-                    // WHY THAT IS WORSE THAN AN ERROR. The queue's replies are
-                    // BROADCAST (the game thread has no send target; clients match
-                    // by request_id). So a caller whose envelope was never
-                    // understood does not get silence — it gets the NEXT
-                    // broadcast, which is another request's answer, well-formed
-                    // and complete and about something else entirely.
-                    //
-                    // ck-zgh4 hit exactly this probing a live world: two malformed
-                    // envelopes each came back with a full query_character payload
-                    // for Harold Godwinson. They read a field off it, wrote the
-                    // OPPOSITE of the truth into a report, and caught it only
-                    // because they recognised the character name. A protocol that
-                    // answers a question you did not ask, in the right shape, is
-                    // the plausible-wrong-answer family at the transport layer.
-                    //
-                    // The refusal names the key that was missing, so the caller
-                    // learns what to fix rather than that "something" was wrong.
-                    if (!bridge::envelope_has_actions_array(line_buf.c_str())) {
-                        char err[320];
-                        snprintf(err, sizeof err,
-                            "{\"success\":false,\"error\":\"malformed_envelope\","
-                            "\"reason\":\"no top-level \\\"actions\\\" array\","
-                            "\"hint\":\"send {\\\"actions\\\":[{\\\"action\\\":...,"
-                            "\\\"params\\\":...,\\\"request_id\\\":...}]} after the "
-                            "handshake; replies are matched by request_id\"}");
-                        send_observation(err, strlen(err));
-                        if (bridge::g_logfile) fprintf(bridge::g_logfile,
-                            "[CK3-Bridge] REFUSED a malformed envelope on slot=%d "
-                            "(no \"actions\" array) — refusing rather than queueing, "
-                            "because a queued envelope's caller reads the next "
-                            "BROADCAST as its own answer (ck-dzxr)\n", idx);
-                    } else if (bridge::pipeline_handle_envelope(line_buf, slot_session)) {
-                        // Buffered + acknowledged (or answered, for `check`).
-                    } else if (try_inline_safe_query(line_buf, slot_session)) {
-                        // Processed inline — reply already routed to this slot.
-                    } else {
-                        SessionState state = get_session_state();
-                        if (state != SessionState::ACTIVE) {
-                            char err_buf[256];
-                            snprintf(err_buf, sizeof(err_buf),
-                                "{\"error\":\"game_not_loaded\",\"state\":\"%s\"}",
-                                session_state_string());
-                            send_observation(err_buf, strlen(err_buf));
-                            if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Rejected action (slot=%d state=%s)\n",
-                                    idx, session_state_string());
-                        } else if (try_queue_fallthrough_rejection(line_buf)) {
-                            // D1-C/N2: an envelope of unregistered names
-                            // answered inline with unknown_action.
-                        } else {
-                            // Queue for the game-thread drain. The drained response is broadcast
-                            // (game thread has no send target); the originating
-                            // client matches it by request_id.
-                            std::string session_id;
-                            {
-                                std::lock_guard<std::mutex> lock(g_client_mutex);
-                                if (g_clients[idx].gen == cur_gen && g_clients[idx].session)
-                                    session_id = g_clients[idx].session->session_id;
-                            }
-                            std::string tagged = embed_session_id(line_buf, session_id.c_str());
-                            std::lock_guard<std::mutex> lock(g_queue_mutex);
-                            g_msg_queue.push_back(std::move(tagged));
-                            g_queue_cv.notify_one();
-                        }
-                    }
-
-                    // R1c (ck-6kvq.10, design §2.9): the READER-THREAD anchor of
-                    // the pulse ledger. This envelope's inline dispatch is over,
-                    // so any pulse THIS thread still has open is leaked — the
-                    // same argument as the drain anchor in bridge_init.cpp, and
-                    // the one that covers the ~21 ALLOW_RANDOM_IN_SCOPE pulses
-                    // that happen on this thread (eight of which cannot restore
-                    // on their own crash path at all, because they arm AFTER
-                    // their sigsetjmp).
-                    bridge::pulse_sweep_ipc();
-                }
+                queued[idx].push_back(std::move(line_buf));
                 line_buf.clear();
             }
-            if (dropped) std::string().swap(line_buf);   // free the 1 MiB
-            g_send_target_slot = -1;
         }
+
+        // Serve one queued line of each slot, starting one slot further on
+        // each round.
+        for (int k = 0; k < MAX_CLIENTS; k++) {
+            const int idx = (round_start + k) % MAX_CLIENTS;
+            if (!queued[idx].empty()) serve_queued_head(idx);
+        }
+        round_start = (round_start + 1) % MAX_CLIENTS;
     }
 }
 
@@ -2603,7 +2649,7 @@ static bool send_observation_impl(const char* json_data, size_t len,
     // drop, or a broadcast that reached one of six clients would report clean.
     for (int i = 0; i < n; i++) {
         bridge::SendOutcome bo;
-        if (send_to_slot(idxs[i], gens[i], json_data, len, &bo)) {
+        if (send_to_slot(idxs[i], gens[i], json_data, len, &bo, /*best_effort=*/true)) {
             any = true;
         } else {
             bridge::merge_broadcast_outcome(g_last_send_outcome, bo);

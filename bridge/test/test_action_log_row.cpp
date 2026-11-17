@@ -118,6 +118,24 @@ int main(int argc, char** argv) {
           "a synchronous write: applied, no poll", std::string(v.verdict) + "/" + v.poll);
     v = action_log_verdict_of(R"({"success":false,"action":"create_title","status":"queued","reason":"no_poll_on_game_thread"})");
     check(std::string(v.verdict) == "pending", "create_title's queued receipt (success:false) is pending", v.verdict);
+    // fix10: council-a's row (bridge action_log.jsonl, 1070.08.26, K 37067 on
+    // 31808, SACT_17): the effect script ran (success true) and its guard did not
+    // let the war start (guard refused). Red on 5e506f28: applied.
+    v = action_log_verdict_of(R"({"success":true,"action":"script_action","template":"declare_war","actor_id":37067,"token":"SACT_17","guard":"refused","errors":[],"logs_found":true})");
+    check(std::string(v.verdict) == "rejected" && std::string(v.poll) == "answered",
+          "a script action whose guard refused: rejected, answered", std::string(v.verdict) + "/" + v.poll);
+    v = action_log_verdict_of(R"({"success":true,"action":"script_action","template":"declare_war","actor_id":37067,"token":"SACT_8","guard":"ran"})");
+    check(std::string(v.verdict) == "applied",
+          "[control] a script action whose guard ran: applied", v.verdict);
+    // lane peace: end_war with no terms is the read-only listing; it wrote
+    // nothing to the game (guard ran = the listing was written), so the row is
+    // a read. Red without the read_only rule: applied.
+    v = action_log_verdict_of(R"({"success":true,"action":"script_action","template":"end_war","actor_id":37067,"token":"SACT_9","guard":"ran","marks":["LEADS","OPEN_WE_YIELD"],"read_only":true})");
+    check(std::string(v.verdict) == "read" && std::string(v.poll) == "answered",
+          "end_war's read-only listing: read, answered", std::string(v.verdict) + "/" + v.poll);
+    v = action_log_verdict_of(R"({"success":true,"action":"script_action","template":"end_war","actor_id":37067,"token":"SACT_10","guard":"ran","terms":"we_yield","read_only":false})");
+    check(std::string(v.verdict) == "applied",
+          "[control] end_war with terms whose guard ran: applied", v.verdict);
     v = action_log_verdict_of("not json");
     check(std::string(v.verdict) == "unknown", "an unparseable reply is unknown, never rejected", v.verdict);
     v = action_log_verdict_of(R"({"action":"x"})");

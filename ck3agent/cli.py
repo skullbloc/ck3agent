@@ -1048,6 +1048,14 @@ EXIT_CONTINUATIONS_EXHAUSTED = 3
 STOP_CONTINUATIONS_EXHAUSTED = "continuations_exhausted"
 #: The other exit-3 stop: claude ended and its transcript names no session to resume.
 STOP_CONTINUATION_WITHOUT_SESSION = "continuation_without_session"
+#: fix10: claude came up twice in a row without the ck3 server's tools.
+STOP_SURFACE_FAILED = "seat_surface_failed"
+#: fix10: a failed start is restarted this many times before the run stops.
+SURFACE_RESTARTS = 1
+#: fix10: Claude Code's MCP server start timeout (ms) for a run's claude, unless
+#: the caller set one: under six seats a server's handshake and pre-bind could
+#: outlast the default, and the server came up `failed` with no tools.
+MCP_START_TIMEOUT_MS = "60000"
 #: The declared rulers (mcp_server.AGENT_CHARACTER_ENV) and the seat's lineage
 #: sink (seat_lineage.LINEAGE_OUT_ENV), mirrors checked by a test, and the sink
 #: row kinds a carry reads (seat_lineage KIND_*).
@@ -1209,6 +1217,58 @@ def turn_row(turn: int, kind: str, text: str, game_date: str | None, environ, **
     return {"turn": turn, "kind": kind, "utc": _now_utc(), "game_date": game_date,
             "cycle": pos.get("cycle"), "cycle_state": pos.get("state"),
             "text": text, "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), **extra}
+
+
+class SurfaceSeen:
+    """fix10 (v4 pilot 2, COUNCIL: 31 duke starts came up `ck3:failed` with
+    ZERO game tools and each then ran a whole turn blind). Read off the
+    transcript as the drain copies it: every `system/init` of this run's claude
+    is checked for the ck3 MCP server `connected` and at least one of its tools.
+    A start that fails is stopped at once (`proc` is terminated) and marked
+    `pending`; the run restarts that turn ONCE (_surface_restart), and a second
+    failed start in a row stops the run with STOP_SURFACE_FAILED. Nothing else
+    is read."""
+
+    TOOL_PREFIX = f"mcp__{MCP_SERVER_NAME}__"
+
+    def __init__(self) -> None:
+        self.proc = None
+        self.pending: dict | None = None
+        self.inits = 0
+        self.failed_inits: list[dict] = []
+
+    @classmethod
+    def init_failure(cls, ev) -> dict | None:
+        """The failure an init event shows, or None when the ck3 server is
+        connected with tools (or the event is not an init)."""
+        if not isinstance(ev, dict) or ev.get("type") != "system" or ev.get("subtype") != "init":
+            return None
+        servers = ev.get("mcp_servers") if isinstance(ev.get("mcp_servers"), list) else []
+        st = next((m.get("status") for m in servers
+                   if isinstance(m, dict) and m.get("name") == MCP_SERVER_NAME), None)
+        tools = [t for t in (ev.get("tools") or []) if isinstance(t, str) and t.startswith(cls.TOOL_PREFIX)]
+        if st == "connected" and tools:
+            return None
+        return {"server_status": st, "ck3_tools": len(tools), "session_id": ev.get("session_id"),
+                "uuid": ev.get("uuid"), "utc": _now_utc()}
+
+    def feed(self, line) -> None:
+        try:
+            ev = json.loads(line)
+        except (ValueError, TypeError):
+            return
+        if not (isinstance(ev, dict) and ev.get("type") == "system" and ev.get("subtype") == "init"):
+            return
+        self.inits += 1
+        bad = self.init_failure(ev)
+        if bad is None:
+            return
+        self.failed_inits.append(bad)
+        self.pending = bad
+        proc = self.proc
+        if proc is not None:
+            with contextlib.suppress(OSError, ProcessLookupError):
+                proc.terminate()
 
 
 class HorizonSeen:
@@ -1475,9 +1535,10 @@ class _Drain(threading.Thread):
     """claude's stdout to the transcript (and the terminal), line by line."""
 
     def __init__(self, src, fh, echo: bool, counter: "CycleCounter | None" = None,
-                 horizon: "HorizonSeen | None" = None):
+                 horizon: "HorizonSeen | None" = None, surface: "SurfaceSeen | None" = None):
         super().__init__(daemon=True)
         self.src, self.fh, self.echo, self.counter, self.horizon = src, fh, echo, counter, horizon
+        self.surface = surface
 
     def run(self) -> None:
         with contextlib.suppress(ValueError, OSError):  # fh closed under us: a grandchild kept the pipe
@@ -1491,6 +1552,8 @@ class _Drain(threading.Thread):
                 self.counter.feed(line)
             if self.horizon is not None:
                 self.horizon.feed(line)
+            if self.surface is not None:
+                self.surface.feed(line)
             if self.echo:
                 try:
                     _echo(line)
@@ -1565,6 +1628,43 @@ def _copy_range(src: Path, start: int, dst: Path) -> dict:
     out = {"source": str(src), "offset": start, "bytes": len(data), "lines": data.count(b"\n")}
     if note:
         out["note"] = note
+    return out
+
+
+def own_action_rows(data: bytes, sessions) -> tuple[bytes, dict]:
+    """fix10 (v4 pilot 2: each seat's bundled actions.jsonl held ~20 sessions'
+    rows, every seat's): the rows of the shared action log whose `session_id`
+    is one of this seat's sessions (the server's session record, `sessions`),
+    and the count of what was left out. A row that does not parse, or names no
+    session, is never this seat's: counted as `unattributed`, not copied."""
+    own = set(s for s in (sessions or []) if isinstance(s, str) and s)
+    kept, other, unattributed = [], 0, 0
+    for raw in data.splitlines(keepends=True):
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            unattributed += 1
+            continue
+        sid = row.get("session_id") if isinstance(row, dict) else None
+        if not isinstance(sid, str) or not sid:
+            unattributed += 1
+        elif sid in own:
+            kept.append(raw if raw.endswith(b"\n") else raw + b"\n")
+        else:
+            other += 1
+    return b"".join(kept), {"sessions": sorted(own), "rows": len(kept),
+                            "other_sessions_rows": other, "unattributed_rows": unattributed}
+
+
+def _copy_own_rows(src: Path, start: int, dst: Path, sessions) -> dict:
+    """_copy_range, then only this seat's rows (own_action_rows) are kept in `dst`."""
+    out = _copy_range(src, start, dst)
+    if dst.is_file():
+        kept, info = own_action_rows(dst.read_bytes(), sessions)
+        dst.write_bytes(kept)
+        out.update(info, attribution="session_id")
     return out
 
 
@@ -1944,6 +2044,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     env = dict(os.environ, CK3_TOOL_SURFACE_OUT=str(paths["tools"]),
                CK3_SESSION_OUT=str(paths["session"]),
                CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS="0")
+    env.setdefault("MCP_TIMEOUT", MCP_START_TIMEOUT_MS)
     env[SESSION_ID_ENV] = seat_sid
     env[HOOK_STATE_OUT_ENV] = str(paths["hook"])
     action_log = Path(br.action_log_path())
@@ -1991,11 +2092,14 @@ def cmd_run(a: argparse.Namespace) -> int:
     proc = watch = drain = None
     counter = CycleCounter()
     horizon = HorizonSeen()
+    surface = SurfaceSeen()
+    surface_in_row = 0
     gate = _Gate()
     fh = paths["stream"].open("w", encoding="utf-8")
     err = paths["stderr"].open("w", encoding="utf-8")
     old_signals = _set_signals(gate, with_int=signal.getsignal(signal.SIGINT) is signal.default_int_handler)
     record_turn(paths["turns"], turn_row(0, TURN_INITIAL, prompt, manifest["start_game_date"], env))
+    last_argv, last_text = argv, prompt     # fix10: what a failed start is restarted with
     try:
         gate.held = True
         try:
@@ -2004,7 +2108,9 @@ def cmd_run(a: argparse.Namespace) -> int:
         finally:
             gate.held = False
         gate.release()
-        drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter, horizon=horizon)
+        if cell:
+            surface.proc = proc             # fix10: only a cell's run stops a blind start
+        drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter, horizon=horizon, surface=surface)
         drain.start()
         if a.until_date or a.wall_seconds or a.cycles or os.environ.get(HORIZON_END_ENV) or cell:
             watch = _Watch(proc, sock, a.until_date, a.wall_seconds, link,
@@ -2021,54 +2127,85 @@ def cmd_run(a: argparse.Namespace) -> int:
                 # fed the server's horizon reply is finished, not resumed (r2 item 2).
                 if watch.reason is not None or horizon.reached:
                     break
-                if len(manifest["continuations"]) >= a.continuations or not sid:
-                    stop = STOP_CONTINUATIONS_EXHAUSTED if sid else STOP_CONTINUATION_WITHOUT_SESSION
-                    break
-                # Only now, with a resume certain, the old server's records are
-                # consumed: on any break above the teardown reads them (L23
-                # witness r3 item 1). 2026.12.5: the old server's bridge session
-                # is HANDED OVER, not released (_handover): its session record
-                # stays for the new server, which resumes that session with
-                # the seat's claims. The rulers this seat held when its claude
-                # ended are still carried to the new server, which otherwise
-                # pre-binds the DECLARED id: after a death and a rebind that is
-                # the dead original (r2 item 1). The old server's release record
-                # (what its session held at exit), else what the bridge lists
-                # for the handed-over session, else the seat's lineage sink.
-                release, handover = _handover(paths, sock, link)
-                carry = carried_rulers(release, handover, os.environ.get(LINEAGE_OUT_ENV))
-                with contextlib.suppress(OSError):
-                    paths["release"].unlink()   # the next server writes its own
-                if carry["rulers"] is not None:
-                    env[AGENT_CHARACTER_ENV] = ",".join(str(x) for x in carry["rulers"])
-                tinfo = br.tick_info(sock, link)
-                gdate = br._date(tinfo)
-                turn = len(manifest["continuations"]) + 1
-                pos = turn_position(gdate, env)
-                msgs, delivery = deliver_for_turn(env, game_date=gdate, tick=(tinfo or {}).get("tick_id"),
-                                                  cycle=pos.get("cycle"), turn=turn)
-                text = turn_prompt(msgs)
-                record_turn(paths["turns"], turn_row(
-                    turn, TURN_CONTINUATION, text, gdate, env, resumed_session_id=sid,
-                    messages_delivered=[m.get("msg_id") for m in msgs], delivery=delivery))
-                manifest["continuations"].append(
-                    {"utc": _now_utc(), "game_date": gdate, "turn": turn,
-                     "messages_delivered": len(msgs), "delivery": delivery["state"],
-                     "claude_stop": "exited", "claude_rc": rc, "result": sub,
-                     "result_stop_reason": why, "resumed_session_id": sid,
-                     "carried_rulers": carry["rulers"], "carried_from": carry["source"],
-                     "handover": handover})
-                rargv = resume_argv(argv, prompt, sid, text)
-                gate.held = True
-                try:
-                    proc = subprocess.Popen(dies_with_run(rargv), cwd=play, env=env, stdin=subprocess.DEVNULL,
-                                            stdout=subprocess.PIPE, stderr=err, encoding="utf-8",
-                                            errors="replace")
-                finally:
-                    gate.held = False
-                watch.proc = proc
+                bad, surface.pending = surface.pending, None
+                if bad is not None:
+                    # fix10: claude came up without the ck3 tools and was stopped
+                    # before it ran a turn blind: the same start once more, then
+                    # the run stops loudly. Not a continuation (the cap counts
+                    # claude ending on its own), but a turn row, so the turn
+                    # record still matches the starts.
+                    surface_in_row += 1
+                    if surface_in_row > SURFACE_RESTARTS:
+                        stop = STOP_SURFACE_FAILED
+                        break
+                    turn = len(manifest["continuations"]) + 1
+                    gdate = br.game_date(sock, link)
+                    record_turn(paths["turns"], turn_row(turn, TURN_CONTINUATION, last_text, gdate, env,
+                                                         resumed_session_id=sid, surface_restart=True))
+                    manifest["continuations"].append(
+                        {"utc": _now_utc(), "game_date": gdate, "turn": turn, "kind": "surface_restart",
+                         "failed_init": bad, "claude_stop": "terminated", "claude_rc": rc,
+                         "resumed_session_id": sid, "messages_delivered": 0, "delivery": "none"})
+                    gate.held = True
+                    try:
+                        proc = subprocess.Popen(dies_with_run(last_argv), cwd=play, env=env,
+                                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err,
+                                                encoding="utf-8", errors="replace")
+                    finally:
+                        gate.held = False
+                    watch.proc = surface.proc = proc
+                else:
+                    surface_in_row = 0
+                    n_cont = sum(1 for x in manifest["continuations"] if x.get("kind") != "surface_restart")
+                    if n_cont >= a.continuations or not sid:
+                        stop = STOP_CONTINUATIONS_EXHAUSTED if sid else STOP_CONTINUATION_WITHOUT_SESSION
+                        break
+                    # Only now, with a resume certain, the old server's records are
+                    # consumed: on any break above the teardown reads them (L23
+                    # witness r3 item 1). 2026.12.5: the old server's bridge session
+                    # is HANDED OVER, not released (_handover): its session record
+                    # stays for the new server, which resumes that session with
+                    # the seat's claims. The rulers this seat held when its claude
+                    # ended are still carried to the new server, which otherwise
+                    # pre-binds the DECLARED id: after a death and a rebind that is
+                    # the dead original (r2 item 1). The old server's release record
+                    # (what its session held at exit), else what the bridge lists
+                    # for the handed-over session, else the seat's lineage sink.
+                    release, handover = _handover(paths, sock, link)
+                    carry = carried_rulers(release, handover, os.environ.get(LINEAGE_OUT_ENV))
+                    with contextlib.suppress(OSError):
+                        paths["release"].unlink()   # the next server writes its own
+                    if carry["rulers"] is not None:
+                        env[AGENT_CHARACTER_ENV] = ",".join(str(x) for x in carry["rulers"])
+                    tinfo = br.tick_info(sock, link)
+                    gdate = br._date(tinfo)
+                    turn = len(manifest["continuations"]) + 1
+                    pos = turn_position(gdate, env)
+                    msgs, delivery = deliver_for_turn(env, game_date=gdate, tick=(tinfo or {}).get("tick_id"),
+                                                      cycle=pos.get("cycle"), turn=turn)
+                    text = turn_prompt(msgs)
+                    record_turn(paths["turns"], turn_row(
+                        turn, TURN_CONTINUATION, text, gdate, env, resumed_session_id=sid,
+                        messages_delivered=[m.get("msg_id") for m in msgs], delivery=delivery))
+                    manifest["continuations"].append(
+                        {"utc": _now_utc(), "game_date": gdate, "turn": turn,
+                         "messages_delivered": len(msgs), "delivery": delivery["state"],
+                         "claude_stop": "exited", "claude_rc": rc, "result": sub,
+                         "result_stop_reason": why, "resumed_session_id": sid,
+                         "carried_rulers": carry["rulers"], "carried_from": carry["source"],
+                         "handover": handover})
+                    rargv = resume_argv(argv, prompt, sid, text)
+                    last_argv, last_text = rargv, text
+                    gate.held = True
+                    try:
+                        proc = subprocess.Popen(dies_with_run(rargv), cwd=play, env=env, stdin=subprocess.DEVNULL,
+                                                stdout=subprocess.PIPE, stderr=err, encoding="utf-8",
+                                                errors="replace")
+                    finally:
+                        gate.held = False
+                    watch.proc = surface.proc = proc
             gate.release()
-            drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter, horizon=horizon)
+            drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter, horizon=horizon, surface=surface)
             drain.start()
             rc = proc.wait()
     except OSError as e:
@@ -2101,13 +2238,19 @@ def cmd_run(a: argparse.Namespace) -> int:
             err.close()
             if stop in ("cycles", "until_date", "wall_seconds", "horizon"):
                 rc = 0
-            elif stop in (STOP_CONTINUATIONS_EXHAUSTED, STOP_CONTINUATION_WITHOUT_SESSION):
+            elif stop in (STOP_CONTINUATIONS_EXHAUSTED, STOP_CONTINUATION_WITHOUT_SESSION, STOP_SURFACE_FAILED):
                 rc = EXIT_CONTINUATIONS_EXHAUSTED
             try:
                 srec = _load_json(paths["session"]) or {}
                 prebind, prebind_wait = srec.get("prebind"), srec.get("prebind_wait")
             except (ValueError, OSError):
                 srec, prebind, prebind_wait = {}, None, None
+            # fix10: the sessions this seat's servers held (the record carries them all)
+            seat_sessions = [x for x in ((srec if isinstance(srec, dict) else {}).get("sessions") or [])
+                             if isinstance(x, str)]
+            if isinstance(srec, dict) and isinstance(srec.get("session_id"), str) \
+                    and srec["session_id"] not in seat_sessions:
+                seat_sessions.append(srec["session_id"])
             release, resumed = _release_after(paths, sock, link)
             good = _clean(resumed) if resumed is not None else _clean(release)
             # L20-B: this run's sessions only (the server's, from its session
@@ -2147,7 +2290,10 @@ def cmd_run(a: argparse.Namespace) -> int:
                 end_game_date=br.game_date(sock, link), server_release=release, resumed_release=resumed,
                 teardown=[{"step": w, "ok": g, "detail": d} for w, g, d in teardown],
                 tool_surface=_load_tool_surface(paths["tools"]),
-                actions=_copy_range(action_log, log_start, paths["actions"]),
+                actions=_copy_own_rows(action_log, log_start, paths["actions"], seat_sessions),
+                surface_starts={"inits": surface.inits, "failed": surface.failed_inits,
+                                "restarts": sum(1 for x in manifest["continuations"]
+                                                if x.get("kind") == "surface_restart")},
                 rulers=_rulers_record(_declared_rulers(os.environ.get(AGENT_CHARACTER_ENV)),
                                       prebind, release, resumed, br.held_rulers(sock, link),
                                       wait=prebind_wait))
@@ -2179,6 +2325,10 @@ def cmd_run(a: argparse.Namespace) -> int:
                     + (f" (CK3_AGENT_CHARACTER_ID={rl['declared']!r} is not an id list)"
                        if isinstance(rl["declared"], str) else "")
                     + f"; held at stop {rl['held_at_stop'] or 'none'}")
+            if stop == STOP_SURFACE_FAILED:
+                con.fail("seat ended before the horizon",
+                         f"claude started without the ck3 tools {SURFACE_RESTARTS + 1} times in a row "
+                         f"(restarted {SURFACE_RESTARTS}); stop {stop}")
             if stop in (STOP_CONTINUATIONS_EXHAUSTED, STOP_CONTINUATION_WITHOUT_SESSION):
                 con.fail("seat ended before the horizon",
                          f"claude ended {len(manifest['continuations'])} time(s) before the run stopped it "

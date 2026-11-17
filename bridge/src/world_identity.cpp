@@ -38,7 +38,7 @@ bool           g_reload_seen = false;
 constexpr size_t kLedgerMax = 8;
 std::deque<RestoreRecord> g_ledger CK3_EARLY_INIT;
 
-void wlog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void wlog(const char* fmt, ...) CK3_PRINTF_FMT(1, 2);
 void wlog(const char* fmt, ...) {
     if (!g_logfile) return;
     va_list ap;
