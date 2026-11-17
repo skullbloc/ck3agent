@@ -46,6 +46,7 @@ import redesign
 import bridge_client  # noqa: E402
 import seat_lineage                      # v3 §7.5: the seat is a lineage (inert unless armed)
 import do_intent_args
+import refusal_memo                     # fix10: a game-refused write is not sent again this month
 
 #: The most domains one query(domains=[...]) call reads.
 QUERY_BATCH_MAX = 5
@@ -396,6 +397,13 @@ class BridgeState:
     #: 2026.12.5: this server's handshake presented a resume token and the bridge
     #: resumed that session (a seat handed over from its previous server).
     resumed_session: bool = False
+    #: fix10: the predecessor's resume token this server has NOT yet presented
+    #: on an acknowledged handshake (`_handshake_unusable`). Kept until a
+    #: handshake is acked, so a startup handshake lost under bridge load does
+    #: not lose the seat's session with it.
+    pending_resume_token: Optional[str] = None
+    #: fix10: handshakes refused `session_attached` while holding that token.
+    resume_attached_refusals: int = 0
     #: ck-ey8p. Frames this listener's type dispatch did not handle, counted by
     #: `type`. THE DICT IS EMPTY UNTIL ONE ARRIVES, never pre-seeded with zeroes:
     #: an absent key means none of that type was seen, and a zero would claim a
@@ -681,10 +689,13 @@ async def bridge_lifespan(server: FastMCP):
 
     EXPECTED_BRIDGE_VERSION = "v8-2026-03-20"
 
+    state.pending_resume_token = handover
     connected = await client.connect()
     if connected:
         state.connected = True
         ack = await _handshake_and_bind(client, state, resume_token=handover)
+        if await _handshake_unusable(state, ack, handover):
+            ack = None
         if ack:
             state.handshake_info = ack
             # rc2: "bridge_version" is the release version; the wire protocol tag moved to "bridge_protocol".
@@ -700,9 +711,12 @@ async def bridge_lifespan(server: FastMCP):
                     "Offsets may be stale — proceed with caution.",
                     EXPECTED_BRIDGE_VERSION, bv,
                 )
-        if state._listener_task is None or state._listener_task.done():   # a pre-bind starts it
+        if not state.connected:
+            log.warning("no usable bridge session at start: the first tool call reconnects "
+                        "(and presents the predecessor's token if there is one)")
+        elif state._listener_task is None or state._listener_task.done():   # a pre-bind starts it
             state._listener_task = asyncio.create_task(_bridge_listener(state))
-        log.info("Bridge connected, listener started")
+            log.info("Bridge connected, listener started")
     else:
         log.warning("Bridge not available — tools will return errors. "
                      "Start CK3 with bridge DLL and reconnect.")
@@ -978,6 +992,10 @@ async def _try_reconnect(state: BridgeState) -> bool:
                 await old_client.close()
             except Exception:
                 pass
+        # fix10: a token this server never presented on an acked handshake (its
+        # startup handshake was lost, or refused `session_attached`) is the
+        # seat's session; it is presented before any other.
+        resume = getattr(state, "pending_resume_token", None) or resume
         state._client = AsyncBridgeClient()
         # rc2 B7 (cli-4): the new client's session is recorded like the first
         # one, or CK3_SESSION_OUT keeps naming a session that no longer holds
@@ -995,6 +1013,8 @@ async def _try_reconnect(state: BridgeState) -> bool:
             # session; where it destroyed it the bridge answers unknown_token
             # and mints a fresh one, and the re-bind below claims again.
             ack = await _handshake_and_bind(state._client, state, resume_token=resume)
+            if await _handshake_unusable(state, ack, resume):
+                return False
             if ack:
                 state.handshake_info = ack
             if state._listener_task is None or state._listener_task.done():
@@ -1040,6 +1060,69 @@ def _handover_resume_token() -> Optional[str]:
     return tok if isinstance(tok, str) and tok else None
 
 
+#: fix10: how many handshakes may be refused `session_attached` (the
+#: predecessor's server still holds its socket) before this server keeps the
+#: fresh session it was given. Each is one tool call that answers
+#: `bridge_disconnected` and is retried on the next.
+RESUME_ATTACHED_RETRIES = 5
+
+
+def _resume_retry_due(state, ack, resume_token: Optional[str]) -> bool:
+    """True when a handshake that presented the seat's token was refused only
+    because the old session is still attached: the predecessor's server has not
+    let go yet, and a later handshake can still resume it. Bounded by
+    RESUME_ATTACHED_RETRIES."""
+    if not resume_token or not isinstance(ack, dict) or ack.get("resumed") is True:
+        return False
+    if ack.get("resume_status") != "session_attached":
+        return False
+    return int(getattr(state, "resume_attached_refusals", 0)) < RESUME_ATTACHED_RETRIES
+
+
+async def _handshake_unusable(state, ack, resume_token: Optional[str]) -> bool:
+    """fix10 (v4 pilot 2, COUNCIL D2 and D3): True when this connection must
+    not be used, after closing it and marking the server disconnected so the
+    next tool call reconnects (_ensure_connected).
+
+    THE DEFECT. Under six seats the bridge's one reader thread fell behind and
+    a seat server's startup handshake got no ack within its 10 s. The server
+    kept the socket as connected anyway: no pre-bind, no session record
+    (CK3_SESSION_OUT), the predecessor's token dropped, and the session the
+    bridge minted for that socket when it caught up was one the server could
+    not name. The agent's own `session(control)` then claimed its ruler on that
+    nameless session; at the claude's exit the bridge pinned it (a declared
+    seat), nobody could resume it, and every later server of the seat was
+    refused `owned_by_other` (D2 from turn 2, D3 from turn 1, to the end).
+
+    Unusable: (a) no ack (None, or not a dict); (b) the seat's token refused
+    `session_attached` while retries remain (_resume_retry_due). The token is
+    kept in `state.pending_resume_token` until an acked handshake presented it;
+    a resumed or freshly bound session clears it."""
+    usable = isinstance(ack, dict) and bool(ack)
+    retry = usable and _resume_retry_due(state, ack, resume_token)
+    if usable and not retry:
+        state.pending_resume_token = None
+        return False
+    if retry:
+        state.resume_attached_refusals = int(getattr(state, "resume_attached_refusals", 0)) + 1
+        log.warning("the seat's session is still attached to its previous server: this "
+                    "connection is dropped and the resume retried on the next call (%d/%d)",
+                    state.resume_attached_refusals, RESUME_ATTACHED_RETRIES)
+    else:
+        log.warning("no handshake ack: this connection is dropped and the next tool call "
+                    "reconnects%s", " presenting the seat's token" if resume_token else "")
+    state.pending_resume_token = resume_token or getattr(state, "pending_resume_token", None)
+    state.connected = False
+    state.handshake_info = {}
+    client = getattr(state, "_client", None)
+    if client is not None:
+        try:
+            await client.close()
+        except Exception:                                          # noqa: BLE001
+            pass
+    return True
+
+
 def _reconnect_resume_token(old_client) -> Optional[str]:
     """The previous session's resume token, presented on a reconnect ONLY when
     release-on-exit is armed (`ck3agent run`). An experiment episode, which
@@ -1077,6 +1160,9 @@ async def _ensure_connected(state: BridgeState, tool: str) -> dict[str, Any] | N
 #: character gets pre-bound. That gating is what keeps this out of arm E0 (which
 #: runs NullAgent and no MCP server at all) and out of anyone's ad-hoc session.
 AGENT_CHARACTER_ENV = "CK3_AGENT_CHARACTER_ID"
+
+#: fix10: this server's game-refused writes (refusal_memo.py).
+_REFUSALS = refusal_memo.Memo()
 
 
 #: lane-multi: the most rulers one pre-bind list may name. The bridge's cap is
@@ -1205,6 +1291,8 @@ async def _handshake_and_bind(client, state,
                         "owned_by_other", ack.get("resume_status"))
     # 2026.12.5: a handed-over session already holds the seat's rulers.
     state.resumed_session = bool(resume_token) and ack.get("resumed") is True
+    if _resume_retry_due(state, ack, resume_token):
+        return ack                      # fix10: no bind on a session about to be dropped
     ids = _agent_character_ids()
     if not ids:
         return ack                      # nothing declared: unchanged behaviour
@@ -2757,16 +2845,27 @@ async def _attach_pushed(gw, env: dict[str, Any], facts: dict) -> dict[str, Any]
     vids = _pw.vassal_ids(realm)
     key = (idx, tuple(vids))
     if idx is not None and _PUSH_CACHE.get("key") == key:
-        vassal_realms = _PUSH_CACHE["vassal_realms"]
+        vassal_realms, unread = _PUSH_CACHE["vassal_realms"], _PUSH_CACHE.get("unread")
     else:
+        unread = None
         try:
             replies = await gw.read_many([("query_realm", {"character_id": v}) for v in vids]) if vids else []
             vassal_realms = dict(zip(vids, replies))
+            # read_many answers a read that raised with {} (pilot 2: the king's
+            # 32 reads ran past the read timeout and the trigger went silent).
+            missed = [v for v, r in vassal_realms.items() if not (isinstance(r, dict) and r)]
+            if missed:
+                unread = {"code": "vassal_realms_unread", "unread": len(missed), "of": len(vids),
+                          "vassal_ids": missed,
+                          "detail": f"{len(missed)} of {len(vids)} vassal realm reads returned nothing; "
+                                    "vassal_over_demesne was not evaluated for them this cycle"}
         except Exception as exc:                                # noqa: BLE001
             vassal_realms = {}
-            env.setdefault("warnings", []).append(
-                {"code": "vassal_realms_unread", "detail": f"{type(exc).__name__}: {exc}"})
-        _PUSH_CACHE.update(key=key, vassal_realms=vassal_realms)
+            unread = {"code": "vassal_realms_unread", "unread": len(vids), "of": len(vids),
+                      "vassal_ids": list(vids), "detail": f"{type(exc).__name__}: {exc}"}
+        _PUSH_CACHE.update(key=key, vassal_realms=vassal_realms, unread=unread)
+    if unread:
+        env.setdefault("warnings", []).append(dict(unread))
     briefing, why = _pw.read_briefing(os.environ)
     if why:
         env.setdefault("warnings", []).append({"code": _pw.W_BRIEFING_UNREAD, "detail": why})
@@ -2850,8 +2949,10 @@ async def plan_war(character_id: int = 0, goal_scoped: bool = True,
     when declare_war sends the war, and a refusal there comes back with its reason. A row
     whose CB did not pass, a war on your own liege, and a claim whose claimant is not in
     your court are listed in `excluded`, never offered. A claim
-    CB is offered only on a pressed claim (`claim_pressed: true`, with the claimed title
-    and the claimant); an unpressed claim is listed in `excluded` as claim_not_pressed.
+    CB is offered on your OWN claim, pressed or not, or on a claimant's PRESSED claim
+    (`claim_pressed` says which, with the claimed title and the claimant); a claimant's
+    unpressed claim is listed in `excluded` as claim_not_pressed.
+    `claim_pressed` is null on a row whose casus belli is not a claim (it reads no claims).
     Empty list ⇒ `empty_reason` names the commonest
     `excluded` gate with its count (all gates in `measured.by_gate`), and in `fix` the
     parameter that would admit those rows (exclude_straddling=False with
@@ -2878,10 +2979,42 @@ async def plan_war(character_id: int = 0, goal_scoped: bool = True,
     err = await _ensure_connected(_get_state(), "plan_war")
     if err:
         return err
-    return await redesign.plan_war_impl(await _gateway_now(), character_id=character_id,
-                                         goal_scoped=goal_scoped, ally_free_only=ally_free_only,
-                                         exclude_straddling=exclude_straddling, max_results=max_results,
-                                         toward=toward)
+    env = await redesign.plan_war_impl(await _gateway_now(), character_id=character_id,
+                                       goal_scoped=goal_scoped, ally_free_only=ally_free_only,
+                                       exclude_straddling=exclude_straddling, max_results=max_results,
+                                       toward=toward)
+    return withhold_refused_offers(env, character_id, _REFUSALS)
+
+
+def withhold_refused_offers(env: Any, character_id: int, memo: "refusal_memo.Memo") -> Any:
+    """fix10: a plan_war row whose declaration the game refused this game-month
+    (the memo, keyed as declare_war keys it) is not offered again: it moves to
+    `excluded` with the gate refused_this_month and the earlier refusal's gate.
+    v4 pilot 2 COUNCIL: plan_war offered William 31808 / 7127, 30162 / 7808 and
+    63899 / 7808 after the game had refused each (cb_invalid_for_target)."""
+    if not isinstance(env, dict) or not isinstance(env.get("result"), dict):
+        return env
+    res = env["result"]
+    date = (env.get("game") or {}).get("date") if isinstance(env.get("game"), dict) else None
+    keep, moved = [], []
+    for row in res.get("targets") or []:
+        args = row.get("declare_args") if isinstance(row, dict) else None
+        earlier = memo.earlier(refusal_memo.declare_key(character_id, args), date) \
+            if isinstance(args, dict) else None
+        if earlier is None:
+            keep.append(row)
+            continue
+        gate = ((earlier["env"].get("blocked") or {}).get("gate"))
+        moved.append({**{k: row.get(k) for k in ("declare_args", "target_name", "title") if k in row},
+                      "blocked": redesign.why_blocked(
+                          refusal_memo.GATE_REFUSED_THIS_MONTH,
+                          summary=f"the game refused this declaration on {earlier['game_date']} ({gate}); "
+                                  "it is offered again next game-month"),
+                      "repeat_of": {"game_date": earlier["game_date"], "gate": gate}})
+    if moved:
+        res["targets"] = keep
+        res["excluded"] = list(res.get("excluded") or []) + moved
+    return env
 
 
 @mcp.tool()
@@ -2911,10 +3044,20 @@ async def declare_war(character_id: int = 0, declare_args: dict = None,
     err = await _ensure_connected(_get_state(), "declare_war")
     if err:
         return err
-    return await redesign.declare_war_impl(await _gateway_now(), character_id=character_id,
-                                            declare_args=declare_args, target_id=target_id,
-                                            cb=cb, cb_title_id=cb_title_id, claimant_id=claimant_id or 0,
-                                            confirm_straddle=confirm_straddle)
+    gw = await _gateway_now()
+    fields = dict(declare_args) if isinstance(declare_args, dict) else \
+        {"target_id": target_id, "cb": cb, "cb_title_id": cb_title_id, "claimant_id": claimant_id}
+    key = refusal_memo.declare_key(character_id, fields)
+    date = _state_game(_get_state()).get("date")
+    again = _REFUSALS.repeat_reply(key, date)
+    if again is not None:
+        return again                        # fix10: refused this game-month; not sent
+    env = await redesign.declare_war_impl(gw, character_id=character_id,
+                                          declare_args=declare_args, target_id=target_id,
+                                          cb=cb, cb_title_id=cb_title_id, claimant_id=claimant_id or 0,
+                                          confirm_straddle=confirm_straddle)
+    _REFUSALS.note(key, env, (env.get("game") or {}).get("date") if isinstance(env, dict) else None)
+    return env
 
 
 @mcp.tool()
@@ -3030,6 +3173,15 @@ async def do(
                 war's participant list. A refusal names the gate: recipient_refuses
                 (they would decline), interaction_invalid (the game's own check),
                 not_war_leader, war_not_found.
+                end_war (args={"enemy_id", "terms": we_win | white_peace | we_yield})
+                ENDS a war you lead against that enemy leader at once, with the casus
+                belli's own outcome: it is NOT an offer and the enemy is not asked. Terms
+                are named from YOUR side: we_win (needs your war score at 100), white_peace
+                (needs the enemy's below 25), we_yield (always open: you LOSE the war).
+                surrender / victory / enforce_demands are refused (they read from either
+                side). No terms (or check=true) reads the war: whether you lead it, your
+                war-score band and the open terms. applied means the war is gone from the
+                war list; a refused guard returns the reading in blocked.measured.
         action_class: formable_titles lists the titles you could create now, each with
                       its de-jure county count and a ready mint_title do_call (pass
                       `candidates=[...]` to test a custom key set). mercenaries: free
@@ -3070,8 +3222,17 @@ async def do(
     err = await _ensure_connected(_get_state(), "do")
     if err:
         return err
-    return await redesign.do_impl(await _gateway_now(), intent=intent, action_class=action_class,
-                                   candidates=candidates, character_id=character_id, args=args)
+    gw = await _gateway_now()
+    key = refusal_memo.do_key(character_id, intent, args) if intent else None
+    if key is not None:
+        again = _REFUSALS.repeat_reply(key, _state_game(_get_state()).get("date"))
+        if again is not None:
+            return again                    # fix10: refused this game-month; not sent
+    env = await redesign.do_impl(gw, intent=intent, action_class=action_class,
+                                 candidates=candidates, character_id=character_id, args=args)
+    if key is not None:
+        _REFUSALS.note(key, env, (env.get("game") or {}).get("date") if isinstance(env, dict) else None)
+    return env
 
 
 @mcp.tool()
@@ -3701,6 +3862,23 @@ def _record_session_at_handshake(client) -> None:
             rec = {"session_id": ack["session_id"], "resume_token": ack["resume_token"],
                    "pid": os.getpid(),
                    "written_utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+            # fix10: every session this seat's servers have held in this run,
+            # oldest first, carried from the record this one replaces: the
+            # run attributes action-log rows by it (ck3agent run, actions.jsonl).
+            pth0 = os.path.expanduser(out)
+            try:
+                with open(pth0, encoding="utf-8") as fh:
+                    prev = json.loads(fh.read() or "{}")
+            except (OSError, ValueError):
+                prev = {}
+            seen = [x for x in (prev.get("sessions") or []) if isinstance(x, str)] \
+                if isinstance(prev, dict) else []
+            if isinstance(prev, dict) and isinstance(prev.get("session_id"), str) \
+                    and prev["session_id"] not in seen:
+                seen.append(prev["session_id"])
+            if ack["session_id"] not in seen:
+                seen.append(ack["session_id"])
+            rec["sessions"] = seen
             if kw.get("resume_token"):
                 # 2026.12.5: a token was presented (a hand-over or a reconnect):
                 # whether the bridge resumed that session, and its word why not.

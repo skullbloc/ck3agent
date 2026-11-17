@@ -871,9 +871,23 @@ open(os.environ["FAKE_ARGV"], "w").write(json.dumps(args))
 open(os.environ["FAKE_ARGV"] + ".env", "w").write(json.dumps({"CK3_SESSION_OUT": os.environ.get("CK3_SESSION_OUT"),
                                                               "CK3_SESSION_ID": os.environ.get("CK3_SESSION_ID")}))
 if os.environ.get("FAKE_ACTION_LOG"):
-    open(os.environ["FAKE_ACTION_LOG"], "a").write('{"action":"during"}\n')
+    open(os.environ["FAKE_ACTION_LOG"], "a").write(os.environ.get("FAKE_ACTION_ROWS", '{"action":"during"}\n'))
+if os.environ.get("FAKE_SESSION_REC"):
+    # fix10: what the seat's server records at its handshake (every session held)
+    open(os.environ["CK3_SESSION_OUT"], "w").write(os.environ["FAKE_SESSION_REC"])
 cfg = json.load(open(args[args.index("--mcp-config") + 1]))["mcpServers"]["ck3"]
 open(os.environ["FAKE_ARGV"] + ".agent_ids", "a").write(repr(os.environ.get("CK3_AGENT_CHARACTER_ID")) + "\n")
+_start = len(open(os.environ["FAKE_ARGV"] + ".agent_ids").read().splitlines())
+if str(_start) in os.environ.get("FAKE_FAIL_STARTS", "").split(","):
+    # fix10: this start's MCP server came up failed: no ck3 tools. A real claude
+    # would go on to run its turn blind; this one waits to be stopped.
+    sys.stdout.write(json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "uuid": f"bad{_start}",
+                                 "tools": ["Bash"], "mcp_servers": [{"name": "ck3", "status": "failed"}],
+                                 "model": "claude-x", "claude_code_version": "9.9.9"}) + "\n")
+    sys.stdout.flush()
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    while True:
+        time.sleep(0.2)
 if os.environ.get("FAKE_HELD") is not None and "--resume" not in args:
     # The first claude's server, at exit: what its session held (release record).
     open(cfg["env"]["CK3_RELEASE_ON_EXIT"], "w").write(json.dumps(
@@ -1054,7 +1068,9 @@ def test_run_records_the_session(play, tmp_path, monkeypatch):
     assert m["actions"]["lines"] == 1
     stamp = Path(m["prompt_file"]).name.split(".")[0]
     runs = play / "runs"
-    assert (runs / f"{stamp}.actions.jsonl").read_text() == '{"action":"during"}\n'
+    # fix10: a row naming no session is nobody's: counted, not copied
+    assert (runs / f"{stamp}.actions.jsonl").read_text() == ""
+    assert m["actions"]["unattributed_rows"] == 1 and m["actions"]["rows"] == 0
     lines = (runs / f"{stamp}.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 4 and "Jórvik" in lines[1] and "bad � byte" in lines[2]
     argv = json.loads((tmp_path / "argv.json").read_text())
@@ -2102,3 +2118,83 @@ def test_a_python_without_ctypes_spawns_claude_directly(monkeypatch):
     if sys.platform.startswith("linux"):
         assert cli.pdeathsig_shim_available() == (False, "this Python has no ctypes")
     assert cli.dies_with_run(argv) == argv
+
+
+def test_a_seats_action_rows_are_its_own_sessions_only(play, tmp_path, monkeypatch):
+    """fix10 (v4 pilot 2: each seat's bundled actions.jsonl held ~20 sessions'
+    rows, every seat's). The shared action log's window holds rows of this
+    seat's two sessions, another seat's, and one naming none; the seat's copy
+    keeps its own two and counts the rest. Red on 5e506f28: all four copied."""
+    action_log = Path(br.action_log_path())
+    action_log.parent.mkdir(parents=True)
+    action_log.write_text('{"session_id":"mine-old","verb":"before"}\n')
+    rows = ['{"session_id":"mine-old","verb":"a"}', '{"session_id":"theirs","verb":"b"}',
+            '{"session_id":"mine","verb":"c"}', '{"verb":"d"}']
+    monkeypatch.setenv("FAKE_ACTION_LOG", str(action_log))
+    monkeypatch.setenv("FAKE_ACTION_ROWS", "\n".join(rows) + "\n")
+    monkeypatch.setenv("FAKE_SESSION_REC", json.dumps({"session_id": "mine", "resume_token": "t",
+                                                       "sessions": ["mine-old", "mine"]}))
+    assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "2"]) == 0
+    m = manifest_of(play)
+    stamp = Path(m["prompt_file"]).name.split(".")[0]
+    got = (play / "runs" / f"{stamp}.actions.jsonl").read_text().splitlines()
+    assert got == [rows[0], rows[2]]
+    assert m["actions"]["sessions"] == ["mine", "mine-old"] and m["actions"]["rows"] == 2
+    assert m["actions"]["other_sessions_rows"] == 1 and m["actions"]["unattributed_rows"] == 1
+
+
+def test_own_action_rows_unit():
+    """fix10: the filter alone, on bytes (one definition: own_action_rows)."""
+    data = b'{"session_id":"a","x":1}\nnot json\n{"session_id":"b"}\n\n{"x":2}\n{"session_id":"a"}'
+    kept, info = cli.own_action_rows(data, ["a"])
+    assert kept == b'{"session_id":"a","x":1}\n{"session_id":"a"}\n'
+    assert info == {"sessions": ["a"], "rows": 2, "other_sessions_rows": 1, "unattributed_rows": 2}
+
+
+def test_a_cell_start_without_the_ck3_tools_is_stopped_and_restarted_once(play, tmp_path, monkeypatch):
+    """fix10 (v4 pilot 2 COUNCIL: 31 duke starts came up `ck3:failed`, zero game
+    tools, and each ran its turn blind). Start 2 (the first resume) comes up
+    without the ck3 server: the run stops it at its init and starts it again,
+    a turn row and a `surface_restart` continuation that the cap does not count;
+    the run then goes on to its cap. Red on 5e506f28: the blind start is never
+    stopped (it hangs here until the wall stop) and nothing is restarted."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_FAIL_STARTS", "2")
+    rc = cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "40",
+                   "--continuations", "2"])
+    m = manifest_of(play)
+    kinds = [c.get("kind", "continuation") for c in m["continuations"]]
+    assert kinds == ["continuation", "surface_restart", "continuation"], m["continuations"]
+    assert m["stop_reason"] == "continuations_exhausted" and rc == cli.EXIT_CONTINUATIONS_EXHAUSTED
+    assert m["surface_starts"]["restarts"] == 1 and [f["uuid"] for f in m["surface_starts"]["failed"]] == ["bad2"]
+    assert m["surface_starts"]["failed"][0]["server_status"] == "failed"
+    stamp = Path(m["prompt_file"]).name.split(".")[0]
+    turns = (play / "runs" / f"{stamp}{cli.TURNS_SUFFIX}").read_text().splitlines()
+    assert [json.loads(t)["turn"] for t in turns] == [0, 1, 2, 3]
+    assert json.loads(turns[2]).get("surface_restart") is True
+
+
+def test_a_second_blind_start_in_a_row_stops_the_run_loudly(play, tmp_path, monkeypatch):
+    """fix10: the restart also comes up without the tools: the run stops with
+    seat_surface_failed (exit 3), never a turn run blind. Red on 5e506f28: the
+    run waits out its wall limit on the blind start."""
+    for k, v in CELL_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("FAKE_FAIL_STARTS", "2,3")
+    rc = cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "40",
+                   "--continuations", "5"])
+    m = manifest_of(play)
+    assert m["stop_reason"] == "seat_surface_failed" and rc == cli.EXIT_CONTINUATIONS_EXHAUSTED
+    assert [f["uuid"] for f in m["surface_starts"]["failed"]] == ["bad2", "bad3"]
+    assert m["surface_starts"]["restarts"] == 1
+
+
+def test_an_init_with_the_ck3_tools_is_not_a_failure():
+    """fix10 control: the predicate on the two init shapes the pilot recorded."""
+    good = {"type": "system", "subtype": "init", "tools": ["mcp__ck3__observe"],
+            "mcp_servers": [{"name": "ck3", "status": "connected"}]}
+    bad = {**good, "tools": [], "mcp_servers": [{"name": "ck3", "status": "failed"}]}
+    assert cli.SurfaceSeen.init_failure(good) is None
+    assert cli.SurfaceSeen.init_failure(bad)["server_status"] == "failed"
+    assert cli.SurfaceSeen.init_failure({"type": "assistant"}) is None

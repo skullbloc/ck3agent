@@ -4,12 +4,14 @@
 // it during AI tick → calls AI_INTERACTION_DECISION from safe tick context
 // → returns result.
 
+#include "claim_rule.h"
 #include "bridge.h"
 #include "scope_slot_policy.h"
 
 #include <atomic>
 #include <thread>
 #include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "ck3_compiler.h" // slot_load_acquire / slot_cas_acq_rel (cl.exe has no __atomic_*)
 #include "intent_queue.h"
 #include "ck3_offsets.h"
 #include "action_dispatch_internal.h"  // resolve_title_realm()
@@ -129,7 +131,7 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
     g_fake_scope[0]    = &g_fake_rng;
 
     const uint64_t fake = reinterpret_cast<uint64_t>(g_fake_scope);
-    uint64_t saved = __atomic_load_n(slot, __ATOMIC_ACQUIRE);
+    uint64_t saved = bridge::slot_load_acquire(slot);
     if (out_saved) *out_saved = saved;
 
     // COUNT THE DISPLACEMENT, unconditionally. A non-zero `saved` means we are
@@ -149,8 +151,7 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
     // do NOT retry with the newer value: that would be a second displacement
     // with a `saved` we never ledgered, and the caller's restore would then put
     // back a pointer the ledger does not know about.
-    if (!__atomic_compare_exchange_n(slot, &saved, fake, /*weak=*/false,
-                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    if (!bridge::slot_cas_acq_rel(slot, &saved, fake)) {
         ++bridge::g_arm_cas_failed;
         bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(slot));
         return false;              // NOT armed: the caller must not restore
@@ -216,10 +217,7 @@ void restore_fake_random_scope(uint64_t saved) {
     // was already dead when we captured it. That is the deploy-50 wedge, and
     // it is why the latch below exists rather than a cleverer value here.
     uint64_t expected = reinterpret_cast<uint64_t>(g_fake_scope);
-    const bool wrote = __atomic_compare_exchange_n(slot, &expected, saved,
-                                                   /*weak=*/false,
-                                                   __ATOMIC_ACQ_REL,
-                                                   __ATOMIC_ACQUIRE);
+    const bool wrote = bridge::slot_cas_acq_rel(slot, &expected, saved);
     // The restore RAN, whatever it decided. `arm_published - restore_ran` is
     // then exactly the number of arms whose restore never happened — the
     // eight sites that arm after their `sigsetjmp` cannot restore on the
@@ -1214,6 +1212,7 @@ bool execute_war_create_core_intent(Intent* intent) {
               eff_claimant, eff_claimant_char, title_id);
 
         bool pressed_claim = false;
+        bool has_claim = false;
         uint32_t claimant_liege_id = 0;
         bool court_resolved = false;
         {
@@ -1242,6 +1241,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                             uintptr_t entry = claim_data_ptr + j * ck3::claim_entry::ENTRY_SIZE;
                             uint32_t claim_tid = safe_read<uint32_t>(entry + ck3::claim_entry::TITLE_ID) & 0xFFFFFF;
                             if (claim_tid == (uint32_t)title_id) {
+                                has_claim = true;
                                 if (safe_read<uint8_t>(entry + ck3::claim_entry::PRESSED) != 0) {
                                     pressed_claim = true;
                                 }
@@ -1282,7 +1282,9 @@ bool execute_war_create_core_intent(Intent* intent) {
             g_in_protected_region = false; watchdog_disarm();
         }
 
-        if (!pressed_claim) return reject("claim_not_pressed");
+        // lane integ11 (claim_rule.h): the claimant's own unpressed claim is his to press
+        if (!claim_rule::claim_usable(has_claim, pressed_claim, eff_claimant == atk_id))
+            return reject("claim_not_pressed");
         // Court membership: pass if claimant is the attacker, or the claimant's
         // resolved liege/host is the attacker. court_resolved==false means the
         // claimant is independent (no liege) and not the attacker → not in court.

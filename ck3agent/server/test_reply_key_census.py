@@ -76,8 +76,13 @@ ENVELOPE = frozenset({"request_id", "tick", "game_date"})
 #: refusals add reason/phase/hint (pipeline.cpp, flush_apply.cpp), and the inline
 #: drain's timeout is {"error","action","waited_ms","hint"} (ipc_server.cpp).
 #: test_failure_keys_are_the_bridges checks each spelling is in those files.
-FAILURE_KEYS = ("success", "action", "error", "reason", "phase", "waited_ms", "hint")
-FAILURE_SOURCES = ("dispatch_router.cpp", "pipeline.cpp", "flush_apply.cpp", "ipc_server.cpp")
+FAILURE_KEYS = ("success", "action", "error", "reason", "phase", "waited_ms", "hint",
+                # lane ACTOR: the dispatch's typed no_actor refusal (actor_resolve.cpp annotate)
+                "actor_refused", "actor_rule",
+                # lane ACTORKEY: rule 0's two keys (actor_resolve.cpp annotate)
+                "actor_key_read", "actor_key_got")
+FAILURE_SOURCES = ("dispatch_router.cpp", "pipeline.cpp", "flush_apply.cpp", "ipc_server.cpp",
+                   "actor_resolve.cpp")
 FAILURE = frozenset((k,) for k in FAILURE_KEYS)
 
 _DEF = re.compile(r"^[ \t]*(?:static\s+|inline\s+)*(?:void|bool)\s+(\w+)\s*\(", re.M)

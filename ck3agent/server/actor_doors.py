@@ -3,8 +3,10 @@
 A query domain or a discover subject asks about the bound ruler when its bridge
 handler resolves an unnamed actor (character_id / actor_id 0 or absent) to the
 controlled character: resolve_character, resolve_actor, get_controlled_character
-or g_controlled_primary in the handler's chain (bridge/src). With no ruler bound
-such a door has nobody to answer about, so the server answers the refusal every
+or resolve_actor_id in the handler's chain (bridge/src; all of them reach
+bridge/include/actor_resolve.h, which gives a seat its own primary or a typed
+no_actor refusal, never another seat's ruler). With no ruler bound such a door
+has nobody to answer about, so the server answers the refusal every
 actor-bearing tool answers (redesign.unbound_refusal). A door whose handler never
 falls back to the bound ruler (a catalog, a feed, a read that needs its ids named)
 is answered whatever is bound.
@@ -72,13 +74,6 @@ ACTOR_DOORS: dict[str, tuple[str, ...]] = {
     "construction_check": (),
     "list_decisions_annotated": (),
     "list_valid_decisions": (),
-}
-
-#: Actor doors whose fallback is not in the handler's own chain: the function
-#: that holds it (the game-thread worker the handler submits to).
-ACTOR_DOORS_VIA: dict[str, str] = {
-    "list_decisions_annotated": "enumerate_decisions_annotated",
-    "list_valid_decisions": "enumerate_decisions_annotated",
 }
 
 #: Doors whose handler falls back to the bound ruler and still answers without

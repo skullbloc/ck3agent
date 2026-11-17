@@ -1,0 +1,73 @@
+﻿# ck3agent incoming-proposal queue (lane QMOD; docs/design/incoming-proposals.md).
+#
+# The triggers the generated interaction copies call (the four enumerated line
+# shapes, scripts/proposal_overrides.py ALLOWED_LINE) and the ones the static
+# effects use. EVERY trigger below reads only our own variables:
+#   ck3agent_proposal_held_<class>   a list on a SEATED recipient, filled only by
+#                                    the capture effect, which needs the seat marker
+#   ck3agent_proposal_sending        on an actor, only during one bridge template call
+#   ck3agent_proposal_options        the same actor's list, the same call
+#   ck3agent_proposal_answering      on a seated recipient, only during an answer
+# With none of them present every trigger here takes the vanilla branch, so an
+# unseated character's interactions behave as in the unmodified game.
+
+# Hold (shape 2): first line of the interaction's validity. False only when the
+# sender is on the recipient's held list for the class: the engine's re-check on
+# delivery then drops the held offer with no effects (RE HIGH, ck-1ps.5).
+ck3agent_proposal_not_held_trigger = {
+	NOT = {
+		scope:recipient ?= {
+			is_target_in_variable_list = {
+				name = ck3agent_proposal_held_$CLASS$
+				target = scope:actor
+			}
+		}
+	}
+}
+
+# Send options (shape 3). True while one of our template calls sends this
+# interaction (proposal_answer's re-send).
+ck3agent_proposal_sending_trigger = {
+	scope:actor ?= { has_variable = ck3agent_proposal_sending }
+}
+ck3agent_proposal_not_sending_trigger = {
+	NOT = { scope:actor ?= { has_variable = ck3agent_proposal_sending } }
+}
+
+# The option FLAG was on in the captured offer (only ever true while sending).
+ck3agent_proposal_option_selected_trigger = {
+	scope:actor ?= {
+		has_variable = ck3agent_proposal_sending
+		is_target_in_variable_list = {
+			name = ck3agent_proposal_options
+			target = flag:$FLAG$
+		}
+	}
+}
+
+# Exclusive options: valid as in vanilla, and while sending only the captured one.
+ck3agent_proposal_option_trigger = {
+	trigger_if = {
+		limit = { ck3agent_proposal_sending_trigger = yes }
+		ck3agent_proposal_option_selected_trigger = { FLAG = $FLAG$ }
+	}
+}
+
+# On_send guard (shape 4): the vanilla on_send body runs unless this is our own
+# re-send of an offer whose on_send already ran when the AI sent it.
+ck3agent_proposal_not_answering_trigger = {
+	NOT = { scope:recipient ?= { has_variable = ck3agent_proposal_answering } }
+}
+
+# ── story scope (root or this = a ck3agent_proposal story) ────────────────────
+
+ck3agent_proposal_open_trigger = {
+	has_variable = ck3agent_proposal_state
+	var:ck3agent_proposal_state = 1
+}
+
+# The kind's application family (design "Applying an answer"); set at capture
+# by the generated ck3agent_proposal_set_family_effect.
+ck3agent_proposal_resend_family_trigger = {
+	var:ck3agent_proposal_family = flag:resend
+}

@@ -5,6 +5,7 @@
 
 #include "pause_alarm.h"
 #include "council_task_family.h"
+#include "council_pin.h"        // COUNCILRE: the per-seat council-task pin verdicts
 #include "optional_id.h"     // witness r1 item 8: an optional id read through json_get_int
 #include "game_date.h"
 #include "action_dispatch_internal.h"
@@ -19,6 +20,8 @@
 #include "lobby_view_hook.h"
 #include "observer_data_functions.h"
 #include "script_templates.h"   // lane v4act: the script action layer
+#include "console_call.h"       // lane WINRE: the console-handler ABI per OS
+#include "os/game_logs.h"      // lane WINRE: the game's debug.log/error.log per OS
 #include <dirent.h>
 #include <map>
 #include <mutex>
@@ -78,9 +81,18 @@ bool do_queue_intent(const char* params_json, std::string* response_out) {
     if (actor_id_raw > 0) {
         actor_id = static_cast<uint32_t>(actor_id_raw);
     } else {
-        uint32_t resolved = g_controlled_primary.load(std::memory_order_relaxed);
+        // lane ACTOR: the one resolver (actor_resolve.h). A write: this
+        // session's own primary, never the global mirror (another seat's ruler).
+        // lane ACTORKEY: a character_id it does not read is refused, not ignored.
+        const ActorPick pick = resolve_actor_id(0, LegacyChain::MirrorOnly, kActorKeyActorId,
+                                                unread_actor_key(params_json, kActorKeyActorId));
+        uint32_t resolved = pick.id;
         if (resolved == 0 || resolved == 0xFFFFFFFF) {
-            if (response_out) *response_out = R"({"success":false,"action":"queue_intent","reason":"actor_id_required"})";
+            if (response_out) *response_out = !pick.reason
+                ? R"({"success":false,"action":"queue_intent","reason":"actor_id_required"})"
+                : (std::strcmp(pick.reason, kActorKeyNotRead) == 0
+                   ? R"({"success":false,"action":"queue_intent","reason":"actor_key_not_read"})"
+                   : R"({"success":false,"action":"queue_intent","reason":"no_actor"})");
             return false;
         }
         actor_id = resolved;
@@ -756,17 +768,20 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
     // enumerate; a fallback HERE touches one handler whose semantics I know.
     //
     // actor_id still wins, so nothing that works today changes.
+    //
+    // lane ACTORKEY: send_decision READS character_id, so it never goes through
+    // resolve_actor with one (that resolver refuses a write whose actor is named
+    // under a key it does not read: actor_resolve.h rule 0).
     safe_read_clear();
-    void* actor = resolve_actor(params_json);
+    void* actor = nullptr;
     const char* actor_key = "actor_id";
-    if (json_get_int(params_json, "actor_id") <= 0) {
-        const int cid = json_get_int(params_json, "character_id");
-        if (cid > 0) {
-            actor = lookup_character(static_cast<uint32_t>(cid));
-            actor_key = "character_id";
-        } else {
-            actor_key = "controlled_default";
-        }
+    const int cid = json_get_int(params_json, "character_id");
+    if (json_get_int(params_json, "actor_id") <= 0 && cid > 0) {
+        actor = lookup_character(static_cast<uint32_t>(cid));
+        actor_key = "character_id";
+    } else {
+        actor = resolve_actor(params_json);
+        if (json_get_int(params_json, "actor_id") <= 0) actor_key = "controlled_default";
     }
     // ck-23hv: AND THE RESOLVED ACTOR'S OWN ID, not just the key. The logged
     // character_id was the IGNORED parameter, so no log in either episode says
@@ -1236,6 +1251,41 @@ namespace {
         }
         return rows;
     }
+
+    // The ruler's council position whose seat is `postype_ref` (a task type's +0x30
+    // position-type ref), by walking the council (pure reads). Mirrors the engine's
+    // FUN_068b6f10: for each of the council's positions (council+0x230 = id array,
+    // +0x23c = count), look it up in COUNCIL_POSITION_DB and match on the position's
+    // TYPE — which the engine reads as *(*(position+0x18 [current task]) + 0x30).
+    // (Calling FUN_067e2b20 directly returned -1 here; the manual walk is what the
+    // engine does internally and reliably finds the slot.) 0 = not found.
+    uintptr_t find_council_position(void* actor, uintptr_t postype_ref, uintptr_t* council_out) {
+        constexpr uintptr_t COUNCIL_POS_ARRAY = 0x230;  // ptr to u32[] position ids
+        constexpr uintptr_t COUNCIL_POS_COUNT = 0x23c;  // u32 position count
+        constexpr uintptr_t POS_CURRENT_TASK  = 0x18;   // position instance → current task obj
+        uintptr_t council = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(actor) + 0x1b8);
+        if (council_out) *council_out = council;
+        uintptr_t posdb = safe_read_offset<uintptr_t>(ck3::globals::COUNCIL_POSITION_DB);
+        if (!council || !is_mapped(council) || !posdb || !is_mapped(posdb)) return 0;
+        uintptr_t arr  = safe_read<uintptr_t>(council + COUNCIL_POS_ARRAY);
+        uint32_t  cnt  = safe_read<uint32_t>(council + COUNCIL_POS_COUNT);
+        uintptr_t pdb_arr = safe_read<uintptr_t>(posdb + ck3::hash_map::TABLE_PTR);
+        uint32_t  pdb_cap = safe_read<uint32_t>(posdb + ck3::hash_map::CAPACITY);
+        if (!arr || !is_mapped(arr) || !pdb_arr || cnt == 0 || cnt >= 64) return 0;
+        for (uint32_t i = 0; i < cnt; i++) {
+            uint32_t pid = safe_read<uint32_t>(arr + static_cast<uintptr_t>(i) * 4);
+            uint32_t idx = pid & 0xffffff;
+            if (idx >= pdb_cap) continue;
+            uintptr_t entry = safe_read<uintptr_t>(pdb_arr + ck3::hash_map::ENTRY_HEADER_SIZE
+                                                   + static_cast<uintptr_t>(idx) * ck3::hash_map::ENTRY_STRIDE);
+            if (!entry || !is_mapped(entry)) continue;
+            if (safe_read<uint32_t>(entry + ck3::hash_map::ENTRY_KEY_REF) != pid) continue;
+            uintptr_t cur_task = safe_read<uintptr_t>(entry + POS_CURRENT_TASK);
+            if (!cur_task || !is_mapped(cur_task)) continue;
+            if (safe_read<uintptr_t>(cur_task + TASKTYPE_POSREF) == postype_ref) return entry;
+        }
+        return 0;
+    }
 }
 
 bool do_set_council_task(const char* params_json, std::string* response_out) {
@@ -1392,41 +1442,9 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     }
 
     // --- Resolve the ruler's position instance by walking the council (pure reads) ---
-    // Mirrors the engine's FUN_068b6f10: for each of the council's positions
-    // (council+0x230 = id array, +0x23c = count), look it up in
-    // COUNCIL_POSITION_DB and match on the position's TYPE — which the engine
-    // reads as *(*(position+0x18 [current task]) + 0x30). The position whose type
-    // equals our task's position-ref (tasktype+0x30) is the slot to assign.
-    // (Calling FUN_067e2b20 directly returned -1 here; the manual walk is what
-    //  the engine does internally and reliably finds the slot. FUN_03ff3a70 only
-    //  uses its own internal resolve for a no-op check, so a valid position_instance
-    //  is all that is required to build + dispatch the command.)
-    constexpr uintptr_t COUNCIL_POS_ARRAY = 0x230;  // ptr to u32[] position ids
-    constexpr uintptr_t COUNCIL_POS_COUNT = 0x23c;  // u32 position count
-    constexpr uintptr_t POS_CURRENT_TASK  = 0x18;   // position instance → current task obj
-    uintptr_t position = 0;
-    uintptr_t council = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(actor) + 0x1b8);
-    uintptr_t posdb = safe_read_offset<uintptr_t>(ck3::globals::COUNCIL_POSITION_DB);
-    if (council && is_mapped(council) && posdb && is_mapped(posdb)) {
-        uintptr_t arr  = safe_read<uintptr_t>(council + COUNCIL_POS_ARRAY);
-        uint32_t  cnt  = safe_read<uint32_t>(council + COUNCIL_POS_COUNT);
-        uintptr_t pdb_arr = safe_read<uintptr_t>(posdb + ck3::hash_map::TABLE_PTR);
-        uint32_t  pdb_cap = safe_read<uint32_t>(posdb + ck3::hash_map::CAPACITY);
-        if (arr && is_mapped(arr) && pdb_arr && cnt > 0 && cnt < 64) {
-            for (uint32_t i = 0; i < cnt; i++) {
-                uint32_t pid = safe_read<uint32_t>(arr + static_cast<uintptr_t>(i) * 4);
-                uint32_t idx = pid & 0xffffff;
-                if (idx >= pdb_cap) continue;
-                uintptr_t entry = safe_read<uintptr_t>(pdb_arr + ck3::hash_map::ENTRY_HEADER_SIZE
-                                                       + static_cast<uintptr_t>(idx) * ck3::hash_map::ENTRY_STRIDE);
-                if (!entry || !is_mapped(entry)) continue;
-                if (safe_read<uint32_t>(entry + ck3::hash_map::ENTRY_KEY_REF) != pid) continue;
-                uintptr_t cur_task = safe_read<uintptr_t>(entry + POS_CURRENT_TASK);
-                if (!cur_task || !is_mapped(cur_task)) continue;
-                if (safe_read<uintptr_t>(cur_task + TASKTYPE_POSREF) == postype_ref) { position = entry; break; }
-            }
-        }
-    }
+    // find_council_position (above; shared with the script path's pin read-back).
+    uintptr_t council = 0;
+    const uintptr_t position = find_council_position(actor, postype_ref, &council);
     ADLOG("set_council_task: council=%lx posref=%lx position=%lx\n",
           (unsigned long)council, (unsigned long)postype_ref, (unsigned long)position);
     if (!position) {
@@ -1617,16 +1635,12 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     bool unchanged = readback_ok && (prior == task_used);
     bool applied = changed;
 
-    // L20 stickiness: once the agent has deliberately set a council task, lock
-    // this ruler's council so the native per-ruler council-AI routine
-    // (FUN_04dca2a0) is skipped for it on subsequent AI ticks — otherwise the
-    // engine re-assigns and overwrites our task next tick. Only locks on a
-    // confirmed apply; release_character clears the lock. Suppresses
-    // ONLY the council routine for this one ruler, not war/other AI.
-    if (applied) {
-        uint32_t actor_id = char_get_id(actor) & 0xFFFFFF;
-        council_lock_add(actor_id);
-    }
+    // COUNCILRE: pin THIS seat against the native per-seat task selection
+    // (FUN_04dc9fc0), which can switch the task on the ruler's next bucket-3 pass.
+    // Armed on the read-back (a re-set of the same task pins too), only for a
+    // controlled character; the other seats keep their AI. council_pin.h.
+    const char* ai_pin = council_pin_arm(char_get_id(actor) & 0xFFFFFF, pos_id,
+                                         true, readback_ok);
 
     // Honest reason + success. success is true only when we changed the task. A
     // redundant call (already set) reports false with a reason so the agent does
@@ -1672,6 +1686,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         // lane-query item 1: the seat this task was applied to (or tried).
         if (!task_seat.empty()) { r.key("seat"); r.value_string(task_seat.c_str(), task_seat.size()); }
         r.key("position_id"); r.value_uint(pos_id & 0xFFFFFF);
+        r.key("ai_pin"); r.value_string(ai_pin);
         if (ctx_a && (ctx_a & 0xFFFFFF) != 0xFFFFFF) {
             r.key("councillor_id"); r.value_uint(ctx_a & 0xFFFFFF);
             void* cc = lookup_character(ctx_a);
@@ -6963,22 +6978,19 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    struct DocArgEntry { const char* data; uint64_t length; uint64_t reserved[2]; };
-    struct DocCommandData { DocArgEntry* args; uint32_t pad_08; int32_t arg_count; uint8_t pad_rest[48]; };
-    struct DocResult { uint8_t success; uint8_t _pad[7]; std::string message; };
-
-    auto handler = reinterpret_cast<void*(*)(void*, const void*)>(
+    // The handler ABI and the game's std::string layout per OS: console_call.h (WINRE).
+    namespace cc = bridge::console_call;
+    auto handler = reinterpret_cast<void* (*)(void*, const void*)>(
         g_base_addr + ck3::console_handlers::CMD_ADD_DOCTRINE);
     // ARG ORDER (re_resolution_faith.md verify): the add_doctrine console parser expects
     // args[0]=DOCTRINE (hashed against the doctrine DB), args[1]=FAITH (FaithLookupByName) —
     // <doctrine> [faith]. The prior [faith, doctrine] order made the doctrine lookup always
     // miss → permanent "Invalid doctrine". Doctrine first, faith second.
-    DocArgEntry args[2]; memset(args, 0, sizeof(args));
-    args[0].data = want.c_str();      args[0].length = want.size();      // doctrine name
-    args[1].data = faith_key.c_str(); args[1].length = faith_key.size(); // faith key
-    DocCommandData cmd_data; memset(&cmd_data, 0, sizeof(cmd_data));
+    cc::Arg args[2] = {cc::arg(want.c_str(), want.size()),             // doctrine name
+                       cc::arg(faith_key.c_str(), faith_key.size())};  // faith key
+    cc::CommandData cmd_data; memset(&cmd_data, 0, sizeof(cmd_data));
     cmd_data.args = args; cmd_data.arg_count = 2;
-    DocResult result; memset(&result.success, 0, sizeof(result.success) + sizeof(result._pad));
+    cc::Result result;
 
     // L14 (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_doctrine", response_out);
@@ -7007,9 +7019,7 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
     g_in_protected_region = false; watchdog_disarm();
 
     bool applied = (result.success != 0);
-    std::string engine_msg;
-    if (!result.message.empty())
-        engine_msg = result.message.substr(0, std::min(result.message.size(), (size_t)512));
+    const std::string engine_msg = result.message(512);
     ADLOG("set_doctrine: handler returned success=%d msg='%s'\n", applied ? 1 : 0, engine_msg.c_str());
 
     if (response_out) {
@@ -7039,20 +7049,27 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
 // by the game's own check (can_declare_war; run_interaction's own validity;
 // exists = cp:<seat>) and writes the bridge's token to debug.log on each branch.
 //
-// params: {"template": declare_war|gift|sway|council_task|set_policy|clear_policy,
+// params: {"template": declare_war|gift|sway|council_task|set_policy|clear_policy|end_war|
+//          proposal_seat|proposal_policy|proposal_list|proposal_answer,
 //          "actor_id", "target_id", "cb", "cb_title_id", "claimant_id",
-//          "task", "seat", "target_character_id", "target_title_id", "policy"}
+//          "task", "seat", "target_character_id", "target_title_id", "policy",
+//          "terms" (end_war: we_win|white_peace|we_yield; absent = read only),
+//          "on", "class", "answer", "by", "proposal_id"}
+// proposal_list adds {list_complete, proposals[]}; proposal_answer adds
+// {outcome, outcome_reason, window_complete} (docs/design/incoming-proposals.md).
 // reply:  {success, action, template, token, script, engine_result, guard
-//          (ran|refused|unseen), errors[] (the game's own script errors for this
-//          call), debug_log_offset, error_log_offset, logs_found}
+//          (ran|refused|unseen), marks[] (the token's other debug.log marks:
+//          end_war's reading), errors[] (the game's own script errors for this
+//          call), debug_log_offset, error_log_offset, logs_found, read_only}
 // success means the engine's effect handler ran the script; whether the game
 // did the thing is the guard marker plus the caller's read-back (a run_interaction
 // the recipient declines, or an offer_peace, is silent: the server's read-back
 // reports it not applied, never ok).
 //
 // query_script_log (a read, the IPC thread): {token, debug_log_offset,
-// error_log_offset} -> the guard marker and the errors written since, for a
-// marker the logger had not flushed when do_script_action answered; with
+// error_log_offset} -> the guard marker, the token's other marks (end_war's
+// reading) and the errors written since, for a marker the logger had not
+// flushed when do_script_action answered; with
 // {"count": "<WORD>"} the number of debug.log lines holding WORD (the policy
 // mod's tick lines) and the last few of them.
 // ===========================================================================
@@ -7067,53 +7084,16 @@ std::mutex g_policy_mu;
 std::map<uint32_t, std::map<std::string, bool>> g_policy_ledger;
 std::atomic<bool> g_policy_mod_seen{false};
 
-// The game's own log files, found by its open descriptors (the game holds
-// debug.log and error.log open for writing under <userdir>/logs/). A -userdir
-// game and the default tree are found the same way.
-struct GameLogs { std::string debug, error; };
-GameLogs find_game_logs() {
-    GameLogs g;
-    DIR* d = opendir("/proc/self/fd");
-    if (!d) return g;
-    char path[64], target[4096];
-    while (struct dirent* e = readdir(d)) {
-        if (e->d_name[0] == '.') continue;
-        snprintf(path, sizeof(path), "/proc/self/fd/%s", e->d_name);
-        ssize_t n = readlink(path, target, sizeof(target) - 1);
-        if (n <= 0) continue;
-        target[n] = 0;
-        std::string_view t(target, (size_t)n);
-        auto ends = [&](std::string_view s) {
-            return t.size() >= s.size() && t.substr(t.size() - s.size()) == s;
-        };
-        if (g.debug.empty() && ends("/logs/debug.log")) g.debug.assign(t);
-        else if (g.error.empty() && ends("/logs/error.log")) g.error.assign(t);
-    }
-    closedir(d);
-    return g;
-}
-
-long long file_size_of(const std::string& p) {
-    struct stat st;
-    if (p.empty() || stat(p.c_str(), &st) != 0) return -1;
-    return (long long)st.st_size;
-}
-
+// The game's own log files, found by what the game holds open, and read
+// through the os layer (os/game_logs.h, lane WINRE): on Linux the v4act
+// /proc/self/fd walk, moved there unchanged; on Windows the process's own file
+// handles, read shared.
+using GameLogs = bridge::os::GameLogs;
+using bridge::os::find_game_logs;
+long long file_size_of(const std::string& p) { return bridge::os::game_log_size(p); }
 // At most `cap` bytes of P from OFFSET on (the tail when more were written).
 std::string read_from(const std::string& p, long long offset, size_t cap = 512 * 1024) {
-    std::string out;
-    if (p.empty() || offset < 0) return out;
-    FILE* f = fopen(p.c_str(), "rb");
-    if (!f) return out;
-    long long size = file_size_of(p);
-    if (size > offset + (long long)cap) offset = size - (long long)cap;
-    if (size >= offset && fseeko(f, offset, SEEK_SET) == 0) {
-        char buf[16384];
-        size_t n;
-        while ((n = fread(buf, 1, sizeof(buf), f)) > 0 && out.size() < cap) out.append(buf, n);
-    }
-    fclose(f);
-    return out;
+    return bridge::os::game_log_read_from(p, offset, cap);
 }
 
 // A ruler's script reference: the key of his primary title, the title's holder
@@ -7154,6 +7134,53 @@ void emit_errors(ResponseBuilder& r, const std::vector<std::string>& errs) {
     for (const auto& e : errs) r.value_string(e.c_str(), std::min(e.size(), (size_t)600));
     r.end_array();
 }
+
+// lane QMOD: what a proposal template wrote between its <token>_BEGIN and
+// <token>_END. proposal_list: proposals[] and list_complete (false is a
+// refusal upstream, never an empty list); proposal_answer: outcome and
+// outcome_reason (outcome null until the window is complete).
+void emit_proposal_window(ResponseBuilder& r, bool list, const bridge::script_tpl::ProposalWindow& w) {
+    namespace st = bridge::script_tpl;
+    auto id_or_null = [&](const char* k, long long v) {
+        r.key(k);
+        if (v < 0) r.value_null(); else r.value_int(v);
+    };
+    if (list) {
+        r.key("list_complete"); r.value_bool(w.complete);
+        r.key("proposals"); r.begin_array();
+        if (w.complete) {
+            for (const auto& it : st::proposal_items(w.lines)) {
+                r.begin_object();
+                id_or_null("id", it.id);
+                r.key("kind"); r.value_string(it.kind.c_str(), it.kind.size());
+                r.key("class"); r.value_string(it.cls.c_str(), it.cls.size());
+                r.key("state"); r.value_string("open");
+                id_or_null("actor_id", it.actor_id);
+                id_or_null("recipient_id", it.recipient_id);
+                id_or_null("secondary_actor_id", it.secondary_actor_id);
+                id_or_null("secondary_recipient_id", it.secondary_recipient_id);
+                r.key("war_name");
+                if (it.has_war) r.value_string(it.war_name.c_str(), std::min(it.war_name.size(), (size_t)200));
+                else r.value_null();
+                r.key("options"); r.begin_array();
+                for (const auto& o : it.options) r.value_string(o.c_str(), o.size());
+                r.end_array();
+                id_or_null("age_days_min", it.age_days_min);
+                r.end_object();
+            }
+        }
+        r.end_array();
+        return;
+    }
+    const st::ProposalOutcome o = w.complete ? st::proposal_outcome(w.lines) : st::ProposalOutcome{};
+    r.key("outcome");
+    if (o.outcome.empty()) r.value_null(); else r.value_string(o.outcome.c_str(), o.outcome.size());
+    r.key("outcome_reason");
+    if (o.reason.empty()) r.value_null(); else r.value_string(o.reason.c_str(), o.reason.size());
+    r.key("window_complete"); r.value_bool(w.complete);
+}
+
+std::atomic<bool> g_proposal_mod_seen{false};
 
 }  // namespace
 
@@ -7207,6 +7234,7 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         return true;
     };
 
+    uintptr_t council_posref = 0;   // kCouncilTask: the chosen task's seat (pin read-back)
     switch (t) {
     case st::Template::kDeclareWar: {
         if (!char_key("target_id", &s.target_title, true)) return false;
@@ -7242,6 +7270,7 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         if (!pick.chosen) return refuse("seat_cannot_take_task", pick.asked->seat.c_str());
         s.task = pick.chosen->name;
         s.seat = pick.chosen->seat;
+        council_posref = safe_read<uintptr_t>(pick.chosen->obj + TASKTYPE_POSREF);
         if (!st::is_ident(s.task) || !st::is_ident(s.seat)) return refuse("task_key_unreadable");
         if (!char_key("target_character_id", &s.task_target_char, false)) return false;
         const int ttid = json_get_int(params_json, "target_title_id");
@@ -7257,6 +7286,43 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         const char* p = json_get_string(params_json, "policy");
         if (!p || !st::policy_variable(p)) return refuse("unknown_policy", p);
         s.policy = p;
+        break;
+    }
+    // lane QMOD: the incoming-proposal queue. Every argument is checked against
+    // script_templates.h's tables; the refusal codes are the header's (one
+    // place), sent as they come back from compose or the checks below.
+    case st::Template::kProposalSeat: {
+        bool on = false;
+        if (!json_get_bool_strict(params_json, "on", &on)) return refuse(st::kProposalArgOn, "on");
+        s.proposal_on = on;
+        break;
+    }
+    case st::Template::kProposalPolicy: {
+        const char* cls = json_get_string(params_json, "class");
+        const char* ans = json_get_string(params_json, "answer");
+        s.proposal_class = cls ? cls : "";
+        s.proposal_answer = st::proposal_policy_answer(ans ? ans : "");
+        break;   // compose refuses bad_class / bad_answer
+    }
+    case st::Template::kProposalList:
+        break;
+    case st::Template::kProposalAnswer: {
+        const char* ans = json_get_string(params_json, "answer");
+        const char* by = json_get_string(params_json, "by");
+        s.proposal_id = json_get_int(params_json, "proposal_id");
+        s.proposal_answer = st::proposal_answer_code(ans ? ans : "");
+        s.proposal_by = st::proposal_by_code(by ? by : "");
+        break;   // compose refuses bad_proposal_id / bad_answer / bad_by
+    }
+    case st::Template::kEndWar: {
+        // lane peace: the enemy LEADER, and the terms from the actor's side
+        // (absent = the read-only listing).
+        if (!char_key("target_id", &s.target_title, true)) return false;
+        const char* terms = json_get_string(params_json, "terms");
+        if (terms && terms[0]) {
+            if (!st::is_peace_terms(terms)) return refuse("bad_peace_terms", terms);
+            s.peace_terms = terms;
+        }
         break;
     }
     default:
@@ -7280,18 +7346,14 @@ bool do_script_action(const char* params_json, std::string* response_out) {
     const GameLogs logs = find_game_logs();
     const long long dbg0 = file_size_of(logs.debug), err0 = file_size_of(logs.error);
 
-    // The handler's ABI (SResult* h(SResult*, const SCommandData*)), the one the
-    // bridge's add_doctrine / set_title_law console calls use: args at +0 (0x20
-    // stride: char*, length), argc at +0xC; out: success byte +0, message +8.
-    struct ArgEntry { const char* data; uint64_t length; uint64_t reserved[2]; };
-    struct CommandData { ArgEntry* args; uint32_t pad_08; int32_t arg_count; uint8_t pad_rest[48]; };
-    struct Result { uint8_t success; uint8_t _pad[7]; std::string message; };
+    // The handler's ABI (SResult* h(SResult*, const SCommandData*)) and the game's
+    // std::string layout per OS: console_call.h (WINRE; one argument, the script).
+    namespace cc = bridge::console_call;
     auto handler = reinterpret_cast<void* (*)(void*, const void*)>(addr);
-    ArgEntry args[1]; memset(args, 0, sizeof(args));
-    args[0].data = c.script.c_str(); args[0].length = c.script.size();
-    CommandData cmd; memset(&cmd, 0, sizeof(cmd));
+    cc::Arg args[1] = {cc::arg(c.script.c_str(), c.script.size())};
+    cc::CommandData cmd; memset(&cmd, 0, sizeof(cmd));
     cmd.args = args; cmd.arg_count = 1;
-    Result result; memset(&result.success, 0, sizeof(result.success) + sizeof(result._pad));
+    cc::Result result;
 
     uint64_t saved_rng = 0;
     const bool rng_armed = arm_fake_random_scope(&saved_rng);
@@ -7311,7 +7373,7 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         std::chrono::steady_clock::now() - t0).count();
 
     const bool ran = result.success != 0;
-    const std::string msg = result.message.substr(0, std::min(result.message.size(), (size_t)1024));
+    const std::string msg = result.message(1024);
     // Every template writes its marker last, so once the marker is in debug.log
     // the script's own errors (run_interaction's reason) are in error.log. The
     // read is made HERE, on the game thread, where no other script action can
@@ -7320,10 +7382,38 @@ bool do_script_action(const char* params_json, std::string* response_out) {
     // has not written yet is `unseen`, and the caller reads it with
     // query_script_log.
     st::Marker m = st::Marker::kUnseen;
-    if (ran && !logs.debug.empty()) m = st::marker_in(read_from(logs.debug, dbg0), s.token);
+    std::string dbg_text;
+    std::vector<std::string> marks;
+    if (ran && !logs.debug.empty()) {
+        dbg_text = read_from(logs.debug, dbg0);
+        m = st::marker_in(dbg_text, s.token);
+        marks = st::token_marks(dbg_text, s.token);
+    }
+    // lane peace: end_war with no terms writes nothing to the game; the action
+    // log says so (action_log_row.h: read_only -> verdict "read").
+    const bool read_only = (t == st::Template::kEndWar && s.peace_terms.empty());
     const auto errs = st::console_effect_errors(read_from(logs.error, err0));
     ADLOG("script_action: %s returned %d guard=%s errors=%zu us=%lld\n", tok, ran ? 1 : 0,
           st::marker_name(m), errs.size(), us);
+    // COUNCILRE: the council_task template pins the seat it set (council_pin.h) on
+    // the seat's own read-back, as the native path does; a refused or failed
+    // script pins nothing.
+    const char* ai_pin = nullptr;
+    if (t == st::Template::kCouncilTask) {
+        if (ran && m != st::Marker::kRefused) {
+            const uintptr_t pos = find_council_position(actor, council_posref, nullptr);
+            std::string now;
+            if (pos) {
+                const uintptr_t cur = safe_read<uintptr_t>(pos + ck3::globals::COUNCIL_POS_CURRENT_TASK);
+                if (cur && is_mapped(cur)) now = ad_read_std_string(cur + CTT_NAME);
+            }
+            ai_pin = council_pin_arm(actor_id,
+                                     pos ? safe_read<uint32_t>(pos + ck3::globals::COUNCIL_POS_KEY) : 0,
+                                     pos != 0, !now.empty() && now == s.task);
+        } else {
+            ai_pin = bridge::council_pin::arm_name(bridge::council_pin::Arm::kNotApplied);
+        }
+    }
     if (ran && (t == st::Template::kSetPolicy || t == st::Template::kClearPolicy) &&
         m == st::Marker::kRan) {
         std::lock_guard<std::mutex> lk(g_policy_mu);
@@ -7339,14 +7429,22 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         r.key("script"); r.value_string(c.script.c_str(), c.script.size());
         r.key("engine_result"); r.value_string(msg.c_str(), msg.size());
         r.key("guard"); r.value_string(st::marker_name(m));
+        r.key("marks"); r.begin_array();
+        for (const auto& w : marks) r.value_string(w.c_str(), w.size());
+        r.end_array();
+        if (!s.peace_terms.empty()) { r.key("terms"); r.value_string(s.peace_terms.c_str()); }
+        r.key("read_only"); r.value_bool(read_only);
         emit_errors(r, errs);
         r.key("logs_found"); r.value_bool(!logs.debug.empty() && !logs.error.empty());
         r.key("debug_log_offset"); r.value_int(dbg0);
         r.key("error_log_offset"); r.value_int(err0);
         if (!s.seat.empty()) { r.key("seat"); r.value_string(s.seat.c_str()); }
         if (!s.task.empty()) { r.key("task_used"); r.value_string(s.task.c_str()); }
+        if (ai_pin) { r.key("ai_pin"); r.value_string(ai_pin); }
         r.key("rng_armed"); r.value_bool(rng_armed);
         r.key("elapsed_us"); r.value_int(us);
+        if (t == st::Template::kProposalList || t == st::Template::kProposalAnswer)
+            emit_proposal_window(r, t == st::Template::kProposalList, st::proposal_window(dbg_text, s.token));
         if (!ran) { r.key("reason"); r.value_string("effect_handler_refused"); }
         r.end_object();
         *response_out = r.take();
@@ -7394,17 +7492,66 @@ bool do_query_script_log(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = r.take();
         return true;
     }
+    bool lines_flag = false;
+    if (json_get_bool_strict(params_json, "proposal_lines", &lines_flag) && lines_flag) {
+        // lane QMOD: the proposal queue's HELD / RESOLVED / VOID lines written
+        // since debug_log_offset (a pure read). next_offset is where the next
+        // read starts; a debug.log shorter than the offset (a new game) reads
+        // from 0 and says so (log_restarted).
+        long long off = json_get_int(params_json, "debug_log_offset");
+        if (off < 0) off = 0;
+        const long long size = file_size_of(logs.debug);
+        const bool restarted = size >= 0 && size < off;
+        if (restarted) off = 0;
+        const std::string text = read_from(logs.debug, off, 8u * 1024 * 1024);
+        r.key("success"); r.value_bool(!logs.debug.empty());
+        r.key("log_restarted"); r.value_bool(restarted);
+        r.key("lines"); r.begin_array();
+        size_t consumed = 0;
+        for (size_t p = 0; p < text.size();) {
+            const size_t e = text.find('\n', p);
+            if (e == std::string::npos) break;   // a partial last line is read next time
+            consumed = e + 1;
+            st::ProposalLogLine pl;
+            if (st::parse_proposal_log_line(std::string_view(text.data() + p, e - p), &pl)) {
+                bool wanted = false;
+                for (const char* w : st::kProposalLogWords) wanted |= (pl.word == w);
+                if (wanted) {
+                    r.begin_object();
+                    r.key("word"); r.value_string(pl.word.c_str(), pl.word.size());
+                    r.key("fields"); r.begin_array();
+                    for (const auto& f : pl.fields) r.value_string(f.c_str(), std::min(f.size(), (size_t)200));
+                    r.end_array();
+                    r.key("date");
+                    if (pl.date.empty()) r.value_null(); else r.value_string(pl.date.c_str(), pl.date.size());
+                    r.end_object();
+                }
+            }
+            p = e + 1;
+        }
+        r.end_array();
+        // read_from returns the TAIL when more than its cap was written: the
+        // offset of what it returned is size - text.size().
+        const long long base = (size >= 0 && size - (long long)text.size() > off) ? size - (long long)text.size() : off;
+        r.key("next_offset"); r.value_int(base + (long long)consumed);
+        r.end_object();
+        if (response_out) *response_out = r.take();
+        return true;
+    }
     const int pcid = json_get_int(params_json, "character_id");
     if (pcid > 0) {
         // The standing policies this bridge set for the character, and whether
         // the game logged the policy mod enabled (scanned until seen once).
-        if (!g_policy_mod_seen.load() && !logs.debug.empty()) {
+        if ((!g_policy_mod_seen.load() || !g_proposal_mod_seen.load()) && !logs.debug.empty()) {
             const std::string head = read_from(logs.debug, 0, 4u * 1024 * 1024);
             if (head.find(st::kPolicyModEnabledLine) != std::string::npos) g_policy_mod_seen.store(true);
+            if (head.find(st::kProposalModEnabledLine) != std::string::npos) g_proposal_mod_seen.store(true);
         }
         r.key("success"); r.value_bool(true);
         r.key("character_id"); r.value_uint((uint32_t)pcid & 0xFFFFFF);
-        r.key("mod_enabled"); 
+        r.key("proposal_mod_enabled");
+        if (logs.debug.empty()) r.value_null(); else r.value_bool(g_proposal_mod_seen.load());
+        r.key("mod_enabled");
         if (logs.debug.empty()) r.value_null(); else r.value_bool(g_policy_mod_seen.load());
         r.key("policies"); r.begin_object();
         {
@@ -7431,12 +7578,25 @@ bool do_query_script_log(const char* params_json, std::string* response_out) {
     }
     const long long dbg0 = json_get_int(params_json, "debug_log_offset");
     const long long err0 = json_get_int(params_json, "error_log_offset");
-    const st::Marker m = st::marker_in(read_from(logs.debug, dbg0), token);
+    const std::string dbg_text = read_from(logs.debug, dbg0);
+    const st::Marker m = st::marker_in(dbg_text, token);
+    const auto marks = st::token_marks(dbg_text, token);
     const auto errs = st::console_effect_errors(read_from(logs.error, err0));
     r.key("success"); r.value_bool(!logs.debug.empty());
     r.key("token"); r.value_string(token);
     r.key("guard"); r.value_string(st::marker_name(m));
+    r.key("marks"); r.begin_array();
+    for (const auto& w : marks) r.value_string(w.c_str(), w.size());
+    r.end_array();
     emit_errors(r, errs);
+    // lane QMOD: a proposal template's window, read late (the logger had not
+    // written it when do_script_action answered): both readings, the caller
+    // takes the one of the template it sent.
+    const st::ProposalWindow pw = st::proposal_window(dbg_text, token);
+    if (pw.begun) {
+        emit_proposal_window(r, true, pw);
+        emit_proposal_window(r, false, pw);
+    }
     r.end_object();
     if (response_out) *response_out = r.take();
     return true;

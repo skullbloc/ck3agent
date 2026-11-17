@@ -32,6 +32,8 @@ DEDICATED: dict = {
     "faction": (pathlib.Path(__file__).resolve().parent / "factions.py",
                 ("do_faction", "_respond_demand"), "args"),
     "set_policy": (REDESIGN, ("_do_set_policy",), "a"),
+    "answer_proposal": (REDESIGN, ("_do_answer_proposal",), "a"),
+    "end_war": (REDESIGN, ("_do_end_war",), "a"),
 }
 
 

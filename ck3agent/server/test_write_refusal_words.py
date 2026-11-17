@@ -152,6 +152,9 @@ NOT_THE_GAMES = {
                      "into blocked.detail"),
     "_do_set_policy": ("the script layer's set_policy (lane v4act); its words come from error.log, "
                        "driven in test_script_actions.py"),
+    "_do_end_war": ("the script layer's end_war (lane peace); its guard says no without words (the "
+                    "reading rides in blocked.measured), and any error.log words ride through "
+                    "script_verdict; driven in test_end_war.py"),
     "_do_cancel_pending": "the bridge's own queue answers a cancel (not_found), not the game",
     "_set_experimental_flag": "a bridge switch; the game is not asked",
     "set_phase_impl": "writes personality weights and a bridge flag; the bridge refuses with its own codes",

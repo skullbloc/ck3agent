@@ -21,7 +21,7 @@
 namespace bridge {
 
 // instance_paths.cpp; weak so host targets that do not link it still link.
-mode_t instance_dir_mode() __attribute__((weak));
+mode_t instance_dir_mode() CK3_WEAK;
 }  // namespace bridge
 #include "private_fopen.h"   // rc2 B1: detach stamp opened 0600, O_NOFOLLOW
 namespace bridge {
@@ -469,6 +469,13 @@ std::string SessionRegistry::first_unbound_reason() const {
         if (s.primary_character_id == 0 && !s.unbound_reason.empty()) return s.unbound_reason;
     }
     return std::string();
+}
+
+bool SessionRegistry::any_seat_declared() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& kv : sessions_)
+        if (kv.second->declared_seat.load(std::memory_order_relaxed)) return true;
+    return false;
 }
 
 // rc2 B6: the dead ruler's heir is the human player. Release the corpse (state

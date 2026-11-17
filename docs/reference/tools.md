@@ -306,8 +306,10 @@ date and the gates the pre-check does not cover; the game's start check runs onl
 when declare_war sends the war, and a refusal there comes back with its reason. A row
 whose CB did not pass, a war on your own liege, and a claim whose claimant is not in
 your court are listed in `excluded`, never offered. A claim
-CB is offered only on a pressed claim (`claim_pressed: true`, with the claimed title
-and the claimant); an unpressed claim is listed in `excluded` as claim_not_pressed.
+CB is offered on your OWN claim, pressed or not, or on a claimant's PRESSED claim
+(`claim_pressed` says which, with the claimed title and the claimant); a claimant's
+unpressed claim is listed in `excluded` as claim_not_pressed.
+`claim_pressed` is null on a row whose casus belli is not a claim (it reads no claims).
 Empty list ⇒ `empty_reason` names the commonest
 `excluded` gate with its count (all gates in `measured.by_gate`), and in `fix` the
 parameter that would admit those rows (exclude_straddling=False with
@@ -459,6 +461,15 @@ Args:
             war's participant list. A refusal names the gate: recipient_refuses
             (they would decline), interaction_invalid (the game's own check),
             not_war_leader, war_not_found.
+            end_war (args={"enemy_id", "terms": we_win | white_peace | we_yield})
+            ENDS a war you lead against that enemy leader at once, with the casus
+            belli's own outcome: it is NOT an offer and the enemy is not asked. Terms
+            are named from YOUR side: we_win (needs your war score at 100), white_peace
+            (needs the enemy's below 25), we_yield (always open: you LOSE the war).
+            surrender / victory / enforce_demands are refused (they read from either
+            side). No terms (or check=true) reads the war: whether you lead it, your
+            war-score band and the open terms. applied means the war is gone from the
+            war list; a refused guard returns the reading in blocked.measured.
     action_class: formable_titles lists the titles you could create now, each with
                   its de-jure county count and a ready mint_title do_call (pass
                   `candidates=[...]` to test a custom key set). mercenaries: free
@@ -498,7 +509,7 @@ Args:
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `intent` | enum: `mint_title`, `take_decision`, `interact`, `convert_faith`, `convert_culture`, `set_doctrine`, `change_law`, `council_task`, `appoint`, `lifestyle`, `set_education_focus`, `build`, `men_at_arms`, `hire_merc`, `move_capital`, `set_obligation`, `scheme`, `make_peace`, `call_ally`, `join_war`, `cancel_pending`, `faction`, `set_policy` or null |  | `null` | The one action to execute; null with action_class enumerates. |
+| `intent` | enum: `mint_title`, `take_decision`, `interact`, `convert_faith`, `convert_culture`, `set_doctrine`, `change_law`, `council_task`, `appoint`, `lifestyle`, `set_education_focus`, `build`, `men_at_arms`, `hire_merc`, `move_capital`, `set_obligation`, `scheme`, `make_peace`, `call_ally`, `join_war`, `cancel_pending`, `faction`, `set_policy`, `answer_proposal`, `end_war` or null |  | `null` | The one action to execute; null with action_class enumerates. |
 | `action_class` | enum: `interactions`, `decisions`, `council_tasks`, `laws`, `fabricate_targets`, `mercenaries`, `factions_to_join`, `buildings`, `imprison_targets`, `formable_titles`, `men_at_arms` or null |  | `null` | What to enumerate (enumerate mode only). |
 | `candidates` | array[any] |  | `null` |  |
 | `character_id` | integer |  | `0` |  |
@@ -508,6 +519,7 @@ Args:
 
 ```text
 Intent-specific keys. ARGUMENTS BY INTENT (read from the code):
+  answer_proposal: args.{proposal_id, answer}
   appoint: args.{seat, position_id, councillor_id, character_id}
   build: args.{location_id, building}
   call_ally: args.{war_id, ally_id}
@@ -515,6 +527,7 @@ Intent-specific keys. ARGUMENTS BY INTENT (read from the code):
   convert_culture: args.{culture, culture_id}
   convert_faith: args.{faith, faith_id}
   council_task: args.{task, target_title_id, target_character_id, seat}
+  end_war: args.{terms, enemy_id, check}
   faction: args.{faction_id, liege_id, action, faction_type, response}
   hire_merc: args.{company_id}
   interact: args.{interaction, interaction_type, target_id, title_id, secondary_actor_id, secondary_recipient_id, war_id, send_options}
@@ -528,7 +541,7 @@ Intent-specific keys. ARGUMENTS BY INTENT (read from the code):
   set_doctrine: args.{doctrine}
   set_education_focus: args.{focus}
   set_obligation: args.{vassal_id, level, obligation}
-  set_policy: args.{on, policy}
+  set_policy: args.{on, policy, class, answer}
   take_decision: args.{decision}
 ```
 

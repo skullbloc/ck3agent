@@ -1,0 +1,451 @@
+﻿# ck3agent incoming-proposal queue (lane QMOD; docs/design/incoming-proposals.md).
+#
+# One ck3agent_proposal story per held offer, owned by the seated recipient.
+# Story variables:
+#   ck3agent_proposal_id                  the next value of global ck3agent_proposal_next_id
+#   ck3agent_proposal_kind                flag:<interaction key>
+#   ck3agent_proposal_class               flag:<class>   (marriage, alliance, ...)
+#   ck3agent_proposal_family              flag:resend | flag:join_war | flag:peace
+#   ck3agent_proposal_state               1 open, 2 resolved, 3 void
+#   ck3agent_proposal_void_reason         the void code (below); set with state 3, by the void
+#                                         effect only, so an answer to a void offer names why
+#   ck3agent_proposal_age                 10-day steps since capture (the story's own counter)
+#   ck3agent_proposal_actor / _recipient / _secondary_actor / _secondary_recipient /
+#   ck3agent_proposal_target / _war       the offer's scopes, as the engine gave them
+#   ck3agent_proposal_had_<scope>         1 when the scope existed at capture (a variable
+#                                         pointing at a dead or ended object is told apart
+#                                         from one that was never there)
+#   ck3agent_proposal_options             list of flag:<send option> on in the offer
+#
+# Every line written to debug.log starts with CK3AGENT_PROPOSAL_; the bridge
+# (bridge/include/script_templates.h, parse_proposal_line) reads them, except
+# CK3AGENT_PROPOSAL_SENT|<kind>|<class>|<actor>|<recipient> (L8: written at the top
+# of the capture for scripts/proposal_overrides.py SENT_LOGGED_CLASSES; only the
+# live scenario reads it). Codes:
+#   answer  1 accept, 2 decline, 3 ask_me, 4 native
+#   by      1 seat, 2 rule, 3 boundary, 4 lapse, 5 void, 6 classifier
+#   void    1 void_sender_dead, 2 void_subject_dead, 3 void_war_ended,
+#           4 void_recipient_dead, 5 invalid_now
+# Ids are printed with the Character.GetID data function (live row L3 checks it
+# prints the bridge's runtime id).
+#
+# The per-kind and per-class pieces (the lifted bodies, the option lists, the
+# log lines naming a kind) are GENERATED at install from the installed game's
+# own files into zz_ck3agent_proposal_kinds.txt (scripts/proposal_overrides.py);
+# this file holds only what does not name a kind or a class.
+
+# ── capture: first line of a first-set interaction's on_send (shape 1) ────────
+# KIND = the interaction key, CLASS = its class. Returns at its first check for
+# a recipient without the seat marker, which only the bridge's proposal_seat
+# template sets.
+ck3agent_proposal_capture_effect = {
+	# L8: every send of a SENT_LOGGED_CLASSES kind is logged here, before every
+	# exclusion below (generated; empty for the other kinds). It sets the two
+	# global variables it prints and removes them after the line: nothing held,
+	# answered or saved changes, seated or not.
+	ck3agent_proposal_k_$KIND$_sent_effect = yes
+	if = {
+		limit = {
+			scope:recipient ?= { has_variable = ck3agent_proposal_seat }
+			exists = scope:actor
+			NOT = { scope:actor = scope:recipient }
+			# our own re-send of an answer (the design's pass list)
+			NOT = { scope:recipient = { has_variable = ck3agent_proposal_answering } }
+			# one held offer per sender and class
+			NOT = {
+				scope:recipient = {
+					is_target_in_variable_list = {
+						name = ck3agent_proposal_held_$CLASS$
+						target = scope:actor
+					}
+				}
+			}
+			# the engine accepts it at once: nobody answers it in vanilla either
+			NOT = { ck3agent_proposal_k_$KIND$_auto_accept_trigger = yes }
+		}
+		ck3agent_proposal_read_policy_effect = { CLASS = $CLASS$ }
+		# native: not captured; the game's AI answers, as today
+		if = {
+			limit = { NOT = { scope:ck3a_policy = 4 } }
+			if = {
+				limit = { NOT = { has_global_variable = ck3agent_proposal_next_id } }
+				set_global_variable = { name = ck3agent_proposal_next_id value = 0 }
+			}
+			change_global_variable = { name = ck3agent_proposal_next_id add = 1 }
+			clear_saved_scope = ck3a_new
+			scope:recipient = {
+				create_story = {
+					type = ck3agent_proposal
+					save_scope_as = ck3a_new
+				}
+			}
+			scope:ck3a_new ?= {
+				set_variable = { name = ck3agent_proposal_id value = global_var:ck3agent_proposal_next_id }
+				set_variable = { name = ck3agent_proposal_kind value = flag:$KIND$ }
+				set_variable = { name = ck3agent_proposal_class value = flag:$CLASS$ }
+				set_variable = { name = ck3agent_proposal_state value = 1 }
+				set_variable = { name = ck3agent_proposal_age value = 0 }
+				set_variable = { name = ck3agent_proposal_actor value = scope:actor }
+				set_variable = { name = ck3agent_proposal_recipient value = scope:recipient }
+				if = {
+					limit = { exists = scope:secondary_actor }
+					set_variable = { name = ck3agent_proposal_secondary_actor value = scope:secondary_actor }
+					set_variable = { name = ck3agent_proposal_had_secondary_actor value = 1 }
+				}
+				if = {
+					limit = { exists = scope:secondary_recipient }
+					set_variable = { name = ck3agent_proposal_secondary_recipient value = scope:secondary_recipient }
+					set_variable = { name = ck3agent_proposal_had_secondary_recipient value = 1 }
+				}
+				if = {
+					limit = { exists = scope:target }
+					set_variable = { name = ck3agent_proposal_target value = scope:target }
+					set_variable = { name = ck3agent_proposal_had_target value = 1 }
+				}
+				if = {
+					limit = { exists = scope:war }
+					set_variable = { name = ck3agent_proposal_war value = scope:war }
+					set_variable = { name = ck3agent_proposal_had_war value = 1 }
+				}
+				ck3agent_proposal_set_family_effect = yes
+				ck3agent_proposal_capture_options_effect = yes
+				ck3agent_proposal_stamp_effect = yes
+				ck3agent_proposal_log_held_effect = yes
+			}
+			scope:recipient = {
+				add_to_variable_list = {
+					name = ck3agent_proposal_held_$CLASS$
+					target = scope:actor
+				}
+			}
+			# a rule answers it one day later, through the same apply effect
+			if = {
+				limit = {
+					exists = scope:ck3a_new
+					scope:ck3a_policy <= 2
+				}
+				scope:recipient = {
+					trigger_event = {
+						id = ck3agent_proposal.1
+						days = 1
+					}
+				}
+			}
+		}
+	}
+}
+
+# scope:ck3a_policy = the recipient's answer for CLASS (its variable, else the
+# class default, common/script_values/ck3agent_proposal_values.txt).
+ck3agent_proposal_read_policy_effect = {
+	save_scope_value_as = { name = ck3a_policy value = ck3agent_proposal_default_$CLASS$ }
+	if = {
+		limit = { scope:recipient ?= { has_variable = ck3agent_proposal_answer_$CLASS$ } }
+		save_scope_value_as = {
+			name = ck3a_policy
+			value = scope:recipient.var:ck3agent_proposal_answer_$CLASS$
+		}
+	}
+}
+
+# ── story scope helpers ──────────────────────────────────────────────────────
+
+# The offer's scopes back, by the names the interaction's own bodies read.
+ck3agent_proposal_restore_scopes_effect = {
+	clear_saved_scope = actor
+	clear_saved_scope = recipient
+	clear_saved_scope = secondary_actor
+	clear_saved_scope = secondary_recipient
+	clear_saved_scope = target
+	clear_saved_scope = war
+	var:ck3agent_proposal_actor ?= { save_scope_as = actor }
+	var:ck3agent_proposal_recipient ?= { save_scope_as = recipient }
+	var:ck3agent_proposal_secondary_actor ?= { save_scope_as = secondary_actor }
+	var:ck3agent_proposal_secondary_recipient ?= { save_scope_as = secondary_recipient }
+	var:ck3agent_proposal_target ?= { save_scope_as = target }
+	var:ck3agent_proposal_war ?= { save_scope_as = war }
+	ck3agent_proposal_restore_options_effect = yes
+}
+
+# Scope values the log lines print: the id, the age and today's date.
+ck3agent_proposal_stamp_effect = {
+	save_scope_value_as = { name = ck3a_pid value = var:ck3agent_proposal_id }
+	save_scope_value_as = { name = ck3a_age value = var:ck3agent_proposal_age }
+	save_scope_value_as = { name = ck3a_y value = current_year }
+	save_scope_value_as = { name = ck3a_m value = current_month }
+	save_scope_value_as = { name = ck3a_d value = current_day }
+}
+
+# While one of our calls sends the interaction: the actor carries the sending
+# variable and a copy of the captured options, so the generated send-option
+# lines turn on exactly the options of the captured offer.
+ck3agent_proposal_arm_sending_effect = {
+	scope:actor = {
+		set_variable = { name = ck3agent_proposal_sending value = 1 days = 1 }
+		clear_variable_list = ck3agent_proposal_options
+	}
+	# flag by flag (a flag is a value, not a scope an iterator could save)
+	ck3agent_proposal_copy_options_effect = yes
+}
+ck3agent_proposal_disarm_sending_effect = {
+	scope:actor ?= {
+		remove_variable = ck3agent_proposal_sending
+		clear_variable_list = ck3agent_proposal_options
+	}
+}
+
+# The engine's own send of KIND from the stored sender to the seat, with the
+# stored secondaries and options. THRESHOLD = execute_threshold (accept: the
+# engine's whole acceptance runs now, special effects included) or
+# send_threshold (the native hand-back: the offer is sent for real and the
+# seat's AI answers it on delivery). The answering variable keeps our capture
+# and the vanilla on_send body (shape 4) out of it.
+ck3agent_proposal_run_effect = {
+	scope:recipient = { set_variable = { name = ck3agent_proposal_answering value = 1 days = 1 } }
+	ck3agent_proposal_arm_sending_effect = yes
+	if = {
+		limit = { exists = scope:secondary_actor exists = scope:secondary_recipient }
+		run_interaction = {
+			interaction = $KIND$
+			actor = scope:actor
+			recipient = scope:recipient
+			secondary_actor = scope:secondary_actor
+			secondary_recipient = scope:secondary_recipient
+			$THRESHOLD$ = decline
+		}
+	}
+	else_if = {
+		limit = { exists = scope:secondary_actor }
+		run_interaction = {
+			interaction = $KIND$
+			actor = scope:actor
+			recipient = scope:recipient
+			secondary_actor = scope:secondary_actor
+			$THRESHOLD$ = decline
+		}
+	}
+	else_if = {
+		limit = { exists = scope:secondary_recipient }
+		run_interaction = {
+			interaction = $KIND$
+			actor = scope:actor
+			recipient = scope:recipient
+			secondary_recipient = scope:secondary_recipient
+			$THRESHOLD$ = decline
+		}
+	}
+	else = {
+		run_interaction = {
+			interaction = $KIND$
+			actor = scope:actor
+			recipient = scope:recipient
+			$THRESHOLD$ = decline
+		}
+	}
+	ck3agent_proposal_disarm_sending_effect = yes
+	scope:recipient = { remove_variable = ck3agent_proposal_answering }
+}
+
+# scope:ck3a_void = why the offer can no longer be answered (0 = it can).
+# Story scope, scopes restored.
+ck3agent_proposal_check_void_effect = {
+	save_scope_value_as = { name = ck3a_void value = 0 }
+	if = {
+		limit = {
+			OR = {
+				NOT = { exists = scope:actor }
+				scope:actor = { is_alive = no }
+			}
+		}
+		save_scope_value_as = { name = ck3a_void value = 1 }
+	}
+	else_if = {
+		limit = {
+			OR = {
+				NOT = { exists = scope:recipient }
+				scope:recipient = { is_alive = no }
+			}
+		}
+		save_scope_value_as = { name = ck3a_void value = 4 }
+	}
+	else_if = {
+		limit = {
+			OR = {
+				AND = {
+					has_variable = ck3agent_proposal_had_secondary_actor
+					OR = {
+						NOT = { exists = scope:secondary_actor }
+						scope:secondary_actor = { is_alive = no }
+					}
+				}
+				AND = {
+					has_variable = ck3agent_proposal_had_secondary_recipient
+					OR = {
+						NOT = { exists = scope:secondary_recipient }
+						scope:secondary_recipient = { is_alive = no }
+					}
+				}
+			}
+		}
+		save_scope_value_as = { name = ck3a_void value = 2 }
+	}
+	else_if = {
+		limit = {
+			OR = {
+				AND = {
+					has_variable = ck3agent_proposal_had_war
+					NOT = { exists = scope:war }
+				}
+				AND = {
+					var:ck3agent_proposal_family = flag:join_war
+					has_variable = ck3agent_proposal_had_target
+					NOT = { exists = scope:target }
+				}
+			}
+		}
+		save_scope_value_as = { name = ck3a_void value = 3 }
+	}
+}
+
+# Void: the state, the line, the sender released. Story scope, scope:ck3a_void set.
+ck3agent_proposal_void_effect = {
+	# the line prints from variables on scope:recipient (proposal_overrides _carry);
+	# the story's own re-check has no saved recipient (live i11p6: VOID|0|0|...|0.0.0)
+	if = { limit = { NOT = { exists = scope:recipient } } var:ck3agent_proposal_recipient ?= { save_scope_as = recipient } }
+	set_variable = { name = ck3agent_proposal_state value = 3 }
+	set_variable = { name = ck3agent_proposal_void_reason value = scope:ck3a_void }
+	ck3agent_proposal_stamp_effect = yes
+	ck3agent_proposal_release_effect = yes
+	ck3agent_proposal_log_void_effect = yes
+}
+
+# The OUTCOME line of a void offer: the reason the story keeps. Story scope.
+ck3agent_proposal_log_void_outcome_effect = {
+	if = {
+		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 1 }
+		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_sender_dead"
+	}
+	else_if = {
+		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 2 }
+		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_subject_dead"
+	}
+	else_if = {
+		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 3 }
+		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_war_ended"
+	}
+	else_if = {
+		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 4 }
+		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_recipient_dead"
+	}
+	else_if = {
+		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 5 }
+		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|invalid_now"
+	}
+	else = {
+		# a void story without its reason (one voided before the reason was kept):
+		# said as such, never as "already answered"
+		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_reason_unread"
+	}
+}
+
+# ── THE apply effect: one declaration, every reader ──────────────────────────
+# Story scope. ANSWER = 1 accept, 2 decline, 4 native; BY = the by code. Called
+# by the bridge's proposal_answer template (BY 1 seat, 3 boundary, 6 classifier),
+# by the rule event (BY 2) and by the story's lapse (BY 4). The outcome line
+# (CK3AGENT_PROPOSAL_OUTCOME|<outcome>|<reason>) is what the template reads.
+#
+# Immediately before ANY answer is carried out, the offer is checked against the
+# interaction's own script conditions as the installed game defines them (the
+# generated ck3agent_proposal_kind_valid_trigger: is_shown, is_valid,
+# is_valid_showing_failures_only, has_valid_target, has_valid_target_showing_failures_only
+# and can_send, lifted from the game's file, evaluated with the actor as root as
+# the engine does). An offer that no longer meets them is VOID (invalid_now): the
+# sender released, the VOID line, OUTCOME refused|invalid_now; nothing is run. Live
+# i11p9 / i11s4: the engine refused run_interaction ("cannot get betrothed",
+# "cannot be sent") while this effect, which did not check, wrote applied_accept.
+ck3agent_proposal_answer_effect = {
+	ck3agent_proposal_restore_scopes_effect = yes
+	ck3agent_proposal_stamp_effect = yes
+	save_scope_value_as = { name = ck3a_answer value = $ANSWER$ }
+	save_scope_value_as = { name = ck3a_by value = $BY$ }
+	if = {
+		# void already (the story's re-check, an earlier answer's check): say why
+		limit = { has_variable = ck3agent_proposal_state var:ck3agent_proposal_state = 3 }
+		ck3agent_proposal_log_void_outcome_effect = yes
+	}
+	else_if = {
+		limit = { NOT = { ck3agent_proposal_open_trigger = yes } }
+		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|already_resolved"
+	}
+	else = {
+		ck3agent_proposal_check_void_effect = yes
+		if = {
+			limit = { scope:ck3a_void > 0 }
+			ck3agent_proposal_void_effect = yes
+			ck3agent_proposal_log_void_outcome_effect = yes
+		}
+		else_if = {
+			limit = {
+				scope:ck3a_answer = 4
+				NOT = { ck3agent_proposal_resend_family_trigger = yes }
+			}
+			debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|native_not_supported"
+		}
+		else_if = {
+			# the interaction's own conditions, now, for every family and answer
+			limit = { NOT = { ck3agent_proposal_kind_valid_trigger = yes } }
+			save_scope_value_as = { name = ck3a_void value = 5 }
+			ck3agent_proposal_void_effect = yes
+			ck3agent_proposal_log_void_outcome_effect = yes
+		}
+		else = {
+			# resolved BEFORE any effect, the sender released, then the answer
+			set_variable = { name = ck3agent_proposal_state value = 2 }
+			ck3agent_proposal_release_effect = yes
+			ck3agent_proposal_log_resolved_effect = yes
+			if = {
+				limit = { scope:ck3a_answer = 1 }
+				ck3agent_proposal_dispatch_accept_effect = yes
+				debug_log = "CK3AGENT_PROPOSAL_OUTCOME|applied_accept|none"
+			}
+			else_if = {
+				limit = { scope:ck3a_answer = 2 }
+				ck3agent_proposal_dispatch_decline_effect = yes
+				debug_log = "CK3AGENT_PROPOSAL_OUTCOME|applied_decline|none"
+			}
+			else = {
+				ck3agent_proposal_dispatch_resend_effect = { THRESHOLD = send_threshold }
+				debug_log = "CK3AGENT_PROPOSAL_OUTCOME|handed_back|none"
+			}
+		}
+	}
+}
+
+# ── the list (proposal_list template; story scope) ───────────────────────────
+ck3agent_proposal_list_item_effect = {
+	ck3agent_proposal_restore_scopes_effect = yes
+	ck3agent_proposal_stamp_effect = yes
+	ck3agent_proposal_log_item_effect = yes
+	if = {
+		limit = { exists = scope:secondary_actor }
+		set_global_variable = { name = ck3a_c_secondary_actor value = scope:secondary_actor }
+		debug_log = "CK3AGENT_PROPOSAL_ITEM_SECONDARY_ACTOR|[GetGlobalVariable('ck3a_c_secondary_actor').GetCharacter.GetID]"
+	}
+	if = {
+		limit = { exists = scope:secondary_recipient }
+		set_global_variable = { name = ck3a_c_secondary_recipient value = scope:secondary_recipient }
+		debug_log = "CK3AGENT_PROPOSAL_ITEM_SECONDARY_RECIPIENT|[GetGlobalVariable('ck3a_c_secondary_recipient').GetCharacter.GetID]"
+	}
+	if = {
+		limit = { exists = scope:war }
+		debug_log = "CK3AGENT_PROPOSAL_ITEM_WAR|[SCOPE.sWar('war').GetName]"
+	}
+	else_if = {
+		limit = {
+			var:ck3agent_proposal_family = flag:join_war
+			exists = scope:target
+		}
+		debug_log = "CK3AGENT_PROPOSAL_ITEM_WAR|[SCOPE.sWar('target').GetName]"
+	}
+	ck3agent_proposal_log_options_effect = yes
+}

@@ -39,7 +39,7 @@
 namespace bridge {
 
 struct ActionLogVerdict {
-    const char* verdict;   // applied | rejected | pending | unknown
+    const char* verdict;   // applied | rejected | pending | unknown | read (a script action that wrote nothing)
     const char* poll;      // answered | skipped_on_game_thread | timed_out | not_applicable
 };
 
@@ -75,6 +75,20 @@ inline ActionLogVerdict action_log_verdict_of(const char* result_json) {
         return {"pending", poll};
     if (strcmp(status, "war_created") == 0 || strcmp(status, "rejected") == 0) poll = "answered";
 
+    // fix10 (v4 pilot 2, council-a: 15 `script_action declare_war ... applied`
+    // rows whose reply said guard "refused", while the seat was told
+    // `rejected can_declare_war_false`). A script action's `success` is the
+    // engine running the effect script; its guard (`if = { limit = {
+    // can_declare_war ... } }`) deciding NOT to act is `guard: refused`, and
+    // the action did not happen: rejected, answered.
+    if (strcmp(str("guard"), "refused") == 0) return {"rejected", "answered"};
+    // lane peace: a script action that writes nothing to the game (end_war with
+    // no terms, the read-only listing) is a READ, never applied: the action log
+    // is read as the write log (attribution, writes.txt).
+    {
+        auto ro = d.FindMember("read_only");
+        if (ro != d.MemberEnd() && ro->value.IsBool() && ro->value.GetBool()) return {"read", "answered"};
+    }
     auto ok = d.FindMember("success");
     if (ok == d.MemberEnd() || !ok->value.IsBool()) return {"unknown", poll};
     return {ok->value.GetBool() ? "applied" : "rejected", poll};

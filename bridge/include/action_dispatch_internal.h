@@ -10,6 +10,7 @@
 #include "ck3_offsets.h"
 #include "name_tables.h"
 #include "personality_locks.h"
+#include "actor_resolve.h"   // lane ACTOR: the one resolver of an unnamed actor
 
 #include <cstdio>
 #include <cstring>
@@ -257,6 +258,11 @@ void* get_controlled_character();
 uint32_t get_player_character_id();
 void* resolve_character(const char* params_json);
 void* resolve_actor(const char* params_json);
+// lane ACTORKEY (actor_resolve.h rule 0): the OTHER actor key (actor_id <->
+// character_id) when the request names an actor (> 0) under it and none under
+// `read_key`, the key this handler reads; nullptr otherwise. Fed to
+// resolve_actor_id, whose pick_actor refuses a write with it.
+const char* unread_actor_key(const char* params_json, const char* read_key);
 // Player-protection invariant: returns true (and writes a rejection to *out) if
 // the actor IS the human player. Mutating handlers gate on this; the player is a
 // valid TARGET but never a valid ACTOR. No-op in observer mode (no player).
@@ -655,15 +661,18 @@ bool cascade_query_pending();
 // Council Task Assignment Observer (council_task_hook.cpp)
 bool do_query_council_tasks(const char* params_json, std::string* out);
 
-// Per-ruler Council-AI Suppression (council_suppress_hook.cpp, L20 stickiness)
-// Installs an inline hook on AI_COUNCIL_TASKS_PER_RULER (FUN_04dca2a0). While a
-// ruler id is in g_council_locked, the native per-ruler council-task
-// re-assignment routine is skipped for that ruler so a bridge-set council task
-// sticks. Default empty → AI keeps full control. Fails OPEN (runs the original)
-// on any unexpected state. council_lock_add is called when do_set_council_task
-// successfully applies a task; council_lock_remove on release_character.
+// Per-seat council-task pin (council_suppress_hook.cpp, council_pin.h; lane
+// COUNCILRE). Installs an inline hook on AI_COUNCIL_TASK_SELECT_FOR_POSITION
+// (FUN_04dc9fc0). The native per-seat task selection is skipped only for a
+// (ruler, position) a seat's council-task write pinned, while that ruler is a
+// controlled character. Default: no pins, native behaviour. Fails OPEN.
+// council_pin_arm returns the reply's "ai_pin" word (council_pin::arm_name):
+// pinned | not_seated | not_applied | no_position | refused.
+// council_lock_remove releases every pin of a ruler (release_character, the
+// dead-ruler handoff).
 void init_council_suppress_hook();
-void council_lock_add(uint32_t char_id);
+const char* council_pin_arm(uint32_t ruler_id, uint32_t position_id,
+                            bool have_position, bool readback_matches);
 void council_lock_remove(uint32_t char_id);
 
 // Per-character OFF-GOAL routine-war veto (offgoal_war_veto_hook.cpp,
@@ -1129,7 +1138,17 @@ bool do_query_debug_flags(const char* params_json, std::string* out);
 // already answer). nullptr: a living character. The MCP maps them to
 // character_not_found and character_dead (redesign.py RAW_REASON_TO_GATE); the
 // one word no_living_actor said both and was read as "dead".
+// lane ACTOR: a null actor whose resolve was REFUSED (actor_resolve.h: a write,
+// or a seat's read, with no actor of its own) answers that refusal, "no_actor",
+// not "actor_not_found": nobody was looked up.
 inline const char* actor_refusal(void* actor) {
+    // (last_actor_refusal() is kActorRefusalReason, spelled here as a literal so
+    // test_dead_actor_gate.py reads every reason this helper can answer.)
+    if (!actor && last_actor_refusal()) {
+        // lane ACTORKEY: the request named its actor under a key this verb does not read.
+        if (std::strcmp(last_actor_refusal(), kActorKeyNotRead) == 0) return "actor_key_not_read";
+        return "no_actor";
+    }
     if (!actor || is_sentinel(actor)) return "actor_not_found";
     // g_char_is_alive is the engine's CHAR_IS_ALIVE, resolved at init (before
     // any request is served); tested as factions.cpp and intent_dispatch.cpp do.

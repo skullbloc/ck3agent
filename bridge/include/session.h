@@ -538,6 +538,10 @@ public:
     //: primary ("" when none). get_tick_info publishes it beside the global
     //: controlled_character_id the hook reads.
     std::string first_unbound_reason() const;
+    //: lane ACTOR: whether ANY live session declared `episode_seat`. When one
+    //: has, the global primary mirror is a seat's ruler, so a write that names
+    //: no actor and arrives with no session cannot take it (actor_resolve.h).
+    bool any_seat_declared() const;
     //: rc2 B6: the succession handoff's player guard. `dead` died and its heir
     //: is the human player: release `dead` from `session` (state HeirIsPlayer:
     //: never recovered, never retried) and set unbound_reason="heir_is_player",

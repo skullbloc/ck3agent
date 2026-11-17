@@ -47,8 +47,8 @@ namespace bridge {
 // Declared in bridge.h; redeclared so this TU stays engine-free.
 extern FILE* g_logfile;
 // Defined in instance_paths.cpp (see default_path()).
-const char* instance_state_dir() __attribute__((weak));
-FILE* instance_state_fopen(const char* name, const char* mode) __attribute__((weak));
+const char* instance_state_dir() CK3_WEAK;
+FILE* instance_state_fopen(const char* name, const char* mode) CK3_WEAK;
 }  // namespace bridge
 #include "private_fopen.h"   // rc2 B1: explicit-path locks opened 0600, O_NOFOLLOW
 namespace bridge {

@@ -18,7 +18,8 @@ import tools
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SRC = os.path.join(ROOT, "bridge", "src")
-FALLBACK = re.compile(r"\b(resolve_character|resolve_actor|get_controlled_character)\s*\("
+FALLBACK = re.compile(r"\b(resolve_character|resolve_actor|get_controlled_character"
+                      r"|resolve_actor_id)\s*\("
                       r"|\bg_controlled_primary\b")
 
 
@@ -102,7 +103,6 @@ def test_the_table_names_only_reached_doors():
     assert set(AD.ACTOR_DOORS) <= reached, set(AD.ACTOR_DOORS) - reached
     assert set(AD.ACTOR_OPTIONAL) <= reached
     assert not set(AD.ACTOR_DOORS) & set(AD.ACTOR_OPTIONAL)
-    assert set(AD.ACTOR_DOORS_VIA) <= set(AD.ACTOR_DOORS)
 
 
 def test_a_door_whose_handler_falls_back_to_the_ruler_is_classified():
@@ -118,7 +118,7 @@ def test_an_actor_door_falls_back_to_the_ruler_in_the_source():
     routes = _routes()
     bad = []
     for a in list(AD.ACTOR_DOORS) + list(AD.ACTOR_OPTIONAL):
-        fn = AD.ACTOR_DOORS_VIA.get(a) or routes[a]
+        fn = routes[a]
         if not _falls_back(fn):
             bad.append((a, fn))
     assert not bad, bad

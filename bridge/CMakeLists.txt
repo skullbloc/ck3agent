@@ -80,6 +80,7 @@ set(CK3_BRIDGE_SOURCES
     src/factions.cpp              # F16: faction management, both seats (re_factions.md)
     src/snapshot.cpp
     src/session.cpp
+    src/actor_resolve.cpp         # lane ACTOR: the one resolver of an unnamed actor
     src/deferred_drain.cpp
     src/war_score_hook.cpp
     src/war_declaration_hook.cpp
@@ -171,6 +172,29 @@ else()
     set(CK3_OS_WARNINGS -Wall -Wextra)
 endif()
 
+# THE MSVC STAND-IN. The public windows-latest leg compiles with cl.exe; the
+# node cross-builds with clang-cl, which accepts GNU extensions cl.exe rejects,
+# so 2026.12.1-2026.12.9 built there and failed on the public leg (1491 cl.exe
+# errors on 2026.12.9: __attribute__, the shim's __extension__ statement
+# expression in sigsetjmp, __atomic_* builtins). Under clang-cl, (1) the GNU
+# constructs that are not single tokens are errors, and (2) msvc_standin_lint
+# (below, after the targets) preprocesses every bridge translation unit and
+# fails on any GNU-only token left in a bridge file. Shared sources spell those
+# through include/ck3_compiler.h; test/check_msvc_portable.py (ctest, every
+# Linux build) reads the same rule off the source. What neither can see:
+# cl.exe's own front-end differences (two-phase lookup corners, constexpr
+# limits, overload resolution); only the public leg can.
+set(CK3_MSVC_STANDIN OFF)
+if(CK3_PLATFORM STREQUAL "windows" AND MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(CK3_MSVC_STANDIN ON)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    set(CK3_MSVC_STANDIN_FLAGS -Werror=gnu-statement-expression -Werror=gnu-conditional-omitted-operand
+        -Werror=gnu-case-range -Werror=gnu-label-as-value -Werror=vla -Werror=c++20-designator
+        -Werror=gnu-designator -Werror=zero-length-array)
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${CK3_MSVC_STANDIN_FLAGS}>")
+    message(STATUS "ck3 MSVC stand-in: clang-cl with cl.exe's GNU refusals (msvc_standin_lint)")
+endif()
+
 # THE WINDOWS CELLS, one declaration for three readers. Each name <c> here is
 #   src/os/windows/<c>.cpp            compiled into ck3_os on windows
 #   src/os/test/test_os_win_<c>.cpp   its engine-free test (ctest name
@@ -184,7 +208,10 @@ endif()
 # One exception, session_pass: ONE cell for both platforms (L14 m-16),
 # src/os/session_pass.cpp, tested by src/os/test/test_os_session_pass.cpp
 # (ctest test_os_win_session_pass here, test_os_linux_session_pass on linux).
-set(CK3_WIN_CELLS process entry image identity safe_read threads paths write_protected transport exec_alloc guarded watchdog session_pass)
+# game_logs (lane WINRE): the game's debug.log/error.log by its open handles, the
+# script action layer's read-back; its test is shared with linux too
+# (src/os/test/test_os_game_logs.cpp; test_os_linux_game_logs there).
+set(CK3_WIN_CELLS process entry image identity safe_read threads paths write_protected transport exec_alloc guarded watchdog session_pass game_logs)
 set(CK3_WIN_CELL_DEFS "")
 foreach(_c ${CK3_WIN_CELLS})
     string(TOUPPER "${_c}" _C)
@@ -192,7 +219,7 @@ foreach(_c ${CK3_WIN_CELLS})
 endforeach()
 # Portable helpers (standard C++17, no platform header) and their tests, which
 # build and run on every platform: src/os/test/test_os_<t>.cpp.
-set(CK3_OS_PORTABLE src/os/os_common.cpp src/os/pe_image.cpp src/os/sha256.cpp src/os/win_paths.cpp)
+set(CK3_OS_PORTABLE src/os/os_common.cpp src/os/pe_image.cpp src/os/sha256.cpp src/os/win_paths.cpp src/os/game_logs.cpp)
 set(CK3_OS_PORTABLE_TESTS pe_image sha256 win_paths_rules format_fixed2)
 
 if(CK3_PLATFORM STREQUAL "linux")
@@ -430,6 +457,13 @@ if(BUILD_BRIDGE_TESTS)
         target_compile_definitions(test_os_linux_session_pass PRIVATE _GNU_SOURCE)
         target_compile_options(test_os_linux_session_pass PRIVATE ${CK3_OS_WARNINGS})
         add_test(NAME test_os_linux_session_pass COMMAND test_os_linux_session_pass)
+        # lane WINRE: the game-log finder, the same rows test_os_win_game_logs runs under wine.
+        add_executable(test_os_linux_game_logs src/os/test/test_os_game_logs.cpp
+            src/os/game_logs.cpp src/os/linux/game_logs.cpp)
+        target_include_directories(test_os_linux_game_logs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_definitions(test_os_linux_game_logs PRIVATE _GNU_SOURCE)
+        target_compile_options(test_os_linux_game_logs PRIVATE ${CK3_OS_WARNINGS})
+        add_test(NAME test_os_linux_game_logs COMMAND test_os_linux_game_logs)
 
         # The Windows path rules and instance_paths.cpp must refuse the same
         # ids. Linux-only (it forks to set the environment per case).
@@ -475,7 +509,11 @@ if(BUILD_BRIDGE_TESTS)
                 # the layout the bridge reads (ck3_win::struct_layout::SESSION_*)
                 target_include_directories(test_os_win_${_c} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets/windows)
             else()
-                add_executable(test_os_win_${_c} src/os/test/test_os_win_${_c}.cpp)
+                if(_c STREQUAL "game_logs")
+                    add_executable(test_os_win_${_c} src/os/test/test_os_game_logs.cpp)  # shared with linux
+                else()
+                    add_executable(test_os_win_${_c} src/os/test/test_os_win_${_c}.cpp)
+                endif()
             endif()
             target_link_libraries(test_os_win_${_c} PRIVATE ck3_os)
             target_compile_definitions(test_os_win_${_c} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
@@ -542,6 +580,21 @@ if(BUILD_BRIDGE_TESTS)
     endif()
 endif()
 
+# The MSVC stand-in's token check (see CK3_MSVC_STANDIN above): runs on every
+# build, after the generated headers exist, and fails the build like cl.exe would.
+# Here, before the platform layer's return(): a Windows configure ends there.
+if(CK3_MSVC_STANDIN)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_custom_target(msvc_standin_lint ALL
+        COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/cmake/msvc_standin_lint.py
+            --compdb ${CMAKE_BINARY_DIR}/compile_commands.json --root ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "msvc_standin_lint: no GNU-only token in the preprocessed bridge sources"
+        VERBATIM)
+    if(TARGET gen_win_offsets)
+        add_dependencies(msvc_standin_lint gen_win_offsets gen_provenance_win)
+    endif()
+endif()
+
 if(NOT CK3_PLATFORM STREQUAL "linux")
     return()   # windows/macos: the platform layer is all there is to build
 endif()
@@ -554,6 +607,9 @@ add_library(ck3_bridge SHARED ${CK3_BRIDGE_SOURCES})
 # The session-pass cell (os::session_pass_*), shared with Windows, where it is
 # in ck3_os; libck3_bridge.so does not link ck3_os, so it compiles the cell.
 target_sources(ck3_bridge PRIVATE src/os/session_pass.cpp)
+# The game-log finder (lane WINRE; os/game_logs.h): the Linux cell is the v4act
+# /proc/self/fd walk, moved; Windows builds src/os/windows/game_logs.cpp into ck3_os.
+target_sources(ck3_bridge PRIVATE src/os/game_logs.cpp src/os/linux/game_logs.cpp)
 
 # Build provenance — regenerated every build (git SHA, dirty state, offsets MD5,
 # build time) so a deployed .so can always be matched to its source commit.
@@ -841,6 +897,17 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_council_task_family_prefix_control PRIVATE FAMILY_PREFIX_CONTROL)
 
+    # lane COUNCILRE: the per-seat council-task pin (council_pin.h) on the 867
+    # dump's character 14859. The control is the pre-fix read (the id at the
+    # CAIStrategy's +0x18) and exits 0 only when exactly its rows 1 and 7a fail.
+    foreach(_v test_council_pin test_council_pin_dispatcher_arg_control)
+        add_executable(${_v} test/test_council_pin.cpp)
+        target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                 ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_council_pin_dispatcher_arg_control PRIVATE COUNCIL_PIN_DISPATCHER_ARG_CONTROL)
+
     # lane v4act: the script action layer's fixed templates (script_templates.h).
     # The raw control is the probe's channel (the caller's text is the script)
     # and must fail (WILL_FAIL).
@@ -999,6 +1066,16 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_compile_options(test_line_watch PRIVATE -O2 -Wall -Wextra)
+
+    # fix10: a ping or broadcast never waits on a client that is not reading
+    # (frame_send.h, header-only; a real socketpair).
+    add_executable(test_frame_send
+        test/test_frame_send.cpp
+    )
+    target_include_directories(test_frame_send PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_options(test_frame_send PRIVATE -O2 -Wall -Wextra)
 
     # cleanup 2026.11 F16: a faction's war as the game reads it (faction_war.h).
     # HEADER-ONLY and engine-free: WAR_DB is a stand-in, so the rule (the whole
@@ -1349,6 +1426,17 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_diag_dtor PRIVATE -O2 -Wall -Wextra)
 
+    # lane WINRE: the console-handler ABI (console_call.h) under both std::string
+    # layouts; the control lays the Windows argument out the pre-fix way and must
+    # fail the MSVC rows.
+    add_executable(test_console_call test/test_console_call.cpp)
+    target_include_directories(test_console_call PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_console_call PRIVATE -O2 -Wall -Wextra)
+    add_executable(test_console_call_prefix_control test/test_console_call.cpp)
+    target_include_directories(test_console_call_prefix_control PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_console_call_prefix_control PRIVATE -O2 -Wall -Wextra)
+    target_compile_definitions(test_console_call_prefix_control PRIVATE CK3_CONSOLE_CALL_PREFIX)
+
     # ck-6kvq.13 (R6): the decision-budget governor's ENFORCING half. Pure by
     # construction — no engine, no game, no stub global — because "is this agent
     # out of budget" must be provable without a running game. Also carries the
@@ -1545,6 +1633,8 @@ if(BUILD_BRIDGE_TESTS)
         src/deferred_counters.cpp
         # L20-A: dispatch_router.cpp's clock verbs clear the game-day pause alarm.
         src/pause_alarm.cpp
+        # lane ACTOR: get_controlled_character and the dispatch scope ask it.
+        src/actor_resolve.cpp
         ${DISPATCH_HANDLER_STUBS}
     )
     set(RELEASE_HANDLER_INCLUDES
@@ -1590,6 +1680,31 @@ if(BUILD_BRIDGE_TESTS)
         CK3_BRIDGE_DEBUG_VERBS)
     target_link_libraries(test_debug_verbs_negative_control PRIVATE Threads::Threads)
     target_compile_options(test_debug_verbs_negative_control PRIVATE -O2 -Wall -Wextra)
+
+    # lane ACTOR: an unnamed actor resolves by ONE rule (actor_resolve.h): the
+    # pure table, and the same rule through the REAL dispatch_action of the REAL
+    # dispatch_router.cpp (strong test handlers stand in for the engine-bound
+    # ones). The negative control builds actor_resolve.cpp -DCK3_ACTOR_PRE_FIX
+    # (every call keeps its handler's historical chain, the pre-fix tree's
+    # behaviour) and exits 0 only when EXACTLY its named rows fail.
+    set(ACTOR_RESOLVE_SOURCES ${RELEASE_HANDLER_SOURCES})
+    list(REMOVE_ITEM ACTOR_RESOLVE_SOURCES test/test_release_handler.cpp src/actor_resolve.cpp)
+    add_executable(test_actor_resolve ${ACTOR_RESOLVE_SOURCES}
+                   test/test_actor_resolve.cpp src/actor_resolve.cpp)
+    target_include_directories(test_actor_resolve PRIVATE ${RELEASE_HANDLER_INCLUDES})
+    target_link_libraries(test_actor_resolve PRIVATE Threads::Threads)
+    target_compile_options(test_actor_resolve PRIVATE -O2 -Wall -Wextra)
+    add_library(actor_resolve_pre_fix OBJECT src/actor_resolve.cpp)
+    target_include_directories(actor_resolve_pre_fix PRIVATE ${RELEASE_HANDLER_INCLUDES})
+    target_compile_definitions(actor_resolve_pre_fix PRIVATE CK3_ACTOR_PRE_FIX=1)
+    add_executable(test_actor_resolve_pre_fix_control ${ACTOR_RESOLVE_SOURCES}
+                   test/test_actor_resolve.cpp $<TARGET_OBJECTS:actor_resolve_pre_fix>)
+    target_include_directories(test_actor_resolve_pre_fix_control PRIVATE ${RELEASE_HANDLER_INCLUDES})
+    target_compile_definitions(test_actor_resolve_pre_fix_control PRIVATE CK3_ACTOR_PRE_FIX_CONTROL=1)
+    target_link_libraries(test_actor_resolve_pre_fix_control PRIVATE Threads::Threads)
+    target_compile_options(test_actor_resolve_pre_fix_control PRIVATE -O2 -Wall -Wextra)
+    add_test(NAME test_actor_resolve COMMAND test_actor_resolve)
+    add_test(NAME test_actor_resolve_pre_fix_control COMMAND test_actor_resolve_pre_fix_control)
 
     # ff3 N1: a read that faulted on an inline path is answered (memory_access_fault,
     # or degraded), never a silent 0. Same sources as test_release_handler (the
@@ -1745,6 +1860,34 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_game_thread_reads PRIVATE Threads::Threads)
     target_compile_options(test_game_thread_reads PRIVATE -O2 -Wall -Wextra)
 
+    # wave 13 lane METER: the REAL reader serves one line per client per round,
+    # so a Tier-1 get_tick_info is not held behind another client's burst of
+    # game-thread reads (the seated-run meter timeouts).
+    add_executable(test_reader_fairness
+        test/test_reader_fairness.cpp
+        src/ipc_server.cpp
+        src/listener_fd.cpp
+        ${SESSION_HOST_SOURCES}
+        src/instance_paths.cpp
+        src/pipeline_mode.cpp
+        src/json_helpers.cpp
+        src/client_slot.cpp
+        src/log_archive.cpp
+        src/build_id_witness.cpp
+    )
+    add_dependencies(test_reader_fairness gen_provenance)
+    target_include_directories(test_reader_fairness PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+        ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    if(_ck3_bridge_defs)
+        target_compile_definitions(test_reader_fairness PRIVATE ${_ck3_bridge_defs})
+    endif()
+    target_link_libraries(test_reader_fairness PRIVATE Threads::Threads)
+    target_compile_options(test_reader_fairness PRIVATE -O2 -Wall -Wextra)
+
     # rc2 B6: the succession handoff never binds the human player.
     add_executable(test_handoff_player
         test/test_handoff_player.cpp
@@ -1885,6 +2028,12 @@ endif()
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
     )
     target_compile_options(test_action_log_row PRIVATE -O2 -Wall -Wextra)
+
+    # lane integ11: when a claim may carry a claim war (include/claim_rule.h);
+    # the wiring half reads the product sources, comment-stripped.
+    add_executable(test_claim_rule test/test_claim_rule.cpp)
+    target_include_directories(test_claim_rule PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_claim_rule PRIVATE -O2 -Wall -Wextra)
 
     # ck-hxh7: world-reload detection + world-scoped cache invalidation.
     # Compiles world_epoch.cpp and name_tables.cpp standalone; the engine name
@@ -2030,17 +2179,19 @@ endif()
     # Engine-free tests that run standalone and exit 0; `ctest` runs them.
     enable_testing()
     foreach(_t test_json_helpers test_instance_paths
-               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_liege_walk test_played_line test_line_watch test_engine_bool
+               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_liege_walk test_played_line test_line_watch test_frame_send test_engine_bool
                test_flush_scheduler test_pipeline
-               test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_intent_lookup test_handoff_player
+               test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_reader_fairness test_intent_lookup test_handoff_player
                add_claim_probe name_pending_probe tls_prologue_scan_probe
                latch_guarded_rows_probe
                test_action_args    # L18-B: built since ck-6kvq.15, never run by ctest
                test_war_scope test_pause_alarm test_council_task_family     # L20-A
+               test_council_pin test_council_pin_dispatcher_arg_control   # COUNCILRE (the control exits 0 only on its exact rows)
                test_script_templates   # lane v4act
                test_war_stance_record   # L22: a stance row reads its own side's record
                test_decision_eval_plan  # L22: no failure-key pass on a not-shown decision
                test_diag_dtor      # L20-D: DIAG_OBJECT_DTOR is the engine's dtor
+               test_console_call   # WINRE: console-handler ABI, both std::string layouts
                test_optional_id    # L20 r3: location_id absent -> missing_location_id
                test_listener_fd    # L21: the socket lives only in the game process
                test_log_redact)    # 2026.12.5: no token reaches the bridge log
@@ -2055,6 +2206,8 @@ endif()
     # structural half (the drain samples the world before any queued write).
     add_test(NAME test_action_log_row
              COMMAND test_action_log_row ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME test_claim_rule
+             COMMAND test_claim_rule ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME acceptance_world_reset COMMAND acceptance_world_reset)
     # The structural half lives in scripts/, which the public export does not
     # ship: registered only where it exists (the private tree).
@@ -2071,6 +2224,8 @@ endif()
     set_tests_properties(test_council_task_family_prefix_control PROPERTIES WILL_FAIL TRUE)
     add_test(NAME test_script_templates_raw_control COMMAND test_script_templates_raw_control)
     set_tests_properties(test_script_templates_raw_control PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME test_console_call_prefix_control COMMAND test_console_call_prefix_control)
+    set_tests_properties(test_console_call_prefix_control PROPERTIES WILL_FAIL TRUE)
     # L20-A: the pre-fix war scope read must fail the same rows.
     add_test(NAME test_war_scope_prefix_control COMMAND test_war_scope_prefix_control)
     set_tests_properties(test_war_scope_prefix_control PROPERTIES WILL_FAIL TRUE)
@@ -2097,12 +2252,21 @@ endif()
     set(_census_private_file_opens ${CMAKE_CURRENT_SOURCE_DIR}/test/check_private_file_opens.py)
     set(_census_raw_pointer_inputs ${CMAKE_CURRENT_SOURCE_DIR}/test/check_raw_pointer_inputs.py)
     set(_census_no_va_output       ${CMAKE_CURRENT_SOURCE_DIR}/test/check_no_va_output.py)
-    foreach(_c private_file_opens raw_pointer_inputs no_va_output)
+    # lane ACTOR: no handler resolves an unnamed actor outside actor_resolve.h.
+    set(_census_actor_resolution   ${CMAKE_CURRENT_SOURCE_DIR}/test/check_actor_resolution.py)
+    foreach(_c private_file_opens raw_pointer_inputs no_va_output actor_resolution)
         add_test(NAME ${_c}
                  COMMAND ${CK3_PYTHON3} ${_census_${_c}} ${CMAKE_CURRENT_SOURCE_DIR})
         add_test(NAME ${_c}_selftest
                  COMMAND ${CK3_PYTHON3} ${_census_${_c}} --selftest)
     endforeach()
+    # lane win12: no GNU-only construct in a file the Windows (cl.exe) build
+    # compiles; the files are read from this CMakeLists.txt's Windows branch.
+    set(_census_msvc_portable ${CMAKE_CURRENT_SOURCE_DIR}/test/check_msvc_portable.py)
+    add_test(NAME msvc_portable
+             COMMAND ${CK3_PYTHON3} ${_census_msvc_portable} ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME msvc_portable_selftest
+             COMMAND ${CK3_PYTHON3} ${_census_msvc_portable} --selftest)
     foreach(_c raw_pointer_inputs no_va_output)
         add_test(NAME ${_c}_debug_control
                  COMMAND ${CK3_PYTHON3} ${_census_${_c}} --include-debug

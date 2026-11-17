@@ -49,8 +49,9 @@
 // (the world-reset registrars), the holder became a class type so it could
 // carry the priority: see WorldResetRegistrar in world_epoch.h.
 //
-// ck-xqol's ipc_server.cpp globals predate this header and spell the attribute
-// out inline; they are the same lever at the same priority.
+// ck-xqol's ipc_server.cpp globals predate this header; they spelled the
+// attribute out inline until the MSVC fix (lane win12) moved them onto
+// CK3_EARLY_INIT: the same lever at the same priority.
 //
 // IF test_init_order FAILS ON YOUR BRANCH, IT IS TELLING YOU SOMETHING TRUE.
 // It names the translation unit. Add CK3_EARLY_INIT to that TU's namespace-scope
@@ -64,4 +65,6 @@
 // would have been wiped by the constructor that ran afterwards.
 // =============================================================================
 
-#define CK3_EARLY_INIT __attribute__((init_priority(101)))
+// The definition (and its empty MSVC form) is in ck3_compiler.h, the one file
+// that spells GNU attributes: GCC gets __attribute__((init_priority(101))).
+#include "ck3_compiler.h"

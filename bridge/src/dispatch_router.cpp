@@ -232,23 +232,34 @@ void* lookup_character(uint32_t char_id) {
     return reinterpret_cast<void*>(entry_ptr);
 }
 
-// Returns the explicitly controlled character.
-// M1: when a ClientContext is installed, returns the current session's primary
-// character; otherwise falls back to the global legacy mirror. Does NOT fall
-// back to PLAYER_CHAR_ID — the LLM controls AI characters, not the player.
+// Returns the explicitly controlled character for THIS request. The chain is
+// actor_resolve.h's (lane ACTOR): this session's primary; the global legacy
+// mirror only where that header's rule keeps the historical chain (a read by a
+// session that declared no seat, a call outside any dispatch, a session-less
+// write with no seat in play). A write or a seat's read with no actor of its own
+// gets nullptr and a recorded `no_actor` refusal (actor_refusal() answers it).
+// Never PLAYER_CHAR_ID — the LLM controls AI characters, not the player.
 // Call set_controlled_character first, or pass explicit character_id/actor_id.
 void* get_controlled_character() {
-    uint32_t cid = 0;
-    bridge::Session* s = bridge::current_session();
-    if (s) {
-        std::lock_guard<std::mutex> lk(s->mutex);
-        cid = s->primary_character_id;
-    }
-    if (cid == 0 || cid == 0xFFFFFFFF) {
-        cid = g_controlled_primary.load(std::memory_order_relaxed);
-    }
-    if (cid == 0 || cid == 0xFFFFFFFF) return nullptr;
-    return lookup_character(cid);
+    const bridge::ActorPick p = bridge::resolve_actor_id(0, bridge::LegacyChain::SessionThenMirror);
+    if (p.id == 0) return nullptr;
+    return lookup_character(p.id);
+}
+
+// lane ACTORKEY: see action_dispatch_internal.h. The decision is pick_actor's
+// (actor_resolve.h rule 0); this only reads which keys the request carries.
+const char* unread_actor_key(const char* params_json, const char* read_key) {
+    const char* other = bridge::actor_key_counterpart(read_key);
+    if (!other || json_get_int(params_json, read_key) > 0) return nullptr;
+    return json_get_int(params_json, other) > 0 ? other : nullptr;
+}
+
+// get_controlled_character for a handler that reads its actor under `read_key`.
+static void* controlled_character_reading(const char* params_json, const char* read_key) {
+    const bridge::ActorPick p = bridge::resolve_actor_id(
+        0, bridge::LegacyChain::SessionThenMirror, read_key, unread_actor_key(params_json, read_key));
+    if (p.id == 0) return nullptr;
+    return lookup_character(p.id);
 }
 
 // Returns the engine's player character (information only — not for LLM actions).
@@ -298,7 +309,7 @@ bool reject_player_actor(void* actor, const char* action, std::string* out) {
 // No PLAYER_CHAR_ID fallback.
 void* resolve_character(const char* params_json) {
     int cid = json_get_int(params_json, "character_id");
-    if (cid <= 0) return get_controlled_character();
+    if (cid <= 0) return controlled_character_reading(params_json, bridge::kActorKeyCharacterId);
     return lookup_character(static_cast<uint32_t>(cid));
 }
 
@@ -307,7 +318,7 @@ void* resolve_character(const char* params_json) {
 void* resolve_actor(const char* params_json) {
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id > 0) return lookup_character(static_cast<uint32_t>(actor_id));
-    return get_controlled_character();
+    return controlled_character_reading(params_json, bridge::kActorKeyActorId);
 }
 
 // These three and the two table lookups below sit on nearly every Tier-2
@@ -2911,10 +2922,16 @@ bool dispatch_action(const char* action_type, const char* params_json,
     // -> silent 20s+ stall; bit query_war_stance, query_dejure_progress and
     // query_map_graph before that). Add new actions to action_registry.inc, not
     // here.
+    // lane ACTOR: every registered handler runs inside an actor scope, so the
+    // one resolver (actor_resolve.h) knows whether this call reads or writes
+    // and the reply carries a typed `no_actor` refusal when it refused.
 #define BRIDGE_ACTION(NAME, HANDLER) \
     if (strcmp(action_type, NAME) == 0) { \
         if (fail_if_no_context(NAME, response_out)) return false; \
-        return HANDLER(params_json, response_out); \
+        bridge::ActorDispatchScope actor_scope(NAME, params_json); \
+        const bool handler_ok = HANDLER(params_json, response_out); \
+        actor_scope.annotate(response_out, handler_ok); \
+        return handler_ok; \
     }
 #include "action_registry.inc"
 #undef BRIDGE_ACTION

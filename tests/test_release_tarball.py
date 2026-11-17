@@ -40,6 +40,7 @@ def scratch(tmp: Path) -> Path:
     t = tmp / "tree"
     shutil.copytree(ROOT / "docs", t / "docs")
     shutil.copytree(ROOT / "ck3agent/policy_mod", t / "ck3agent/policy_mod")
+    shutil.copytree(ROOT / "ck3agent/proposal_mod", t / "ck3agent/proposal_mod")
     (t / "installer").mkdir(parents=True)
     for f in ("install.sh", "uninstall.sh", "README.txt"):
         shutil.copy(ROOT / "installer" / f, t / "installer" / f)
@@ -81,7 +82,9 @@ def test_the_tarball_ships_the_docs_readme_txt_names(tmp_path):
     for f in ("docs/getting-started.md", "docs/reference/tools.md", "docs/reference/files-and-paths.md",
               "README.txt", "install.sh", "lib/libck3_bridge.so", "docs/standing-policies.md",
               "policy_mod/ck3agent_policies/descriptor.mod",
-              "policy_mod/ck3agent_policies/events/ck3agent_policy_events.txt"):
+              "policy_mod/ck3agent_policies/events/ck3agent_policy_events.txt",
+              "docs/incoming-proposals.md", "proposal_mod/proposal_overrides.py",
+              "proposal_mod/ck3agent_proposals/descriptor.mod"):
         assert f"{name}/{f}" in listed, f
     named = re.findall(r"\bdocs/[\w/.-]+\.md\b", (ROOT / "installer/README.txt").read_text())
     assert named, "README.txt names no docs file"
@@ -132,3 +135,19 @@ def test_the_listing_check_reds_a_tarball_without_the_policy_mod(tmp_path):
     r = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(tmp_path / "assemble.sh")],
                        cwd=tree, env=env, capture_output=True, text=True)
     assert r.returncode != 0 and "tarball lacks policy_mod/" in r.stdout + r.stderr, r.stdout + r.stderr
+
+
+@pytest.mark.skipif(not shutil.which("tar"), reason="needs tar")
+def test_the_listing_check_reds_a_tarball_without_the_proposal_mod(tmp_path):
+    """2026.12.10: the tarball carries the incoming-proposal mod's static half and
+    its generator (without them the queue answers proposal_mod_not_loaded); drop
+    the copy and the workflow's own listing check fails."""
+    tree = scratch(tmp_path)
+    line = 'cp -R ck3agent/proposal_mod "$d/proposal_mod"'
+    script = assemble_script()
+    assert line in script, "the copy line moved; this row no longer drops the mod"
+    (tmp_path / "assemble.sh").write_text(script.replace(line, "true"))
+    env = dict(os.environ, VER=VER, RUNNER_TEMP=str(tmp_path / "runner"), SOURCE_DATE_EPOCH="1700000000")
+    r = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(tmp_path / "assemble.sh")],
+                       cwd=tree, env=env, capture_output=True, text=True)
+    assert r.returncode != 0 and "tarball lacks proposal_mod/" in r.stdout + r.stderr, r.stdout + r.stderr

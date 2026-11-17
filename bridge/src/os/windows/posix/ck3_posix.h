@@ -226,10 +226,14 @@ int timer_delete(timer_t t);                                 // refuses
 // The bridge's guarded regions are `if (sigsetjmp(g_recovery_point, 1) == 0)`,
 // and the Linux SIGSEGV handler siglongjmps to the point. Here the point is the
 // MSVC CRT's own _setjmp buffer (every non-volatile register, xmm6-xmm15 included,
-// as glibc's sigsetjmp saves its callee-saved set), with its Frame field zeroed
-// after the first return: a longjmp to a Frame of 0 restores the registers and does
-// NOT unwind, so the abandoned frames are skipped exactly as siglongjmp skips them
-// on Linux (a protected body owns no resources). The fault path is the bridge's
+// as glibc's sigsetjmp saves its callee-saved set), with its Frame field zeroed by
+// siglongjmp just before the jump: a longjmp to a Frame of 0 restores the registers
+// and does NOT unwind, so the abandoned frames are skipped exactly as siglongjmp
+// skips them on Linux (a protected body owns no resources). Frame is read by
+// longjmp alone, so zeroing it there is the same as zeroing it after the first
+// return, and sigsetjmp stays a bare _setjmp call: the earlier form zeroed it in a
+// GNU statement expression around _setjmp, which cl.exe has no syntax for (every
+// guarded region failed on the public windows-latest leg) and clang-cl accepted. The fault path is the bridge's
 // vectored handler, which does not longjmp itself (ADR amendment "No longjmp out of
 // a vectored handler"): it rewrites the faulting thread's RIP to a trampoline that
 // calls siglongjmp from ordinary thread context. See posix_shim.cpp.
@@ -243,11 +247,12 @@ int timer_delete(timer_t t);                                 // refuses
 #include <setjmp.h>
 extern "C" {
 typedef jmp_buf sigjmp_buf;
-#define sigsetjmp(buf, savemask) \
-    (__extension__({ int ck3_sj_r_ = _setjmp(buf); \
-                     if (ck3_sj_r_ == 0) reinterpret_cast<_JUMP_BUFFER*>(buf)->Frame = 0; \
-                     ck3_sj_r_; }))
-#define siglongjmp(buf, val) longjmp((buf), (val) ? (val) : 1)
+#define sigsetjmp(buf, savemask) _setjmp(buf)
+[[noreturn]] inline void ck3_siglongjmp(_JBTYPE* buf, int val) {
+    reinterpret_cast<_JUMP_BUFFER*>(buf)->Frame = 0;   // restore registers, no unwind
+    longjmp(buf, val ? val : 1);
+}
+#define siglongjmp(buf, val) ck3_siglongjmp((buf), (val))
 
 // ── <ucontext.h> ─────────────────────────────────────────────────────────── type
 // Read only inside Linux signal handlers, which never run on Windows.

@@ -1,0 +1,24 @@
+﻿# ck3agent incoming-proposal queue: THE class defaults (design "The answer
+# policy"). A seat's answer for a class is its character variable
+# ck3agent_proposal_answer_<class> when set, else this value.
+# Codes: 1 accept, 2 decline, 3 ask_me, 4 native.
+# Mirrors: scripts/proposal_mod.py CLASS_DEFAULT and bridge/include/script_templates.h
+# kProposalClasses (test_proposal_mod.py checks all three agree).
+ck3agent_proposal_default_marriage = 3
+ck3agent_proposal_default_alliance = 3
+ck3agent_proposal_default_call_to_war = 3
+ck3agent_proposal_default_peace = 3
+ck3agent_proposal_default_vassalage = 3
+
+# The lapse default per class (design "Timing"): what silence means at the hard
+# lapse (by=lapse) and at the turn boundary (by=boundary, the server's hand-back).
+# native for the resend classes (re-sent, the AI answers); accept for a call to
+# war (vanilla's common case; declining breaks the alliance); decline for peace.
+ck3agent_proposal_lapse_marriage = 4
+ck3agent_proposal_lapse_alliance = 4
+ck3agent_proposal_lapse_call_to_war = 1
+ck3agent_proposal_lapse_peace = 2
+ck3agent_proposal_lapse_vassalage = 4
+
+# The hard lapse, in 10-day steps of the story's own counter (400 days).
+ck3agent_proposal_lapse_steps = 40
