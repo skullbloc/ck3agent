@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_no_va_output.py — rc2 B2 census: no ungated code puts a process
+"""check_no_va_output.py — census: no ungated code puts a process
 virtual address in what a client receives.
 
 A VA in a reply defeats ASLR, and handed the addresses a raw-pointer sink
@@ -51,7 +51,7 @@ HEX_CONV = re.compile(r"%#?0?\d*(?:l|ll|j|z)?[xX]")
 
 
 def strip_comments(src: str) -> str:
-    """Comments blanked, literals kept: the one tokenizer's (cpp_strip, L13 FF3)."""
+    """Comments blanked, literals kept: the one tokenizer's (cpp_strip)."""
     return cpp_strip.strip(src, keep_strings=True)
 
 
@@ -185,8 +185,8 @@ SELFTEST_BAD = {
     "raw string key": 'snprintf(b, sizeof b, R"({"error":"x","option_array_ptr":"%d"})", n);',
     # The scan stays in phase across a raw string holding a quote, and across a
     # digit separator, each followed by an apostrophe in a comment and a raw
-    # reply key (the FF2 miss: query_handlers.cpp's cb_db_ptr went unseen). The
-    # raw-string row is missed by the pre-FF2 checker. The digit-separator row is
+    # reply key (the miss: query_handlers.cpp's cb_db_ptr went unseen). The
+    # raw-string row is missed by the earlier checker. The digit-separator row is
     # flagged by it too (non-discriminating against it); it reds a strip_comments
     # fixed without the matching literals() fix.
     "raw key after a raw string with a quote":

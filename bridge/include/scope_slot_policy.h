@@ -1,4 +1,4 @@
-// scope_slot_policy.h — ck-2gtk. Who may write RandomScopeManager+0x20.
+// scope_slot_policy.h —. Who may write RandomScopeManager+0x20.
 //
 // THE ENGINE PUBLISHES THAT SLOT WITH `xchg`, AND KEEPS EACH FRAME'S SAVED
 // PREDECESSOR INSIDE ITS OWN OBJECT. Disassembled from the shipped binary
@@ -42,7 +42,7 @@
 // stale is the OBJECT, on another thread, and no inspection of the pointer can
 // see that.
 //
-// ── ck-zgh4: AND THE COMPARE-EXCHANGE CANNOT SEE IT EITHER ───────────────────
+// ── AND THE COMPARE-EXCHANGE CANNOT SEE IT EITHER ───────────────────
 // This paragraph used to end "Only the compare-exchange can." That is wrong,
 // and it is the sentence that let the deploy-50 wedge run for a whole episode.
 //
@@ -131,7 +131,7 @@ inline const char* slot_state_name(SlotState s) {
     return "unknown";
 }
 
-// ── the latch (ck-zgh4, progenitor ruling "Latch + measure") ────────────────
+// ── the latch (progenitor ruling "Latch + measure") ────────────────
 // From the FIRST refused restore, the bridge stops touching the slot for the
 // rest of the PROCESS. Not the first non-NULL slot: non-NULL was 97 events in
 // d50 and all of them were downstream of the single refusal, so latching on
@@ -207,7 +207,7 @@ inline std::uint64_t g_restore_refused = 0;
 //: restores that found the slot already holding `saved`.
 inline std::uint64_t g_restore_noop = 0;
 
-// ── ck-zgh4 measurement ─────────────────────────────────────────────────────
+// ── measurement ─────────────────────────────────────────────────────
 // Atomics, unlike the four plain counters above: these are read by the
 // heartbeat while several threads arm, and two of them (the tid table and the
 // published/ran pair) give wrong ANSWERS rather than merely losing a count if
@@ -244,7 +244,7 @@ inline std::atomic<std::uint64_t> g_arm_refused_latched{0};
 //: rejected.
 //:
 //: THIS COMMENT USED TO CLAIM `== war_validity_skipped_latched`, AND THAT WAS
-//: WRONG TWICE (found by ck-t5bc). The war site I named as the one legitimate
+//: WRONG TWICE (found). The war site I named as the one legitimate
 //: reacher tests the latch in an `else if` BEFORE the arm, so it never
 //: reaches arm at all and contributes ZERO, not one. Meanwhile
 //: run_effect_tree_walk_hardened DID reach the arm while latched, because it
@@ -253,7 +253,7 @@ inline std::atomic<std::uint64_t> g_arm_refused_latched{0};
 //: site in exactly the episodes the "skip the check, make the war" ruling
 //: creates: one unguarded site plus one latched war is (1,1), which that test
 //: reads as clean. The walk site then tested the latch before arming (and was
-//: deleted with the scripted-effect path in cleanup 2026.11), which is what
+//: deleted with the scripted-effect path in), which is what
 //: makes `== 0` true by construction rather than by argument.
 inline std::atomic<std::uint64_t> g_arm_called_while_latched{0};
 

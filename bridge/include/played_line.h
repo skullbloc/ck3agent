@@ -1,5 +1,5 @@
 // played_line.h — WHO THE LINE IS NOW: the two decisions the heir handoff makes,
-// as pure functions over values (METERLINE, owner ruling 2026-11-11).
+// as pure functions over values (METERLINE).
 //
 // ONE DEFINITION, TWO CALLERS, BOTH IN THE BRIDGE. `bridge_init.cpp`
 // `check_controlled_handoff` follows a control session's character through
@@ -62,7 +62,7 @@ inline uint32_t heir_from_holder(uint32_t raw_holder, uint32_t dead_id) {
     return holder;
 }
 
-// THE REALM GUARD (owner ruling 2026-11-12; v3reg2 s3 D1: the handoff moved a
+// THE REALM GUARD (the handoff moved a
 // duke's seat onto Carloman, an independent rival king). A succession must never
 // move a seat onto a ruler OUTSIDE the seat's registered realm.
 //   root            the seat's registered realm root: the top liege of the

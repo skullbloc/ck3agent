@@ -1,4 +1,4 @@
-// ticket_table.cpp — R1b: the async ticket layer (ck-6kvq.9).
+// ticket_table.cpp — R1b: the async ticket layer.
 // See ticket_table.h. Deliberately dependency-free so it host-tests with no
 // game: <cstdio>/<deque>/<mutex>/<string> and nothing from the engine.
 

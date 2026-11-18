@@ -1,4 +1,4 @@
-// test_ipc_wiring.cpp — rc2 B1 + B9: the REAL ipc_server.cpp, on a real socket.
+// test_ipc_wiring.cpp — + B9: the REAL ipc_server.cpp, on a real socket.
 //
 // test_instance_paths checks instance_peer_admitted() as a pure predicate, so
 // deleting its call at accept() passed every test. This links ipc_server.cpp,
@@ -86,7 +86,7 @@ bool is_game_state_query(const char*) { return false; }
 bool is_game_thread_action(const char*) { return false; }
 void refresh_memory_map() {}
 bool is_registered_action(const char*) { return false; }
-// rc2 B2: one stand-in debug verb, so the reader's unavailable_in_release
+// One stand-in debug verb, so the reader's unavailable_in_release
 // branch (ipc_server.cpp try_queue_fallthrough_rejection) is exercised. The
 // real list is test_debug_verbs's business.
 bool debug_verb_compiled_out(const char* v) { return v && std::strcmp(v, "memory_probe") == 0; }
@@ -310,7 +310,7 @@ int main() {
         bridge::g_test_session_state = static_cast<int>(bridge::SessionState::DORMANT);
     }
 
-    // 2026.12.5 (smoke5): a handshake's resume token never reaches the bridge
+    // 2026.12.5: a handshake's resume token never reaches the bridge
     // log. The REAL reader logs the handshake line (ipc_server.cpp "Handshake
     // received"); before the fix it logged it verbatim, token and all. The
     // control row: the line is still written, with the client's name, so the

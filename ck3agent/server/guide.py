@@ -1,4 +1,4 @@
-"""The seats' guide, served page by page (pre-registration v4 draft section 6; lane v4instr).
+"""The seats' guide, served page by page (pre-registration v4 draft section 6).
 
 WHY A TOOL. A seat is locked down (no file tools, slash commands off:
 ck3bench/runner/seat_surface.py), so strategy context cannot be skills or

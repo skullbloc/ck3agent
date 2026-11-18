@@ -1,4 +1,4 @@
-// test_pipeline_mode.cpp — R8 host unit tests: what `null` MEANS (ck-6kvq.4).
+// test_pipeline_mode.cpp — R8 host unit tests: what `null` MEANS.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §6.3 ("no control
 // sessions, no windows, clock free-runs at a fixed speed, observer lane samples
@@ -8,7 +8,7 @@
 // pipeline_mode.cpp and flush_scheduler.cpp — carry every behaviour this bead
 // had to change, which is why the bead's bridge half is host-testable at all.
 //
-// ck-1ek9 DEVIATION FROM 425c20b. As written this file had three pure TUs and
+// DEVIATION FROM 425c20b. As written this file had three pure TUs and
 // a fifth policy column, both involving the CHECKPOINT CLOCK GATE. That gate
 // was withdrawn from the experiment path on 2026-09-12 (G3' reversed by the
 // progenitor — episode_policy.h:14-18), so section 5 and half of section 4
@@ -245,7 +245,7 @@ static void test_null_admits_no_control_session() {
     CHECK(!mode_admits_control_sessions(PipelineMode::Null),
           "the handshake must downgrade a control request in null mode");
 
-    // ck-1ek9: the second half of this section asserted that the checkpoint
+    // The second half of this section asserted that the checkpoint
     // gate never waits on an OBSERVE session. The gate is withdrawn; the claim
     // has no subsystem left to hold it, so it is gone rather than stubbed.
     CHECK(mode_admits_control_sessions(PipelineMode::Legacy) &&

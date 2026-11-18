@@ -12,12 +12,6 @@ Engine-free C++ tests; none needs the game. Configure with
 | Acceptances | `acceptance_*.cpp` | like probes, plus `--json` for upstream tooling that also runs a patched-out build, which must fail. |
 | Scripts | `*.sh`, `*.py` | host-only checks and generators; the header comment says how to use them. |
 
-## ck-ids
-
-`ck-xxxx` in a comment is an id in the upstream tracker (for example
-`ck-dzxr`). It marks the defect or decision behind the line. The tracker is
-not public: the comment beside the id states the reason. Keep existing ids.
-
 ## Adding a test
 
 Copy the nearest `test_*.cpp`; add its target to `bridge/CMakeLists.txt`.

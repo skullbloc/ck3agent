@@ -1,4 +1,4 @@
-// budget_ledger.cpp — R6 decision-budget governor, enforcing half (ck-6kvq.13).
+// budget_ledger.cpp — R6 decision-budget governor, enforcing half.
 //
 // Pure: no engine reads, no offsets, no globals. See budget_ledger.h for the
 // rules this implements and why they live in the bridge rather than the agent.

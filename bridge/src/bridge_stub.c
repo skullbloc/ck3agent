@@ -22,7 +22,7 @@
  * don't have 32-bit glibc dev files installed (e.g., Fedora without
  * glibc-devel.i686).
  *
- * Bead: ck-dq7ym.1
+ *
  */
 
 static void ck3_bridge_stub_init(void) {

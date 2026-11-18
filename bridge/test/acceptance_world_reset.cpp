@@ -1,4 +1,4 @@
-// test/acceptance_world_reset.cpp — ck-hxh7 ACCEPTANCE.
+// test/acceptance_world_reset.cpp — ACCEPTANCE.
 //
 // THE CLAIM UNDER TEST, in one sentence: when a save is loaded into a live CK3
 // process, every world-scoped bridge cache is dropped — the character name
@@ -166,7 +166,7 @@ static void lane_registry() {
     printf("\n1. REGISTRY AND EPOCH\n");
     const char* LANE = "mechanism";
 
-    // ck-6kvq.5 hard constraint: 0 is that consumer's "no provider" sentinel, so
+    // hard constraint: 0 is that consumer's "no provider" sentinel, so
     // a live world must NEVER read as epoch 0 or resume loses its liveness check.
     check(LANE, world_epoch() >= 1, "world_epoch() is >= 1 before any reload (ck-6kvq.5: 0 is the 'unavailable' sentinel)");
 
@@ -239,7 +239,7 @@ static void lane_name_cache() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. The ended-war ledger (ck-sd4d) — real war_history.cpp.
+// 3. The ended-war ledger — real war_history.cpp.
 // ---------------------------------------------------------------------------
 static WarEndRecord make_war(uint32_t id, const char* cb, uint32_t atk, uint32_t def) {
     WarEndRecord r;
@@ -283,7 +283,7 @@ static void lane_war_ledger() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Personality locks (ck-9fc3) — real personality_world_reset.cpp.
+// 4. Personality locks — real personality_world_reset.cpp.
 //    The ONLY member of this family that WRITES into game memory.
 // ---------------------------------------------------------------------------
 static PersonalityLock lock_with(int8_t v) {
@@ -326,7 +326,7 @@ static void lane_personality() {
           "the quarantine is stamped with the epoch of the reload that quarantined it");
     check(LANE, personality_quarantine_epoch() > 0, "the quarantine epoch is set");
 
-    // The axes survive intact, so ck-9fc3's save-identity work has something to
+    // The axes survive intact, so save-identity work has something to
     // restore from.
     {
         std::shared_lock<std::shared_mutex> lk(g_personality_lock_mutex);
@@ -336,7 +336,7 @@ static void lane_personality() {
         check(LANE, ok, "quarantined axes are preserved byte-for-byte");
     }
 
-    // Never auto-re-applied: that decision belongs to ck-9fc3's save identity.
+    // Never auto-re-applied: that decision belongs to save identity.
     {
         std::shared_lock<std::shared_mutex> lk(g_personality_lock_mutex);
         check(LANE, g_personality_locks.find(31808) == g_personality_locks.end(),
@@ -359,7 +359,7 @@ static void lane_personality() {
 }
 
 // ---------------------------------------------------------------------------
-// 4b. L18-A — the first set_phase of a seat, replayed from the pilot logs.
+// 4b. — the first set_phase of a seat, replayed from the pilot logs.
 //     pilots-2026.11 scale0/n2 bridge-full.log: set_ai_personality for 13191 runs
 //     in a tick-0 drain (line 481, "Processed 1 queued actions at tick=0"); the
 //     first tick after unpause then logs "WORLD-RELOAD fingerprint:
@@ -419,7 +419,7 @@ static void lane_first_write() {
           "...and the lock is quarantined, and lock_state says so instead of going silent");
     check_eq_str(LANE, personality_lock_state_name(personality_lock_state(cui)), "quarantined",
                  "lock_state's wire name is \"quarantined\"");
-    // L18 round 2: set_ai_personality's reply, which runs under the lock map's
+    // Set_ai_personality's reply, which runs under the lock map's
     // unique lock, says the same: a write of no axes over a quarantined lock is
     // "quarantined", not "none"; a write that locks an axis is "live".
     {

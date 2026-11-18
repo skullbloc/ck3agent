@@ -1,7 +1,7 @@
 """Suite-wide fixtures for the ck3agent server unit tests.
 
 THE DRAIN SCHEDULE IS ZERO IN TESTS. redesign.DRAIN_SCHEDULE_S is the one
-definition of stage 1's waits (L13 amendment 3: the bridge runs a queued write
+definition of stage 1's waits (amendment 3: the bridge runs a queued write
 on its next pass; the server re-reads the verdict on this schedule, ~2.75 s in
 all). Every write that goes through confirm_write / await_drain against a fake
 that never answers a verdict would sleep the whole schedule for real: ~650 s

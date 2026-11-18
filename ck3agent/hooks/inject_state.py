@@ -28,7 +28,7 @@ Query plan:
     get_active_wars  -> the controlled ruler's wars, by name
   With no ruler bound (controlled id 0) nothing else is read or rendered: the
   block is the date and the line that says how to bind one.
-  WHOSE ruler (L18-C): the hook is its own bridge session and holds nothing, so
+  WHOSE ruler: the hook is its own bridge session and holds nothing, so
   a read with character_id 0 resolves to the bridge's GLOBAL primary
   (dispatch_router.cpp get_controlled_character -> g_controlled_primary), which
   is the session that claimed first (session.cpp sessions_json order). With
@@ -42,8 +42,8 @@ Query plan:
   nothing yet, while another seat's holds the global primary). A seat whose
   record (CK3_SESSION_OUT set) names no session the bridge lists (not written
   yet, a failed connect, a stale record) is shown no ruler either, however many
-  sessions are attached: the one attached session may be another seat's (L18
-  round 3, witness item 3). Not detectable: an interactive seat (setup writes
+  sessions are attached: the one attached session may be another seat's
+  (round 3). Not detectable: an interactive seat (setup writes
   no record) whose own server has not attached yet while one other seat is;
   it looks like the only seat and is shown that seat's ruler (CHANGELOG
   2026.12.0 says so; CK3_AGENT_CHARACTER_ID closes it).
@@ -74,7 +74,7 @@ _SERVER_DIR = os.path.normpath(
 if _SERVER_DIR not in sys.path:
     sys.path.insert(0, _SERVER_DIR)
 
-# rc2 B1: the instance resolver and the checked client are REQUIRED. If either
+# The instance resolver and the checked client are REQUIRED. If either
 # fails (including a malformed CK3_INSTANCE_LAYOUT or CK3_INSTANCE_ID, which
 # both raise), the bridge is reported offline. The hook never guesses a /tmp
 # path and never connects without the socket-owner and peer-uid checks; the
@@ -95,7 +95,7 @@ CONNECT_TIMEOUT = 0.6   # connect()
 QUERY_TIMEOUT = 0.8     # per-query recv loop
 TOTAL_BUDGET = 2.5      # total wall-clock across the whole plan
 
-# ─── ck-6kvq.18: pipeline-mode frame correlation ───────────────────────────────
+# ─── Pipeline-mode frame correlation ───────────────────────────────
 #
 # THE BUG THIS FIXES. The skip list used to be exactly {tick_start, observation,
 # notification}, and the query loop then did `if resp_rid is None: return resp`.
@@ -327,7 +327,7 @@ class BridgePuller:
         """Send one query and return its response dict, or None on failure.
 
         Skips ping lines and every unsolicited push type (PUSHED_TYPES —
-        which since ck-6kvq.18 includes the pipeline acceptance ack and the
+        which since includes the pipeline acceptance ack and the
         checkpoint gate broadcasts). Accepts the first line whose request_id
         == rid; if the bridge does not echo request_id, accepts the first line
         that is not a named push. Detects a {"error":"bridge_busy"} degrade.
@@ -348,7 +348,7 @@ class BridgePuller:
         # hook's hard total budget, so a chatty push stream — or a flush ETA
         # measured in seconds — can never wedge a turn. If the result does not
         # fit in the budget the hook publishes NOTHING for this field, which is
-        # the correct outcome: before ck-6kvq.18 it published the ACK and the
+        # the correct outcome: before that it published the ACK and the
         # overlay showed an empty panel as if that were the game state.
         def _send(obj):
             # The shared settler speaks the {"actions":[...]} envelope; this
@@ -378,7 +378,7 @@ class BridgePuller:
                 timeout=QUERY_TIMEOUT,
                 # The hook may not spend a round trip it has no budget for, but
                 # when it does have one, asking beats publishing nothing: the
-                # live ck-zgh4 readiness failure was recovered by exactly this
+                # live readiness failure was recovered by exactly this
                 # `check`, and by nothing else.
                 allow_check=True,
                 # Resolved on THIS module at call time so the negative control,
@@ -492,7 +492,7 @@ def seat_record_unmatched(bstate, env=None):
     names no session the bridge lists: the record is not written yet (the server's
     handshake has not landed, or its connect failed) or it is stale. One definition
     for resolve_seat (which then answers "unknown") and build_report (which then
-    prints SEAT_RECORD_UNMATCHED): L18 round 3, witness item 3."""
+    prints SEAT_RECORD_UNMATCHED):."""
     env = os.environ if env is None else env
     if not env.get(SESSION_OUT_ENV):
         return False
@@ -693,7 +693,7 @@ def partition_line(succ_sim, succ=None, succ_map=None):
     """The next succession, in succession_plan's words: passes_intact and the
     breaker, decided by succession_verdict.verdict (the one definition observe
     and succession_plan call too). When no heir was read the verdict is
-    undetermined and the line says so, with its reason (L14 FF2 N-MAJ-2): an
+    undetermined and the line says so, with its reason: an
     absent line read as "nothing to worry about"."""
     import succession_verdict  # the server's module (_SERVER_DIR is on sys.path)
     # map_summary takes the read as returned: None (read failed) is no_response.
@@ -753,13 +753,13 @@ def build_report(puller):
 
     date = g(tick, "game_date", "date")
     year = g(tick, "game_year")
-    # ck-k57a: `game_speed` is null when no speed was READ; `game_speed_legacy`
+    # `game_speed` is null when no speed was READ; `game_speed_legacy`
     # is the compat integer (0 == no reading) every older reader expected here.
     speed = g(tick, "game_speed", "speed", "game_speed_legacy")
     paused = g(tick, "paused")
     controlled = g(tick, "controlled_character_id", "controlled_id")
     # Liveness of the controlled ruler from tick info, so a death shows even
-    # when the profile read below fails (live-run L25).
+    # when the profile read below fails (live-run).
     controlled_alive = g(tick, "controlled_alive")
 
     lines = ["## Live game state (fresh this turn)",
@@ -769,7 +769,7 @@ def build_report(puller):
                  % (date or "?", _fmt_num(year), _fmt_num(speed), pstr))
 
     # Whose ruler: this seat's, never the bridge's global primary unless only
-    # one session holds rulers (resolve_seat; L18-C).
+    # one session holds rulers (resolve_seat).
     how, mine, others = resolve_seat(bstate, controlled)
     if how == "unknown":
         held = sum(1 for r in (bstate or {}).get("sessions") or [] if isinstance(r, dict) and _row_ids(r))
@@ -785,7 +785,7 @@ def build_report(puller):
         controlled_alive = None
 
     # No ruler bound: get_tick_info reports 0 (and why, when the bridge itself
-    # unbound one, rc2 B6), or this seat's session holds none. Every read below
+    # unbound one), or this seat's session holds none. Every read below
     # would be about "character 0", which is nobody (or the bridge's primary,
     # another seat's), so none is made and nothing about a ruler is rendered.
     if (tick or how != "only") and not me:
@@ -820,7 +820,7 @@ def build_report(puller):
         if val is None:
             gaps.append("%s read failed or timed out" % label)
 
-    # query_character's keys (build_char_profile); L15 dropped the aliases it never writes.
+    # query_character's keys (build_char_profile); dropped the aliases it never writes.
     title = g(ch, "primary_title_name", "primary_title_key")
     tier = g(ch, "ruler_tier")
 
@@ -868,7 +868,7 @@ def build_report(puller):
 
     if ch:
         # The monthly gold income is income_breakdown.total_monthly (core_data+0x2B0).
-        # L15 A3: query_character's old `monthly_income` was the MERIT stock
+        # Query_character's old `monthly_income` was the MERIT stock
         # (core_data+0x170) and is now emitted as `merit`; it is not money.
         _bd = ch.get("income_breakdown")
         gold, income = g(ch, "gold"), g(_bd, "total_monthly")
@@ -915,7 +915,7 @@ def _gap_lines(puller, gaps, lines):
         lines.append("- _Not seeing: %s._" % "; ".join(gaps))
 
 
-#: Lane v4sees (seat review problem 11: the status header injected at each
+#: (seat review problem 11: the status header injected at each
 #: resume was not recorded). When `ck3agent run` sets this (its run's
 #: `<stamp>.hook.jsonl`; release/overlay/ck3agent/cli.py HOOK_STATE_OUT_ENV, the
 #: mirror checked), every block this hook prints is also appended there as one

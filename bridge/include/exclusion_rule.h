@@ -1,8 +1,8 @@
-// exclusion_rule.h — X IS A RULE, NOT A CONSTANT (ck-2ngg).
+// exclusion_rule.h — X IS A RULE, NOT A CONSTANT.
 //
-// Design of record: pre-registration §7.1. Predecessors: ck-6kvq.10 (the
-// covariate), ck-ijfa (the wall-clock anomaly gate + the both-units rule),
-// ck-uq5i (the same ruled-meaning-vs-coded-constant shape, one bead earlier).
+// Design of record: pre-registration §7.1. Predecessors: (the
+// covariate), (the wall-clock anomaly gate + the both-units rule),
+//
 //
 // ─── THE DEFECT THIS EXISTS TO END ─────────────────────────────────────────
 // `unavailability.h` stored `exclusion_days_ = 365`. 365 is not a threshold —
@@ -18,7 +18,7 @@
 // A smoke episode judged at 365 cannot be excluded at all: its entire horizon
 // is 1568 game-days, so a session would have to be unsteered for 23% of the run
 // before the constant noticed, where the rule notices at 5%. The number agreed
-// with its meaning in exactly one configuration — ck-uq5i's shape exactly.
+// with its meaning in exactly one configuration — shape exactly.
 //
 // ─── THE RULE ──────────────────────────────────────────────────────────────
 //   X = round(FRACTION x (horizon_end - horizon_start), in GAME-DAYS)
@@ -42,13 +42,13 @@
 // unevaluated criterion must never read as a passed one.
 //
 // ─── THE CALENDAR IS THE ENGINE'S ──────────────────────────────────────────
-// The span is computed through ck3::game_date (ck-05mg) — REAL month lengths,
+// The span is computed through ck3::game_date — REAL month lengths,
 // 31/28/31/30/... — because that is the calendar the ledger's own day numbers
 // come from (`(raw_date - DATE_EPOCH)/24`). It is NOT the uniform-30-day
 // `_ordinal()` in scripts/meter_lane.py, which is documented there as CADENCE
 // ARITHMETIC ONLY and is never written to a row. The two disagree by 3 days on
 // any horizon starting 15 September, and mixing them is the same class of
-// units error as the one ck-ijfa was filed for. See test_unavailability's
+// units error as the one was filed for. See test_unavailability's
 // exclusion lane, which asserts both numbers side by side.
 //
 // PURE. Header-only, no engine reads, no globals, no allocation beyond the
@@ -63,13 +63,13 @@
 #include <string>
 
 #include "episode_policy.h"  // the RULE's constants: fraction, unarmed names
-#include "game_date.h"      // ck-05mg: THE calendar. Never open-code one (section D).
+#include "game_date.h"      // THE calendar. Never open-code one (section D).
 
 namespace bridge {
 
 
 // The rule, resolved for ONE episode. Everything a reader needs to re-derive
-// the number offline is in here, which is the ck-ijfa property applied to X:
+// the number offline is in here, which is the property applied to X:
 // the value, the fraction it came from, and the horizon it was measured over.
 struct ExclusionRule {
     bool        armed = false;

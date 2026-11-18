@@ -1,11 +1,11 @@
 // Bridge DLL initialization — loaded via LD_PRELOAD into CK3 process.
 // Resolves ASLR base, installs hooks, starts IPC server.
 
-#include "action_log_row.h"   // L18-A: emit_action_outcome_log
+#include "action_log_row.h"   // Emit_action_outcome_log
 #include "ck3_compiler.h"   // CK3_PRINTF_FMT (cl.exe has no __attribute__)
 #include "thread_registry.h"
-#include "claim_event_log.h"   //: ck-jij9
-#include "primary_cause.h"   //: ck-6xi6 cause register
+#include "claim_event_log.h"
+#include "primary_cause.h"   //: cause register
 #include "fault_site.h"
 #include <cerrno>
 #include "log_rotate.h"
@@ -19,23 +19,23 @@
 #include "log_stamp.h"
 #include "bridge.h"
 #include "reply_record.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "ck3_offsets.h"
 #include "lobby_view_hook.h"
 #include "name_tables.h"
 #include "snapshot.h"
 #include "pipeline.h"
-#include "drain_action_record_frame.h"   //: ck-td8m
+#include "drain_action_record_frame.h"
 #include "drain_write_verdict.h"
-#include "instance_paths.h" // ck-qn03
-#include "listener_fd.h"     // L21: the socket lives only in the game process
+#include "instance_paths.h"
+#include "listener_fd.h"     // The socket lives only in the game process
 #include "budget_ledger.h"
 #include "drain_registry.h"
-#include "world_epoch.h"   // ck-hxh7
-#include "runtime_resolver.h" // ck-nkyc leg (e): observe_build_id
+#include "world_epoch.h"
+#include "runtime_resolver.h" // leg (e): observe_build_id
 #include "offset_version.h"   // the supported build, for the strict refusal message
 #include "build_id_witness.h"
-#include "drain_activation.h"   // L13 D2
+#include "drain_activation.h"
 
 #include <chrono>
 #include <cstdarg>
@@ -45,7 +45,7 @@
 #include <ctime>
 #include <dlfcn.h>
 #include <fcntl.h>
-#include "os/os.h"   // os::session_pass_* (both platforms, L14 m-16)
+#include "os/os.h"   // os::session_pass_* (both platforms)
 #ifndef _WIN32
 #include <link.h>
 #else
@@ -74,13 +74,13 @@ namespace bridge { FILE* g_logfile = nullptr; }
 using bridge::g_logfile;
 
 // Process-lifetime trace gate (CK3_BRIDGE_TRACE=1). Default OFF — gates the
-// high-frequency per-query BT_TRACE diagnostics (ck-xm08) that otherwise drive
+// high-frequency per-query BT_TRACE diagnostics that otherwise drive
 // ~190MB/session of log growth.
 namespace bridge { bool g_trace = false; }
 
 static void blog(const char* fmt, ...) CK3_PRINTF_FMT(1, 2);
 static void blog(const char* fmt, ...) {
-    // ck-55dx: one spelling of the prefix, shared with the reply records so
+    // One spelling of the prefix, shared with the reply records so
     // both land on the same timeline. Was inline here, where nothing outside
     // this file could reach it.
     char tbuf[32];
@@ -102,7 +102,7 @@ namespace bridge {
 thread_local sigjmp_buf g_recovery_point;
 thread_local bool g_in_protected_region = false;
 
-// ck-e3dp: previous SIGSEGV disposition captured when the safety net is
+// Previous SIGSEGV disposition captured when the safety net is
 // RE-ARMED post-startup (see rearm_sigsegv_safety_net below). CK3 installs its
 // own crash handler (CrashReporter) during engine startup, AFTER bridge_init's
 // dlopen-time sigaction — so until the re-arm, the bridge net is decorative
@@ -114,7 +114,7 @@ static struct sigaction g_prev_sigsegv_action = {};
 static volatile bool g_sigsegv_chain_valid = false;
 
 static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
-    // ── ck-duv5: THE FAULTING INSTRUCTION, CAPTURED ON *EVERY* PATH ─────────
+    // ── THE FAULTING INSTRUCTION, CAPTURED ON *EVERY* PATH ─────────
     // This extraction already existed — for the PROTECTED-region branch only.
     // The UNPROTECTED path, which is the one that takes the process out, logged
     // a fault address and nothing else.
@@ -129,7 +129,7 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
     //
     // SO IT IS HOISTED ABOVE THE BRANCH. The protected path's message is
     // unchanged; the forwarded path now carries the same three numbers. Same
-    // asymmetry as ck-cg3b (one call site guarded, its twin not) and as the
+    // asymmetry as (one call site guarded, its twin not) and as the
     // acceptance query's missing target check: the capability was present, one
     // branch had it, and the branch that needed it most did not.
     void* rip = nullptr;
@@ -138,7 +138,7 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
         rip = reinterpret_cast<void*>(uc->uc_mcontext.gregs[REG_RIP]);
     }
 
-    // ck-65lv: rsp beside rip, ABOVE THE BRANCH, for the same reason the rip
+    // Rsp beside rip, ABOVE THE BRANCH, for the same reason the rip
     // extraction was hoisted here — all three paths need it, and a value
     // computed inside one branch is a value the other two cannot have.
     const uintptr_t fault_rsp =
@@ -151,7 +151,7 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
         return format_fault_site(b, n, rip, g_base_addr);
     };
 
-    // ck-duv5: WHICH THREAD. rip names the instruction; without this the reader
+    // WHICH THREAD. rip names the instruction; without this the reader
     // supplies the thread from assumption, and the engine's AI workers, the
     // engine's own tick and five bridge threads are all candidates. An absent
     // registry entry prints UNREGISTERED — never a guessed role. See
@@ -169,11 +169,11 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
         // Capture the faulting instruction (RIP) so an engine-call crash can be
         // pinpointed to an exact offset: rip - g_base_addr = the raw code offset
         // (maps to the specific WCC/engine sub-call in Ghidra at offset+0x100000).
-        // ── ck-65lv: THE RECOVERED PATH GETS THE FULL CAPTURE TOO ──────────
+        // ── THE RECOVERED PATH GETS THE FULL CAPTURE TOO ──────────
         // This branch had rip and thread and NO registers. I wired the register
         // dump into the two FATAL paths only, on the reasoning that this one
         // recovers so it can keep its one-liner — and then this is the path that
-        // fired, five times, on ck-duv5's first live outing, resolving to
+        // fired, five times, on first live outing, resolving to
         // GetPrestige with a NULL character. Rich instrumentation on the failure
         // I was hunting, a one-liner on the failure that happened.
         //
@@ -194,7 +194,7 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
                     format_fault_regs(regbuf, sizeof regbuf, ctx),
                     format_frame_word(retbuf, sizeof retbuf, fault_rsp,
                                       &safe_read_bytes, g_base_addr, g_image_end));
-            // ck-65lv ladder: the eight words above rsp, each probed on its own.
+            // ladder: the eight words above rsp, each probed on its own.
             char ladbuf[768];
             fprintf(g_logfile, "[CK3-Bridge] WARNING: %s\n",
                     format_stack_ladder(ladbuf, sizeof ladbuf, fault_rsp,
@@ -204,7 +204,7 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
         g_in_protected_region = false;
         siglongjmp(g_recovery_point, 1);
     }
-    // Not in a protected region — this fault is NOT ours to absorb (ck-e3dp).
+    // Not in a protected region — this fault is NOT ours to absorb.
     // Forward to the engine handler (CrashReporter) saved at re-arm time so
     // crash reporting/minidumps behave exactly as if the bridge net were not
     // installed. Fall through to default+re-raise when there is nothing real
@@ -212,7 +212,7 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
     // NEVER `return` from here. Returning from a SIGSEGV handler resumes at the
     // faulting instruction, which faults again — an unkillable 100%-CPU spin.
     //
-    // 2026-08-22 (ck-26fm): that is exactly what happened, three times. The
+    // 2026-08-22: that is exactly what happened, three times. The
     // chained CrashReporter handler RETURNED instead of terminating, we returned
     // too, and CK3's main thread livelocked: fault -> handler -> return -> fault.
     // eu-stack on the hung thread showed the whole story in three frames —
@@ -249,9 +249,9 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
                     info ? info->si_addr : nullptr,
                     fmt_rip(ripbuf, sizeof ripbuf),
                     fmt_thread(thrbuf, sizeof thrbuf));
-                    // ck-65lv: the frame word on the FATAL paths too. These take the
+                    // The frame word on the FATAL paths too. These take the
                     // process out and get ONE shot, so a fatal fault that cannot name
-                    // its caller is the exact gap ck-duv5 exists to close. Emitting it
+                    // its caller is the exact gap exists to close. Emitting it
                     // only on the recovered path repeats, in the other direction, the
                     // asymmetry this file's rip hoist was written to end.
                     char regbuf[512], retbuf[192], ladbuf[768];
@@ -259,14 +259,14 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
                             format_fault_regs(regbuf, sizeof regbuf, ctx),
                             format_frame_word(retbuf, sizeof retbuf, fault_rsp,
                                               &safe_read_bytes, g_base_addr, g_image_end));
-                    // ck-65lv ladder: the eight words above rsp, each probed on its own.
+                    // ladder: the eight words above rsp, each probed on its own.
                     fprintf(g_logfile, "[CK3-Bridge] FATAL: %s\n",
                             format_stack_ladder(ladbuf, sizeof ladbuf, fault_rsp,
                                                 &safe_read_bytes, g_base_addr, g_image_end));
             fflush(g_logfile);
         }
     }
-    // ck-duv5: AND THE NO-CHAIN PATH LOGGED NOTHING AT ALL. A fault before the
+    // AND THE NO-CHAIN PATH LOGGED NOTHING AT ALL. A fault before the
     // re-arm, or with the engine on SIG_DFL, died completely silently — not even
     // a fault address. That is the worst of the three branches and it was the
     // one nobody had looked at, because it is the one that never fired in an
@@ -280,9 +280,9 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
                 info ? info->si_addr : nullptr,
                 fmt_rip(ripbuf, sizeof ripbuf),
                 fmt_thread(thrbuf, sizeof thrbuf));
-                // ck-65lv: the frame word on the FATAL paths too. These take the
+                // The frame word on the FATAL paths too. These take the
                 // process out and get ONE shot, so a fatal fault that cannot name
-                // its caller is the exact gap ck-duv5 exists to close. Emitting it
+                // its caller is the exact gap exists to close. Emitting it
                 // only on the recovered path repeats, in the other direction, the
                 // asymmetry this file's rip hoist was written to end.
                 char regbuf[512], retbuf[192], ladbuf[768];
@@ -290,7 +290,7 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
                         format_fault_regs(regbuf, sizeof regbuf, ctx),
                         format_frame_word(retbuf, sizeof retbuf, fault_rsp,
                                           &safe_read_bytes, g_base_addr, g_image_end));
-                // ck-65lv ladder: the eight words above rsp, each probed on its own.
+                // ladder: the eight words above rsp, each probed on its own.
                 fprintf(g_logfile, "[CK3-Bridge] FATAL: %s\n",
                         format_stack_ladder(ladbuf, sizeof ladbuf, fault_rsp,
                                             &safe_read_bytes, g_base_addr, g_image_end));
@@ -306,7 +306,7 @@ static void bridge_sigsegv_handler(int sig, siginfo_t* info, void* ctx) {
     raise(SIGSEGV);
 }
 
-// ck-e3dp: re-install the bridge SIGSEGV safety net AFTER CK3's startup and
+// Re-install the bridge SIGSEGV safety net AFTER CK3's startup and
 // chain to whatever handler the engine installed in between. bridge_init()'s
 // dlopen-time sigaction runs before CK3's own crash handler registration, so
 // the engine "wins" the race and every sigsetjmp wrap in the bridge was
@@ -492,13 +492,13 @@ static timer_t g_watchdog_timer = nullptr;
 static bool g_watchdog_initialized = false;
 
 void watchdog_init() {
-    // ck-duv5: this runs ON the game thread (that is the whole reason the
+    // This runs ON the game thread (that is the whole reason the
     // watchdog uses SIGEV_THREAD_ID here), so it is the natural place to record
     // the game thread's identity. The tid was already being read one line down
     // and thrown away after the sigevent — now it is kept.
     register_thread(ThreadRole::GameThread);
 
-    // L13: the game thread can change ONCE — from an AI-tick worker (drains run
+    // The game thread can change ONCE — from an AI-tick worker (drains run
     // from on_tick until the session-pass hook is installed, e.g. a save that
     // loaded running) to the session thread. The timer must follow it, or it
     // would interrupt a worker while the session thread hangs unguarded.
@@ -541,7 +541,7 @@ void watchdog_arm(unsigned secs) {
     win_watchdog_arm(secs);
     return;
 #endif
-    // ck-4ot67: unblock SIGALRM on the calling thread before arming. The engine
+    // Unblock SIGALRM on the calling thread before arming. The engine
     // may have inherited or set a thread-level SIGALRM mask elsewhere during a
     // tick (parallel worker setup, allocator critical sections, etc.). If the
     // signal is blocked when the timer fires, the kernel queues it but the
@@ -575,7 +575,7 @@ void watchdog_disarm() {
 }
 
 uintptr_t g_base_addr = 0;
-// ck-65lv: one past the last byte of the CK3 image (max PT_LOAD end), captured
+// One past the last byte of the CK3 image (max PT_LOAD end), captured
 // ONCE at init beside the base so the fault formatters can tell an in-image
 // word from a stack or heap address without reading /proc in a handler.
 uintptr_t g_image_end = 0;
@@ -707,7 +707,7 @@ static bool is_ck3_process() {
 static bool is_addr_readable(uintptr_t addr);
 
 // ─────────────────────────────────────────────────────────────────────────
-// Game-ready predicate (ck-crm5: defer hooks until game-state is constructed)
+// Game-ready predicate (defer hooks until game-state is constructed)
 //
 // GAME_STATE_ROOT holds a pointer-to-pointer: at the fixed base-relative
 // address we find a pointer that is null on binary boot / main menu /
@@ -748,7 +748,7 @@ static uintptr_t find_binary_base() {
     // Method 1 (most reliable): dl_iterate_phdr gives the actual load address
     struct CallbackData {
         uintptr_t base;
-        uintptr_t end;      // ck-65lv: max over PT_LOAD of addr + p_vaddr + p_memsz
+        uintptr_t end;      // Max over PT_LOAD of addr + p_vaddr + p_memsz
         char name[256];
     };
     CallbackData data{0, 0, {}};
@@ -893,7 +893,7 @@ void init_tls_offsets();
 void init_runtime_discovery();
 void init_event_handler();
 void install_score_hook();
-// ck-6kvq.5 — defined in personality.cpp (declared in action_dispatch_internal.h,
+// Defined in personality.cpp (declared in action_dispatch_internal.h,
 // which this TU deliberately does not pull in; see the note below).
 void install_steering_purge_hook();
 void map_graph_init();   // map_graph.cpp — mmaps the baked ck3map.bin (self-disables if absent)
@@ -911,7 +911,7 @@ uintptr_t lookup_title_obj(uint32_t title_id);
 uintptr_t resolve_title_realm(uintptr_t char_addr);
 uint32_t  char_get_id(void* character);
 int       get_title_tier(uintptr_t title_ptr);
-uint32_t  get_player_character_id();   // rc2 B6: PLAYER_CHAR_ID (dispatch_router.cpp)
+uint32_t  get_player_character_id();   // PLAYER_CHAR_ID (dispatch_router.cpp)
 // TASK B: monthly telemetry emitter (defined in query_handlers.cpp).
 void      emit_monthly_telemetry(int32_t raw_date);
 extern fn_get_ai_controller g_get_ai_ctrl;
@@ -959,7 +959,7 @@ void on_tick_internal(void* secondary_base) {
 
 // ─────────────────────────────────────────────────────────────────────────
 // Install the main-tick vtable hooks. Separated from bridge_init() so it
-// can be invoked from a deferred polling thread (ck-crm5): installing at
+// can be invoked from a deferred polling thread: installing at
 // dlopen was causing CK3 to crash on boot, because the engine dispatches
 // through the patched vtable slot during early initialization against an
 // AI manager whose backing state isn't fully constructed yet.
@@ -1117,7 +1117,7 @@ static bool install_main_tick_hooks() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// L13 D1: THE SESSION-PASS HOOK — where the bridge's game-thread work runs.
+// THE SESSION-PASS HOOK — where the bridge's game-thread work runs.
 //
 // re/findings/re_frame_update_hook.md §1-§3, §6. CK3 executes every engine
 // command, the daily tick included, on one dedicated SESSION thread:
@@ -1144,9 +1144,9 @@ static bool install_main_tick_hooks() {
 // thread exists (the session thread may not exist at the main menu, finding §9
 // item 3) and refuses for good on a value it does not recognise. Without the
 // hook (refused) on_tick runs drain_game_thread_work() after the AI tick, as
-// before L13, and the bridge says which in its log.
+// before that, and the bridge says which in its log.
 //
-// ONE CELL FOR BOTH PLATFORMS (L14 m-16): os::session_pass_install / _remove /
+// ONE CELL FOR BOTH PLATFORMS: os::session_pass_install / _remove /
 // _live (src/os/session_pass.cpp; tests test_os_linux_session_pass and, under
 // wine, test_os_win_session_pass). The cell owns the swap (a compare-exchange),
 // the remove (a compare-exchange back that leaves a slot it no longer owns), the
@@ -1245,7 +1245,7 @@ void bridge_init() {
     // Only initialize if we're in the actual CK3 binary.
     if (!is_ck3_process()) {
 #ifndef _WIN32
-        // L21 (node smoke18): a process the game exec'd (CrashReporter) may hold
+        // A process the game exec'd (CrashReporter) may hold
         // the game's listening socket, inherited from a bridge built before the
         // listener was close-on-exec. It serves nothing, so it must not keep the
         // socket answering: close a listener on this instance's socket path.
@@ -1255,11 +1255,11 @@ void bridge_init() {
         return;
     }
 
-    // ck-qn03 (R12): resolve THIS instance's private paths before anything is
+    // Resolve THIS instance's private paths before anything is
     // opened. On the default instance every answer is the historical literal,
     // so a bridge launched the old way behaves exactly as it always did.
     bridge::instance_paths_init();
-    // rc2 B1: 0600, no symlink follow, fresh inode. Not opened at all when the
+    // 0600, no symlink follow, fresh inode. Not opened at all when the
     // private dir failed verification; the refusal goes to stderr instead.
     if (bridge::instance_private_dir_ok()) {
         g_logfile = bridge::instance_open_private_log(bridge::instance_bridge_log(), true);
@@ -1275,32 +1275,32 @@ void bridge_init() {
          bridge::instance_layout_was_refused()
              ? "  (CK3_INSTANCE_LAYOUT REFUSED: want user|legacy — nothing bound)" : "");
 
-    // ck-6kvq.9 (G11): resolve pipeline_mode ONCE, from CK3_PIPELINE_MODE.
+    // Resolve pipeline_mode ONCE, from CK3_PIPELINE_MODE.
     // DEFAULT legacy — a bridge built with the flush loop in it and no env var
     // set must be indistinguishable from the pre-change bridge.
     bridge::pipeline_init_from_env();
-    // rc2 B6: the registry refuses the human player's character on every bind
+    // The registry refuses the human player's character on every bind
     // path (claim, swap, succession handoff). It reads PLAYER_CHAR_ID lazily.
     bridge::g_session_registry.set_player_character_source(
         [] { return bridge::get_player_character_id(); });
-    // ck-6kvq.10 (§2.7): resolve the EPISODE policy — mode, id, and the two
+    // Resolve the EPISODE policy — mode, id, and the two
     // unavailability numbers. FREE PLAY IS THE DEFAULT, and a free-play bridge
     // behaves exactly as the pre-change one: no claim pin, no episode abort on a
     // pulse leak, and the covariate is recorded but reads nothing back.
     bridge::pipeline_episode_init_from_env();
 
-    // ck-6kvq.13 (R6/G7): resolve the per-episode decision-budget ceiling ONCE,
+    // Resolve the per-episode decision-budget ceiling ONCE,
     // from CK3_BUDGET_PER_AGENT_PER_YEAR. DEFAULT no cap — record everything,
     // refuse nothing — because the ceiling (1.5 x the pilot median, design
     // §5.3) does not exist until the pilot episodes have run.
     bridge::budget_init_from_env();
-    // ck-6kvq.5: the steering-purge hook.  Installed HERE, explicitly, rather
+    // The steering-purge hook.  Installed HERE, explicitly, rather
     // than from a static initialiser — dll_init() runs at .init_array[1] and a
     // constructor-installed hook may not exist yet when the reader thread first
-    // touches the registry (ck-22n3 / ck-xqol, the whole init-order bug class).
+    // touches the registry (the whole init-order bug class).
     bridge::install_steering_purge_hook();
 
-    // Trace gate: per-query BT_TRACE diagnostics (ck-xm08) only emit when
+    // Trace gate: per-query BT_TRACE diagnostics only emit when
     // CK3_BRIDGE_TRACE=1. Read once at init; toggling mid-run is a no-op.
     {
         const char* e = getenv("CK3_BRIDGE_TRACE");
@@ -1309,7 +1309,7 @@ void bridge_init() {
 
     blog("[CK3-Bridge] Initializing (PID %d)...\n", getpid());
 
-    // Strict mode (ck-nr51.4): if CK3_BRIDGE_STRICT=1, sigsetjmp catch paths
+    // Strict mode: if CK3_BRIDGE_STRICT=1, sigsetjmp catch paths
     // abort() instead of swallowing — turning previously-silent pointer
     // validation misses into crash signals for test runs. Read once at init
     // and never re-checked, so toggling the env var mid-run is a no-op.
@@ -1375,7 +1375,7 @@ void bridge_init() {
     // The game-function pointers the action handlers call (g_char_is_alive,
     // g_get_ai_ctrl, ...): address arithmetic only, so set them here, before the
     // IPC listener opens. Set on the first tick alone, a claim made while the
-    // loaded game was still paused called a null pointer (P6 smoke4:
+    // loaded game was still paused called a null pointer (P6:
     // set_controlled_character -> memory_access_fault at tick 0, either platform).
     // The first-tick call below repeats it, harmlessly.
     init_action_dispatch();
@@ -1384,7 +1384,7 @@ void bridge_init() {
     // Use safe read: check that game_state_root address is accessible
     blog("[CK3-Bridge] Step 2: Verifying binary...\n");
 
-    // ck-nkyc leg (e). WHICH CK3 BINARY IS THIS, OBSERVED RATHER THAN ASSUMED.
+    // leg (e). WHICH CK3 BINARY IS THIS, OBSERVED RATHER THAN ASSUMED.
     // The offsets in ck3_offsets.h are valid against exactly one binary, and
     // until this call nothing in a sealed bundle recorded which one ran: the
     // code that reads the ELF BuildID lives in runtime_resolver.cpp, and its
@@ -1403,7 +1403,7 @@ void bridge_init() {
     // same name — and the loaded binary is not that one, REFUSE: no hooks, no
     // IPC server, no memory read through offsets that belong to another build.
     // The research checkout keeps warn-and-continue because its refusal lives
-    // in the episode driver (ck-nkyc), which can say which leg failed; the
+    // in the episode driver, which can say which leg failed; the
     // witness still records the mismatch for the handshake either way.
     {
         const bridge::BuildIdWitness& w = bridge::build_id_witness();
@@ -1456,7 +1456,7 @@ void bridge_init() {
     // With serial intent dispatch from on_tick, parallel AI is safe.
     blog("[CK3-Bridge] Step 3: Parallel AI mode preserved (serial intent dispatch)\n");
 
-    // Step 3b (ck-dq7ym.8): install the CJominiMultiplayerLobbyView constructor
+    // Step 3b: install the CJominiMultiplayerLobbyView constructor
     // hook NOW (before game-ready), so the singleton is captured the moment
     // the engine creates the lobby view. The lobby is only constructed once
     // the game starts opening multiplayer/observer UI — well after dlopen —
@@ -1464,7 +1464,7 @@ void bridge_init() {
     // touches .text bytes; it does not depend on game state.
 #ifdef _WIN32
     // ADR 0001 P6: the same path as Linux from here (IPC listener, the deferred
-    // main-tick hook on game-ready, then the session-pass hook (L14), which
+    // main-tick hook on game-ready, then the session-pass hook, which
     // drains in both clock states). Windows adds one thread: the fault ring is
     // drained to the log once a second (the vectored handler may not do I/O),
     // and the readable-range table is refreshed while no tick runs (paused, or
@@ -1488,7 +1488,7 @@ void bridge_init() {
     // Steps 4-5 deferred to first tick (C++ runtime may not be fully init during constructor)
 
     // Step 6: Defer main-tick hook installation until the game reports ready.
-    // ck-crm5: Installing the vtable hook at dlopen crashes CK3 on boot because
+    // Installing the vtable hook at dlopen crashes CK3 on boot because
     // the engine dispatches through the patched vtable slot during early init
     // (before AI manager backing state is constructed). A background thread
     // polls is_game_ready() and installs the hooks atomically when it flips.
@@ -1508,7 +1508,7 @@ void bridge_init() {
         blog("[CK3-Bridge] IPC server started (session=DORMANT, accepting connections)\n");
     }
 
-    // ck-6kvq.9: start the bridge-owned flush timer. NOT the game thread — the
+    // Start the bridge-owned flush timer. NOT the game thread — the
     // game thread does not run while paused, and a flush must be able to END a
     // pause. The loop idles until the session goes ACTIVE, and pipeline_start()
     // is a no-op in any mode but `pipeline`.
@@ -1516,7 +1516,7 @@ void bridge_init() {
 
     blog("[CK3-Bridge] Initialization complete. Waiting for game-ready to install hooks...\n");
 
-    // Deferred hook installer (ck-crm5). Polls is_game_ready() every 500ms.
+    // Deferred hook installer. Polls is_game_ready every 500ms.
     // When the predicate flips (GAME_STATE_ROOT pointer becomes non-null,
     // i.e. the engine has finished constructing the in-game world), install
     // the main-tick vtable hooks from this thread. Between dlopen and that
@@ -1526,7 +1526,7 @@ void bridge_init() {
     // After hooks are installed, this thread also serves as the legacy
     // bootstrap monitor (logging when DORMANT->ACTIVE transitions happen).
     std::thread([]() {
-        register_thread(ThreadRole::HookInstaller);   // ck-duv5
+        register_thread(ThreadRole::HookInstaller);
         blog("[CK3-Bridge] Hook-installer thread: polling for game-ready...\n");
 
         // Phase 1: wait for game-ready, then install hooks.
@@ -1547,12 +1547,12 @@ void bridge_init() {
             }
         }
 
-        // Phase 2 (L13 D1/D2): the session-pass hook goes in once the session
+        // Phase 2 (/D2): the session-pass hook goes in once the session
         // thread exists (+0x408 == 1) and its slot holds CSession_ThreadLoop;
         // polled because the thread may start after game-ready. The first
         // drain takes the bridge DORMANT -> ACTIVE with no tick, so a loaded
         // save stays paused: the bridge never unpauses to wake itself (the
-        // ck-w809/ck-7kbi auto-unpause existed only because ACTIVE needed a
+        // auto-unpause existed only because ACTIVE needed a
         // tick, and is gone with that need).
         SessionHookInstall session_hook = install_session_pass_hook();
         for (int iter = 1; ; iter++) {
@@ -1587,7 +1587,7 @@ void bridge_init() {
 void bridge_shutdown() {
     blog("[CK3-Bridge] Shutting down...\n");
 
-    // L13: no drain may start once shutdown begins.
+    // No drain may start once shutdown begins.
     remove_session_pass_hook();
 
     // Reset session state
@@ -1630,7 +1630,7 @@ void bridge_shutdown() {
     }
 
     // Stop IPC server
-    // ck-6kvq.9: stop the conductor BEFORE the IPC server, so no flush is
+    // Stop the conductor BEFORE the IPC server, so no flush is
     // mid-emit when the sockets go away. No-op in legacy mode.
     bridge::pipeline_stop();
 
@@ -1762,8 +1762,8 @@ static uint32_t title_raw_holder(uint32_t tid) {
     return safe_read<uint32_t>(tobj + ck3::title_obj::HOLDER_CHAR_ID);
 }
 
-// ── THE REALM GUARD (owner ruling 2026-11-12) ──────────────────────────────
-// v3reg2 s3: D1's duke died, his duchy's holder was Carloman (by then an
+// ── THE REALM GUARD ──────────────────────────────
+// s3: D1's duke died, his duchy's holder was Carloman (by then an
 // independent rival king) and the handoff moved D1's seat onto him. A succession
 // now never moves a seat outside its REGISTERED REALM (session.h realm_root_id;
 // the decision is played_line.h succession_realm_check, ctest test_played_line).
@@ -1820,12 +1820,12 @@ struct RealmGuardInstaller {
 static void check_controlled_handoff() {
     if (!g_char_is_alive) return;
 
-    // ── ck-handoff-swap: ONE WALK PER STATE, NOT ONE PER TICK ────────────────
+    // ── ONE WALK PER STATE, NOT ONE PER TICK ────────────────
     // The 64-candidate walk answers a COLLISION question and the answer does not
     // change between adjacent ticks. Re-walking every tick turned ONE
     // unresolvable handoff into 2,574 indistinguishable watchlist_full lines in
     // diag25. The state machine lives in skip_held_heir.h so a fixture can drive
-    // it (ck-7rk6's reason for extracting handoff_subject: inline in the tick
+    // it (reason for extracting handoff_subject: inline in the tick
     // loop it is a condition a test can only grep for).
     //
     // TICK-THREAD ONLY, so no lock: check_controlled_handoff has exactly one
@@ -1847,7 +1847,7 @@ static void check_controlled_handoff() {
             std::lock_guard<std::mutex> lk(session->mutex);
             ctrl = session->primary_character_id;
             cached_tid = session->primary_title_id;
-            // ck-7rk6: an agent that releases its own CORPSE zeroes
+            // An agent that releases its own CORPSE zeroes
             // primary_character_id (session.cpp release path), and this loop
             // used to `continue` on ctrl == 0 — so the handoff never ran, the
             // skip-held-heir redirect never fired, and the seat was lost with
@@ -1859,7 +1859,7 @@ static void check_controlled_handoff() {
             // that deliberately released a LIVE character chose to stop
             // steering it and must not be handed an heir. Only a corpse means
             // the seat is being lost to the succession this feature exists for.
-            // ck-7yrp: READ THE RECORDED STATE, do not re-derive it.
+            // READ THE RECORDED STATE, do not re-derive it.
             //
             // This used to call lookup_character(last) and ask whether it is dead
             // NOW. That is a different question from the one handoff_subject
@@ -1900,7 +1900,7 @@ static void check_controlled_handoff() {
                 std::lock_guard<std::mutex> lk(session->mutex);
                 session->primary_title_id = pt;
             }
-            // owner ruling 2026-11-12: latch the seat's registered realm root
+            // Latch the seat's registered realm root
             // ONCE, from its ruler read alive, and only when the line watch can
             // follow that root through his own succession (else no guard,
             // logged: the bridge cannot see the realm, so it does not claim to).
@@ -1937,7 +1937,7 @@ static void check_controlled_handoff() {
             [&] { return resolve_controlled_successor(ctrl); });
         if (heir == 0) continue;  // not resolvable yet — retry next tick
 
-        // owner ruling 2026-11-12: never move a seat outside its registered
+        // Never move a seat outside its registered
         // realm. Outside: refuse and record (the seat is unbound, typed
         // `heir_outside_realm`). Unresolved: a reading is missing; retry.
         {
@@ -1955,7 +1955,7 @@ static void check_controlled_handoff() {
         // Clear stale council lock for the dead ruler.
         council_lock_remove(ctrl);
 
-        // rc2 B6: THE HUMAN INHERITED. The handoff must not bind the player:
+        // THE HUMAN INHERITED. The handoff must not bind the player:
         // unbind the seat (typed reason heir_is_player, published in
         // sessions_json and get_tick_info) and let the agent pick another
         // ruler. The registry refuses the player on every bind path too; this
@@ -1971,7 +1971,7 @@ static void check_controlled_handoff() {
 
         // Transfer session ownership: SWAP corpse -> heir, then promote.
         //
-        // ck-handoff-swap. This was `claim_character(heir)` followed by
+        // This was `claim_character(heir)` followed by
         // `release_character(ctrl)` further down, and the ORDER is the defect:
         // the session still holds the corpse while it asks for a slot, so at a
         // full roster it is asking for room while occupying the only room there
@@ -1979,11 +1979,11 @@ static void check_controlled_handoff() {
         // candidate returns watchlist_full — and it is what spun this function
         // 2,574 times in diag25 while the seat stayed pointed at a corpse.
         //
-        // The swap is net zero against the cap (ck-swap, Ruling Three): one slot
+        // The swap is net zero against the cap (Ruling Three): one slot
         // out, one in, under one lock, claim_seq unmoved. It also SUBSUMES the
         // release, which is why the release below is gone rather than moved.
         std::string claim_reason;
-        // ck-6xi6: stamped AT THE HANDOFF SITE, not inside swap_character —
+        // Stamped AT THE HANDOFF SITE, not inside swap_character —
         // swap_character also serves the control path, so stamping there would
         // label a control switch as a handoff. Set before the call so the cause
         // is in place by the time the tick hook observes the new primary; the
@@ -1992,7 +1992,7 @@ static void check_controlled_handoff() {
         bridge::note_primary_change(heir, bridge::kPrimaryCauseHandoff);
         if (!bridge::g_session_registry.swap_character(session, ctrl, heir,
                                                        &claim_reason)) {
-            // ── ck-7rk6 SKIP-HELD-HEIR ─────────────────────────────────────
+            // ── SKIP-HELD-HEIR ─────────────────────────────────────
             // This `continue` used to end the seat: arma6's six->five. The
             // collision IS this claim failure — the game's heir is already held
             // by another participant session.
@@ -2033,7 +2033,7 @@ static void check_controlled_handoff() {
                         uint32_t cand = safe_read<uint32_t>(harr + hi * 4) & 0xFFFFFF;
                         if (cand == 0 || cand == 0xFFFFFF) continue;
                         if (cand == intended_heir || cand == ctrl) continue;
-                        if (player != 0 && cand == player) continue;   // rc2 B6
+                        if (player != 0 && cand == player) continue;
                         void* cand_cc = lookup_character(cand);
                         if (!cand_cc || is_sentinel(cand_cc)) continue;
                         if (!g_char_is_alive(cand_cc)) continue;
@@ -2043,7 +2043,7 @@ static void check_controlled_handoff() {
                         std::string why;
                         // A SWAP HERE TOO. The corpse is still held on this
                         // path as well, so leaving it a plain claim would fix
-                        // the heir case and leave ck-7rk6's collision case
+                        // the heir case and leave collision case
                         // failing at a full roster — half the fix, passing an
                         // acceptance written around the other half.
                         bridge::note_primary_change(
@@ -2075,7 +2075,7 @@ static void check_controlled_handoff() {
                     bridge::record_skip_held_heir_exhausted(
                         sid.c_str(), ctrl, intended_heir,
                         static_cast<int>(heir_count), claim_reason.c_str());
-                    //: ck-jij9: the SWAP leg is a claim-set event too, and this is
+                    //: The SWAP leg is a claim-set event too, and this is
                     //: the line that reports one FAILING — the case a corroborator
                     //: is most needed for, since the ledger has no row for a swap
                     //: that did not happen.
@@ -2092,7 +2092,7 @@ static void check_controlled_handoff() {
 
             bridge::record_skip_held_heir(sid.c_str(), ctrl, intended_heir,
                                           redirected, redirect_index);
-            // THE INVARIANT ck-9rto's WITNESS READS: heir_character_id must be
+            // THE INVARIANT WITNESS READS: heir_character_id must be
             // the character ACTUALLY CLAIMED. Reassigning `heir` here keeps the
             // single variable that is both claimed and recorded below, so the
             // two cannot disagree. Recording the PRIMARY heir instead grades as
@@ -2108,10 +2108,10 @@ static void check_controlled_handoff() {
         // the slot, and the ORDER is exactly what was wrong here. The probe
         // MEASURES that it is a no-op rather than asserting it.
         //
-        // ck-7rk6 is unaffected. Its recovery path needs last_steered_character_
+        // is unaffected. Its recovery path needs last_steered_character_
         // id, which release_character sets and the swap deliberately does not —
         // but handoff_subject() only consults it when primary_character_id == 0,
-        // and after a successful swap the primary IS the heir. The case ck-7rk6
+        // and after a successful swap the primary IS the heir. The case
         // protects is an agent releasing its own corpse, which is still a release
         // and still sets the field.
         s_handoff_backoff.erase(sid);
@@ -2123,7 +2123,7 @@ static void check_controlled_handoff() {
         }
         any_change = true;
 
-        // ck-48z8: THE HANDOFF PRESERVES THE AI STATE THE CLAIM HAD.
+        // THE HANDOFF PRESERVES THE AI STATE THE CLAIM HAD.
         //
         // This block used to read: "Re-enable agent steering of the heir if
         // agent_mode is active", and then call g_ai_char_toggle(ai_ctrl, 0) — which
@@ -2178,7 +2178,7 @@ static void check_controlled_handoff() {
         //: TWO WHOLE FORMAT STRINGS, one per branch, so `strings` finds both claims
         //: in the binary — a %s for the state would leave neither in .rodata for the
         //: blind-rebuild witness the bead asks for.
-        // ck-jij9: and the TICK + GAME DATE, so a handoff is locatable exactly
+        // And the TICK + GAME DATE, so a handoff is locatable exactly
         // rather than to the nearest 50-tick DIAG marker. blog() already supplies
         // the monotonic wall-clock stamp; what was missing is the GAME's clock,
         // which is the one a vacancy is measured in.
@@ -2262,7 +2262,7 @@ static void check_line_watches() {
 }
 
 // A world reload ends every watch: a character id from the previous world names
-// nobody in this one (ck-hxh7).
+// nobody in this one.
 void clear_line_watches() { played_line::watches().clear(); }
 [[maybe_unused]] static const bridge::WorldResetRegistrar g_line_watches_world_scoped CK3_EARLY_INIT([] {
     bridge::register_world_reset("played_line_watches", &clear_line_watches);
@@ -2273,7 +2273,7 @@ void clear_line_watches() { played_line::watches().clear(); }
 // other thread is refused (logged once), because the drain's guarantees —
 // serial with every engine command and with the whole daily tick, under the
 // session mutex — hold only there. Without the hook the drain runs from on_tick
-// on whichever AI-tick worker took CAIManager's job, as before L13, and that
+// on whichever AI-tick worker took CAIManager's job, as before that, and that
 // thread is noted as the game thread for the call. The SITE is passed, never
 // inferred from session_pass_hook_live(): the hook can go live between
 // on_tick's check and this one, and an AI-tick worker must never claim the
@@ -2324,11 +2324,11 @@ static void refresh_ranges_for_reads(uint64_t tick) {
 }
 
 static void drain_game_thread_work_at(DrainSite site) {
-    // ck-crm5: never touch bridge state before the world exists.
+    // Never touch bridge state before the world exists.
     if (!is_game_ready()) return;
     if (!claim_drain_thread(site)) return;
 
-    // --- L18-A: the world's first sighting precedes every write the drain makes ---
+    // --- The world's first sighting precedes every write the drain makes ---
     // The drain runs paused or running and executes the queued game-thread writes
     // (set_ai_personality among them) below. The world fingerprint used to be
     // sampled only in on_tick, i.e. first at the first tick after unpause, and
@@ -2371,7 +2371,7 @@ static void drain_game_thread_work_at(DrainSite site) {
         // SIGEV_THREAD_ID targets this thread's TID
         watchdog_init();
 
-        // ck-e3dp: re-arm the SIGSEGV safety net now that CK3's startup is
+        // Re-arm the SIGSEGV safety net now that CK3's startup is
         // complete. The engine's CrashReporter registration during startup
         // displaced the handler bridge_init() installed at dlopen time, so
         // every sigsetjmp wrap was decorative until this point (P4.5). This
@@ -2471,7 +2471,7 @@ static void drain_game_thread_work_at(DrainSite site) {
             blog("[CK3-Bridge] WARNING: init_war_declaration_hook() threw exception\n");
         }
 
-        // War TERMINATION observer hook (ck-sd4d) — hooks WAR_END_CORE, which
+        // War TERMINATION observer hook — hooks WAR_END_CORE, which
         // sets IS_ENDED and then destroys the CWar in the same call. Without
         // this, an ended war's outcome and end date are unreadable by any
         // client: the object is gone before anything can poll for it.
@@ -2491,7 +2491,7 @@ static void drain_game_thread_work_at(DrainSite site) {
 
         // AI CB selector observer hook — post-hooks AI_CB_SELECTOR to capture the
         // S1 verdict (cb_ref/target/score/extra_roll) gated to bridge-initiated
-        // execute_war_intent. Replaces the ck-2x8w replay probe (ck-10f5 crash).
+        // execute_war_intent. Replaces the replay probe (crash).
         try {
             init_ai_cb_selector_hook();
         } catch (...) {
@@ -2523,7 +2523,7 @@ static void drain_game_thread_work_at(DrainSite site) {
             blog("[CK3-Bridge] WARNING: init_council_task_hook() threw exception\n");
         }
 
-        // Per-ruler council-AI suppression hook (L20 stickiness) — hooks
+        // Per-ruler council-AI suppression hook (stickiness) — hooks
         // AI_COUNCIL_TASKS_PER_RULER so a bridge-set council task is not
         // overwritten by the native AI on the next tick for locked rulers.
         // Fail-safe: install failure logs and continues (global behavior
@@ -2565,11 +2565,11 @@ static void drain_game_thread_work_at(DrainSite site) {
     const uint64_t tick = g_tick_id.load(std::memory_order_relaxed);
 
     // --- Once per daily tick (g_tick_id moved since the last drain) ---
-    // These ran from on_tick once per tick before L13 and keep that cadence: the
+    // These ran from on_tick once per tick before that and keep that cadence: the
     // event paths log per call, and the maps refresh parses /proc/self/maps.
     // This block also runs on the FIRST drain, so the war-DB monitor takes its
     // baseline at ACTIVE (a war declared before the first tick is a new war,
-    // witness FF2 m-2). What must not run at load is the auto-respond: a save
+    // witness). What must not run at load is the auto-respond: a save
     // loaded paused with an event pending and no client is not auto-answered
     // (and unpaused) before anything has run the clock — so it waits for the
     // first tick (s_ticked).
@@ -2590,13 +2590,13 @@ static void drain_game_thread_work_at(DrainSite site) {
         // Log rotation. fopen("w") only truncates at process start, so a long single
         // session grows unbounded; this bounds it at the tick boundary.
         //
-        // ck-otj9: IT USED TO TRUNCATE IN PLACE — freopen(path, "w") on the same
+        // IT USED TO TRUNCATE IN PLACE — freopen(path, "w") on the same
         // inode, no copy retained, ever. The only survivor was line 1 of the new
         // file. That was written for an untraced log, where discarding the old
         // window is harmless.
         //
         // IT IS NOT HARMLESS WITH CK3_BRIDGE_TRACE ARMED, AND THAT IS THE ONLY TIME
-        // IT FIRES. Measured by ck-zgh4 across 11 sealed bundles: an untraced
+        // IT FIRES. Measured across 11 sealed bundles: an untraced
         // bridge.log is 250KB-1.1MB and NOT ONE had ever rotated. With the trace on
         // it is ~0.148 MB/tick, so a single episode blows a 64MB cap several times.
         // The trace exists to tell "died inside the bridge" from "written then
@@ -2626,7 +2626,7 @@ static void drain_game_thread_work_at(DrainSite site) {
                         s_log_coverage.window_start[0];
                     s_log_coverage.note_rotation(static_cast<unsigned long long>(tick));
 
-                    // ck-bwz1: HAND THE RETIRED WINDOW TO THE ARCHIVER, O(1).
+                    // HAND THE RETIRED WINDOW TO THE ARCHIVER, O(1).
                     // The bytes are at <path>.1 right now and will stay there for
                     // ~1300 ticks before the ring drops them; the accept thread
                     // compresses them off this thread. Doing it here would stall
@@ -2644,7 +2644,7 @@ static void drain_game_thread_work_at(DrainSite site) {
                              w.start_tick, w.end_tick, path);
                     }
                     if (s_log_coverage.head_of_run_lost()) {
-                        // ck-zgh4: do not let the file count imply coverage. The
+                        // Do not let the file count imply coverage. The
                         // ring is full, so the eldest was overwritten and the head
                         // of the run is gone — a reader who counts .1/.2/.3 and
                         // assumes a complete record would be wrong, in the greener
@@ -2673,7 +2673,7 @@ static void drain_game_thread_work_at(DrainSite site) {
             }
         }
 
-        // ck-e3dp: keep the SIGSEGV safety net armed. A save reload or late engine
+        // Keep the SIGSEGV safety net armed. A save reload or late engine
         // re-registration can displace the handler again after the first-tick
         // re-arm; this periodic check (one sigaction read syscall per 100 ticks —
         // no-op when already armed) takes the slot back and re-saves the displaced
@@ -2707,7 +2707,7 @@ static void drain_game_thread_work_at(DrainSite site) {
         g_in_protected_region = false;
 
         // METERLINE: the played line(s) the meter armed, followed per tick. FIRST
-        // (owner ruling 2026-11-12): the handoff's realm guard reads who heads a
+        //: the handoff's realm guard reads who heads a
         // seat's registered realm NOW from these watches, so a root and his
         // vassal dying in one tick see the root's line already moved.
         g_in_protected_region = true;
@@ -2735,12 +2735,12 @@ static void drain_game_thread_work_at(DrainSite site) {
         // Event handling — two mutually exclusive paths.
         //
         // Agent connected → push pending events to the agent; the bridge does not
-        // pause (L13 D3: the engine's own event pause holds the game where an
-        // event demands it). No bridge action answers an event (L16 R3 deleted
+        // pause (the engine's own event pause holds the game where an
+        // event demands it). No bridge action answers an event (deleted
         // respond_event, which had no caller).
         //
         // No agent → fall back to auto-dismiss so events don't leave the game stuck
-        // on a paused popup forever: always on (L16 deleted its switch,
+        // on a paused popup forever: always on (deleted its switch,
         // set_auto_respond_events, which had no caller), and only once a tick has
         // run since the bridge came ACTIVE (m-2: never at load); auto_respond
         // unpauses only a game that is paused (m-1).
@@ -2774,7 +2774,7 @@ static void drain_game_thread_work_at(DrainSite site) {
 
     }
 
-    // L20-A: the game-day pause alarm (pause_alarm.h). Every pass, paused or
+    // The game-day pause alarm (pause_alarm.h). Every pass, paused or
     // running: a lock-free test while nothing is armed; armed, one guarded read
     // of the game date and, at or past the target, the pause, here on the
     // session thread between two engine commands. Before the delayed-unpause
@@ -2791,7 +2791,7 @@ static void drain_game_thread_work_at(DrainSite site) {
 
     // Check delayed unpause (handles game auto-pausing for events)
     //
-    // ck-cg3b: sigsetjmp, not try/catch alone. This step DEREFERENCES ENGINE
+    // Sigsetjmp, not try/catch alone. This step DEREFERENCES ENGINE
     // MEMORY RAW: event_handler.cpp:242 reads *(int32_t*)(idler + PLAYER_ID)
     // with no safe_read and no is_mapped — the only check is `if (idler)`,
     // which is a null test, not a validity test — and then hands the result to
@@ -2820,7 +2820,7 @@ static void drain_game_thread_work_at(DrainSite site) {
     g_in_protected_region = false;
 
 
-    // L13: a per-PASS budget, not per tick. The drain holds the session's command
+    // A per-PASS budget, not per tick. The drain holds the session's command
     // mutex, so its length delays the next engine command (the next daily tick
     // included): at most kDrainActionsPerPass queued envelopes, and none started
     // after kDrainPassBudgetMs. An idle pass comes every ~5 ms, so a burst drains
@@ -2833,7 +2833,7 @@ static void drain_game_thread_work_at(DrainSite site) {
                std::chrono::milliseconds(kDrainPassBudgetMs);
     };
 
-    // L13 D1: the game-state reads the IPC thread is blocked on (Tier 2), first:
+    // The game-state reads the IPC thread is blocked on (Tier 2), first:
     // a reader is waiting, a queued write's caller polls.
     if (game_thread_jobs_pending() > 0) {
         refresh_ranges_for_reads(tick);
@@ -2869,12 +2869,12 @@ static void drain_game_thread_work_at(DrainSite site) {
                 // Parse the queued message (same format as IPC inline)
                 rapidjson::Document envelope;
                 envelope.Parse(msg);
-                std::string drain_session_id;   // ck-n7n0
+                std::string drain_session_id;
                 if (!envelope.HasParseError() && envelope.IsObject() &&
                     envelope.HasMember("actions") && envelope["actions"].IsArray()) {
 
                     // M1: reinstall the originating session context for this envelope.
-                    // ck-n7n0: and KEEP the id, so the reply can be routed back
+                    // And KEEP the id, so the reply can be routed back
                     // to the client that asked instead of broadcast to all of
                     // them. The identity was already being parsed here and
                     // thrown away for routing purposes.
@@ -2888,7 +2888,7 @@ static void drain_game_thread_work_at(DrainSite site) {
                         }
                     }
 
-                    // ck-6kvq.19: the conductor stamps the ticket it is
+                    // The conductor stamps the ticket it is
                     // waiting on onto the ENVELOPE (never onto the inner
                     // action, so no handler sees a key its client did not
                     // write). 0 means this envelope came from somewhere else.
@@ -2931,7 +2931,7 @@ static void drain_game_thread_work_at(DrainSite site) {
                         std::string response_out;
                         dispatch_action_with_response(action_type, sb.GetString(), &response_out);
 
-                        // ck-6kvq.9: a ticket handed to this drain by the flush
+                        // A ticket handed to this drain by the flush
                         // loop is settled BY this drain — never by the mere fact
                         // of having been enqueued. No-op in legacy mode, and a
                         // no-op for any envelope the conductor did not send.
@@ -2950,14 +2950,14 @@ static void drain_game_thread_work_at(DrainSite site) {
                             bflight_action.clear(); bflight_rid.clear(); bflight_actor = 0;
                         }
 
-                        // ck-dup0: COUNT THE PROVENANCE UNCONDITIONALLY. The
+                        // COUNT THE PROVENANCE UNCONDITIONALLY. The
                         // trace below is gated on CK3_BRIDGE_TRACE because it is
                         // per-action volume, and that is right — but "did any
                         // game-thread action take the raw push?" is a question
                         // whose answer is usually NO, and a diagnostic behind a
                         // flag cannot support a negative claim. The counts ride
                         // the heartbeat so an UNTRACED run answers it too.
-                        // ck-0lph: RESOLVE THE SPINE ONCE, HERE — above both
+                        // RESOLVE THE SPINE ONCE, HERE — above both
                         // the trace that reports it and the injection that
                         // ships it. Computing it twice would let the trace
                         // describe something other than what went on the wire,
@@ -2982,11 +2982,11 @@ static void drain_game_thread_work_at(DrainSite site) {
                         }
                         bridge::note_drain_provenance(pipeline_ticket);
 
-                        // ck-td8m: THE RECORD, BROADCAST, BESIDE THE REPLY.
+                        // THE RECORD, BROADCAST, BESIDE THE REPLY.
                         //
-                        // ck-0lph put the spine on the reply below, calling it
+                        // put the spine on the reply below, calling it
                         // "the only reply such a call ever gets". Seventeen
-                        // hours earlier ck-n7n0 had made that reply UNICAST to
+                        // hours earlier had made that reply UNICAST to
                         // the asking session — the `||` at the send site short-
                         // circuits, so the broadcast leg never runs when the
                         // asker is connected. Both changes are right; the
@@ -2994,12 +2994,12 @@ static void drain_game_thread_work_at(DrainSite site) {
                         // and the driver's ArmActionRelay (which keys every row
                         // off `bridge_record` and whose own docstring asserted
                         // these frames are broadcast) stopped seeing a whole
-                        // action class. ck-9vgu priced it: construct_building
+                        // action class. priced it: construct_building
                         // in bridge.log 168 times, execute=1 167 times, rows in
                         // actions.jsonl ZERO.
                         //
                         // So the RECORD is emitted here as its own frame and
-                        // BROADCAST — ck-h4pn's rule, one path over: a record
+                        // BROADCAST — rule, one path over: a record
                         // is not a reply, whoever emits it. `broadcast_
                         // observation` and not `send_observation`, even though
                         // this is the game thread where the thread-local target
@@ -3032,11 +3032,11 @@ static void drain_game_thread_work_at(DrainSite site) {
                             }
                         }
 
-                        // ck-xm08: trace game-thread drain path for bridge_timeout triage.
-                        // ck-dup0: …and WHICH PATH FED IT. Both the reader's raw
+                        // Trace game-thread drain path for bridge_timeout triage.
+                        // …and WHICH PATH FED IT. Both the reader's raw
                         // push and the flush's ticketed hand-off end in this same
                         // drain and emitted byte-identical lines until now, which
-                        // is why ck-0lph was arguable for a day. ticket=0 is the
+                        // is why was arguable for a day. ticket=0 is the
                         // raw push; ticket=tk_… is the flush hand-off.
                         if (bridge::g_trace && bridge::g_logfile) {
                             char origin[256];
@@ -3062,7 +3062,7 @@ static void drain_game_thread_work_at(DrainSite site) {
                                     injected += "\",";
                                 }
                                 injected += build_envelope_clock_fragment();
-                                // ck-0lph: THE ATTRIBUTION SPINE, ON THE ONLY
+                                // THE ATTRIBUTION SPINE, ON THE ONLY
                                 // REPLY THIS CALL EVER GETS. Every game-thread
                                 // verb settles here and pipeline_note_drain_result
                                 // deliberately emits no second frame, so until now
@@ -3098,7 +3098,7 @@ static void drain_game_thread_work_at(DrainSite site) {
 
                         // Send response back to agent via IPC
                         if (!response_out.empty()) {
-                            // ck-n7n0: target the asker when we know them and
+                            // Target the asker when we know them and
                             // they are still connected; broadcast otherwise, so
                             // engine events and disconnected callers behave
                             // exactly as before. Narrowing delivery must never
@@ -3156,7 +3156,7 @@ static void drain_game_thread_work_at(DrainSite site) {
     // no AI worker runs, so FUN_06b3d770 deep copy cannot deadlock on allocator locks)
     // The client context the drain is entered with: the per-intent guard's
     // destructor does not run on the siglongjmp below, so recovery puts this
-    // back (witness m11). Written before sigsetjmp and never after.
+    // back. Written before sigsetjmp and never after.
     bridge::ClientContext* const drain_entry_ctx = bridge::g_current_client_context;
     g_in_protected_region = true;
     if (sigsetjmp(g_recovery_point, 1) == 0) {
@@ -3173,7 +3173,7 @@ static void drain_game_thread_work_at(DrainSite site) {
     }
     g_in_protected_region = false;
 
-    // R1c (ck-6kvq.10, design §2.9): ASSERT THE PULSE LEDGER IS EMPTY.
+    // R1c (design §2.9): ASSERT THE PULSE LEDGER IS EMPTY.
     //
     // THIS IS THE ANCHOR THE DESIGN IS ABOUT. The `else` branch above is the
     // siglongjmp that jumps clean out of the drain — past every catch(...), past
@@ -3208,10 +3208,10 @@ static void drain_game_thread_work_at(DrainSite site) {
     // Clean up consumed/expired intents and update pending counter
     {
         // tick_maintenance moves the consumed/expired intents into the completed
-        // ring itself, under the queue's lock (L13 FF2, witness R3).
+        // ring itself, under the queue's lock.
         std::vector<Intent> completed;
         g_intent_queue.tick_maintenance(tick, completed);
-        // L18-A: the action log's receipt row for a queued write says
+        // The action log's receipt row for a queued write says
         // verdict:pending; this is where the verdict exists, so this is where
         // it is written (kind "outcome", keyed by dispatch_id). Reads skip.
         for (const Intent& c : completed) emit_action_outcome_log(c);
@@ -3219,7 +3219,7 @@ static void drain_game_thread_work_at(DrainSite site) {
 
 }
 
-// The contract's drain entry (L13): the session-pass hook's call.
+// The contract's drain entry: the session-pass hook's call.
 void drain_game_thread_work() {
     drain_game_thread_work_at(DrainSite::SessionPass);
 }
@@ -3227,7 +3227,7 @@ void drain_game_thread_work() {
 void on_tick(void* ai_manager) {
     auto orig = reinterpret_cast<void(*)(void*)>(g_orig_main_tick);
 
-    // ck-crm5: safety-net gate. Even though hook installation is deferred
+    // Safety-net gate. Even though hook installation is deferred
     // until is_game_ready() first flips true, we re-check here to defend
     // against save-reload windows and to make early-return cheap if the
     // engine ever dispatches the patched vtable slot against a partially-
@@ -3240,15 +3240,15 @@ void on_tick(void* ai_manager) {
     // The game thread is the drain's (claim_drain_thread); this AI-tick worker is
     // noted only when the drain runs from here (no session-pass hook).
 
-    // --- ck-hxh7: world-reload detection (BEGIN, 1 line) ---
+    // --- World-reload detection (BEGIN, 1 line) ---
     // Samples a world fingerprint and drops every world-scoped cache when a save
     // is loaded into this live process. DORMANT->ACTIVE (the first drain) is NOT
     // sufficient: it fires once after dlopen, and a later save load never
     // leaves ACTIVE. See world_epoch.cpp for the full rationale. The drain
-    // samples too, first (L18-A): this one sees a load that happens while the
+    // samples too, first: this one sees a load that happens while the
     // clock runs between two drains.
     world_epoch_sample("ai_tick");
-    // --- ck-hxh7 (END) ---
+    // --- -
 
     // --- Every tick ---
 
@@ -3259,12 +3259,12 @@ void on_tick(void* ai_manager) {
     g_tick_id.fetch_add(1, std::memory_order_relaxed);
     uint64_t tick = g_tick_id.load(std::memory_order_relaxed);
 
-    // ── ck-6xi6 DIAGNOSTIC (CK3_AI_WATCH=1 only; off = one relaxed load) ──────
+    // ── DIAGNOSTIC (CK3_AI_WATCH=1 only; off = one relaxed load) ──────
     //
     // ARMED FROM HERE, because the engine writes we are hunting happen on the
     // task pool this hook runs on — but NOT on one thread. The comment here
     // used to say "this is THE GAME THREAD", singular, and that was the
-    // assumption behind arming once: ck-zgh4 measured the hook on two of five
+    // assumption behind arming once: measured the hook on two of five
     // "Primary Task" workers within 36 ticks. A per-task watchpoint armed on
     // one of them returns a clean zero for the other four, which is the
     // reading we established cannot be interpreted.
@@ -3276,7 +3276,7 @@ if (bridge::ai_watch_requested()) {
         // exists to answer, so the readout's order has to be the real order.
         bridge::ai_watch_drain(g_logfile);
 
-        // COVER THIS WORKER. The hook is NOT one thread: ck-zgh4 measured the
+        // COVER THIS WORKER. The hook is NOT one thread: measured the
         // node's CK3 running it on two of five "Primary Task" workers within 36
         // ticks. A hardware watchpoint is per-task, so a single arm sees one
         // worker's share of the writes — which is why run 1's watchpoint column
@@ -3291,7 +3291,7 @@ if (bridge::ai_watch_requested()) {
         // rather than silently absent from the watchpoint column.
         bridge::ai_watch_rescan_threads(tick, g_logfile);
 
-        // FOLLOW THE SESSION'S PRIMARY (ck-6xi6 run-2 recut). The watch used to
+        // FOLLOW THE SESSION'S PRIMARY (run-2 recut). The watch used to
         // read g_controlled_primary ONCE, in the arming condition below, and then
         // track that one character for the whole run — so ep-03's control path
         // (30853 -> 36375 -> 32642 -> 36552) would arm on the first, sit through
@@ -3366,7 +3366,7 @@ if (bridge::ai_watch_requested()) {
                     reinterpret_cast<uintptr_t>(now_ctrl) + ck3::ai_ctrl::AI_ENABLED,
                     wc, &g_tick_id, g_logfile);
             } else {
-                // ck-zgh4: the controller was DESTROYED, not relocated — there is
+                // The controller was DESTROYED, not relocated — there is
                 // no new address, so the move path cannot run and without this
                 // else NOTHING disarms. The sampler would keep dereferencing a
                 // stale pointer, and a reused freed page reports garbage as a
@@ -3392,7 +3392,7 @@ if (bridge::ai_watch_requested()) {
     // post-tick re-write alone is too late: the AI evaluator reads personality
     // bytes (and unhooked parametric/dot-product paths) DURING orig() this
     // same tick, so the steered values must already be in place at tick start.
-    // ck-cg3b: personality.cpp:410 WRITES engine memory raw —
+    // Personality.cpp:410 WRITES engine memory raw —
     // *(int8_t*)(personality_ptr + i) = axis — after a safe_read chain and an
     // is_mapped() check. The validation is real, which makes this lower risk
     // than check_delayed_unpause above, but is_mapped is a time-of-check test
@@ -3421,7 +3421,7 @@ if (bridge::ai_watch_requested()) {
 
     // Re-apply personality locks after engine tick (Build D) — belt-and-suspenders
     // re-write in case the engine recomputed any axis from traits during the tick.
-    // ck-cg3b: personality.cpp:410 WRITES engine memory raw —
+    // Personality.cpp:410 WRITES engine memory raw —
     // *(int8_t*)(personality_ptr + i) = axis — after a safe_read chain and an
     // is_mapped() check. The validation is real, which makes this lower risk
     // than check_delayed_unpause above, but is_mapped is a time-of-check test
@@ -3444,7 +3444,7 @@ if (bridge::ai_watch_requested()) {
     g_in_protected_region = false;
 
     // Without the session-pass hook (refused, or not yet in) the game-thread work
-    // drains here, after the AI tick, as before L13: only while the clock runs.
+    // drains here, after the AI tick, as before: only while the clock runs.
     if (!session_pass_hook_live()) drain_game_thread_work_at(DrainSite::AiTick);
 
     // THIRD apply point (run-2 fix: re_personality_steering_persistence).
@@ -3475,7 +3475,7 @@ if (bridge::ai_watch_requested()) {
     // (lookup→sentinel→alive→core_data→personality_ptr→is_mapped, then ≤9 byte
     // writes). Pure memory read/write, no engine calls, no RNG, bounded by the
     // lock-map size (≤ a handful of chars). Identical safety profile to :1219.
-    // ck-cg3b: personality.cpp:410 WRITES engine memory raw —
+    // Personality.cpp:410 WRITES engine memory raw —
     // *(int8_t*)(personality_ptr + i) = axis — after a safe_read chain and an
     // is_mapped() check. The validation is real, which makes this lower risk
     // than check_delayed_unpause above, but is_mapped is a time-of-check test
@@ -3515,7 +3515,7 @@ extern "C" void ck3_bridge_start(void) {
 #else
 __attribute__((constructor))
 static void dll_init() {
-    // Diagnostic-first marker (ck-fj23): proves whether the .so constructor
+    // Diagnostic-first marker: proves whether the .so constructor
     // even fires before bridge_init() is called. Append-mode boot log avoids
     // racing the per-PID g_logfile (which is opened later, only in CK3) and
     // captures every host process LD_PRELOAD attaches to (Steam launcher,

@@ -1,4 +1,4 @@
-// test_optional_id.cpp — witness r1 item 8: the location_id fix
+// test_optional_id.cpp —: the location_id fix
 // (action_handlers.cpp resolve_build_target) through the REAL json_get_int.
 // Built twice: plain (must pass) and -DOPTIONAL_ID_PREFIX_CONTROL, the pre-fix
 // read, registered WILL_FAIL (an absent location_id reads as 0xFFFFFF, so

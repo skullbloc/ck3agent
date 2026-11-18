@@ -1,5 +1,5 @@
 // primary_cause.h — WHY THE CONTROLLED PRIMARY CHANGED, recorded by the action
-// that changed it (ck-6xi6).
+// that changed it.
 //
 // `g_controlled_primary` is a DERIVED MIRROR: SessionRegistry::
 // rebuild_legacy_mirrors_locked rewrites it for a claim, a release and a handoff

@@ -1,8 +1,8 @@
-// flush_scheduler.cpp — R1a: the buffered, polarity-driven flush loop (ck-6kvq.8).
+// flush_scheduler.cpp — R1a: the buffered, polarity-driven flush loop.
 //
 // See flush_scheduler.h for the shape ruling. Deliberately dependency-free:
 // <cstdint>/<string>/<vector>/<mutex> and nothing from the bridge or the game.
-// A flush is a PLAN, not an effect; ck-6kvq.9 applies it.
+// A flush is a PLAN, not an effect; applies it.
 
 #include "flush_scheduler.h"
 
@@ -150,7 +150,7 @@ static void rr_select(const std::vector<BufferedCall>& pool,
 // ============================================================================
 FlushScheduler::FlushScheduler(const FlushConfig& cfg) : cfg_(cfg) {}
 
-// ck-on4u. The planner's resting speed is the episode's DECLARED one. Refuses a
+// The planner's resting speed is the episode's DECLARED one. Refuses a
 // non-speed rather than storing it: the restore step below compares against
 // this value and emits a SetSpeed carrying it, and `game_set_speed` clamps
 // anything it dislikes — so a bad value here becomes a clock write that no
@@ -181,7 +181,7 @@ void FlushScheduler::unregister_session(const std::string& session_id) {
     registered_.erase(session_id);
     submitted_since_flush_.erase(session_id);
     // Buffered calls are NOT dropped: a detached session's tickets survive
-    // (ck-6kvq.5 resume). They are still flushed and still attributed.
+    // (resume). They are still flushed and still attributed.
 }
 
 size_t FlushScheduler::registered_session_count() const {
@@ -228,7 +228,7 @@ SubmitResult FlushScheduler::submit(const CallRequest& req, uint64_t now_ms) {
     return r;
 }
 
-// ck-6kvq.9, §2.10 `cancel`. Withdrawing the buffered descriptor is what makes
+// §2.10 `cancel`. Withdrawing the buffered descriptor is what makes
 // cancel mean something: leaving it in the buffer and merely failing the ticket
 // still lets the call consume one of this flush's bounded tick/paused slots, and
 // still drives it through the apply layer's serve path — which then emits a
@@ -278,7 +278,7 @@ FlushTrigger FlushScheduler::due_locked(uint64_t now_ms) const {
         if (all_spoke) return FlushTrigger::AllSessionsSubmitted;
     }
 
-    // (D', ck-h6nx) THE DECLARED OBSERVER'S OWN SUBMISSION SERVES THE READ
+    // (D') THE DECLARED OBSERVER'S OWN SUBMISSION SERVES THE READ
     // LANE. Placed AFTER (b) so an all-spoke flush still wins and serves
     // everything: this trigger is the narrower case, not a replacement.
     if (!cfg_.privileged_reader.empty()
@@ -302,15 +302,15 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
                                      FlushTrigger trigger) {
     std::lock_guard<std::mutex> lk(mu_);
 
-    // ck-43u3: count the trigger that produced this plan. Here rather than in
+    // Count the trigger that produced this plan. Here rather than in
     // the conductor, because the trigger is this object's own decision — and
     // because a probe that ticks a scheduler can then WITNESS the count move,
     // which a counter in the conductor could not show without the engine.
     //
-    // ck-tqx2: under the SAME lock the rest of the function already takes. It
+    // Under the SAME lock the rest of the function already takes. It
     // was a scoped lock_guard immediately followed by re-acquiring mu_ — not a
     // deadlock, the scope closes first, but a redundant lock cycle on EVERY
-    // flush. ck-t5bc flagged it as a timing perturbation on the flush path,
+    // flush. flagged it as a timing perturbation on the flush path,
     // which is where the arm-A crash lives, so it is a weak confound for the
     // first instrumented run and worth closing before that run rather than
     // whenever this file is next touched.
@@ -448,7 +448,7 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
         // is always RUNNING. An agent's latency is its own; what it costs the
         // experiment is MEASURED (unavailability.h), not prevented.
         //
-        // ck-on4u: THE SetSpeed STEP BELOW IS THE SECOND WRITER OF THE GAME
+        // THE SetSpeed STEP BELOW IS THE SECOND WRITER OF THE GAME
         // SPEED, and for a year nothing knew it. It reaches `game_set_speed`
         // through the effects vtable (flush_apply.cpp -> the
         // `set_speed(int) override` in pipeline.cpp -> do_set_speed), so a
@@ -473,13 +473,13 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
         // so the world rests PAUSED and the clock starts when the observer
         // declares. Re-asserted every flush, so it is a STATE rather than a
         // condition somebody has to remember to check.
-        // ONE RELEASE SIGNAL, AND IT CANNOT FIRE EARLY (ck-8o5j).
+        // ONE RELEASE SIGNAL, AND IT CANNOT FIRE EARLY.
         // This used to also release when `privileged_reader` was non-empty —
-        // i.e. when the episode OBSERVER declared. ck-9rto found the hazard:
+        // i.e. when the episode OBSERVER declared. found the hazard:
         // the standalone meter lane (meter_lane.py run) is the only thing in
         // the tree that declares, and if an operator starts it against a
         // pipeline bridge BEFORE the driver opens the episode, its declaration
-        // released the clock during preflight — the exact defect ck-zen6 was
+        // released the clock during preflight — the exact defect was
         // written to kill, arriving through the other signal.
         //
         // So the observer release is RETIRED. The hold is released by the

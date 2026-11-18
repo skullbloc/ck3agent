@@ -1,4 +1,4 @@
-// test_engine_bool.cpp — L14 S3 (surface-eval finding 14). NO GAME.
+// test_engine_bool.cpp — (surface-eval finding 14). NO GAME.
 //
 // THE CLAIM: a game function declared `bool` is read by its AL only. The stubs
 // below return exactly what CanCreateTitle returned for Murchad's k_ireland mint:
@@ -7,7 +7,7 @@
 //
 // The control (built with -DENGINE_BOOL_PREFIX_CONTROL, registered WILL_FAIL) reads
 // the same stubs through the pre-fix shape, `uint64_t (*)(void*, void*)` tested for
-// nonzero (intent_dispatch.cpp before L14 S3), and must fail the same checks.
+// nonzero (intent_dispatch.cpp before that S3), and must fail the same checks.
 
 #include "engine_bool.h"
 

@@ -2,7 +2,7 @@
 Action selector — LLM-facing menu + pre-dispatch validation of the act-shaped
 params a do() intent resolves to (redesign._intent_to_act_params).
 
-Two responsibilities (ck-3hij9.3):
+Two responsibilities:
 
 1. build_action_menu(observation) — derive a structured menu of currently
    actionable options from an observation snapshot. The menu is intentionally
@@ -213,7 +213,7 @@ def _validate_interaction(params: dict, actor_id: int, target_id: int) -> dict:
     own_court = (interaction_type in _OWN_COURT_RECIPIENT_INTERACTIONS
                  and (params.get("secondary_actor_id") or params.get("secondary_recipient_id")))
     if target_id and actor_id and target_id == actor_id and not own_court:
-        # L18-B (scale0 n8/s1 Cui 0867.04.25-26): this hint said "Pass target_id=0
+        # This hint said "Pass target_id=0
         # for self-scope actions" for every interaction; the seat passed 0 and the
         # branch above answered "targets another character — pass target_id". Only a
         # self-scope interaction is offered target_id=0; any other needs another
@@ -235,7 +235,7 @@ def _validate_interaction(params: dict, actor_id: int, target_id: int) -> dict:
     return {"valid": True, "type": "interaction", "interaction_type": interaction_type}
 
 
-#: Lane l4: interactions whose recipient may be the actor himself when the people
+#: Interactions whose recipient may be the actor himself when the people
 #: they act on are the secondaries: arranging a marriage between two of your own
 #: court (the script's arrange_marriage_interaction_desc_ruler_at_own_court), or
 #: appointing a guardian to your own ward (educate_child_interaction: "recipient =

@@ -1,6 +1,6 @@
-"""No agent-facing prose tells the agent to run the clock for an answer (L13 FF2, witness R7).
+"""No agent-facing prose tells the agent to run the clock for an answer.
 
-The owner's rule: every tool works whether the game is paused or running, and
+Every tool works whether the game is paused or running, and
 only session(pause|unpause|speed|wait) moves the clock, on the player's call.
 The bridge's reply strings are guarded by test_inline_safety_static (row F2);
 this is the same guard for the prose the agent and its author read as doctrine:
@@ -109,7 +109,7 @@ def test_the_census_reads_the_doctrine():
         floor = 30
     else:
         must = ("ck3agent/protocol/CLAUDE.md", "CHANGELOG.md",
-                "docs/reference/bridge-contract.md", "docs/porting/p7-windows-vm-runbook.md")
+                "docs/reference/bridge-contract.md", "docs/porting/proton-runbook.md")
         floor = 15
     for m in must:
         assert m in names, m
@@ -139,7 +139,7 @@ def test_every_allowed_line_still_exists_and_still_matches():
 
 
 def test_CONTROL_the_patterns_catch_the_witness_lines():
-    """The phrasings witness R7 found (now fixed) are each caught."""
+    """The phrasings found (now fixed) are each caught."""
     for line in ("⚠ **CALL IT UNPAUSED** (drains on the game tick;",
                  "paused it blocks). Alliance flags",
                  "Caveat: the CB/validity discovers need **UNPAUSED** + serial",

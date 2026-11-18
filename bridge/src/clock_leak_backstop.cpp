@@ -1,4 +1,4 @@
-// clock_leak_backstop.cpp — see clock_leak_backstop.h (ck-epzs)
+// clock_leak_backstop.cpp — see clock_leak_backstop.h
 //
 // A LEAF TU BY CONSTRUCTION: this file includes its own header and nothing else,
 // so a host lane can link the shipping rule without dragging the pipeline, the

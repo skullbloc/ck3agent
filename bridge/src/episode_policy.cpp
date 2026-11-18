@@ -1,8 +1,8 @@
-// episode_policy.cpp — see episode_policy.h (ck-6kvq.10).
+// episode_policy.cpp — see episode_policy.h.
 
 #include "episode_policy.h"
 
-#include "exclusion_rule.h"   // ck-2ngg: X is a RULE over the declared horizon
+#include "exclusion_rule.h"   // X is a RULE over the declared horizon
 
 #include <cctype>
 #include <cstdlib>
@@ -85,7 +85,7 @@ void EpisodePolicyHolder::init_from_env() {
     const char* id = getenv("CK3_EPISODE_ID");
     if (id && *id) p.episode_id = id;
 
-    // ck-6kvq.12 (R4): CK3_EPISODE_ARM, lower-cased, kept verbatim otherwise
+    // CK3_EPISODE_ARM, lower-cased, kept verbatim otherwise
     // (see the header).
     const char* arm = getenv("CK3_EPISODE_ARM");
     if (arm && *arm) {
@@ -94,11 +94,11 @@ void EpisodePolicyHolder::init_from_env() {
             ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
     }
 
-    // ck-ijfa: CK3_UNAVAIL_MIN_SPAN_DAYS is RETIRED with the game-day gate it
+    // CK3_UNAVAIL_MIN_SPAN_DAYS is RETIRED with the game-day gate it
     // configured. The gate is now in WALL-CLOCK and reads this instead.
     env_i64("CK3_UNAVAIL_ANOMALY_WALL_S", p.unavail_anomaly_wall_s);
 
-    // ── ck-2ngg: X IS COMPUTED, NEVER READ ─────────────────────────────────
+    // ── X IS COMPUTED, NEVER READ ─────────────────────────────────
     // The only knob is the FRACTION. The horizon is DECLARED by the harness at
     // episode start, and with no horizon the exclusion is UNARMED and typed —
     // the bridge does not fall back to 365, because falling back to the rule's
@@ -106,7 +106,7 @@ void EpisodePolicyHolder::init_from_env() {
     env_fraction("CK3_UNAVAIL_EXCLUSION_FRACTION", p.unavail_exclusion_fraction,
                  p.refused_exclusion_fraction_env);
 
-    // ── ck-on4u: §9.4's REGISTERED GAME SPEED ──────────────────────────────
+    // ── §9.4's REGISTERED GAME SPEED ──────────────────────────────
     // ONE DECLARATION, THREE READERS. This is the bridge's read; the other two
     // are scripts/registered_launch-side establishment and
     // scripts/episode_validity.py's comparison. A refusal keeps the raw text

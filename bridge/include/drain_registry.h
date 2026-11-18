@@ -1,6 +1,6 @@
 // drain_registry.h — the conductor's payload store and drain correlation.
 //
-// WHY THIS EXISTS (ck-6kvq.19):
+// WHY THIS EXISTS:
 //
 // A tick-polarity call is not served inline. The conductor hands it to the
 // GAME THREAD (`enqueue_action_envelope`) and the game thread reports back when
@@ -25,7 +25,7 @@
 // every call, so two in-flight bdt tickets collided in that map and the first
 // was orphaned exactly as above.
 //
-// THE FIX, and the rule it comes from (same lesson as ck-6kvq.15): SETTLEMENT
+// THE FIX, and the rule it comes from (same lesson as): SETTLEMENT
 // MUST NEVER DEPEND ON A FIELD THE CLIENT WAS FREE NOT TO SEND. Correlation is
 // by the BRIDGE-MINTED TICKET, which is unique by construction and always
 // present. The ticket rides to the game thread on the drain ENVELOPE — not on

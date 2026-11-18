@@ -24,7 +24,7 @@ const char* resolve_decision_name(uint32_t hash);
 // Returns the cached name, or empty string on cache miss (schedules resolution).
 std::string get_cached_character_name(uint32_t char_id);
 
-// The name a hook buffer row reports for a character (L14, surface-eval finding
+// The name a hook buffer row reports for a character (surface-eval finding
 // 7: every query(event_log) scheme row read owner_name "" and target_name "").
 // A hook records the name when the engine acts, and then the cache usually
 // misses (the hook runs before any read asked for that id), so the row kept "".
@@ -44,10 +44,10 @@ void populate_name_cache();
 // are REUSED across saves, so its lifetime is the loaded WORLD, not the process.
 // This is registered with the world-epoch detector (see world_epoch.h) in
 // name_tables.cpp and fires automatically when a save is loaded into a live
-// process; do not rely on anything else calling it. (ck-hxh7)
+// process; do not rely on anything else calling it.
 void clear_name_cache();
 
-// Test seam (ck-hxh7). Override the engine-backed name resolution step used by
+// Test seam. Override the engine-backed name resolution step used by
 // populate_name_cache(), so the cache's world-lifetime behaviour can be tested
 // host-side with no game attached. Pass nullptr to restore the engine path.
 // Returns true and fills `out` on success; false means "skip this id".

@@ -1,4 +1,4 @@
-// test_council_pin.cpp — lane COUNCILRE: the per-seat council-task pin
+// test_council_pin.cpp —: the per-seat council-task pin
 // (bridge/include/council_pin.h, bridge/src/council_suppress_hook.cpp).
 //
 // Fixture: the 867 dump ck3_20260625_152901_ivar867 (BuildID e61ff264...), read

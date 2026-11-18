@@ -1,4 +1,4 @@
-"""ck-zgh4 deploy-51 item (4) — tell each seat what it controls, truthfully.
+""" deploy-51 item (4) — tell each seat what it controls, truthfully.
 
 THE EVIDENCE. d49's king wrote "I never had hands on the army" in its own
 retrospective. d50 read `native_ai_disabled: true` 210 times — and that field is
@@ -54,7 +54,7 @@ class Gateway:
             # the GLOBAL controller, deliberately disagreeing with the per-char one
             return {"ai_controller": {"ai_enabled": True}}
         if action == "query_character":
-            # a BOUND ruler: since rc2 B6 whoami blocks no_ruler_bound when
+            # a BOUND ruler: since whoami blocks no_ruler_bound when
             # character_id=0 resolves to nothing, and carries no agency then.
             return {"id": 30853, "alive": True}
         return {}

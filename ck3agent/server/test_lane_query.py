@@ -54,7 +54,7 @@ class ScriptedGateway:
     async def write(self, action, params=None):
         self.writes.append((action, dict(params or {})))
         if action == "script_action" and action not in self.replies:
-            # Lane v4act: council_task goes through the script layer first; these
+            # Council_task goes through the script layer first; these
             # rows grade the native path it falls back to (test_script_actions.py
             # grades the script path, whose `seat` key do_script_action reads).
             return {"success": False, "action": "script_action",
@@ -128,7 +128,7 @@ def test_fabricate_enumerate_prints_the_chaplain_and_the_bridge_accepts_it():
     assert row["do_call"]["args"]["seat"] == "court_chaplain"
     # The bridge compares after stripping "councillor_" and lower-casing; the
     # task's seat key for task_fabricate_claim is councillor_court_chaplain.
-    # L20-A: the comparison moved into council_task_family.h (norm_seat, run by
+    # The comparison moved into council_task_family.h (norm_seat, run by
     # bridge/test/test_council_task_family.cpp on "court_chaplain" and
     # "councillor_court_chaplain"), and do_set_council_task resolves through it.
     seg = _handler_text("action_handlers.cpp", "do_set_council_task")
@@ -244,7 +244,7 @@ def test_set_phase_reports_a_refused_reassert():
 
 
 def test_set_phase_reads_the_ai_byte_back_not_the_write_return():
-    # F11 (cleanup 2026.11, lane l6): the bridge answers success with the byte
+    # F11: the bridge answers success with the byte
     # as it reads after the store; a store that did not take is not reasserted.
     gw = ScriptedGateway(cid=30853, replies={"set_character_ai": {
         "success": True, "ai_enabled": False, "requested": True, "applied": False}})
@@ -292,7 +292,7 @@ def test_men_at_arms_enumerate_is_capped_and_candidates_filter():
 
 
 def test_building_rows_come_from_the_bridge_reply_and_name_the_holding_they_need():
-    # cleanup 2026.11, lane l6: the class read keys the bridge never emits and
+    # The class read keys the bridge never emits and
     # listed nothing; its do_call carried location_id 0, which build refuses.
     types = [{"name": f"b_{i:02d}", "level": 1} for i in range(45)]
     gw = ScriptedGateway(cid=13902, replies={"query_building_types": {"building_types": types}})
@@ -332,7 +332,7 @@ def test_building_rows_come_from_the_bridge_reply_and_name_the_holding_they_need
     assert un["b_02"]["blocked"]["raw_reason"] == "construction_refused"
     assert un["b_02"]["blocked"]["summary"] == "the game refuses: This Barony already contains a Holding"
     assert un["b_03"]["blocked"]["summary"] == "the game refuses: Missing gold 318"
-    # One call for the whole list (witness #2: one inline engine call per row, on the
+    # One call for the whole list (one inline engine call per row, on the
     # IPC thread, tripped the scope latch); none per building.
     assert [r for r in gw.reads if r[0] == "construction_check"] == [
         ("construction_check", {"actor_id": 13902, "location_id": 1268,
@@ -376,7 +376,7 @@ def test_the_games_tooltip_text_reads_plain():
 
 
 def test_build_refusal_carries_the_games_reasons_and_a_build_sends_no_execute_flag():
-    # cleanup 2026.11, lane l6: build runs the player's construction path; a
+    # Build runs the player's construction path; a
     # refusal names the game's reasons, as its tooltip shows them.
     refused = {"success": False, "action": "construct_building", "reason": "construction_refused",
                "engine_reasons": [_MISSING_GOLD, _INNOVATION], "price": {"gold": 522.5},
@@ -393,7 +393,7 @@ def test_build_refusal_carries_the_games_reasons_and_a_build_sends_no_execute_fl
 
 
 def test_an_obligation_raise_is_refused_with_a_named_gate_and_the_reason():
-    # lane l6, witness #2: the raise refusal read as gate unmapped_refusal (l6fin4-latch-1).
+    # The raise refusal read as gate unmapped_refusal (l6fin4-latch-1).
     gw = ScriptedGateway(cid=10465, replies={"set_obligation_level": {
         "success": False, "action": "set_obligation_level", "reason": "raise_requires_negotiation",
         "old_level": 2, "requested_level": 3}})

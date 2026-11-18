@@ -225,7 +225,7 @@ static std::string resolve_character_name(uintptr_t char_ptr) {
 // The ruler's house name: char_house_name (dispatch_router.cpp), the one
 // house-name reader (NAME +0x248). The read here was house_obj +
 // db_object::NAME_KEY (+0x10), the house's masked id, so house_name was never
-// sent (L14 FB, M-1).
+// sent (M-1).
 static std::string resolve_house_name(uintptr_t char_ptr) {
     return char_house_name(char_ptr);
 }
@@ -243,7 +243,7 @@ static uint32_t house_dynasty_fallback(uintptr_t char_ptr) {
 }
 
 // The ruler's dynasty name: char_dynasty_name (dispatch_router.cpp), the one
-// dynasty-name reader (L14 S4). This file's own read<>/db_lookup primitives are
+// dynasty-name reader. This file's own read<>/db_lookup primitives are
 // not used for it: the name read here was dynasty_obj + db_object::NAME_KEY
 // (+0x10), which is the dynasty's uint32 id (dynasty_obj::ID), so the feed's
 // dynasty_name was empty or garbage.
@@ -254,7 +254,7 @@ static std::string resolve_dynasty_name(uintptr_t char_ptr) {
 // Culture and faith through the shared readers (dispatch_router.cpp): the
 // culture's localized NAME (+0x260; +0x10 is its id), the faith through
 // faith_lookup (FAITH_DB keyed at +0x08; db_lookup's +0x10 key never matches a
-// faith). L14 FB, M-1.
+// faith)., M-1.
 static NamePair resolve_culture_names(uintptr_t char_ptr) {
     return culture_names(read<uint32_t>(char_ptr + ck3::character::CULTURE_ID_DIRECT));
 }
@@ -442,7 +442,7 @@ static void build_basic_stats(JsonBuilder& json, void* ruler) {
         // Round 7: Stress (core_data + 0x2F8, uint32)
         int32_t stress = read<int32_t>(realm_ptr + ck3::character_vitals::STRESS);
         json.key("stress"); json.value_int(stress);
-        // Merit (core_data+0x170, CORE_MERIT). L15 A3: emitted as `monthly_income` until
+        // Merit (core_data+0x170, CORE_MERIT).: emitted as `monthly_income` until
         // it was identified as the merit stock; the monthly gold income is
         // income_breakdown.total_monthly below.
         json.key("merit"); json.value_float(fp_to_float(read<int64_t>(realm_ptr + ck3::core_data::CORE_MERIT)));
@@ -496,7 +496,7 @@ static void build_basic_stats(JsonBuilder& json, void* ruler) {
     json.key("birth_date"); json.value_int(birth_date);
 
     // Imprisonment status.
-    // L7 fix: ck3::funcs::IS_IMPRISONED (0x0664adf0) is NOT an imprisonment
+    // fix: ck3::funcs::IS_IMPRISONED (0x0664adf0) is NOT an imprisonment
     // check — it is maybe_realm_predicate_inverted (independence/liege-
     // membership predicate, true for ~25% of landed chars / all independent
     // rulers). Mirror build_char_profile: default false until the real
@@ -1132,7 +1132,7 @@ static void build_gold_budget(JsonBuilder& json, void* ruler) {
 
     if (realm) {
         uintptr_t rd = reinterpret_cast<uintptr_t>(realm);
-        // core_data+0x2B0 (MONTHLY_INCOME, MEDIUM). L15 A3: `income_accumulated`
+        // core_data+0x2B0 (MONTHLY_INCOME, MEDIUM).: `income_accumulated`
         // (core_data+0x2E8) is gone: that field is BASE_HEALTH, not money.
         json.key("monthly_income");
         json.value_float(fp_to_float(read<int64_t>(rd + ck3::core_data::MONTHLY_INCOME)));
@@ -1271,7 +1271,7 @@ static void build_wars(JsonBuilder& json, void* ruler) {
                     json.end_object();
                 } else {
                     // Cache miss, or a STALE entry (hook pre-validation has been
-                    // rejecting refreshes — see ck-xwlg; the fossil is typically
+                    // rejecting refreshes —; the fossil is typically
                     // the all-zero day-one breakdown). Either way, clamp the
                     // live battle+ticking estimate instead of a misleading 0.
                     WarScoreBreakdown stale_probe{};

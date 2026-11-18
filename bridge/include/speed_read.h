@@ -1,4 +1,4 @@
-// speed_read.h — ck-k57a. ABSENCE IS A DIFFERENT TYPE THAN A VALUE.
+// speed_read.h —. ABSENCE IS A DIFFERENT TYPE THAN A VALUE.
 //
 // THE DEFECT THIS HEADER EXISTS TO REMOVE. `get_tick_info` used to emit the
 // game speed as:
@@ -18,7 +18,7 @@
 // READ RAW → ADD AN OFFSET → EMIT. Any zero-returning failed read that is then
 // arithmetically shifted becomes a valid-looking datum. The `+ 1` is what
 // converts an abstention into a lie. Its two cousins in this codebase
-// (ck-xqol's `fd = 0` from raw .bss, ck-6kvq.5's `world_epoch() == 0`) at
+// (`fd = 0` from raw .bss, `world_epoch == 0`) at
 // least produced a SENTINEL, which a careful consumer can route to abstain.
 // This one produced a value in the same range as the data, so there was
 // nothing to route and no consumer-side fix existed: the information was
@@ -77,7 +77,7 @@ struct Reading {
 
     bool ok() const { return status == ReadStatus::Ok; }
 
-    // THE COMPAT SHAPE, in one place. The pre-ck-k57a contract was "an integer,
+    // THE COMPAT SHAPE, in one place. The earlier contract was "an integer,
     // 1..5 for a speed and 0 for no reading" — and the whole bug was that the
     // fault case did not honour it, emitting 1. A legacy integer consumer gets
     // that contract here, with the fault case FIXED to the 0 it always should
@@ -123,7 +123,7 @@ inline Reading classify(bool root_ok, bool speed_faulted, int32_t raw) {
 //   game_speed         int 1..5 when a speed was read, else JSON null.
 //                      NEVER 0 and NEVER `raw + 1` on a fault.
 //   speed_read_status  "ok" | "root_unreadable" | "read_faulted".
-//   game_speed_legacy  the pre-ck-k57a integer contract (0 == no reading), for
+//   game_speed_legacy  the earlier integer contract (0 == no reading), for
 //                      consumers that predate `speed_read_status`. Documented
 //                      in docs/ci.md; nothing in-tree decides from it.
 template <typename Builder>

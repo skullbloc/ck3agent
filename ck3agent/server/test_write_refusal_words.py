@@ -1,4 +1,4 @@
-"""A refused write carries the game's own sentence (L14 finding 1).
+"""A refused write carries the game's own sentence (finding 1).
 
 The evaluator granted a county to Ludwig's heir and read `blocked: {gate:
 "interaction_invalid", summary: "send_conditions_not_met"}`; the game's words
@@ -48,11 +48,11 @@ class Bridge:
                                          "intent_request_id": RID}
         self.ring_detail, self.reason, self.ring = ring_detail, reason, ring
         # query_create_title_cost: the price the mint gate reads before it sends
-        # (L14 S3). Priced and affordable here, so the mint goes out and the GAME
+        # Priced and affordable here, so the mint goes out and the GAME
         # refuses it, which is the path these rows drive.
         self.replies = {"query_wars": {"scope": "all_active", "wars": [_WAR]},
                         # declare_war's pre-read, in the emitter's keys
-                        # (do_get_active_wars): no war yet. L15 m7: a read
+                        # (do_get_active_wars): no war yet.: a read
                         # without the list now refuses before the send.
                         "get_active_wars": {"success": True, "action": "get_active_wars",
                                             "character_id": ME, "wars": [], "war_count": 0},
@@ -65,7 +65,7 @@ class Bridge:
                         **(replies or {})}
         self.health = "ok"
         self.writes = []
-        # Lane v4act: a write the fake answers in its own shape (script_action).
+        # A write the fake answers in its own shape (script_action).
         self.write_replies = {}
 
     async def actor_gate(self):
@@ -134,7 +134,7 @@ DRIVERS = {
                                              "target_id": FOE}),
     "_do_war_intent": lambda gw: R.do_impl(gw, intent="make_peace", character_id=ME,
                                            args={"war_id": WAR, "terms": "enforce_demands"}),
-    # Lane v4act: declare_war goes through the script layer first; this row drives
+    # Declare_war goes through the script layer first; this row drives
     # its native fallback (the bridge says the defender holds no title to address
     # him by), which is the path whose refusal rides the intent ring.
     "declare_war_impl": lambda gw: (gw.write_replies.update(script_action=_UNADDRESSABLE),
@@ -207,7 +207,7 @@ def test_no_write_path_builds_its_refusal_around_write_blocked():
         assert "map_raw_reason" not in calls, f"{name} maps a refusal itself"
 
 
-# ── L14 FF1 m-8: every server module, and why_blocked as well as map_raw_reason ──
+# ── Every server module, and why_blocked as well as map_raw_reason ──
 #: The builders themselves (they are where a refusal is built).
 _BUILDERS = {"write_blocked", "_with_words", "lever_absent_block", "settle_write",
              "confirm_write", "_confirm_write", "write", "_script_write"}
@@ -266,7 +266,7 @@ def _server_modules() -> dict:
 
 
 def test_no_write_path_in_any_server_module_hand_builds_a_refusal():
-    """L14 FF1 m-8: factions.py built its own blocks and ~20 why_blocked calls on
+    """Factions.py built its own blocks and ~20 why_blocked calls on
     redesign.py's write paths were never seen (the walker read redesign.py and
     banned map_raw_reason only). Every module, both builders."""
     hits, paths = [], 0

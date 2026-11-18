@@ -1,4 +1,4 @@
-"""One derivation of the episode cycle (lane v4instr item 4a).
+"""One derivation of the episode cycle (item 4a).
 
 `channel.send_cycle` (a message's cycle) and `notepad.cycle_at` (a pad
 record's, and the guide log's) used to derive the cycle each by its own copy of

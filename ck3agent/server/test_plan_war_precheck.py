@@ -1,4 +1,4 @@
-"""v4fix B3: plan_war and cbs offer only the wars declare_war's own pre-check passes.
+""" B3: plan_war and cbs offer only the wars declare_war's own pre-check passes.
 
 Set v3-registered-2: all six declare_war refusals in the set followed a plan_war
 row (and cbs in three) that read "Independent, declarable per strict-CB inner

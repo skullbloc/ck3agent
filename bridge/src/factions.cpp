@@ -1,4 +1,4 @@
-// factions.cpp — faction management from both seats (cleanup 2026.11, F16).
+// factions.cpp — faction management from both seats (F16).
 //
 // Everything the bridge does with political factions lives here:
 //
@@ -389,7 +389,7 @@ static std::string build_faction_options(uint32_t actor_id) {
 
     // CREATE: every type the engine marks ruler-creatable (county factions are
     // formed by counties, not rulers), with the engine's can_create verdict.
-    // L13 FF2 (witness R6): on the game thread, holding the session mutex: the
+    // On the game thread, holding the session mutex: the
     // engine verdicts stop at kGameThreadEvalBudgetMs and the types / factions
     // not reached are named (partial).
     const auto budget_start = std::chrono::steady_clock::now();
@@ -508,7 +508,7 @@ bool faction_query_pending() {
 }
 
 bool do_query_joinable_factions(const char* params_json, std::string* out) {
-    // L13: a game-thread read now; its slot is serviced here, so a faulted read
+    // A game-thread read now; its slot is serviced here, so a faulted read
     // answers degraded, never a silent 0.
     FaultScope fault_scope("query_joinable_factions", out);
     if (!out) return true;

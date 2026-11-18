@@ -28,7 +28,7 @@
 // action left out of every classifier queues to g_msg_queue and runs in the
 // game-thread drain.
 //
-// rc2 B2: DEBUG VERBS (raw memory reads, X/uinput input injection, the debug
+// DEBUG VERBS (raw memory reads, X/uinput input injection, the debug
 // console) are wrapped in #ifdef CK3_BRIDGE_DEBUG_VERBS here AND their handler
 // bodies are compiled out, so a default build neither dispatches, registers
 // nor links them. dispatch_router.cpp:refuse_debug_verb answers them with
@@ -46,7 +46,7 @@ BRIDGE_ACTION("query_interaction_check", do_query_interaction_check)
 BRIDGE_ACTION("queue_intent", do_queue_intent)
 BRIDGE_ACTION("query_intents", do_query_intents)
 BRIDGE_ACTION("query_intent_results", do_query_intent_results)
-// ck-jsis0: probe a single dispatch (success/rejected/crashed/pending/not_found).
+// Probe a single dispatch (success/rejected/crashed/pending/not_found).
 BRIDGE_ACTION("query_dispatch_result", do_query_dispatch_result)
 BRIDGE_ACTION("cancel_intent", do_cancel_intent)
 BRIDGE_ACTION("clear_intents", do_clear_intents)
@@ -71,8 +71,8 @@ BRIDGE_ACTION("construct_building", do_construct_building)
 BRIDGE_ACTION("declare_war", do_declare_war)
 BRIDGE_ACTION("pre_validate_war", do_pre_validate_war)
 
-// Path B' override (ck-8weg): vouch (cb, titles, target) for the next
-// AI_CB_SELECTOR call on this thread; consumed once. rc2 B2: a DEBUG verb —
+// Path B' override: vouch (cb, titles, target) for the next
+// AI_CB_SELECTOR call on this thread; consumed once.: a DEBUG verb —
 // it takes raw engine pointers from the client.
 #ifdef CK3_BRIDGE_DEBUG_VERBS
 BRIDGE_ACTION("set_cb_selector_override", do_set_cb_selector_override)
@@ -85,15 +85,15 @@ BRIDGE_ACTION("set_cb_selector_override", do_set_cb_selector_override)
 // and every other realm are unaffected.
 BRIDGE_ACTION("set_offgoal_veto", do_set_offgoal_veto)
 
-// ck-eyfb: direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect
-// (whose scope-evaluator construction is not recovered — ck-bt9x). Mirrors
+// Direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect
+// (whose scope-evaluator construction is not recovered —). Mirrors
 // WAR_DECLARE_SPECIAL_HANDLER (FUN_065db970): builds a minimal CB-params
 // struct and calls WAR_CREATE_CORE directly. Designed for the LLM-as-player
-// claim-war scenario (A.6 / ck-1qzw). Caller validates upstream gates.
+// claim-war scenario (A.6 /). Caller validates upstream gates.
 BRIDGE_ACTION("call_war_create_core", do_call_war_create_core)
 
-// raise_armies and raise_raiders were deleted in cleanup 2026.11 (owner ruling
-// 2026-10-21): the raise primitive's engine function is the raise-all button's
+// raise_armies and raise_raiders were deleted in
+// (2026-10-21): the raise primitive's engine function is the raise-all button's
 // availability check and raised nothing live (re/findings/re_raise_armies.md).
 
 // REMOVED: move_army / order_siege / siege_holding / set_move_army_enabled
@@ -112,13 +112,13 @@ BRIDGE_ACTION("pause_game", case_pause_game)
 BRIDGE_ACTION("unpause_game", case_unpause_game)
 BRIDGE_ACTION("set_speed", case_set_speed)
 
-// --- SDL Input Injection (ck-77pb) ---
+// --- SDL Input Injection ---
 #ifdef CK3_BRIDGE_DEBUG_VERBS
 BRIDGE_ACTION("inject_mouse_click", do_inject_mouse_click)
 BRIDGE_ACTION("select_observe_default", do_select_observe_default)
 #endif
 
-// ck-dq7ym.8: programmatic observe-mode entry via the live
+// Programmatic observe-mode entry via the live
 // CJominiMultiplayerLobbyView singleton (captured by lobby_view_hook).
 // ck3ctl tries this first; falls back to select_observe_default on miss.
 BRIDGE_ACTION("enter_observe_mode", do_enter_observe_mode)
@@ -127,7 +127,7 @@ BRIDGE_ACTION("enter_observe_mode", do_enter_observe_mode)
 BRIDGE_ACTION("toggle_ai_subsystem", case_toggle_ai_subsystem)
 BRIDGE_ACTION("set_character_ai", case_set_character_ai)
 
-// --- Decision-budget governor (ck-6kvq.13, R6) ---
+// --- Decision-budget governor (R6) ---
 BRIDGE_ACTION("report_usage", do_report_usage)
 BRIDGE_ACTION("set_budget_config", do_set_budget_config)
 BRIDGE_ACTION("get_budget_state", do_get_budget_state)
@@ -180,7 +180,7 @@ BRIDGE_ACTION("query_war_stance", do_query_war_stance)
 BRIDGE_ACTION("set_war_stance_record_walk", case_set_war_stance_record_walk)
 
 BRIDGE_ACTION("query_war_declarations", do_query_war_declarations)
-// ck-sd4d: ENDED wars. WAR_END_CORE wipes the CWar in the same call that marks
+// ENDED wars. WAR_END_CORE wipes the CWar in the same call that marks
 // it ended, so no enumerator can ever surface one; this serves a hook-fed
 // ledger instead. Identity is war_id, or cb_type + belligerents — a query that
 // names only a target title is refused (two 1066 wars target k_england).
@@ -191,7 +191,7 @@ BRIDGE_ACTION("query_council_tasks", do_query_council_tasks)
 BRIDGE_ACTION("query_council", do_query_council)
 BRIDGE_ACTION("query_character_memories", do_query_character_memories)
 BRIDGE_ACTION("query_fabricate_targets", do_query_fabricate_targets)
-// L14 S3: the engine's create-title verdict and price, read on the game thread.
+// The engine's create-title verdict and price, read on the game thread.
 BRIDGE_ACTION("query_create_title_cost", do_query_create_title_cost)
 BRIDGE_ACTION("query_factions", do_query_factions)
 BRIDGE_ACTION("query_faction_threat", do_query_faction_threat)
@@ -230,7 +230,7 @@ BRIDGE_ACTION("query_diplomatic_range", do_query_diplomatic_range)
 BRIDGE_ACTION("query_cb_catalog", do_query_cb_catalog)
 BRIDGE_ACTION("query_building_types", do_query_building_types)
 
-// --- Phase-3 probes (ck-e58l.8) ---
+// --- Phase-3 probes ---
 BRIDGE_ACTION("probe_interaction_cascade", do_probe_interaction_cascade)
 BRIDGE_ACTION("probe_gate_4_slots", do_probe_gate_4_slots)
 BRIDGE_ACTION("list_pending_interactions", do_list_pending_interactions)
@@ -255,7 +255,7 @@ BRIDGE_ACTION("list_decisions_annotated", do_list_decisions_annotated)
 // --- New observation tools ---
 BRIDGE_ACTION("get_tick_info", do_get_tick_info)
 
-// ck-9fc3 — the harness declares WHICH SAVE is loaded, using ck-6kvq.2's
+// The harness declares WHICH SAVE is loaded, using
 // run_summary.json identity ("episode_id" + save.sha256). This is the ONLY
 // trigger that can restore agent steering quarantined by a world reload, and
 // the only caller of the on-disk lock carrier. Reading a character id to guess
@@ -285,7 +285,7 @@ BRIDGE_ACTION("maa_station", do_maa_station)
 BRIDGE_ACTION("maa_unstation", do_maa_unstation)
 BRIDGE_ACTION("hire_mercenary", do_hire_mercenary)
 BRIDGE_ACTION("set_doctrine", do_set_doctrine)
-// lane v4act: the script action layer (script_templates.h) and its log read-back
+// The script action layer (script_templates.h) and its log read-back
 BRIDGE_ACTION("script_action", do_script_action)
 BRIDGE_ACTION("query_script_log", do_query_script_log)
 BRIDGE_ACTION("set_character_faith", do_set_character_faith)

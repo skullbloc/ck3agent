@@ -1,8 +1,8 @@
-// clock_rate.h — ck-ijfa: HOW FAST THE WORLD ACTUALLY RAN, measured, in the
+// clock_rate.h —: HOW FAST THE WORLD ACTUALLY RAN, measured, in the
 // condition the episode actually ran in.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.7. Filed by
-// ck-ijfa off ck-6kvq.5.
+// off.
 //
 // WHY THIS EXISTS. §2.7's covariate is denominated in GAME-DAYS; its gate is in
 // WALL-SECONDS; and every gap has to be recorded in BOTH, at the rate the run
@@ -61,7 +61,7 @@ struct ClockRateSample {
     double   game_years_per_wall_hour  = 0.0;   // the same number, the units
                                                 // A.19 and the design use
 
-    // THE CONDITION. A rate without one is not evidence (ck-ijfa).
+    // THE CONDITION. A rate without one is not evidence.
     uint64_t samples        = 0;
     uint64_t paused_samples = 0;
     int      speed_min      = 0;   // 0 == never observed
@@ -75,7 +75,7 @@ public:
     // ms, the game speed setting, and whether the game was paused. Called from
     // the conductor loop beside unavailability().note_day(), which is the one
     // site that already reads both clocks.
-    // ck-zffq: THE POLICY COMES IN AND THE RECORDING OWNS IT. It used to be a
+    // THE POLICY COMES IN AND THE RECORDING OWNS IT. It used to be a
     // gate at the CALL SITE, which is a decision living one level away from the
     // thing it governs — and a call site can silently diverge from the policy it
     // is supposed to be following. That is the same shape as the defect this
@@ -87,7 +87,7 @@ public:
     // driven by clock_start_probe — so the mutant that was uncatchable is caught
     // by the lane that already exists, without a grep.
     //
-    // RETURNS BEFORE TAKING THE LOCK, deliberately: E0 x8 runs on the node, and
+    // RETURNS BEFORE TAKING THE LOCK, deliberately: E0 x8 runs on the test host, and
     // an unconditional call must cost a branch rather than a mutex in the modes
     // that record nothing.
     //
@@ -98,7 +98,7 @@ public:
     // a COST claim and no behavioural check can see it. A check on source order
     // would be a spelling check, and a timing test measures the machine.
     //
-    // IT IS CLOSABLE BY COUNTING LOCK ACQUISITIONS (ck-t5bc): have the meter
+    // IT IS CLOSABLE BY COUNTING LOCK ACQUISITIONS: have the meter
     // increment a counter each time it takes the mutex, and a probe driving a
     // NO-RECORD policy asserts it stayed at zero. That converts "the return is
     // before the lock" — a fact about source order — into "the lock is never
@@ -115,7 +115,7 @@ public:
 
     ClockRateSample get() const;
 
-    // Test/reset seam, and the ck-hxh7 world-reset hook's entry point.
+    // Test/reset seam, and the world-reset hook's entry point.
     void reset();
 
 private:

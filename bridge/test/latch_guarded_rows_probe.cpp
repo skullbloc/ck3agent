@@ -1,4 +1,4 @@
-// lane l6, witness #3 MAJOR 2: construction_check's list mode must not arm the
+// MAJOR 2: construction_check's list mode must not arm the
 // fake random scope while the scope latch is set.
 //
 // A row whose restore trips the latch (the slot moved under the arm,

@@ -20,7 +20,7 @@ namespace os {
 
 namespace {
 // Plain scalars set under the loader lock in DllMain and read later: no
-// constructor, no allocation (the ck-22n3 init-order discipline, Windows side).
+// constructor, no allocation (the init-order discipline, Windows side).
 EntryPhase     g_phase = EntryPhase::not_attached;
 std::uintptr_t g_module = 0;
 std::uint64_t  g_init_tid = 0;

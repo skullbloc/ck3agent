@@ -5,10 +5,10 @@ primary title, under the same fragments; a duke's lineage with no landed heir or
 a destroyed title ends the seat as `lost`; a rebind that fails for an INSTRUMENT
 reason is `seat_unbound`.
 
-THE KING'S SEAT FOLLOWS THE PLAYED LINE (INTEG item 2, owner ruling
+THE KING'S SEAT FOLLOWS THE PLAYED LINE (INTEG item 2,
 2026-11-11). Until then K's seat followed K's REGISTERED title's holder while
 the growth meter followed the played line (scripts/played_line.py), and the two
-could disagree (v3reg2 block 1: king 12015 took e_hre and k_france went
+could disagree (block 1: king 12015 took e_hre and k_france went
 holderless; his death would have ended the seat `lost` while the line went on
 through e_hre). Now K's seat reads the SAME decision the meter reads: the
 bridge's line watch (bridge/include/line_watch.h, the heir handoff's own
@@ -79,7 +79,7 @@ KIND_REBIND = "rebind"
 KIND_LOST = "lost"
 KIND_UNBOUND = "seat_unbound"
 KIND_PENDING = "pending"          # dead, succession not yet resolved by the engine
-#: 2026.12.6 (owner rulings 2026-11-10): NON-TERMINAL notes. `read_failed` is a
+#: 2026.12.6: NON-TERMINAL notes. `read_failed` is a
 #: step that gave no verdict because a read failed (`read_failed`, below); it
 #: carries the read, why, and how many such steps are consecutive. The first
 #: verdict-bearing step after them writes `reads_recovered`. The sink carries
@@ -88,7 +88,7 @@ KIND_PENDING = "pending"          # dead, succession not yet resolved by the eng
 #: so a count that reset with each process could never reach the bound.
 KIND_READ_FAILED = "read_failed"
 KIND_READS_RECOVERED = "reads_recovered"
-#: 2026.12.7 (owner ruling 2026-11-10; v3pilot5 witness): a NON-TERMINAL note.
+#: 2026.12.7 (v3pilot5 witness): a NON-TERMINAL note.
 #: The seat asked to claim a character the cell reserved for another seat (or
 #: while the reservation could not be read) and the server refused it before
 #: any bridge call (ck3agent/server/seat_reservations.py). The row names the
@@ -98,7 +98,7 @@ KIND_READS_RECOVERED = "reads_recovered"
 #: failed-read count, and it is not part of the lineage a resumed server seeds
 #: from (`prior_from_sink` skips it).
 KIND_CLAIM_REFUSED = "claim_refused"
-#: 2026.12.7 (witness r1 F1 on 1eaab8ac): a NON-TERMINAL note beside a `bound`
+#: 2026.12.7 (F1 on 1eaab8ac): a NON-TERMINAL note beside a `bound`
 #: or `rebind` row whose ruler is another seat's DECLARED character (in this
 #: seat's CK3_RESERVED_FOR_OTHER_SEATS). The lineage rebind, the bridge's heir
 #: handoff and a continuation's pre-bind of carried rulers are not refused by
@@ -112,7 +112,7 @@ SOURCE_BRIDGE = "bridge_handoff"
 SOURCE_EXPLICIT = "explicit_control"
 
 R_HEIR_IS_PLAYER = "heir_is_player"
-#: owner ruling 2026-11-12 (v3reg2 s3 D1 moved onto the rival king Carloman):
+#:
 #: the bridge REFUSED to move the seat because the succession's target is
 #: outside the seat's registered realm (bridge/include/played_line.h
 #: succession_realm_check; session unbound_reason, or the refusal reason of an
@@ -135,7 +135,7 @@ R_SESSION_ROW_ABSENT = "session_row_absent"
 #: stopped seeing.
 R_READS_FAILED_REPEATEDLY = "reads_failed_repeatedly"
 MAX_CONSECUTIVE_FAILED_READS = 3
-#: TK6 witness r2 item 3: the seat's own session row was READ and holds no
+#: TK6: the seat's own session row was READ and holds no
 #: ruler, MAX_CONSECUTIVE_FAILED_READS observes in a row, before the seat ever
 #: had one (a prebind that never landed). Counted with the failed reads; the
 #: terminal says `never_bound` when every step of the run was this, and
@@ -144,8 +144,8 @@ NOT_BOUND_YET = "not_bound_yet"
 R_NEVER_BOUND = "never_bound"
 R_RELEASED = "released_without_death"
 #: a rebind this seat's server records when the primary moved with NO heir witness
-#: (heir != the new primary): a swap, not a lineage rebind (v3 §7.5 as amended by the
-#: owner's ruling 2026-11-09). scripts/seat_lineage_record.py imports this one name.
+#: (heir != the new primary): a swap, not a lineage rebind (v3 §7.5 as amended by the)
+#: scripts/seat_lineage_record.py imports this one name.
 R_PRIMARY_MOVED = "primary_moved_without_heir_witness"
 R_NO_TITLE = "no_title_to_follow"
 
@@ -382,7 +382,7 @@ def _line_target(prior: Prior, dead: int, title: Optional[int], watch_read: Any)
                                  f"{R_LINE_WATCH_UNREADABLE}:{why}")
     if w.get("status") == WATCH_ENDED:
         # The bridge DECIDED the line ended (dead, no successor): the seat is
-        # lost, never on a default (owner ruling 2026-11-12).
+        # lost, never on a default.
         return w, 0, Decision(KIND_LOST, dead, 0, title, SOURCE_BRIDGE, R_LINE_ENDED)
     if w.get("status") == WATCH_PENDING:
         # No heir named yet: the bridge retries every tick; `pending`, not lost.
@@ -456,7 +456,7 @@ def session_rows(reply: Any) -> Optional[list]:
     return [r for r in rows if isinstance(r, dict)]
 
 
-#: THE FAILED-READ CODES, defined ONCE (TK6 witness r1 item 1). The server's
+#: THE FAILED-READ CODES, defined ONCE (TK6). The server's
 #: gateway and its listener spell their own answers with these constants
 #: (mcp_server.BridgeGateway._dispatch, mcp_server._bridge_listener), so a new
 #: spelling cannot slip past the predicate below:
@@ -471,7 +471,7 @@ GAME_THREAD_TIMEOUT = "game_thread_timeout"
 MEMORY_ACCESS_FAULT = "memory_access_fault"
 FAILED_READ_CODES = frozenset({BRIDGE_DISCONNECTED, GAME_THREAD_TIMEOUT, MEMORY_ACCESS_FAULT})
 #: `"degraded": true` marks a reply one of whose memory reads faulted. Where it
-#: is set (TK6 witness r2 item 1):
+#: is set (TK6):
 #:   query_handlers.cpp:972         emit_degraded on a FULL query_character
 #:                                  profile (id, alive, ...): it "stands
 #:                                  without" the faulted fields
@@ -500,7 +500,7 @@ def _load_bearing_missing(reply: dict, read: Optional[str]) -> bool:
     if read == READ_CHARACTER:
         # `alive` is always written by build_char_profile, so a profile whose id
         # read faulted to 0 still carries it: the id is load-bearing too (TK6
-        # witness r3 item 3; _alive needs id > 0)
+        # _alive needs id > 0)
         return reply.get("success") is False or not isinstance(reply.get("alive"), bool) \
             or _i(reply.get("id")) <= 0
     if read == READ_TITLE:
@@ -514,7 +514,7 @@ def read_failed(reply: Any, read: Optional[str] = None) -> Optional[str]:
     """Why `reply` to `read` is a FAILED read (no verdict, counted toward the
     bound), or None when the bridge answered.
 
-    2026.12.6 (owner rulings 2026-11-10: "a failed or list-less read is
+    2026.12.6 ("a failed or list-less read is
     retried, not counted as an unbind", bounded at MAX_CONSECUTIVE_FAILED_READS).
     ONE predicate for the step's three reads (READ_SESSIONS, READ_CHARACTER,
     READ_TITLE):
@@ -566,7 +566,7 @@ def registered_title_from_env(environ: Optional[dict] = None) -> Optional[int]:
 def prior_from_sink(path: Optional[str]) -> Optional[Prior]:
     """The seat's Prior as its sink left it, or None when the sink holds no row.
 
-    2026.12.4 (L23 witness r2 item 1): a cell's `ck3agent run` resumes a seat in
+    2026.12.4: a cell's `ck3agent run` resumes a seat in
     a NEW claude, so a new server whose in-memory Prior starts at None. Seeded
     from the sink, the resumed server knows the seat's lineage: the last
     `bound`/`rebind` row's ruler and title (a dead original is not the ruler
@@ -749,7 +749,7 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
     try:
         bs = await gw.read(READ_SESSIONS, {})
         sid = own_session_id(gw) if own_session_id else None
-        # 2026.12.6 (owner rulings 2026-11-10; TK6 witness r1, r2): EVERY seat not
+        # 2026.12.6 (TK6, r2): EVERY seat not
         # ended counts, whether or not it has had a ruler, so a seat that never
         # gets a good read ends `reads_failed_repeatedly` ("we looked and could
         # not see"), never `unwitnessed`. A FAILED read of any of the three reads
@@ -774,7 +774,7 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
                 and not (isinstance(row.get("unbound_reason"), str) and row.get("unbound_reason")):
             # the row was read and holds no ruler, and the seat never had one
             # (a prebind landing late, or never): not a verdict on a lineage
-            # that does not exist yet (TK6 witness r2 item 3)
+            # that does not exist yet (TK6)
             return _no_verdict(prior or Prior(ruler=0, title_id=None), READ_SESSIONS,
                                NOT_BOUND_YET, gw=gw, sink=sink, seat_session_id=seat_session_id)
         subject = p if (prior is None or p > 0) else prior.ruler
@@ -872,7 +872,7 @@ async def step(gw, prior: Optional[Prior], *, sink: str, seat_session_id: Option
             prior.title_id = d.refresh_title
         return prior
     except Exception as exc:                                        # noqa: BLE001
-        # 2026.12.6 (owner rulings 2026-11-10): a step that raised is a failed
+        # 2026.12.6: a step that raised is a failed
         # read like the others (a `read_failed` row, bounded the same way). It
         # used to write `seat_unbound step_failed:<exc>` at once (a reason the
         # signed rule does not list).

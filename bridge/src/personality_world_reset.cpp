@@ -1,5 +1,5 @@
 // personality_world_reset.cpp — the world-reset half of the personality lock
-// table (ck-hxh7 / ck-9fc3).
+// table.
 //
 // Deliberately a separate translation unit from personality.cpp. personality.cpp
 // is thoroughly engine-coupled (character lookup, offset headers, raw memory
@@ -11,7 +11,7 @@
 // See include/personality_locks.h for why this is a quarantine and not a clear.
 
 #include "personality_locks.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "world_epoch.h"
 
 #include <cstdio>

@@ -1,10 +1,10 @@
-"""L20-B item 2 (smoke17 B4): query(domain="conquest_targets") at its default is
+"""Query(domain="conquest_targets") at its default is
 under 15,000 characters as the seat reads it.
 
 THE SMOKE. probe-paused.jsonl line 21 (B4.conq, Cui 13191, 0867.02.20):
   query(domain="conquest_targets", character_id=13191) -> 38,481 characters,
   compact {counties_listed 25, counties_omitted 54, own_realm_counties_dropped 309}
-The reply's result is committed as fixtures/smoke17_b4_conquest_targets_13191.json.
+The reply's result is committed as fixtures/conquest_targets_13191.json.
 Measured on it: ~1,500 characters a row as tool-result text (indent=2, the probe's
 `chars`), 70% of each row the `declare` and `declare_options` blocks, plus the
 bridge's 1,500-character `note`.
@@ -32,7 +32,7 @@ ms = pytest.importorskip("mcp_server")
 import tools as T  # noqa: E402
 from test_query_tool import bridge  # noqa: E402,F401  (the fake-bridge fixture)
 
-FIX = json.loads((HERE / "fixtures" / "smoke17_b4_conquest_targets_13191.json").read_text())
+FIX = json.loads((HERE / "fixtures" / "conquest_targets_13191.json").read_text())
 CUI = 13191
 LIMIT = 15_000
 
@@ -90,7 +90,7 @@ def test_CONTROL_the_rebuilt_reply_through_the_old_shape_is_the_smokes_size(brid
     """The fixture is faithful: detail='full' at the smoke's 25 rows is the
     2026.12.0 shape, and it lands within 10% of the 38,481 the smoke measured."""
     env = _query(bridge, detail="full", max_results=25)
-    # detail="full" now carries every emitted key (L20 r3, witness item 4); the
+    # detail="full" now carries every emitted key; the
     # 2026.12.0 row is the projection on its own key list (tools.py at 85be8d78)
     for d in env["result"]["duchies"]:
         d["remaining_counties"] = [{k: rc[k] for k in OLD_FULL_COUNTY_KEYS if k in rc}
@@ -159,7 +159,7 @@ def test_verbose_is_the_bridge_reply_unchanged(bridge):
     assert env["result"] == _bridge_reply()
 
 
-# ── L20 r3, witness item 4: detail="full" is a superset of the default row ───
+# ── Detail="full" is a superset of the default row ───
 # The keys are read off the emitter, not the fixture (2026.12.0's compacted
 # output carries none of is_kin / already_at_war_opposing /
 # holder_top_liege_unresolved): every r.key on a remaining_counties row and on a

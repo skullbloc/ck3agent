@@ -1,7 +1,7 @@
 // instance_paths.cpp — see instance_paths.h. Transcription of
 // `ck3agent/server/instance.py`; pinned by `scripts/test_multi_instance.py`.
 #include "instance_paths.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #ifdef _WIN32
 #include "os/os.h"
 #endif
@@ -30,8 +30,8 @@ constexpr const char* kLegacyLog    = "/tmp/ck3_bridge.log";
 std::once_flag g_once;
 std::string g_id CK3_EARLY_INIT, g_socket CK3_EARLY_INIT, g_tele CK3_EARLY_INIT,
             g_log CK3_EARLY_INIT, g_dir CK3_EARLY_INIT,
-            // ck-bwz1: CK3_EARLY_INIT like its siblings, NOT by habit — these
-            // are read from a constructor-ordering-sensitive path, and ck-475j
+            // CK3_EARLY_INIT like its siblings, NOT by habit — these
+            // are read from a constructor-ordering-sensitive path, and
             // was an unprioritised _GLOBAL__sub_I zeroing state after dll_init
             // had already used it. A new member of this group inherits the
             // hazard whether or not anyone remembers why.
@@ -39,7 +39,7 @@ std::string g_id CK3_EARLY_INIT, g_socket CK3_EARLY_INIT, g_tele CK3_EARLY_INIT,
             g_base CK3_EARLY_INIT, g_state_dir CK3_EARLY_INIT;
 std::mutex g_err_mu;
 std::string g_private_err CK3_EARLY_INIT;
-// rc2 B1: a malformed CK3_INSTANCE_LAYOUT or CK3_INSTANCE_ID. instance.py
+// A malformed CK3_INSTANCE_LAYOUT or CK3_INSTANCE_ID. instance.py
 // raises on both, so a client resolves no path; the bridge binds none either.
 // Paths still resolve (for the banner); nothing is bound or opened.
 std::string g_config_err CK3_EARLY_INIT;
@@ -74,7 +74,7 @@ const char* env_nonempty(const char* key) {
     return (v && *v) ? v : nullptr;
 }
 
-// rc2 B1: CK3_INSTANCE_LAYOUT and CK3_INSTANCE_ID are stripped of leading and
+// CK3_INSTANCE_LAYOUT and CK3_INSTANCE_ID are stripped of leading and
 // trailing ASCII whitespace, exactly the set instance.py strips (`_WS`) and
 // ck3_instance.sh strips. All three must agree: when the client accepted
 // "legacy " and the bridge refused it, the client dialled the /tmp socket
@@ -131,7 +131,7 @@ std::string user_base() {
     return h + "/.local/state/ck3agent";
 }
 
-// rc2 B1: every ancestor of `d` (symlinks resolved) is owned by root or euid,
+// Every ancestor of `d` (symlinks resolved) is owned by root or euid,
 // and one that is group/other-writable is sticky (/tmp). Otherwise whoever
 // owns or can write an ancestor can rename the verified leaf away and put
 // their own directory at its path.
@@ -244,7 +244,7 @@ void init_once() {
     g_log    = pick("CK3_BRIDGE_LOG",    kLegacyLog,    "bridge.log");
     g_state_dir = g_legacy ? std::string("/tmp") : (is_default ? g_base : g_dir);
 
-    // ck-bwz1: where retired log windows are archived, gzipped and unbounded.
+    // Where retired log windows are archived, gzipped and unbounded.
     // DELIBERATELY NOT DEFAULTED TO /tmp. The whole reason the ring is bounded
     // at three is a /tmp quota hazard, and an unbounded archive there would
     // trade a known loss for an unknown one. An explicit override is honoured
@@ -540,7 +540,7 @@ FILE* instance_open_private_log(const char* path, bool truncate) {
     }
     int fd = ::open(path, flags | O_NONBLOCK, mode);
     if (fd < 0) return nullptr;
-    // rc2 B1: an append to an existing log: regular files only, and a looser
+    // An append to an existing log: regular files only, and a looser
     // mode is tightened (SECURITY.md: created or tightened to 0600).
     struct stat st;
     if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {

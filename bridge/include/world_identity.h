@@ -1,7 +1,7 @@
 #pragma once
 // world_identity.h — the SAVE/WORLD IDENTITY, and the rule that decides whether
 // quarantined agent steering may be restored after a save is loaded into a live
-// CK3 process (ck-9fc3, epic ck-6kvq R7).
+// CK3 process (epic R7).
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // THE QUESTION THIS ANSWERS
@@ -9,7 +9,7 @@
 // Two events look identical from inside the process:
 //
 //   (a) the SAME save was reloaded   -> agent steering must SURVIVE  (resume, R7)
-//   (b) a DIFFERENT save was loaded  -> agent steering must be DISCARDED (ck-9fc3)
+//   (b) a DIFFERENT save was loaded  -> agent steering must be DISCARDED
 //
 // (b) is not cosmetic. g_personality_locks is keyed by CHARACTER ID and
 // apply_personality_locks() pokes the int8 axes three times per on_tick, and
@@ -18,7 +18,7 @@
 // with values belonging to a world that no longer exists — silently, and in a
 // bundle that still looks clean.
 //
-// ck-hxh7 made the wrong answer UNREACHABLE by emptying the live write set on
+// made the wrong answer UNREACHABLE by emptying the live write set on
 // every detected reload and MOVING the entries to a quarantine. That killed the
 // P1 and left exactly one thing open: quarantined locks are never re-applied, so
 // a legitimate same-save resume loses its steering. This header is the missing
@@ -35,7 +35,7 @@
 //                            file included        -> cannot prove SAMENESS
 //   START_DATE_YEAR          1066 for every 1066 save -> cannot prove DIFFERENCE
 //   GAME_DATE                ditto at the bookmark date
-//   character names / ids    explicitly untrustworthy — that is ck-hxh7 itself,
+//   character names / ids    explicitly untrustworthy — that is itself,
 //                            and inferring identity from ids is the specific
 //                            mistake this bead forbids
 //
@@ -43,10 +43,10 @@
 // harness), through `declare_save_identity`. The identity is deliberately the
 // one that already exists twice in this repository rather than a third one:
 //
-//   ck-6kvq.2  run_summary.json  "episode_id"  and  "save": {"sha256": ...}
+//    run_summary.json  "episode_id"  and  "save": {"sha256": ...}
 //   ck3agent/server/session_memory.py's save key (playthrough_id > save stem)
 //
-// UNIFICATION NOTE, read before editing. ck-6kvq.5 (branch
+// UNIFICATION NOTE, read before editing. (branch
 // `ck-6kvq.5-session-resume`, OPEN and unmerged at the time of writing) defines
 // the same record, under the same name, at this same path, for the CLAIMS half
 // of resume. That is the point: one identity, two consumers. Neither branch may
@@ -56,7 +56,7 @@
 // purpose. Whoever merges second keeps a single definition; do not fork it.
 //
 // The two branches also carry the identity over the wire differently, and that
-// is a merge decision, not a disagreement: ck-6kvq.5 presents it on the v2
+// is a merge decision, not a disagreement: presents it on the v2
 // HANDSHAKE (where it authorises a claim set), this one on a `declare_save_identity`
 // action (where it authorises restoring steering, which a session need not exist
 // to do — an observer-mode harness declares before any control session attaches).
@@ -69,7 +69,7 @@
 // WHAT THE WORLD IS STILL GOOD FOR: REFUTATION
 // ═══════════════════════════════════════════════════════════════════════════
 // A declaration is trusted to AFFIRM and never to overrule the world. The
-// bridge reads START_DATE_YEAR out of the loaded world (ck-hxh7's fingerprint,
+// bridge reads START_DATE_YEAR out of the loaded world (fingerprint,
 // which is a read of game memory, not an inference from any id) and refuses the
 // match when the world visibly disagrees with what was declared. So the split
 // is: the world can only ever say NO; only a declaration can say YES; and the
@@ -86,9 +86,9 @@ namespace bridge {
 // WorldIdentity — declared by the harness, one per loaded save.
 // ===========================================================================
 struct WorldIdentity {
-    // ck-6kvq.2 run_summary.json "episode_id". Identifies a RUN, not a save.
+    // run_summary.json "episode_id". Identifies a RUN, not a save.
     std::string episode_id;
-    // ck-6kvq.2 run_summary.json save.sha256 — THE save key, over the bytes of
+    // run_summary.json save.sha256 — THE save key, over the bytes of
     // the save file. The value session_memory.py's save key is reaching for.
     std::string save_sha256;
     // Corroboration, cheap to cross-check against the live world. Never
@@ -126,7 +126,7 @@ enum class SameSave {
     YES,
     NO_DECLARED_IDENTITY,   // nobody has vouched for the world now loaded
     NO_RECORDED_IDENTITY,   // nobody vouched for the world the locks came from
-    DIFFERENT_SAVE,         // save_sha256 disagrees — THE ck-9fc3 case
+    DIFFERENT_SAVE,         // save_sha256 disagrees — THE case
     DIFFERENT_EPISODE,      // same save, different run (the disk carrier only)
     WORLD_CONTRADICTS,      // the loaded world disagrees with the declaration
 };
@@ -203,7 +203,7 @@ WorldIdentity world_identity_quarantined();
 // "save_identity". Always emitted, always well-formed, never throws.
 std::string world_identity_emit_json();
 
-// Registered with ck-hxh7's world-reset registry. Moves the declared identity
+// Registered with world-reset registry. Moves the declared identity
 // to the quarantine slot and leaves the declared identity EMPTY — after a
 // reload nobody has vouched for the new world, which is the whole point.
 void world_identity_on_world_reset();

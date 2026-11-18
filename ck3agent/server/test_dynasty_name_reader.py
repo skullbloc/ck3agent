@@ -1,4 +1,4 @@
-"""One reader per name: dynasty (L14 S4, FB M-2), house, culture, faith (L14 FB M-1).
+"""One reader per name: dynasty (FB M-2), house, culture, faith.
 
 The rules (re/offsets/ck3_offsets.h): a dynasty is named by dynasty_obj::NAME
 (+0x80) only (CUSTOM_NAME +0x110 would overlap HOUSES_ARRAY, LOW); a house by
@@ -125,7 +125,7 @@ def test_query_dynasty_says_no_stand_in_word():
     assert '"(unknown)"' not in (SRC / "query_handlers.cpp").read_text(encoding="utf-8")
 
 
-# ── one de-jure count (L14 FB m-2) ────────────────────────────────────────────
+# ── one de-jure count ────────────────────────────────────────────
 # The meter (do_query_dejure_progress) counted a county held when its holder's
 # TOP liege was the ruler; the #131 create_title gate (dejure_control_fraction)
 # when the holder's liege chain reached him. A ruler who is himself a vassal read
@@ -152,7 +152,7 @@ def test_the_realm_predicate_is_defined_once():
     assert "char_in_realm_of(" in share and "out.held++" in share, share
 
 
-# ── query_intents lists writes only (L14 FB m-6) ─────────────────────────────
+# ── query_intents lists writes only ─────────────────────────────
 # A queued check is a game-thread read delivered to its asker. pending_writes
 # (IntentQueue, ctest test_intent_lookup row 10) is the one list; query_intents'
 # pending[] and pending_count both come from it.

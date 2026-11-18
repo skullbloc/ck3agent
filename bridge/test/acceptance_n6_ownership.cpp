@@ -1,4 +1,4 @@
-// test/acceptance_n6_ownership.cpp — ck-6kvq.11 (R2) N=6 ownership acceptance,
+// test/acceptance_n6_ownership.cpp — (R2) N=6 ownership acceptance,
 // HOST lane.
 //
 // This is an ACCEPTANCE, not a unit test, and the difference is deliberate:
@@ -30,7 +30,7 @@
 //   P5  cap        — overflow refused typed watchlist_full; no silent divergence
 //   P6  registry   — the ownership table is readable, ordered and byte-stable
 
-#include "bridge.h"     // ck-6kvq.5: MemRange, for the stub globals below
+#include "bridge.h"     // MemRange, for the stub globals below
 #include "session.h"
 
 #include <algorithm>
@@ -45,7 +45,7 @@
 // Stub globals referenced by session.cpp when compiled standalone (identical to
 // the set test_session_registry provides).
 namespace bridge {
-// ck-6kvq.5: session.cpp now links world_identity.cpp (ck-9fc3's judge_same_save
+// Session.cpp now links world_identity.cpp (judge_same_save
 // — one identity rule, not a second copy), which reaches world_epoch.cpp's
 // guarded reads. These are the globals those engine-free TUs reference when the
 // game is not there.

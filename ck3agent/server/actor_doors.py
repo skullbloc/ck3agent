@@ -1,4 +1,4 @@
-"""The doors that answer about the bound ruler (L14 FF1 m-20): ONE declared table.
+"""The doors that answer about the bound ruler: ONE declared table.
 
 A query domain or a discover subject asks about the bound ruler when its bridge
 handler resolves an unnamed actor (character_id / actor_id 0 or absent) to the
@@ -11,7 +11,7 @@ actor-bearing tool answers (redesign.unbound_refusal). A door whose handler neve
 falls back to the bound ruler (a catalog, a feed, a read that needs its ids named)
 is answered whatever is bound.
 
-Until L14 FF1 the rule keyed on a PROXY: "the bridge params carry a character_id
+Until the rule keyed on a PROXY: "the bridge params carry a character_id
 key". discover(decisions) refused unbound because the server sends a character_id
 its handler never reads (case_list_decisions ignores its params), while
 discover(interactions), the same kind of catalog, answered.

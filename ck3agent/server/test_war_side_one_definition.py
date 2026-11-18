@@ -1,5 +1,5 @@
 """Which side of a war a character is on has ONE definition in the bridge:
-bridge/include/war_side.h (witness #8 minor 5).
+bridge/include/war_side.h (minor 5).
 
 Until the final fix there were several readers of a war's participant arrays.
 One of them (get_ai_evaluations' active_wars) indexed the array as inline
@@ -17,8 +17,8 @@ a side by war_participant::ENTRY_SIZE (the inline layout). Every reply key
 that names a side (`my_side`) takes its word from war_side::name.
 
 Those rows key on the constants' spelling, so a reader that writes the offsets
-as literals (`war_ptr + 0x28`, `j * 0x20 + 0x08`) would pass them (witness #9
-minor 4). The anchor that does not share the spelling: the VALUES, read from
+as literals (`war_ptr + 0x28`, `j * 0x20 + 0x08`) would pass them
+(minor 4). The anchor that does not share the spelling: the VALUES, read from
 re/offsets/ck3_offsets.h (war_obj::ATK_PARTICIPANT / DEF_PARTICIPANT,
 war_participant::CHAR_ID / ENTRY_SIZE), are looked for as literals -- a side
 offset added to a war pointer, or the inline stride and the char-id offset --
@@ -68,7 +68,7 @@ def literal_side_readers(bridge: Path) -> list[str]:
     ATK_PARTICIPANT / DEF_PARTICIPANT, or an index times ENTRY_SIZE plus
     CHAR_ID, in one expression.
 
-    Stated limit (witness #10 minor 11), not a pass: a pointer whose name does
+    Stated limit (minor 11), not a pass: a pointer whose name does
     not contain "war" (`wp + 0x58`) and a stride split over two expressions
     (`e = a + j * 32; ... e + 8`) are NOT seen. Matching by offset value alone
     was measured and rejected: `+ 0x28` is added to six unrelated pointers in

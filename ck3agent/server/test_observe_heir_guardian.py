@@ -1,5 +1,5 @@
 """observe(), inspect(heir_plan) and inspect(guardian_candidates): behaviour against
-a scripted gateway (cleanup 2026.11 F15).
+a scripted gateway (F15).
 
 All three resolve their actor the same way, so one table drives the actor gates
 through each tool: actor_required (several rulers, no character_id),
@@ -53,7 +53,7 @@ class Gw:
     def __init__(self, replies=None, *, multi=False, chars=None):
         self.replies = dict(replies or {})
         # query_character's shape (build_char_profile): flat, `id`, gold, merit and
-        # income_breakdown (r.key("merit"), r.key("income_breakdown"); L15 A3).
+        # income_breakdown (r.key("merit"), r.key("income_breakdown")).
         self.chars = {0: {"id": RULER, "name": "Halfdan", "alive": True,
                           "gold": 250.0, "merit": 0.0,
                           "income_breakdown": {"total_monthly": 4.2}}}
@@ -163,8 +163,8 @@ def test_no_bridge_is_bridge_disconnected(tool, monkeypatch, which):
 
 # ── observe ───────────────────────────────────────────────────────────────────
 
-#: lane v4sees: `goal` (first; `not_an_experiment_episode` outside a cell);
-#: lane v4act: `standing_policies` (v4 draft section 6)
+#: `goal` (first; `not_an_experiment_episode` outside a cell);
+#: `standing_policies` (v4 draft section 6)
 BRIEF = {"goal", "de_jure", "standing", "wars", "money", "succession", "posture", "since",
          "standing_policies"}
 FULL = BRIEF | {"self", "war_brief", "council_brief", "evaluations"}
@@ -175,7 +175,7 @@ _TIER = {"b": 1, "c": 2, "d": 3, "k": 4, "e": 5}
 
 def _realm(*keys, **more):
     """query_realm as do_query_realm writes it: the primary title's key and the
-    held-title count; no titles list, no gold (L15)."""
+    held-title count; no titles list, no gold."""
     r = {"held_title_count": len(keys)}
     if keys:
         r["primary_title_key"] = keys[0]
@@ -206,14 +206,14 @@ def test_observe_brief_is_the_one_envelope(tool):
     assert env["actor"]["id"] == RULER and env["actor"]["name"] == "Halfdan"
     assert env["game"]["date"] == "867.4.1"
     assert isinstance(env["delta"], list)
-    # L18 ruling (b): a bridge reply without lock_state reads not_reported
+    # ruling (b): a bridge reply without lock_state reads not_reported
     assert env["result"]["posture"] == {"genome": {"boldness": 40, "lock_state": "not_reported"}}
 
 
 @pytest.mark.parametrize("state", ["live", "quarantined", "none"])
 def test_observe_posture_genome_carries_the_bridge_lock_state(tool, state):
-    """L18 ruling (b): posture.genome.lock_state is the bridge's word
-    (do_get_ai_personality's `lock_state`, L18-A), passed through."""
+    """ ruling (b): posture.genome.lock_state is the bridge's word
+    (do_get_ai_personality's `lock_state`), passed through."""
     gw = Gw({**_seat("d_york"), "query_dejure_progress": _meters,
              "get_ai_personality": {"boldness": 40, "lock_state": state, "world_epoch": 2}})
     genome = tool(gw, "observe")["result"]["posture"]["genome"]
@@ -233,7 +233,7 @@ def test_observe_full_adds_its_sections_and_the_war_stance_when_at_war(tool):
 
 
 def test_observe_full_self_carries_the_faith_and_culture_keys(tool):
-    """L14 FF2 N-14: query_character sends the display names and the scripted
+    """Query_character sends the display names and the scripted
     keys (emit_char_names, dispatch_router.cpp: culture/culture_key,
     faith/faith_key); self carries both, as doctrine teaches the keys. The
     values are Ivar's, read off the 867 dump (the round-2 witness). RED on
@@ -251,7 +251,7 @@ def test_observe_full_self_carries_the_faith_and_culture_keys(tool):
 
 
 def test_observe_full_self_titles_held_is_query_realms_held_title_count(tool):
-    """L15 (witness r4 N4-1): self.titles_held read realm.titles_held /
+    """Self.titles_held read realm.titles_held /
     title_count, which do_query_realm never writes, so every seat read 0 (l14i
     geval-p eval_e_names: Ludwig, 61 counties, titles_held 0). It is
     held_title_count. RED on 627af763 (0)."""
@@ -309,7 +309,7 @@ def test_observe_one_held_title_and_none(tool):
     {"success": False, "action": "query_title_hierarchy"},        # dispatch failure
 ], ids=["absent", "error", "declined"])
 def test_observe_a_failed_held_titles_read_says_unread_not_one_title(tool, failed):
-    """L15 witness m3: when query_title_hierarchy FAILED, observe said "this seat
+    """When query_title_hierarchy FAILED, observe said "this seat
     holds only one resolvable title": nobody looked, told as a count. RED on
     03f19352 (the count line)."""
     seat = {**_seat("d_york"), "query_title_hierarchy": failed,
@@ -324,10 +324,10 @@ def test_observe_a_failed_held_titles_read_says_unread_not_one_title(tool, faile
 
 
 def test_observe_a_clamped_held_titles_list_says_unread_not_one_title(tool):
-    """L15 witness n6: do_query_title_hierarchy zeroed a title count above 500 and
+    """Do_query_title_hierarchy zeroed a title count above 500 and
     still emitted `held_titles: []`, while do_query_realm writes the count
     unclamped (`held_title_count`). RED on 16dd7f14: the empty list read as a
-    successful read, "holds only one". Since L16 R9 the emitter answers an error
+    successful read, "holds only one". Since then the emitter answers an error
     instead; this is the reader's second line of defence."""
     seat = {"query_realm": _realm("d_york", held_title_count=612),
             "query_title_hierarchy": {"character_id": RULER, "held_titles": [],
@@ -342,7 +342,7 @@ def test_observe_a_clamped_held_titles_list_says_unread_not_one_title(tool):
     assert not none["unavailable"].startswith("unread"), none
 
 
-#: L16 (ruling R9): what do_query_title_hierarchy answers now instead of an
+#: What do_query_title_hierarchy answers now instead of an
 #: empty list. Keys from the emitter: `character_id` (query_handlers.cpp
 #: do_query_title_hierarchy, written before the count is read), then
 #: title_count_clamped's `error`/`count_field`/`raw_count`/`max_count`, or the
@@ -357,7 +357,7 @@ LOOKUP_FAILED = {"character_id": RULER, "error": "title_lookup_failed",
                                        (LOOKUP_FAILED, "title_lookup_failed")],
                          ids=["clamped", "lookup_failed"])
 def test_observe_names_the_bridges_held_titles_error(tool, reply, err):
-    """L16 R9: the emitter answers a clamp or a skipped lookup as an error with
+    """The emitter answers a clamp or a skipped lookup as an error with
     the raw count, and observe says which, by the bridge's own word. RED on
     24cac589 (the generic "failed or came back empty ... (clamped)" line)."""
     seat = {"query_realm": _realm("d_york", held_title_count=reply["raw_count"]),
@@ -369,7 +369,7 @@ def test_observe_names_the_bridges_held_titles_error(tool, reply, err):
 
 
 def test_hierarchy_was_read_refuses_the_emitted_errors_whatever_the_realm_says():
-    """L16 R9: the reader's L15 defence and the emitter's error agree. An error
+    """The reader's defence and the emitter's error agree. An error
     reply is unread even when query_realm counts none (so the realm check is
     not what refuses it); the control, a real list, reads."""
     for reply in (CLAMPED, LOOKUP_FAILED):
@@ -454,7 +454,7 @@ def test_heir_plan_orders_the_heir_line_then_the_children(tool):
     assert [h["id"] for h in r["heirs"]] == [201, 101, 102, 103]
     assert r["heir_count"] == 2 and r["child_count"] == 3
     assert r["primary_title_id"] == 77
-    # L15 m1: no emitter writes a law into the simulation; the field is gone,
+    # No emitter writes a law into the simulation; the field is gone,
     # not a null that reads as "no law".
     assert "succession_law" not in r
     assert ("query_succession_simulation", {"character_id": 0}) in gw.reads
@@ -540,7 +540,7 @@ def _court():
             {"id": 601, "name": "Far King", "skills": {"martial": 25, "learning": 0}, "age": 50},
             {"id": 401, "name": "Marshal", "skills": {"martial": 20, "learning": 5}, "age": 40}]}
     # query_council as do_query_council writes it (query_handlers.cpp :5701/:5703,
-    # rows :5786-:5803: position_id, position_key, holder_id, vacant). L15 A2: the
+    # rows :5786-:5803: position_id, position_key, holder_id, vacant).: the
     # double was {"seats": [{"character_id": 401}]}, a shape the bridge never
     # writes, and it hid a council arm that found nobody live.
     replies = {"query_council": {"character_id": RULER, "council": [

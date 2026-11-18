@@ -1,4 +1,4 @@
-"""Lane QSRV: the incoming-proposal queue, server side, against a STUB BRIDGE.
+"""The incoming-proposal queue, server side, against a STUB BRIDGE.
 
 The stub (`Game` + `Gw`) speaks the contract of docs/design/incoming-proposals.md
 ("The contract between QMOD and QSRV") as written, not the bridge's code (QMOD
@@ -16,7 +16,7 @@ emitters' keys: query_character `spouses`/`betrothed`/`liege_id`
 redesign._all_wars.
 
 Every assumption about the not-yet-built bridge is a stub line here; the live
-rows of the design (L1-L12) are what proves the real one.
+rows of the design (L1-) are what proves the real one.
 """
 import asyncio
 import json
@@ -89,7 +89,7 @@ class Game:
 
     def void(self, pid, reason):
         """The game voids an offer (the story's re-check, an answer's own check):
-        the story keeps the reason (lane QFIX) and writes the VOID line."""
+        the story keeps the reason and writes the VOID line."""
         o = self.offers[pid]
         o["state"], o["void_reason"] = "void", reason
         self.lines.append({"word": P.WORD_VOID, "fields": [str(pid), reason], "date": self.date})
@@ -118,7 +118,7 @@ class Game:
             o = self.offers.get(p["proposal_id"])
             if o is None or o["recipient_id"] != actor:
                 return dict(base, outcome="refused", outcome_reason="not_found")
-            if o["state"] == "void":                  # lane QFIX: an answer to a void offer names why
+            if o["state"] == "void":                  # An answer to a void offer names why
                 return dict(base, outcome="refused", outcome_reason=o["void_reason"])
             if o["state"] != "open":
                 return dict(base, outcome="refused", outcome_reason="already_resolved")
@@ -550,7 +550,7 @@ def test_the_classes_mirror_the_generators_first_set_and_the_design_table():
         "call_to_war": "accept", "peace": "decline"}
 
 
-# ── lane QFIX: answers to VOID offers are typed by the void's reason ─────────
+# ── Answers to VOID offers are typed by the void's reason ─────────
 
 def _void_reply(env, reason):
     assert env["verdict"] == "rejected", env
@@ -642,10 +642,10 @@ def test_the_servers_outcome_reasons_are_the_bridges():
     assert set(P._OUTCOME_GATES) == set(P.OUTCOME_REASONS)
 
 
-# ── lane QTRIAGE: the answer's own call row does not blind the read-back ────
+# ── The answer's own call row does not blind the read-back ────
 
 def _held_before_the_seat_was_known(monkeypatch, tmp_path):
-    """Live qf2 L5/L6 (2026-11-15): offers 4 and 5 to seat 37241 were HELD while
+    """Live qf2 (2026-11-15): offers 4 and 5 to seat 37241 were HELD while
     this server had marked only other seats (the scenario marked 37241 through
     the template first), so their HELD lines were read and left out; the seat's
     observe then LISTED both. The answer's own call row took the id off the last

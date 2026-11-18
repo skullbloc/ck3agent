@@ -1,6 +1,6 @@
-// include/claim_rule.h — lane integ11: when a claim may carry a claim war.
+// include/claim_rule.h —: when a claim may carry a claim war.
 //
-// THE EVIDENCE (docs/cleanup-2026.11/evidence/v4integ11, live run i11s3, the peace
+// THE EVIDENCE (live run i11s3, the peace
 // lane's row 4): script_action declare_war claim_cb by 35156 on his OWN UNPRESSED
 // claim on c_berestye (title 3401; query_claims read pressed:false, block_reason
 // claim_not_pressed) — the game's own guard, can_declare_war, RAN and the war

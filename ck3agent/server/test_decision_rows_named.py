@@ -1,4 +1,4 @@
-"""L20-B item 1 (smoke17 B3): a named decision comes back as a row, or as a
+"""A named decision comes back as a row, or as a
 refusal naming it — never as nothing.
 
 THE SMOKE. probe-paused.jsonl row 23 (Bhoja 11329, 0867.02.20, paused):
@@ -21,7 +21,7 @@ The bridge now names every row from the decision's own key (read before the
 eval) and lists the requested names it matched nothing for (`unmatched`); the
 server reads the annotated list and turns each case into a row or a refusal.
 
-MERGED WITH L20-D. The fault itself was the requirement-name read: for every block
+MERGED WITH. The fault itself was the requirement-name read: for every block
 that evaluated false the bridge destroyed EVAL_WITH_FAILURES' diag record through a
 slipped DIAG_OBJECT_DTOR (0x04a5b060, mid-function); D's 0x0595b060 is the engine's
 own callee, witnessed at runtime (bridge/include/diag_dtor.h). So on the merged tree:
@@ -30,7 +30,7 @@ own callee, witnessed at runtime (bridge/include/diag_dtor.h). So on the merged 
   - `decision_eval_faulted` stays a typed state, reached through the eval loop's
     outer SIGSEGV/watchdog recovery (`eval_wedged`), the skip list (`eval_skipped`),
     or a block whose own guarded evaluation crashed (dv_evaluate's `crashed` path,
-    query_handlers.cpp: `eval_error` alone, no `eval_wedged`; witness r1 item 10);
+    query_handlers.cpp: `eval_error` alone, no `eval_wedged`);
   - when resolve_diag_dtor() cannot witness the destructor the bridge skips the
     name read and the row carries `failure_key_unwitnessed` (query_handlers.cpp,
     enumerate_decisions_annotated): `decision_reason_unwitnessed`, never a
@@ -172,7 +172,7 @@ def test_control_an_available_decision_is_an_available_row():
 
 
 def test_an_unwitnessed_dtor_is_its_own_typed_state_not_a_reasonless_row():
-    """L20-B x L20-D: resolve_diag_dtor() returned 0, so the failed requirement's
+    """ x: resolve_diag_dtor returned 0, so the failed requirement's
     name was not read. The verdict (not takeable) stands; the row says why it has
     no reason, and it is neither the fault nor the bridge-gave-no-reason gate."""
     _, env = _do(UNWITNESSED)
@@ -188,7 +188,7 @@ def test_an_unwitnessed_dtor_is_its_own_typed_state_not_a_reasonless_row():
 
 
 def test_a_decision_the_engine_does_not_show_is_typed_not_a_missing_reason():
-    """L20 r3, witness item 6: shown:false (the engine's is_shown verdict,
+    """Shown:false (the engine's is_shown verdict,
     query_handlers.cpp rb.key("shown")) with no failures was labelled
     gate_introspection_unavailable, "the engine gave no reason"."""
     hidden = _reply([{"name": ASK[0], "hash": 3105402711, "shown": False, "valid": True,
@@ -203,7 +203,7 @@ def test_a_decision_the_engine_does_not_show_is_typed_not_a_missing_reason():
 def test_a_crashed_block_alone_is_also_a_faulted_row():
     """dv_evaluate's `crashed` path (query_handlers.cpp): a guarded block that
     crashed sets eval_error and nothing else; that row is decision_eval_faulted
-    too, not only eval_wedged/eval_skipped (witness r1 item 10)."""
+    too, not only eval_wedged/eval_skipped."""
     _, env = _do(_reply([{"name": ASK[0], "hash": 3105402711, "eval_error": True}], unmatched=[]))
     b = env["result"]["unavailable"][0]["blocked"]
     assert b["gate"] == "decision_eval_faulted", b

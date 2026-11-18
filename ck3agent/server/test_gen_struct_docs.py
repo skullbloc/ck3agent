@@ -1,4 +1,4 @@
-"""L14 FB2 (witness N-15): the struct-docs renderer strips only the confidence
+""" FB2: the struct-docs renderer strips only the confidence
 grade its badge shows. It had stripped every confidence word in a field's
 comment, so "LOW (was MEDIUM): ..." rendered "(was ): ..." and "R8V-1
 confirmed via X" rendered "R8V-1  via X" (re/docs/structs, `make struct-docs`)."""

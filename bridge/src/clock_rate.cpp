@@ -1,4 +1,4 @@
-// clock_rate.cpp — see clock_rate.h (ck-ijfa).
+// clock_rate.cpp — see clock_rate.h.
 
 #include "clock_rate.h"
 
@@ -6,7 +6,7 @@ namespace bridge {
 
 void ClockRateMeter::note(const TickBookkeeping& bk, int64_t game_day,
                           uint64_t wall_ms, int speed, bool paused) {
-    // BEFORE THE LOCK (ck-zffq). The call is unconditional now, so the cost in
+    // BEFORE THE LOCK. The call is unconditional now, so the cost in
     // the modes that record nothing must be a branch and not a mutex.
     if (!bk.note_clock_rate) return;
     std::lock_guard<std::mutex> lk(mu_);

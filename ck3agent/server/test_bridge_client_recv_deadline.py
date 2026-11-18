@@ -1,4 +1,4 @@
-"""ck-3esm — `BridgeClient.recv`'s timeout is a DEADLINE, not a per-syscall budget.
+"""`BridgeClient.recv`'s timeout is a DEADLINE, not a per-syscall budget.
 
 THE BUG THIS PINS, measured on a real run rather than imagined. In the arm-C
 smoke (ep-20260921T041851Z) the driver hung on its 10th `query_war_stance`,

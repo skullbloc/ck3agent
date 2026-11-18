@@ -1,4 +1,4 @@
-"""A refusal the game gives no reason for says so (cleanup 2026.11, L12 item 5).
+"""A refusal the game gives no reason for says so.
 
 The game's reason for a compound condition can be its header alone ("All of
 these:"): the failing children render through their own tooltip keys and a

@@ -1,10 +1,10 @@
 // tick_bookkeeping.h — WHAT THE CONDUCTOR RECORDS EACH ITERATION, and why the
-// two things it records are scoped differently (ck-zffq).
+// two things it records are scoped differently.
 //
 // THE DEFECT THIS EXISTS TO PREVENT RECURRING. Both recordings used to sit
 // inside one `if (episode_is_experiment())`, so on a world that had run away
 // unattended the clock-rate meter read measured=false, samples=0, game_days=0
-// WHILE THE CLOCK ADVANCED 3,351 GAME-DAYS (measured by ck-zgh4).
+// WHILE THE CLOCK ADVANCED 3,351 GAME-DAYS (measured).
 //
 //     AN INSTRUMENT GATED ON THE CONDITION IT WOULD DETECT CANNOT DETECT ITS
 //     VIOLATION.

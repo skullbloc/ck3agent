@@ -5,7 +5,7 @@
 // scripts/test_played_line.py; between them the meter's "who is the line now"
 // and the bridge's heir handoff cannot drift apart silently.
 #include "played_line.h"
-#include "line_watch.h"   // line_ended, the end decision (owner ruling 2026-11-12)
+#include "line_watch.h"   // line_ended, the end decision
 
 #include <cstdio>
 #include <cstdlib>
@@ -52,7 +52,7 @@ int main() {
             continue;
         }
         if (f[0] == "realm") {
-            // owner ruling 2026-11-12: the handoff's realm guard
+            // The handoff's realm guard
             // <root>,<dead>,<target>,<root_now>,<target_top> -> in_realm / heir_outside_realm / realm_unresolved
             auto a = split(f[1], ',');
             const char* got_s = played_line::realm_check_name(played_line::succession_realm_check(

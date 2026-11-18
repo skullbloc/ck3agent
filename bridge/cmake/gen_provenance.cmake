@@ -12,7 +12,7 @@ set(GIT_SHA "unknown")
 set(GIT_DIRTY "unknown")
 set(GIT_BRANCH "unknown")
 
-# ck-yjrp: CHECK WHETHER GIT ACTUALLY ANSWERED.
+# CHECK WHETHER GIT ACTUALLY ANSWERED.
 #
 # These three calls used ERROR_QUIET with no RESULT_VARIABLE. On a tree with no
 # .git — a `git archive` export, which is how CI and the two-party blind
@@ -22,7 +22,7 @@ set(GIT_BRANCH "unknown")
 #
 # So the worst case produced the most reassuring possible answer: GIT_SHA ""
 # and GIT_DIRTY "clean". A build whose provenance is entirely unknown claimed
-# to be a clean build. Found by ck-zgh4 on a discarded archive build.
+# to be a clean build. Found on a discarded archive build.
 #
 # The rule this breaks is the one the rest of this system is built on: a
 # measurement that FAILS must not return a VALUE. Absence gets its own

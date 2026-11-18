@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Standalone test suite for action_selector.py — pre-dispatch validation +
-LLM-formatted action menu (ck-3hij9.3).
+LLM-formatted action menu.
 
 Runs with no dependencies (stdlib only). Exit 0 on success, 1 on any failure.
 

@@ -1,6 +1,6 @@
-// test/test_claim_rule.cpp — lane integ11: when a claim may carry a claim war.
+// test/test_claim_rule.cpp —: when a claim may carry a claim war.
 //
-// THE EVIDENCE (docs/cleanup-2026.11/evidence/v4integ11, live run i11s3, the
+// THE EVIDENCE (live run i11s3, the
 // peace lane's row 4): script_action declare_war claim_cb by 35156 on his OWN
 // UNPRESSED claim (c_berestye 3401; query_claims: pressed false, block_reason
 // claim_not_pressed): the game's can_declare_war RAN and the war started.

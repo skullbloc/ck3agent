@@ -1,4 +1,4 @@
-// pause_alarm.cpp — see pause_alarm.h (L20-A).
+// pause_alarm.cpp — see pause_alarm.h.
 #include "pause_alarm.h"
 
 #include <atomic>

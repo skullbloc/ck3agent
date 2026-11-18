@@ -1,5 +1,5 @@
 // test_liege_walk.cpp — a liege walk that cannot finish is 0, never the
-// character's own id (L15 A2; bridge/include/liege_walk.h).
+// character's own id (bridge/include/liege_walk.h).
 //
 // THE DEFECT. get_top_realm_ruler_id returned the id it had reached when a
 // liege did not look up: from the first hop that is the character's own id, so

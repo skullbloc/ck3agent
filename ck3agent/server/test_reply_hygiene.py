@@ -1,4 +1,4 @@
-"""L18-B defects 3 (inspect war_score), 7 (the generate_claim path) and 8 (the
+""" defects 3 (inspect war_score), 7 (the generate_claim path) and 8 (the
 per-reply ETA warning), each against the pilot reply that showed it.
 
 W1  inspect(subject="war_score") with no war_id answered every war in the game:
@@ -171,7 +171,7 @@ def test_Q1_the_compact_reply_keeps_what_seats_read_and_drops_their_own_realm():
     assert sum(1 for rc in rows if rc["conquerable_now"]) == min(12, T.CONQUEST_TARGETS_DEFAULT_ROWS)  # conquerable first
     assert out["compact"]["own_realm_counties_dropped"] == 180
     assert out["compact"]["counties_omitted"] == 68 - T.CONQUEST_TARGETS_DEFAULT_ROWS
-    # L20-B: the counts stay; the bridge's long note is under detail="full"
+    # The counts stay; the bridge's long note is under detail="full"
     for k in ("duchy_count", "expansion_count", "toward_count", "conquerable_count", "target_count"):
         assert out[k] == full[k], k
     assert set(rows[0]) >= {"county_id", "county_name", "holder_id", "holder_name",
@@ -188,7 +188,7 @@ def test_Q3_an_engine_checked_row_keeps_the_games_cb_list():
     rc = full["duchies"][60]["remaining_counties"][0]
     rc.update(conquerable_now_source="engine_county_conquest_cb",
               engine_valid_cbs=["county_conquest_cb", "claim_cb"])
-    out = T.compact_conquest_targets(full, detail="full")     # L20-B: the list under detail="full"
+    out = T.compact_conquest_targets(full, detail="full")     # The list under detail="full"
     row = next(r for d in out["duchies"] for r in d["remaining_counties"]
                if r["county_id"] == rc["county_id"])
     assert row["engine_valid_cbs"] == ["county_conquest_cb", "claim_cb"], row

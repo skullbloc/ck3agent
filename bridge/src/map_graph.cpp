@@ -33,7 +33,7 @@
 // The baked-artifact struct layout is the single source of truth. Include it directly;
 // DO NOT redeclare the structs.
 #include "../tools/ck3mapgen/ck3map_format.h"
-#include "instance_paths.h"   // rc2 B1: state dir + verified fd
+#include "instance_paths.h"   // State dir + verified fd
 
 #include <cstdint>
 #include <cstring>
@@ -294,7 +294,7 @@ void map_graph_init() {
     if (g_map.map_base) { munmap(g_map.map_base, g_map.map_size); }
     g_map = MapArtifact{};
 
-    // rc2 B1: the default is <state dir>/ck3map.bin (/tmp only in the legacy
+    // The default is <state dir>/ck3map.bin (/tmp only in the legacy
     // layout), opened through the verified state-dir fd; an explicit
     // $CK3MAP_BIN is the operator's choice and is opened as given.
     const char* env_bin = getenv("CK3MAP_BIN");

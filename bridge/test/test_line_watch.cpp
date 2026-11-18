@@ -93,7 +93,7 @@ int main() {
         CHECK(w.line_id == HEIR && w.status == WatchStatus::Following, "retried until an heir resolves");
         CHECK(w.since_date == "0870.03.01", "dated at the tick it resolved");
     }
-    {   // THE END (owner ruling 2026-11-12): only on three agreeing readings
+    {   // THE END: only on three agreeing readings
         World wd;
         played_line::Watch w = armed(K);
         wd.holder = {{K_FRANCE, K}};

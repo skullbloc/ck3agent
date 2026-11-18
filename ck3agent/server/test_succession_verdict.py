@@ -1,4 +1,4 @@
-"""One succession verdict, one definition (cleanup 2026.11 L14, surface-eval finding 8).
+"""One succession verdict, one definition (surface-eval finding 8).
 
 succession_plan, observe's succession block and the live-state hook state whether
 the next succession passes intact. Each calls succession_verdict.verdict; these
@@ -6,7 +6,7 @@ rows drive the three with the same bridge replies and compare what they say. The
 replies are the two states recorded live on the 867 save (ck3agent/hooks/fixtures,
 live867 l7-hook-1 and l10fx5-live-2), not shapes written here: the simulation's
 `heirs` rows are the bridge's own (do_query_succession_simulation), which the
-server read under a key the bridge never emits (`eligible_heirs`) until L14.
+server read under a key the bridge never emits (`eligible_heirs`) until.
 """
 import asyncio
 import json
@@ -98,7 +98,7 @@ def test_inspect_has_no_succession_preview_subject():
 
 
 def test_succession_plan_states_no_field_the_bridge_never_sends():
-    """L14 ruling (c): primary_keeps_kingdom and realm_above_partition_floor were
+    """ ruling (c): primary_keeps_kingdom and realm_above_partition_floor were
     read off the succession simulation, which never sends them
     (do_query_succession_simulation), so the reply always said false / true.
     A constant is not a reading; the reply carries neither. Fixture-free, so it
@@ -123,7 +123,7 @@ def _map(*titles, any_splits=False, primary=5):
 
 
 def test_map_fallback_rows_carry_their_titles_and_the_hook_counts_them():
-    """L14 FF1 M-3 (the witness's run 8): two titles to heir 5, the simulation
+    """Two titles to heir 5, the simulation
     empty. The map's heir row carries its titles, and the hook's line counts 2."""
     import inject_state
     sp = _map((1, "d_a", 5), (2, "c_b", 5))
@@ -165,7 +165,7 @@ def test_a_split_names_its_breaker():
 
 
 def test_no_heir_read_is_undetermined_never_intact():
-    """L14 FF2 N-MAJ-2 (the witness's run 4): the simulation empty and the map's
+    """The simulation empty and the map's
     read an error. Nobody was read, so nobody is known to take every title:
     undetermined, naming both reads. RED on b84e3634 (intact, passes_intact True)."""
     v = SV.verdict({}, {}, SV.map_summary({"error": "x"}))
@@ -197,7 +197,7 @@ def test_both_reads_fail_and_observe_and_succession_plan_warn():
 
 
 def test_the_hook_says_undetermined_when_no_heir_is_read():
-    """L14 int5 (FA2's left-over, N-MAJ-2's third reader): the live-state hook
+    """ int5 (FA2's left-over, N-MAJ-2's third reader): the live-state hook
     printed no succession line at all when no heir was read, so the prompt said
     nothing where observe and succession_plan say undetermined. Now it states the
     same verdict and reason. RED on e262847e (partition_line returned None)."""
@@ -212,7 +212,7 @@ def test_the_hook_says_undetermined_when_no_heir_is_read():
                     "(simulation empty; map: no_response))"), line
 
 
-# ── v4fix B2: a second crown title (set v3-registered-2 s3) ──────────────────
+# ── B2: a second crown title (set v3-registered-2 s3) ──────────────────
 # Charles 12015 held k_france and k_aquitaine; all 25 of the king's observes said
 # "intact" with one heir, and at his death k_aquitaine went to Carloman 15319
 # (89 -> 44 counties). The two replies below are the bridge's shapes, keys from

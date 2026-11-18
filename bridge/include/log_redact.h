@@ -1,6 +1,6 @@
 // log_redact.h — what a raw wire frame may put into the bridge log.
 //
-// 2026.12.5 (the draft smoke, smoke5): ipc_server.cpp logged every handshake
+// 2026.12.5 (the draft smoke): ipc_server.cpp logged every handshake
 // verbatim ("Handshake received (slot=N): <line>"), and a handshake carries the
 // RESUME TOKEN — server-minted, "an authorisation over a claim set" (session.h),
 // the one credential that lets a client take a seat's rulers. The house rule is

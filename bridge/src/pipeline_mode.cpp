@@ -1,4 +1,4 @@
-// pipeline_mode.cpp — the mode policy table (ck-6kvq.4, R8). See pipeline_mode.h.
+// pipeline_mode.cpp — the mode policy table (R8). See pipeline_mode.h.
 //
 // Pure. <cstring> is the only include, and getenv is deliberately NOT called
 // here: `parse_pipeline_mode` takes the string so the caller owns the
@@ -50,7 +50,7 @@ bool mode_buffers_calls(PipelineMode m)   { return m != PipelineMode::Legacy; }
 bool mode_runs_flush_loop(PipelineMode m) { return m != PipelineMode::Legacy; }
 bool mode_owns_clock(PipelineMode m)      { return m == PipelineMode::Pipeline; }
 bool mode_admits_control_sessions(PipelineMode)  { return true; }
-// Pre-ck-1ek9 an observe session could never issue a clock verb: `set_speed` is
+// Pre- an observe session could never issue a clock verb: `set_speed` is
 // a mutation and the dispatch gate refused it `observe_mode`, full stop.
 bool mode_admits_observer_clock_verbs(PipelineMode) { return false; }
 

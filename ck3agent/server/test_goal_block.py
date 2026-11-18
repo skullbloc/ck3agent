@@ -1,4 +1,4 @@
-"""Lane v4sees: what an experiment seat's `observe` says about the goal, the
+"""What an experiment seat's `observe` says about the goal, the
 resume-prompt delivery of its messages, and observe during a stall.
 
 Seat review of set v3-registered-2, problem 5: no score, no end date and no

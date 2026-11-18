@@ -1,4 +1,4 @@
-"""L15 witness M1: the several-rulers guard fires on the bridge's own roster.
+"""The several-rulers guard fires on the bridge's own roster.
 
 Both gateways' multi_actor() (now actor_gate(), redesign.actor_gate_of) read `get_controlled_roster` under keys the bridge
 never wrote (`characters` / `controlled`), so `actor_required` could not fire and,

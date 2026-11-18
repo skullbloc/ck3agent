@@ -1,10 +1,10 @@
-"""L18 ruling (a): every tool refuses an argument its schema does not declare,
+""" ruling (a): every tool refuses an argument its schema does not declare,
 with the typed gate `unknown_argument` naming it, before the tool runs.
 
 FastMCP's argument model ignores an extra key, so a call that carried one ran as
 if the key were absent: pass_turn(character_id=...) on 174 pilot calls (that tool
 now takes character_id: the explicit case, test_schema_takes_what_seats_send.py)
-and steer's flat axes once (L18-B). The refusal is one place
+and steer's flat axes once. The refusal is one place
 (mcp_server._StrictArgumentsFastMCP.call_tool); these rows drive every registered
 tool through FastMCP's own call_tool, the route a client's tools/call takes.
 """

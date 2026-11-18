@@ -1,5 +1,5 @@
 // =============================================================================
-// test_init_order.cpp — ck-22n3
+// test_init_order.cpp —
 //
 // THE CONTRACT, asserted against the BUILT libck3_bridge.so, not against source:
 //
@@ -12,10 +12,10 @@
 // AHEAD of every dynamic initializer in the library, so all of that ran against
 // raw .bss. Two shapes of damage, both observed:
 //
-//   * ck-xqol: the reader thread scanned a slot table that was still zeroed,
+//   *: the reader thread scanned a slot table that was still zeroed,
 //     read fd 0 as a live client (zero is not negative), polled stdin, and
 //     SIGSEGV'd clearing a std::string that had never been constructed.
-//   * ck-22n3: bridge_init()'s own writes were RUN OVER by the constructors
+//   *: bridge_init's own writes were RUN OVER by the constructors
 //     that came after it — g_valid_ranges (the /proc/self/maps table built
 //     during validate_offsets()) was emptied and its buffer leaked, and
 //     instance_paths' five std::strings were default-constructed over the
@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
     //      bridge_init    — g_valid_ranges, written by validate_offsets() and
     //                       read by is_mapped() on every bridge thread
     //      ipc_server     — g_clients / g_msg_queue / g_queue_cv / the thread
-    //                       handles (ck-xqol's crash)
+    //                       handles (crash)
     //      session        — g_session_registry, reached by the reader thread on
     //                       the first handshake
     //      pipeline       — g_exhausted, reached from the conductor thread's

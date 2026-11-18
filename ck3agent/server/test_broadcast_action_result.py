@@ -1,12 +1,12 @@
-"""ck-9rto: another session's reply must never reach this model.
+"""Another session's reply must never reach this model.
 
-THE HAZARD (ck-st70, measured by ck-zgh4, corroborated by ck-760i). The bridge
+THE HAZARD (measured, corroborated). The bridge
 BROADCASTS a queue-bound reply to every client slot. A receive loop routes by
 `request_id` first and `continue`s, so a frame that reaches the message-type
 dispatch below it is UNCORRELATED BY CONSTRUCTION: it carries no request_id,
 or one belonging to somebody else.
 
-The bridge has never emitted a frame of type `action_result`. Cleanup 2026.11
+The bridge has never emitted a frame of type `action_result`.
 deleted the protocol entry that described one (`ipc_protocol.json`
 `action_response` and its tick_flow step) together with both clients' branches
 for it. On the MCP server's listener (the B path, the runtime the arms run,

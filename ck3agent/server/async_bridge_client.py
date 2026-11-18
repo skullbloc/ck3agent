@@ -47,14 +47,14 @@ class AsyncBridgeClient:
                         episode_observer: Optional[bool] = None,
                         episode_seat: Optional[bool] = None,
                         timeout: float = 10.0) -> Optional[dict]:
-        """Pass handshake v2 options through to the sync client (ck-6kvq.6).
+        """Pass handshake v2 options through to the sync client.
 
         Called with no arguments this is byte-for-byte the legacy handshake, so
         the MCP server keeps its implicit control session until it asks for
         something else.
 
         THIS SIGNATURE IS A HAND-COPIED MIRROR OF THE SYNC ONE, AND IT DRIFTED
-        (ck-4ae1). `episode_seat` was added to `BridgeClient.handshake` and not
+       `episode_seat` was added to `BridgeClient.handshake` and not
         here, so `mcp_server`'s one handshake path — which splats
         `seat_declaration_kwargs()` — raised `unexpected keyword argument
         'episode_seat'` at startup. The agent had no game tools for a whole

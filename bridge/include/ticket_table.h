@@ -1,4 +1,4 @@
-// ticket_table.h — R1b: the async ticket layer (ck-6kvq.9).
+// ticket_table.h — R1b: the async ticket layer.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.4, §2.8.
 //
@@ -65,7 +65,7 @@ struct Ticket {
     uint32_t    character_id = 0;        // the session's primary at execution time
     uint64_t    tick_executed = 0;
     std::string game_date_executed;      // "YYYY.MM.DD", or "" before execution
-    //: ck-jg2b. WHY character_id is 0, when it is. EMPTY means "attributed" —
+    //: WHY character_id is 0, when it is. EMPTY means "attributed" —
     //: a real character_id is in the field above. Non-empty names the leg:
     //:   "claimless_session"  the session exists and holds no primary character
     //:   "session_gone"       the ticket resolved but the session no longer exists

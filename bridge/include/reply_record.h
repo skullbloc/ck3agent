@@ -1,8 +1,8 @@
-// ck-jh76 — one spelling of "what happened to a reply", shared by every send site.
+// One spelling of "what happened to a reply", shared by every send site.
 //
 // WHY THIS EXISTS. arma7 timed out on get_tick_info with the request RECEIVED,
 // 77 further actions served immediately after, and the game thread healthy
-// throughout (ck-zgh4). The bridge log said nothing about the reply — and the
+// throughout. The bridge log said nothing about the reply — and the
 // reason is that the reply-path records were gated on `bridge::g_trace`, set
 // only from CK3_BRIDGE_TRACE=1, which NOTHING in the repo sets and whose own
 // comment says "Default OFF".
@@ -88,7 +88,7 @@ struct SendOutcome {
     // a modest reply-size increase would cross routinely. The margin is the
     // diagnostic, so it is recorded rather than left to the throttled line.
     int       pending_bytes = -1;   // -1 = not a backpressure outcome
-    // ck-rcrr: the threshold ACTUALLY APPLIED, carried rather than restated.
+    // The threshold ACTUALLY APPLIED, carried rather than restated.
     // This header previously hardcoded 32768 to compute the margin, so raising
     // the limit in ipc_server.cpp would have left the record reporting a margin
     // against a number no longer in force — a second declaration of one value,
@@ -96,15 +96,15 @@ struct SendOutcome {
     int       threshold_bytes = -1;
 };
 
-// ck-55dx: an UNKNOWN elapsed must not print as 0. A zero there is a claim that
-// the reply was instant; absence gets its own spelling (ck-duv5).
+// An UNKNOWN elapsed must not print as 0. A zero there is a claim that
+// the reply was instant; absence gets its own spelling.
 inline constexpr uint64_t kElapsedUnknown = ~0ull;
 
 inline std::atomic<uint64_t> g_reply_attempted{0};
 inline std::atomic<uint64_t> g_reply_failed{0};
 inline std::atomic<uint64_t> g_reply_empty{0};
 
-// ck-0zfc: EVERY backpressure drop is counted here, including the ones the
+// EVERY backpressure drop is counted here, including the ones the
 // verbose line throttles away. arma7 logged exactly one drop — "1 total
 // dropped", slot 0, 33792 bytes against a 32768 threshold — and the throttle in
 // send_to_slot logs only the 1st and every 100th. That counter is a single
@@ -114,7 +114,7 @@ inline std::atomic<uint64_t> g_reply_empty{0};
 // bounds nothing, and this counter is what makes the real number legible.
 inline std::atomic<uint64_t> g_backpressure_drops{0};
 
-// ck-0zfc: KEEPALIVE sends are replies too, for framing purposes. The accept
+// KEEPALIVE sends are replies too, for framing purposes. The accept
 // loop pings every live slot every ~5s through send_to_slot, which appends its
 // own newline — so a ping COMPLETES an orphaned frame left by a failed newline
 // send, unprompted, without the client asking for anything. That makes a ping's
@@ -256,7 +256,7 @@ inline void record_empty_reply(const char* action, const char* rid) {
     }
 }
 
-// The GAME-THREAD drain reply (ck-n7n0's two-stage delivery): try the recorded
+// The GAME-THREAD drain reply (two-stage delivery): try the recorded
 // session id, else fall back to a broadcast. There is no target SLOT here, so
 // this does not borrow the slot spelling — printing slot=-1 for a path that
 // never had a slot would be a measured-looking value for something that was

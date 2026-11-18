@@ -1,4 +1,4 @@
-"""ck-j6lk — WHO DECLARES A SEAT, and who must not.
+"""WHO DECLARES A SEAT, and who must not.
 
 In experiment mode the bridge pins every detached CONTROL session, claim or no
 claim. The driver's own `steer-probe` and `speed-pin` helpers are control
@@ -15,7 +15,7 @@ accident, and no exclusion list exists to drift.
 
 THESE ROWS DRIVE THE FRAME rather than reading the source. A row asserting
 "mcp_server.py contains seat_declaration_kwargs" would pass against a call that
-never executes — which is exactly ck-zi99's defect, a census counting one
+never executes — which is exactly defect, a census counting one
 literal while the arm path reached none.
 """
 
@@ -66,7 +66,7 @@ class TheSeatDeclaration(unittest.TestCase):
         self.assertIs(f.get("episode_seat"), True)
 
     def test_BOTH_HELPERS_DO_NOT_DECLARE(self):
-        """THE ROW ck-j6lk ASKED FOR. The steer probe and the speed pin build
+        """THE ROW ASKED FOR. The steer probe and the speed pin build
         their handshakes through HarnessClient, which hands this builder only
         the kwargs it was given — and neither gives `episode_seat`."""
         for name in ("episode-driver-C-steer-probe", "episode-driver-C-speed-pin"):
@@ -95,7 +95,7 @@ class TheSeatDeclaration(unittest.TestCase):
         self.assertIsInstance(f["episode_seat"], bool)
 
     def test_THE_MCP_SERVER_ACTUALLY_CALLS_IT(self):
-        """Reachability, not uniqueness (ck-zi99). The declaration existing and
+        """Reachability, not uniqueness. The declaration existing and
         the arm path reaching it are different properties; this asserts the
         SECOND by requiring the call to sit on the handshake that connects."""
         src = (Path(__file__).resolve().parent / "mcp_server.py").read_text()
@@ -106,7 +106,7 @@ class TheSeatDeclaration(unittest.TestCase):
         self.assertIn("MODE_CONTROL", src[hs:i])
 
     def test_agent_py_deliberately_does_NOT_declare(self):
-        """The A path is not an arm path — ck-zgh4 established the arms' agents
+        """The A path is not an arm path — established the arms' agents
         reach the bridge through the MCP server, and nothing there imports
         agent.py. Pinned rather than left in a comment, so if agent.py ever
         becomes an arm path this fails and someone decides."""

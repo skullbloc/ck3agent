@@ -1,4 +1,4 @@
-// siege_attribution.h — which war a siege belongs to (lane l5, F8).
+// siege_attribution.h — which war a siege belongs to (F8).
 //
 // A CWar stores no sieges (re_siege_progress_struct.md §1). query_wars used to
 // list every siege whose besieger was one of the war's ATTACKERS, so a ruler

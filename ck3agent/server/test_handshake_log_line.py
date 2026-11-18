@@ -1,7 +1,7 @@
-"""L20-B item 6 (smoke16/17 trip-over, STILL in smoke17): `ck3agent serve`
+"""`ck3agent serve`
 printed the whole handshake_ack to stderr at every start.
 
-THE SMOKE. smoke17 probe-idle.out lines 2-66: one log record,
+THE SMOKE. probe-idle.out lines 2-66: one log record,
 "[INFO] bridge_client: Handshake OK: {" followed by 64 lines of indented JSON
 (bridge_client.py BridgeClient.handshake: log.info("Handshake OK: %s",
 json.dumps(resp, indent=2))). The start line now names bridge_version,
@@ -91,7 +91,7 @@ def test_a_field_the_ack_lacks_is_said_absent():
     assert "build_git_sha=absent" in bc.handshake_summary({"bridge_version": "x"}, None)
 
 
-# ── L20 r3, witness item 1: the kept ack is for reading the build ────────────
+# ── The kept ack is for reading the build ────────────
 # bridge_client.keep_handshake_ack wrote the WHOLE ack, the server-minted
 # resume_token included (ipc_server.cpp:1784, "an authorisation over a claim
 # set"), with a plain open(): umask mode, symlinks followed, the dir at the
@@ -135,7 +135,7 @@ def test_a_symlinked_tmp_is_not_followed(monkeypatch, tmp_path):
 
 def test_the_overview_resource_withholds_the_resume_token():
     """ck3://state/overview carries the ack less HANDSHAKE_ACK_WITHHELD: a resource
-    body ends up in the client's transcript. Red before L20 r3 follow-up b: the
+    body ends up in the client's transcript. Red before follow-up b: the
     raw handshake_info (token included) was returned."""
     import types
     import mcp_server  # noqa: E402

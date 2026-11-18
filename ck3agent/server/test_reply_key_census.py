@@ -1,4 +1,4 @@
-"""L15 lane A (witness r4 N4-1): every unit-test double of a query_realm,
+""" (N4-1): every unit-test double of a query_realm,
 query_character, query_title_succession, query_title_hierarchy, query_council,
 get_controlled_roster or query_succession_simulation reply carries only keys the
 bridge writes.
@@ -45,16 +45,16 @@ TARGETS = {
     "query_realm": "do_query_realm",
     "query_character": "do_query_character",
     "query_title_succession": "do_query_title_succession",
-    # L15 A2: the danelaw duchy count read "titles"/"title_key"/"de_jure_kingdom",
+    # The danelaw duchy count read "titles"/"title_key"/"de_jure_kingdom",
     # none of which do_query_title_hierarchy (emit_title_info) writes.
     "query_title_hierarchy": "do_query_title_hierarchy",
-    # L15 A2: good_guardian_candidates read seats/character_id from a double the
+    # Good_guardian_candidates read seats/character_id from a double the
     # bridge never writes (do_query_council writes council[]/holder_id).
     "query_council": "do_query_council",
-    # L15 witness M1: multi_actor() (now actor_gate) read `characters`/`controlled`; the bridge
+    #: multi_actor (now actor_gate) read `characters`/`controlled`; the bridge
     # writes `roster` (dispatch_router.cpp do_get_controlled_roster).
     "get_controlled_roster": "do_get_controlled_roster",
-    # L15 witness m1: heir_plan read `succession_law`/`law`; the simulation
+    #: heir_plan read `succession_law`/`law`; the simulation
     # writes neither (query_handlers.cpp do_query_succession_simulation).
     "query_succession_simulation": "do_query_succession_simulation",
 }
@@ -77,9 +77,9 @@ ENVELOPE = frozenset({"request_id", "tick", "game_date"})
 #: drain's timeout is {"error","action","waited_ms","hint"} (ipc_server.cpp).
 #: test_failure_keys_are_the_bridges checks each spelling is in those files.
 FAILURE_KEYS = ("success", "action", "error", "reason", "phase", "waited_ms", "hint",
-                # lane ACTOR: the dispatch's typed no_actor refusal (actor_resolve.cpp annotate)
+                # The dispatch's typed no_actor refusal (actor_resolve.cpp annotate)
                 "actor_refused", "actor_rule",
-                # lane ACTORKEY: rule 0's two keys (actor_resolve.cpp annotate)
+                # Rule 0's two keys (actor_resolve.cpp annotate)
                 "actor_key_read", "actor_key_got")
 FAILURE_SOURCES = ("dispatch_router.cpp", "pipeline.cpp", "flush_apply.cpp", "ipc_server.cpp",
                    "actor_resolve.cpp")
@@ -746,7 +746,7 @@ def test_the_parse_reads_nesting_and_helpers():
     assert {("house_name",), ("faith",), ("faith_key",), ("personality", "boldness"),
             ("degraded",)} <= ch
     assert ("held_title_count",) in realm and ("titles",) not in realm
-    # L15 A3: core_data+0x170 is the merit stock and +0x2E8 base health: query_character
+    # Core_data+0x170 is the merit stock and +0x2E8 base health: query_character
     # writes `merit` and no `monthly_income`; query_realm's income has no `accumulated`.
     assert ("merit",) in ch and ("monthly_income",) not in ch
     assert ("income_breakdown", "total_monthly") in ch
@@ -756,7 +756,7 @@ def test_the_parse_reads_nesting_and_helpers():
             ("held_titles", "[]", "sub_titles", "[]", "tier"), ("title", "sub_titles", "[]", "key")} <= th
     assert not {("titles",), ("held_titles", "[]", "title_key"),
                 ("held_titles", "[]", "de_jure_kingdom")} & th
-    # L16 R9: a count out of range or a held title that did not resolve is an
+    # A count out of range or a held title that did not resolve is an
     # error with the raw count (title_count_clamped, a helper handed the builder),
     # never an empty held_titles. RED on 24cac589 (the count was zeroed silently).
     assert {("error",), ("count_field",), ("raw_count",), ("max_count",), ("index",)} <= th
@@ -823,7 +823,7 @@ def test_every_double_carries_only_emitted_keys():
 
 
 @pytest.mark.parametrize("src,want", [
-    # the four L14 shapes: a dict entry, a subscript assignment, an if-branch, a kwarg
+    # the four shapes: a dict entry, a subscript assignment, an if-branch, a kwarg
     ('G = {"query_realm": {"titles": [{"title_key": "d_x"}]}}', [("titles",), ("titles", "[]", "title_key")]),
     ('def t(b):\n    b.replies["query_realm"] = {"is_independent": True}', [("is_independent",)]),
     ('class G:\n    def read(self, a):\n        if a == "query_character":\n'
@@ -836,14 +836,14 @@ def test_every_double_carries_only_emitted_keys():
     ('class W:\n    def __init__(self, realm):\n        self._realm = realm\n'
      '    def read(self, a):\n        if a == "query_realm":\n            return self._realm\n'
      'W({"monthly_income": 1})', [("monthly_income",)]),
-    # L15 A2: the danelaw reader's three invented title keys
+    # The danelaw reader's three invented title keys
     ('def t(b):\n    b.replies["query_title_hierarchy"] = {"titles": [{"title_key": "d_x",'
      ' "de_jure_kingdom": "k_england", "tier": 3}]}',
      [("titles",), ("titles", "[]", "de_jure_kingdom"), ("titles", "[]", "tier"),
       ("titles", "[]", "title_key")]),
     ('G = {"query_title_hierarchy": {"held_titles": [{"key": "d_x", "de_jure_kingdom": "k"}]}}',
      [("held_titles", "[]", "de_jure_kingdom")]),
-    # L15 A3: the merit emitted as income, and base health emitted as accumulated income
+    # The merit emitted as income, and base health emitted as accumulated income
     ('G = {"query_character": {"gold": 1.0, "monthly_income": 4.2}}', [("monthly_income",)]),
     ('G = {"query_realm": {"income": {"monthly": 1.0, "accumulated": 4.4}}}',
      [("income", "accumulated")]),
@@ -852,7 +852,7 @@ def test_every_double_carries_only_emitted_keys():
      [("seats",), ("seats", "[]", "character_id")]),
 ])
 def test_CONTROL_the_census_reds_on_a_forged_double(src, want):
-    """The mutant rows: each L14 forging shape, written fresh, is found and its
+    """The mutant rows: each forging shape, written fresh, is found and its
     forged keys named; the census cannot pass a tree that still carries one."""
     found = find_doubles_in(src, "<control>")
     assert found, src

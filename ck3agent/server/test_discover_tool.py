@@ -1,4 +1,4 @@
-"""discover(): behaviour against a fake bridge (cleanup 2026.11 F15).
+"""discover: behaviour against a fake bridge (F15).
 
 Rows:
   * every `what` resolve_discover maps reaches its bridge action, on the path its
@@ -38,14 +38,14 @@ import tools as T  # noqa: E402
 
 DEFERRED = {w for w in T._DISCOVER_RESOLVED
             if (T.resolve_discover({"what": w}) or ("",))[0] in ms.DEFERRED_DRAIN_READS}
-#: Game-thread reads that go through the gateway (lane l6: construction_check runs
+#: Game-thread reads that go through the gateway (construction_check runs
 #: the validity under the random scope).
 GATEWAY = {w for w in T._DISCOVER_RESOLVED
            if (T.resolve_discover({"what": w}) or ("",))[0] in ms.BridgeGateway._GAME_THREAD_READS}
 
 
 def test_the_game_thread_reads_are_the_ones_lane_l6_moved():
-    # fabricate_targets left discover in L14 (finding 8): do(action_class=...) owns it.
+    # fabricate_targets left discover in (finding 8): do(action_class=...) owns it.
     assert GATEWAY == {"construction_check"}
 
 
@@ -121,7 +121,7 @@ def test_every_resolved_what_reaches_its_action_on_the_right_path(bridge, what):
     expect_action = T.resolve_discover({"what": what})[0]
     kw = {}
     if what in ("decisions_annotated", "valid_decisions"):
-        # L18-B: these evaluate the decisions named (none named is a missing
+        # These evaluate the decisions named (none named is a missing
         # argument) and answer an evaluation (valid_only / considered present)
         kw["decisions"] = ["found_kingdom_decision"]
         bridge.replies[expect_action] = {"valid_only": what == "valid_decisions",
@@ -178,7 +178,7 @@ PARAMS = {
                      {"character_id": 812}),
     "decisions": ("decisions_annotated", {"decisions": ["found_kingdom_decision"]},
                   "list_decisions_annotated", {"decisions": ["found_kingdom_decision"]}),
-    # what=scheme_targets (cleanup L3): the scheme key and an explicit candidate list
+    # what=scheme_targets (cleanup): the scheme key and an explicit candidate list
     # reach the engine's start check (scheme_action, action=check); nothing starts.
     "scheme": ("scheme_targets", {"scheme": "murder", "target_id": 4242, "character_id": 30853},
                "scheme_action", {"action": "check", "scheme": "murder", "target_id": 4242,
@@ -204,7 +204,7 @@ def test_every_discover_parameter_has_a_row():
 def test_each_parameter_reaches_the_bridge(bridge, name):
     what, kwargs, action, expect = PARAMS[name]
     if action == "list_decisions_annotated":
-        # L18-B: an annotated reply is an evaluation (enumerate_decisions_annotated
+        # An annotated reply is an evaluation (enumerate_decisions_annotated
         # writes valid_only and considered); anything else is refused not_evaluated.
         bridge.replies[action] = {"action": "list_decisions", "character_id": 812,
                                   "valid_only": False, "considered": 1, "count": 1,
@@ -351,7 +351,7 @@ def test_a_declined_targets_read_is_a_refusal(bridge):
 
 
 def test_imprison_targets_are_one_judge_in_discover_and_do(bridge):
-    """MAJOR 4 (witness #5): discover(what='targets', action='imprison') annotated
+    """MAJOR 4: discover(what='targets', action='imprison') annotated
     vassals with grounds alone (query_imprisonment_reasons), a second imprison judge
     beside do(action_class='imprison_targets'). It is now the same rows: the game's
     own send check per vassal, with the target's answer and score."""
@@ -447,9 +447,9 @@ def test_danelaw_with_a_failed_title_read_reports_the_duchy_clause_unmeasured(br
 
 
 def test_danelaw_with_a_clamped_title_list_reports_the_duchy_clause_unmeasured(bridge):
-    """L15 witness n6: an empty held_titles while query_realm counts titles was the
+    """An empty held_titles while query_realm counts titles was the
     emitter's >500 clamp, not "holds no duchy". RED on 16dd7f14 (counted 0). The
-    emitter answers an error since L16 R9; this is the second line of defence."""
+    emitter answers an error since then R9; this is the second line of defence."""
     bridge.replies["query_realm"] = {"title_tier": 3, "war_count": 0, "held_title_count": 612}
     bridge.replies["query_character"] = {"id": 30853, "top_liege_id": 30853}
     bridge.replies["query_title_hierarchy"] = {"character_id": 30853, "held_titles": [],
@@ -467,7 +467,7 @@ def test_danelaw_with_a_clamped_title_list_reports_the_duchy_clause_unmeasured(b
      "raw_count": 3},
 ], ids=["clamped", "lookup_failed"])
 def test_danelaw_with_the_emitted_title_error_reports_the_duchy_clause_unmeasured(bridge, hier):
-    """L16 R9: the emitter's own error shape (query_handlers.cpp title_count_clamped,
+    """The emitter's own error shape (query_handlers.cpp title_count_clamped,
     do_query_title_hierarchy's lookup failure) is unmeasured, never a count."""
     bridge.replies["query_realm"] = {"title_tier": 3, "war_count": 0,
                                      "held_title_count": hier["raw_count"]}
@@ -512,7 +512,7 @@ def _danelaw(bridge, held, progress=None):
 
 
 def test_danelaw_counts_only_the_duchies_whose_de_jure_parent_is_k_england(bridge):
-    """L15 A2: the reader filtered on "de_jure_kingdom"/"de_jure_liege_key", which
+    """The reader filtered on "de_jure_kingdom"/"de_jure_liege_key", which
     the bridge never writes (it writes de_jure_parent_key, query_handlers.cpp:2964),
     so the k_england filter never ran and a Scottish duchy counted. RED on
     0f5ed6b7: complete 2, pass True."""
@@ -560,7 +560,7 @@ def _clauses(realm, character, decision="found_kingdom_decision"):
 
 
 def test_a_vassal_duke_is_graded_from_the_fields_the_bridge_writes():
-    """L15 (witness r4 N4-1): the tier came from primary_title_tier/tier and
+    """The tier came from primary_title_tier/tier and
     independence from is_independent/liege_id, none of which query_realm writes:
     the tier read 0 ("<= duke" FAILED for every ruler) and independence
     defaulted to True (PASSED for every vassal). Now: query_realm title_tier
@@ -612,7 +612,7 @@ def test_a_shield_fix_names_no_lever_that_does_nothing():
         assert "steer" not in str(c.get("fix") or ""), c
 
 
-#: discover enumerations deleted in L14 (finding 8) -> the do door that owns each.
+#: discover enumerations deleted in (finding 8) -> the do door that owns each.
 MOVED = {"hireable_mercenaries": "mercenaries", "fabricate_targets": "fabricate_targets",
          "joinable_factions": "factions_to_join"}
 

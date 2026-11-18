@@ -1,4 +1,4 @@
-"""rc2 B7: the MCP server releases its OWN claims when it is stopped, and keeps
+"""The MCP server releases its OWN claims when it is stopped, and keeps
 the session it claims through on disk so `ck3agent run` can resume it when the
 server is SIGKILLed first.
 

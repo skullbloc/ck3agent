@@ -1,4 +1,4 @@
-// liege_walk.h — the independent ruler at the head of a liege chain (L15 A2).
+// liege_walk.h — the independent ruler at the head of a liege chain.
 //
 // query_handlers.cpp's get_top_realm_ruler_id walks get_liege_id_from_addr hop
 // by hop until a ruler with no liege is reached; that ruler is the top liege

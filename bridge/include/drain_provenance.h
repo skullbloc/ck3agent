@@ -1,4 +1,4 @@
-// ck-dup0 — WHICH PATH FED THE DRAIN.
+// WHICH PATH FED THE DRAIN.
 //
 // THE AMBIGUITY THIS ENDS. Two paths reach g_msg_queue and the game-thread
 // drain, and they emit byte-identical trace lines:
@@ -22,15 +22,15 @@
 //   * the `Action: <verb> params:` arrival line is emitted BEFORE the ladder
 //     branches, so it is common to both.
 // A four-line trace of a game-thread verb is therefore emitted identically
-// whichever path it took, and ck-0lph was argued for a day from it.
+// whichever path it took, and was argued for a day from it.
 //
 // WHY BOTH A TRACE FIELD AND A COUNTER. The per-action trace is gated on
 // CK3_BRIDGE_TRACE because it is per-action volume — that gate is correct and
 // stays. But "did ANY game-thread action take the raw push?" is a question whose
 // answer is often NO, and a diagnostic behind a flag cannot support a negative
 // claim: in an untraced run its silence means nothing. So the COUNTS are
-// unconditional and ride the heartbeat, exactly as ck-jh76's reply failures,
-// ck-0zfc's drops and ck-475j's refusals do, and a clean run states them as
+// unconditional and ride the heartbeat, exactly as reply failures,
+// drops and refusals do, and a clean run states them as
 // zero rather than omitting them.
 #pragma once
 

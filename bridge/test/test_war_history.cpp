@@ -1,5 +1,5 @@
 // test_war_history.cpp — host unit tests for the ended-war ledger and, above
-// all, for the war-IDENTITY rule (bead ck-sd4d).
+// all, for the war-IDENTITY rule.
 //
 // THE DEFECT. An ended war was invisible to every client, so the paper's
 // secondary outcome — the Norman Conquest's engine-recorded outcome and date —
@@ -30,7 +30,7 @@
 //     the live acceptance run shows that (William takes k_england).
 //
 // NOT assert(): NDEBUG erases it under the CI build type and the suite goes
-// vacuously green (ck-6kvq.24). CHECK counts failures; main() returns them.
+// vacuously green. CHECK counts failures; main returns them.
 
 #include "war_history.h"
 
@@ -239,7 +239,7 @@ static void test_ledger_mechanics() {
     oldest.has_war_id = true; oldest.war_id = 1;
     CHECK(ring.query(oldest).empty(), "the oldest record was the one dropped");
 
-    // clear() is the world-reset path (ck-hxh7): records go, the observation
+    // clear is the world-reset path: records go, the observation
     // counter stays, because it is what tells an operator the hook is alive.
     ring.clear();
     CHECK(ring.size() == 0, "clear empties the ledger");
@@ -264,7 +264,7 @@ static void test_matching_is_conjunctive() {
 }
 
 // ---------------------------------------------------------------------------
-// ck-yifp. THE ENGINE MOVES A BELLIGERENT, so a filter that pins the pair the
+// THE ENGINE MOVES A BELLIGERENT, so a filter that pins the pair the
 // war was DECLARED with can miss the row the engine actually wrote.
 //
 // Not hypothetical. Smoke episode 1's own ledger, through this very hook:
@@ -288,7 +288,7 @@ static void test_a_moved_defender_defeats_a_frozen_pair_filter() {
     WarHistory ledger;
     ledger.record(moved);
 
-    // The pre-ck-yifp filter shape: cb_type + the DECLARED pair.
+    // The earlier filter shape: cb_type + the DECLARED pair.
     WarHistoryFilter frozen;
     frozen.has_cb_type = true;  frozen.cb_type = "norwegian_invasion_cb";
     frozen.has_attacker = true; frozen.attacker_id = HARALD_HARDRADA;
@@ -316,7 +316,7 @@ static void test_a_moved_defender_defeats_a_frozen_pair_filter() {
 }
 
 // ---------------------------------------------------------------------------
-// ck-yifp. A termination the hook SAW and could not copy out must not be
+// A termination the hook SAW and could not copy out must not be
 // silently identical to a war that never ended.
 static void test_uncaptured_terminations_are_counted_separately() {
     printf("an uncapturable termination is counted, not swallowed (ck-yifp)\n");

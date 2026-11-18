@@ -1,4 +1,4 @@
-// test_council_task_family.cpp — L20-A, smoke17 row B5: which council task type
+// test_council_task_family.cpp — row B5: which council task type
 // a named task is on a given seat (council_task_family.h), on EVERY task type of
 // the 867 dump.
 //

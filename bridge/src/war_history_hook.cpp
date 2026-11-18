@@ -1,4 +1,4 @@
-// war_history_hook.cpp — engine-facing half of the ended-war ledger (ck-sd4d).
+// war_history_hook.cpp — engine-facing half of the ended-war ledger.
 //
 // Hooks funcs::WAR_END_CORE, the single function every war in the game ends
 // through. The hook copies the CWar out BEFORE calling the original, because
@@ -12,12 +12,12 @@
 // ledger. It writes nothing into the game.
 
 #include "action_dispatch_internal.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "war_history.h"
 #include "war_side.h"   // a war's participant ids: the one reader of that layout
 #include "engine_text.h"               // war names are rendered text: one cleaner
 #include "game_date.h"
-// ck-hxh7 landed: the world-reset registry is on main, so the __has_include
+// landed: the world-reset registry is on main, so the __has_include
 // guard this file shipped with is gone and the include is unconditional.
 #include "world_epoch.h"
 
@@ -30,7 +30,7 @@ static void* g_orig_war_end = nullptr;
 // void WAR_END_CORE(void* war_manager, CWar* war, int outcome, bool notify)
 using fn_war_end = void (*)(void*, void*, int, unsigned int);
 
-// ck-hxh7 discipline: the ledger is keyed by war id, and war ids are reused
+// discipline: the ledger is keyed by war id, and war ids are reused
 // across saves. Its lifetime is the loaded WORLD, not the process. Without the
 // reset, loading a different save leaves terminations recorded in the PREVIOUS
 // world matchable by a reused war id, so query_war_history could answer a
@@ -136,7 +136,7 @@ static void on_war_end(void* war_manager, void* war, int outcome, unsigned int n
     if (orig) orig(war_manager, war, outcome, notify);
 
     if (!already_ended && !captured) {
-        // ck-yifp. The engine really did terminate a war here and the hook
+        // The engine really did terminate a war here and the hook
         // could not copy it out. Count it, so an absent ledger row is
         // distinguishable from a hook that saw nothing — otherwise a dropped
         // termination and a war that never ended look identical downstream.
@@ -226,7 +226,7 @@ bool do_query_war_history(const char* params_json, std::string* out) {
     r.key("current_tick"); r.value_uint(g_tick_id.load(std::memory_order_relaxed));
     r.key("ledger_size"); r.value_uint(static_cast<uint64_t>(war_history().size()));
     r.key("total_terminations_observed"); r.value_uint(war_history().total_recorded());
-    // ck-yifp: terminations the hook saw and could not copy out. A non-zero
+    // Terminations the hook saw and could not copy out. A non-zero
     // value here is the difference between "this war did not end" and "this
     // bridge dropped an end", and a consumer must be able to tell.
     r.key("terminations_uncaptured"); r.value_uint(war_history().total_uncaptured());
@@ -256,7 +256,7 @@ bool do_query_war_history(const char* params_json, std::string* out) {
             r.key("start_date"); r.value_string(d);
             r.key("start_date_raw"); r.value_int(rec.start_raw_date);
         }
-        // The refuted engine field, carried so nobody re-guesses it (ck-sd4d).
+        // The refuted engine field, carried so nobody re-guesses it.
         r.key("end_date_field_raw"); r.value_uint(rec.end_date_field_raw);
         r.key("cb_type"); r.value_string(rec.cb_type.c_str(), rec.cb_type.size());
         r.key("attacker_id"); r.value_uint(rec.attacker_id);

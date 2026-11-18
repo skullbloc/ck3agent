@@ -1,4 +1,4 @@
-"""The seats' notepads (pre-registration v4 draft sections 3 and 7; lane v4note):
+"""The seats' notepads (pre-registration v4 draft sections 3 and 7):
 the declaration at boot, the write rule, the bounds, the log, the cycle from the
 cycle authority, the pads' persistence across a resume and a rebind, the seal,
 and the two tools served through the server like msg_send.
@@ -327,7 +327,7 @@ def test_a_write_and_a_read_through_the_server_carry_the_schedules_cycle(seat):
 
 
 def test_a_resumed_seat_stamps_the_episode_cycle_not_its_own_wait_count(seat):
-    """The v3reg2 msg_send defect, not repeated: a resumed process has made no
+    """The msg_send defect, not repeated: a resumed process has made no
     wait (its counter reads 0), and its note is stamped with the cycle the
     schedule gives at the bridge's date."""
     seat.as_seat("D1").date("868.1.3")                   # day 365: cycle 4

@@ -1,6 +1,6 @@
 // game_date.h — THE single source of truth for CK3 raw-date -> Y.M.D rendering.
 //
-// ck-05mg. Every date the bridge emits used to be rendered with twelve 30-day
+// Every date the bridge emits used to be rendered with twelve 30-day
 // months at nine separate copy-pasted sites:
 //
 //     year = total_days / 365; doy = total_days % 365;

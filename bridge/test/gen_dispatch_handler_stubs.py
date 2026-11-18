@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generate WEAK no-op definitions for every action handler declared in
-action_dispatch_internal.h  (ck-sozz).
+action_dispatch_internal.h.
 
 Why this exists
 ---------------

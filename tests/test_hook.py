@@ -139,7 +139,7 @@ def test_every_ruler_the_session_holds_is_listed_primary_first():
 
 
 def test_unpaused_the_extra_rulers_are_read_in_full():
-    """L13: the bridge serves the profile with the game running too, so a running
+    """The bridge serves the profile with the game running too, so a running
     game lists the same names and wars as a paused one and never says to pause."""
     hook = load_hook()
     out = report_p(hook, two_rulers(paused=False))
@@ -220,7 +220,7 @@ def test_a_seat_whose_own_session_holds_nothing_is_not_shown_the_other_seats_rul
 
 
 def test_a_seat_whose_record_names_no_listed_session_is_not_shown_the_other_seats_ruler(tmp_path, monkeypatch):
-    """L18 round 3: one other seat's session is attached and holds the bridge's
+    """One other seat's session is attached and holds the bridge's
     primary; this seat's record (`ck3agent run` set CK3_SESSION_OUT) is absent (its
     server's connect failed or has not finished) or stale. One session is attached,
     so the one-seat path would name the other seat's ruler as `You` (red on db8857cc)."""

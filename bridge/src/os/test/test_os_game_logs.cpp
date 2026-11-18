@@ -1,7 +1,7 @@
 // test_os_game_logs.cpp — os/game_logs.h, engine-free, ONE row set for both
-// platforms (lane WINRE): test_os_linux_game_logs here, test_os_win_game_logs
-// built for Windows and run under wine by the node driver
-// (docs/cleanup-2026.11/evidence/v4winre/drivers/winre_build.sh).
+// platforms: test_os_linux_game_logs here, test_os_win_game_logs
+// built for Windows and run under wine by a test driver
+//
 //
 // The test plays the game: it creates <tmp>/<dir>/logs/debug.log and error.log,
 // KEEPS BOTH OPEN for writing (as the game does), with a decoy

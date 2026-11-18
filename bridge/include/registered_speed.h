@@ -1,4 +1,4 @@
-// registered_speed.h — THE PRE-REGISTERED GAME SPEED, DECLARED ONCE (ck-on4u).
+// registered_speed.h — THE PRE-REGISTERED GAME SPEED, DECLARED ONCE.
 //
 // Design of record: the pre-registration's §7.3 (the speed itself) and §9.4
 // (the registered-conditions block that DECLARES it per episode, beside
@@ -106,7 +106,7 @@ constexpr bool game_speed_in_range(int s) {
 //                                  publish the refusal instead of swallowing
 //                                  it; the default stands, loudly.
 //
-// ck-aqio ADDED A FOURTH, and it is the one `refused` alone cannot carry:
+// ADDED A FOURTH, and it is the one `refused` alone cannot carry:
 //
 //   present=false                  THE VARIABLE WAS NOT SET. The establishing
 //                                  step never ran, or never reached this
@@ -162,7 +162,7 @@ inline std::string render_bytes(const std::string& raw) {
 // A trailing-garbage parse is a REFUSAL, not a silent prefix read: "2x" is a
 // typo, and `strtol` reading it as 2 would make a typo indistinguishable from
 // an intention.
-// THE RULE (ck-aqio, re-ruled 2026-09-13): THE RAW BYTES MUST BE EXACTLY ONE OF
+// THE RULE (re-ruled 2026-09-13): THE RAW BYTES MUST BE EXACTLY ONE OF
 // "1".."5". Anything else is a refusal carrying the raw text.
 //
 // THIS HALF CHANGED TOO, and that is the point. It used to hand the bytes to

@@ -1,4 +1,4 @@
-// pipeline.h — R1b: the wired conductor (ck-6kvq.9).
+// pipeline.h — R1b: the wired conductor.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.2, §2.3, §2.4,
 // §2.8, §2.10, §8; overseer decisions G1, G2, G11 (RULED GO 2026-09-10).
@@ -32,7 +32,7 @@
 
 #include "flush_scheduler.h"
 #include "pipeline_mode.h"
-// ck-m3n5: Session::Mode is a PARAMETER of the conferral function below,
+// Session::Mode is a PARAMETER of the conferral function below,
 // and a nested enum is not reachable through the forward declaration this
 // header used to rely on. session.h includes only world_identity.h and the
 // standard library, so there is no cycle.
@@ -44,7 +44,7 @@ class Session;
 class ResponseBuilder;
 
 // ============================================================================
-// Mode (G11) — the ENUM and the POLICY now live in pipeline_mode.h (ck-6kvq.4).
+// Mode (G11) — the ENUM and the POLICY now live in pipeline_mode.h.
 // ============================================================================
 // This header keeps only the process-wide accessor. `PipelineMode`,
 // `pipeline_mode_name`, `parse_pipeline_mode` and the four `mode_*` policy
@@ -97,7 +97,7 @@ bool action_routes_to_drain(const char* action_type);
 // so the legacy ladder below it is reached unchanged.
 bool pipeline_handle_envelope(const std::string& line, Session* session);
 
-// THE FLUSH A HANDLER IS RUNNING INSIDE (ck-6kvq.12, R4 / §3.2).
+// THE FLUSH A HANDLER IS RUNNING INSIDE (R4 / §3.2).
 //
 // Thread-local, set by the conductor around each `serve()` and 0 everywhere
 // else — on the reader thread in legacy mode, on the game thread, and outside
@@ -113,7 +113,7 @@ uint64_t pipeline_current_flush_id();
 // response for a queued action, so a ticket handed to the drain is settled by
 // the drain and never silently left RUNNING. No-op in legacy mode.
 //
-// ck-6kvq.19: `envelope_ticket` is the BRIDGE-MINTED tag the conductor put on
+// `envelope_ticket` is the BRIDGE-MINTED tag the conductor put on
 // the drain envelope (DrainRegistry::ticket_from_envelope; 0 when the envelope
 // did not come from the conductor). It replaces the client's `request_id` as
 // the correlation key, because request_id is OPTIONAL on the wire and not
@@ -121,7 +121,7 @@ uint64_t pipeline_current_flush_id();
 // executed and then never settled, and two calls sharing one request_id
 // collided. `request_id` is still passed for logging and for the negative
 // control; it is NEVER used to correlate.
-// ck-0lph: the attribution spine for a drain-settled ticket, as a frame
+// The attribution spine for a drain-settled ticket, as a frame
 // fragment beginning with ','. False when the ticket did not resolve — and
 // then `out` is NOT filled with a blank spine, because a blank one reads as
 // attribution that was checked.
@@ -135,16 +135,16 @@ void pipeline_note_drain_result(uint64_t envelope_ticket, const char* request_id
 // Session lifecycle -> early-flush condition (b) and fairness rotation.
 void pipeline_register_session(const char* session_id);
 
-// ── ck-h6nx (D'): declare THE episode's observer ────────────────────────────
+// ── Declare THE episode's observer ────────────────────────────
 // The one session whose submission serves the READ lane early. First
 // declaration wins; a second claimant is refused the privilege and logged, so
 // an episode has a single answer to "who drove the cadence". Buffered WRITES
 // are never served on this trigger — the instrument does not decide when an
 // agent's action lands.
-// ck-m3n5: THE MODE IS A PARAMETER because this is where the privilege is
+// THE MODE IS A PARAMETER because this is where the privilege is
 // CONFERRED. Before this the mode floor lived only at the ipc_server call site,
 // so a caller that logged REFUSED and then declared anyway conferred it on a
-// control session — and ck-ce4h's lane, which read the call site's SOURCE TEXT,
+// control session — and lane, which read the call site's SOURCE TEXT,
 // passed 9/9 on exactly that. Asking the floor HERE makes that mutant harmless
 // rather than merely detectable: this function is the ONLY caller of
 // set_privileged_reader, so a privilege that this refuses cannot be conferred by
@@ -159,7 +159,7 @@ void pipeline_declare_episode_observer(const char* session_id,
 std::string pipeline_episode_observer();
 
 // ── THE EPISODE HAS OPENED. Release the clock hold. ────────────────────────
-// ck-zen6 held the world paused until an episode observer declared, and the arm
+// held the world paused until an episode observer declared, and the arm
 // path NEVER DECLARES: `episode_observer: True` is sent in exactly one place in
 // the tree, meter_lane.run_live(), the STANDALONE entry point that builds its
 // own client. episode_driver embeds ml.MeterLane(self.guard, ...) — the CLASS,
@@ -168,13 +168,13 @@ std::string pipeline_episode_observer();
 // distinct game_date, paused, at the pin. The fix did exactly what it said and
 // nothing ever satisfied its release condition.
 //
-// THE DIAGNOSIS IS THE NAME: ck-zen6 is called "the clock starts when the
+// THE DIAGNOSIS IS THE NAME: is called "the clock starts when the
 // EPISODE starts" and was KEYED on "an episode observer declares". Those are
 // different events, and the arm driver does the first and not the second.
 //
 // WHY NOT MAKE THE DRIVER DECLARE. That is the small diff and it is the wrong
 // one: it creates a SECOND DECLARER, and first-wins then makes the read-lane
-// privilege a race — the exact hazard ck-zi99's census exists to prevent, and
+// privilege a race — the exact hazard census exists to prevent, and
 // one it would NOT catch, because both declarers would be legitimate.
 //
 // WHY TWO RELEASE SIGNALS CANNOT RACE, which is what makes this safe where a
@@ -204,13 +204,13 @@ void pipeline_unregister_session(const char* session_id);
 void pipeline_note_session_open(const Session* session);
 void pipeline_note_session_detached(const char* session_id);
 void pipeline_note_session_ended(const char* session_id);
-// ck-j6lk: for a session that was NEVER A PARTICIPANT (state a). Forgets the
+// For a session that was NEVER A PARTICIPANT (state a). Forgets the
 // unavailability record rather than ending it, so the session is ABSENT from
 // unavailability_game_days instead of present with an open span. Every other exit
 // keeps pipeline_note_session_ended and its documented accrual.
 void pipeline_forget_session(const char* session_id);
 
-// ck-y6fp: RE-ARM THE CLOCK HOLD when the session that opened the episode is
+// RE-ARM THE CLOCK HOLD when the session that opened the episode is
 // gone for good. `why` is a short literal for the log ("session_ended" |
 // "session_lost").
 //
@@ -221,14 +221,14 @@ void pipeline_forget_session(const char* session_id);
 // reconnect reaches neither, because it resumes the SAME session id first.
 void pipeline_note_episode_owner_gone(const char* session_id, const char* why);
 
-// ck-tpvn: THE DESTROY PATH GETS A BOUND, so both ways of losing a session are
+// THE DESTROY PATH GETS A BOUND, so both ways of losing a session are
 // bounded and the re-arm cannot beat a reconnect.
 //
-// The bridge loses a session two ways and ck-y6fp treated them as one:
+// The bridge loses a session two ways and treated them as one:
 //   EXPERIMENT  a drop DETACHES; the session is resumable by token and becomes
 //               LOST only past max_detach_s. Already bounded — the sweep IS the
 //               bound — so that path still re-arms immediately when it fires.
-//   OTHERWISE   the session is DESTROYED at once, and ck-y6fp re-armed with NO
+//   OTHERWISE   the session is DESTROYED at once, and re-armed with NO
 //               bound. But the harness client reconnects in EVERY mode, so the
 //               re-arm was right that THAT SESSION is gone and wrong that THE
 //               EPISODE is over: it freezes a world whose driver is about to
@@ -313,7 +313,7 @@ size_t pulse_sweep_flush(uint64_t flush_id);
 
 // EXPERIMENT-MODE CONTAINMENT (§2.9: "in experiment mode abort the episode with
 // that typed reason"). The bridge cannot terminate an episode — that is the
-// abort ladder's job (ck-6kvq.1, reason `pulse_leak`, exit 13). What the bridge
+// abort ladder's job (reason `pulse_leak`, exit 13). What the bridge
 // does is (1) latch the verdict and publish it as `pipeline.pulse_leak` on
 // get_tick_info, and (2) in EXPERIMENT mode refuse every further control-session
 // submission with {reason:"episode_aborted"}, so nothing else contaminates a run
@@ -366,19 +366,19 @@ void pipeline_set_budget_exhausted(const char* session_id, bool exhausted);
 // `unavailability` carries the computed spans and both totals.
 //
 // `gate_state` and `waiting_on` SURVIVE THE GATE'S WITHDRAWAL as constants
-// ("inert" and []). They are read by ck-6kvq.1's SHIPPED abort ladder, which
+// ("inert" and []). They are read's SHIPPED abort ladder, which
 // keys its hold timer on "$gate_state|$waiting_on"; dropping the keys would
 // change that ladder's progress key on a bridge it was not rebuilt against, for
 // no gain. Constant-"inert" is never in the ladder's held set, so the gate can
 // never fire — which is exactly the withdrawal. The `gate_held_beyond_max`
-// termination reason retires with it (knock-on to ck-6kvq.1, §6.3).
+// termination reason retires with it (knock-on to, §6.3).
 //
 // episode_id has no producer in the bridge: it is CK3_EPISODE_ID when set, and
 // otherwise emitted as "" rather than omitted, so the lanes coding against this shape keep
 // a stable key set.
 //
-// `last_flush_ms` vs `last_flush_age_ms` (ck-6kvq.9 left this open): the name
-// says stamp, G9's probe wants age, and ck-6kvq.1's ladder already reads
+// `last_flush_ms` vs `last_flush_age_ms` (left this open): the name
+// says stamp, G9's probe wants age, and ladder already reads
 // `last_flush_ms` AS AN AGE ("no flush for ${pl_flush_ms}ms"). The consumer wins
 // — a monotonic stamp is meaningless to anything outside this process, and one
 // of the two readings makes the shipped ladder abort on a healthy bridge.
@@ -387,7 +387,7 @@ void pipeline_set_budget_exhausted(const char* session_id, bool exhausted);
 // `last_flush_mono_ms` carries the raw stamp for anyone debugging in-process.
 //
 // `pulse_leak` (§2.9) is null while clean and an OBJECT once latched. Null
-// matters: ck-6kvq.1 treats any non-empty, non-"0", non-"false" value as the
+// matters: treats any non-empty, non-"0", non-"false" value as the
 // abort, so an empty object would be a false abort on a healthy run.
 void pipeline_emit_state(ResponseBuilder& r);
 

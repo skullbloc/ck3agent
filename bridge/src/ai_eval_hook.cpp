@@ -8,11 +8,11 @@
 // deadlock/hang caused by mutex access in the parallel AI eval hot path.
 
 #include "action_dispatch_internal.h"
-#include "diag_dtor.h"   // L20-D: the diag record dtor, witnessed from the engine's call
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "diag_dtor.h"   // The diag record dtor, witnessed from the engine's call
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "runtime_resolver.h"
 #include "cb_outer_filter.h"
-#include "pipeline.h"                 // ck-6kvq.10: the pulse ledger (§2.9)
+#include "pipeline.h"                 // The pulse ledger (§2.9)
 #include "scheme_engine.h"             // l3-schemes: execute_scheme_check_intent
 #include "engine_text.h"               // F16: the check's engine sentences, cleaned
 #include <Zydis/Zydis.h>
@@ -68,7 +68,7 @@ TriggerQuery g_trigger_query = {};
 static uintptr_t g_tls_guard_offset   = ck3::interaction_ctx::TLS_GUARD_FS_OFFSET;
 static uintptr_t g_tls_context_offset = ck3::interaction_ctx::TLS_CONTEXT_FS_OFFSET;
 
-// ck-62eo: WHICH of those two the pipeline is actually running on. Discovery
+// WHICH of those two the pipeline is actually running on. Discovery
 // failure was logged once at init and then indistinguishable from success
 // everywhere downstream, so a TLS fault could not say whether the offsets were
 // measured from this binary or inherited from a different one. In production
@@ -76,7 +76,7 @@ static uintptr_t g_tls_context_offset = ck3::interaction_ctx::TLS_CONTEXT_FS_OFF
 // first thing a reader of such a fault needs.
 static bool g_tls_offsets_discovered = false;
 
-// ── ck-62eo: THE TLS GUARD BYTE, READ AND WRITTEN IN ONE PLACE ─────────────
+// ── THE TLS GUARD BYTE, READ AND WRITTEN IN ONE PLACE ─────────────
 //
 // This address is DERIVED, not observed: fs_base minus g_tls_guard_offset,
 // where that offset is a HARDCODED FALLBACK whenever discovery fails — and
@@ -90,8 +90,8 @@ static bool g_tls_offsets_discovered = false;
 // They were raw — no is_mapped, no protected region — while the SAME functions
 // is_mapped() the TLS_CONSTRUCT function pointer thirty lines later and wrap
 // the call in sigsetjmp. Each validated the pointer it was about to CALL and
-// not the pointer it had already DEREFERENCED. Same asymmetry as ck-cg3b and
-// ck-duv5: the capability was present and the earlier step lacked it.
+// not the pointer it had already DEREFERENCED. Same asymmetry as and
+// The capability was present and the earlier step lacked it.
 //
 // IT LIVES HERE BECAUSE THERE WERE TWO COPIES. execute_direct_dispatch and
 // process_trigger_query each had their own read-and-write of this byte. I fixed
@@ -240,7 +240,7 @@ using fn_ctx_init       = void(*)(uintptr_t* tls_ctx, void* interaction, void* c
 using fn_ctx_reset      = void(*)(uintptr_t* tls_ctx);
 using fn_ctx_set_target = void(*)(uintptr_t* tls_ctx, uint32_t target_char_id, char do_setup);
 // A C++ bool (engine_bool.h): its five engine callers test AL only (objdump
-// 0x4cc4883, 0x4cc4992, 0x4321c24 movzbl al, 0x4cc39c4). L14 S3: read as uint64_t
+// 0x4cc4883, 0x4cc4992, 0x4321c24 movzbl al, 0x4cc39c4).: read as uint64_t
 // on Linux until then; the Windows build already masked AL.
 using fn_ctx_validate   = bridge::EngineBoolFn<uintptr_t*>;
 using fn_try_send       = char(*)(uintptr_t* tls_ctx, long extra);
@@ -566,7 +566,7 @@ static bool destroy_game_command_in_place(void* cmd) {
 }
 
 // =============================================================================
-// The interaction window's choices (lane l4, re/findings/re_interactions.md)
+// The interaction window's choices (re/findings/re_interactions.md)
 // =============================================================================
 
 // The name of a scope-name registry id (§2): the registry's id -> name vector, the
@@ -730,12 +730,12 @@ bool apply_interaction_window_choices(Intent* intent, void* tls_ctx, void* inter
 // this function. Production dispatch now routes WAR_DECLARE intents through
 // execute_war_intent (action_handlers.cpp:680, ai_eval_hook.cpp:3803). The
 // previously-present war-specific branches (CB injection, Gate-2 stamp,
-// recorder bypass) have been stripped per ck-e58l.33 / audit FIX-6.
+// recorder bypass) have been stripped / audit FIX-6.
 //
 // Keep this function for non-war targeted interactions: marriage, gift,
 // sway, vassalization, imprison, etc. See is_direct_dispatch_interaction()
 // for the current whitelist.
-// F16 (l10 witness 4): what query_interaction_check reads from the send pipeline itself,
+// F16 (l10): what query_interaction_check reads from the send pipeline itself,
 // past the game's validity (CTX_VALIDATE): the recipient's pre-answer
 // (interaction_acceptance_decision in mode 1, the mode InteractionTrySend_V2 asks for
 // the recipient: 0 yes, 1 maybe, 2 no) with the game's own pre-answer sentence, and
@@ -948,7 +948,7 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
             evaluate(reinterpret_cast<uintptr_t*>(tls_ctx));
         }
 
-        // Step 4.2 (lane l4): what the player sets in the interaction window besides the
+        // Step 4.2: what the player sets in the interaction window besides the
         // recipient: the secondary characters, the title target and the send options.
         // SET_TARGET clears the title target, so this runs after it; it runs after the
         // war scope's re-evaluate too, so the option selection it reads back is final.
@@ -1279,7 +1279,7 @@ static bool execute_tls_pipeline_dispatch(Intent* intent, void* character, void*
         ADLOG("TLS_PIPELINE: CHECK_ACCEPTANCE\n");
         char acceptance = check_acceptance(reinterpret_cast<uintptr_t*>(tls_ctx), 0);
         if (!acceptance) {
-            // Lane l4: InteractionTrySend is three engine checks in a row (decompile of
+            // InteractionTrySend is three engine checks in a row (decompile of
             // 0x6b43eb0): the send cascade (is_valid_showing_failures_only, can_send ...),
             // the recipient's answer (InteractionTrySend_V2: 2 = declines), the cost.
             // Name the one that said no; "the target would reject" was reported for
@@ -1471,7 +1471,7 @@ static bool is_direct_dispatch_interaction(const char* name) {
     // declare_war now dispatches via execute_war_intent (action_handlers.cpp:680).
     // Keeping it in the list would route declare_war through the structurally
     // dead TLS path for INTERACTION-type intents — which is the opposite of
-    // what ck-0ftj fixed.
+    // what fixed.
     //
     // Name corrections (verified against live game list_interactions, 2026-04-01):
     //   start_fabricate_hook_interaction -> fabricate_hook_interaction
@@ -1515,7 +1515,7 @@ static bool is_direct_dispatch_interaction(const char* name) {
         // as imprison/execute above. No scope_ctx (#73) dependency.
         // Engine key verified: common/character_interactions/00_dynast_interactions.txt.
         "disinherit_interaction",
-        // Lane l4: the succession levers. grant_titles carries the title as the
+        // The succession levers. grant_titles carries the title as the
         // interaction's target object (ctx+0x2F0, written by apply_interaction_window_choices);
         // designate_heir is actor + child.
         "grant_titles_interaction",
@@ -1533,7 +1533,7 @@ static bool is_direct_dispatch_interaction(const char* name) {
         // object (ctx+0x2F0, see above).
         "elope_interaction",
         "buy_claim_interaction",
-        // Peace (lane l5, F8): the three end-war interactions, from either war
+        // Peace (F8): the three end-war interactions, from either war
         // leader's seat. The engine derives scope:war from ARE_AT_WAR(actor,
         // recipient) (CEndWar*InteractionData, re/findings/re_war.md §1), so the
         // explicit enemy war leader is all they need. Through v5 they were gated
@@ -1594,7 +1594,7 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
                      intent->target_id & 0xFFFFFF,
                      intent, &_ret };
 
-    // ck-bjkk: preserve the TLS rejection reason through v5 fallback. Previously
+    // Preserve the TLS rejection reason through v5 fallback. Previously
     // the v5 path cleared intent->rejection_reason and overwrote it with
     // "ai_no_valid_target", masking which specific TLS step had failed. The
     // harness sees only the final intent result, not bridge logs, so the
@@ -1602,7 +1602,7 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
     // "; tls=<reason>" so both halves of the failure surface in one place.
     char tls_reason_saved[128] = {0};
 
-    // DISPATCH PRIORITY (post-ck-0ftj):
+    // DISPATCH PRIORITY (post-):
     //   1. TLS pipeline (v6): CTX_INIT/Reset/SetRecipient/IsValid -> BUILD -> Clone -> Dispatch.
     //      Used by targeted non-war interactions (marriage, gift, sway, vassalization, etc.).
     //   2. v5 scoring hook: AI_INTERACTION_DECISION with score manipulation. Fallback
@@ -1631,13 +1631,13 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
         // target when CTX_VALIDATE already rejected (actor,target). The score
         // hook only tilts scoring for targets that pass CtxValidate in the inner
         // loop, so a rejected target never wins; v5 silently delivers to some
-        // other character and marks the intent "success". Bead ck-88xk (ck-2toa):
+        // other character and marks the intent "success".:
         // gift_interaction CONTROL reported success but recipient gold didn't
         // move because v5 gifted a different character. Fix: don't mask the
         // real reason with a misleading success.
         {
             const char* rej = intent->rejection_reason;
-            // Lane l4: the engine's own verdicts and the window choices the bridge could
+            // The engine's own verdicts and the window choices the bridge could
             // not apply are authoritative too; the v5 fallback would send the
             // interaction without them (or to another target).
             bool legitimate_game_reject =
@@ -1658,7 +1658,7 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
                 return false;
             }
             ADLOG("DISPATCH: TLS pipeline bug '%s', falling back path=v5\n", rej);
-            // ck-bjkk: save the TLS reason so v5 can surface it in the final
+            // Save the TLS reason so v5 can surface it in the final
             // rejection string if v5 also fails.
             snprintf(tls_reason_saved, sizeof(tls_reason_saved), "%s", rej);
             intent->rejection_reason[0] = '\0';
@@ -1708,7 +1708,7 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
     bool use_yesmen = intent->force_accept;  // opt-in per-intent (e.g. for testing)
     if (use_yesmen && is_mapped(reinterpret_cast<uintptr_t>(yesmen_flag))) {
         old_yesmen = *yesmen_flag;
-        (void)bridge::pulse_enter_global(   // R1c (ck-6kvq.10, §2.9)
+        (void)bridge::pulse_enter_global(   // R1c (§2.9)
             "DEBUG_YESMEN", "execute_direct_dispatch",
             reinterpret_cast<uintptr_t>(yesmen_flag), 1, old_yesmen);
         *yesmen_flag = 1;
@@ -1723,7 +1723,7 @@ bool execute_direct_dispatch(Intent* intent, void* character, void* interaction)
     bool use_bypass = intent->force_bypass;
     if (use_bypass && is_mapped(reinterpret_cast<uintptr_t>(bypass_flag))) {
         old_bypass = *bypass_flag;
-        (void)bridge::pulse_enter_global(   // R1c (ck-6kvq.10, §2.9)
+        (void)bridge::pulse_enter_global(   // R1c (§2.9)
             "DEBUG_BYPASS", "execute_direct_dispatch",
             reinterpret_cast<uintptr_t>(bypass_flag), 1, old_bypass);
         *bypass_flag = 1;
@@ -1995,7 +1995,7 @@ void process_acceptance_query() {
     }
 
     // Vtable-dispatch sanity ping via CInteractionDef slot 7 (offset 0x38).
-    // ck-e58l.31: decomp-verified this slot is a trivial "return 1" stub on CCharacterInteractionType
+    // Decomp-verified this slot is a trivial "return 1" stub on CCharacterInteractionType
     // (body: mov al,1; ret at 0x03a5c3e0), so the call does NOT filter invalid interactions — its
     // only value is proving the vtable ptr dispatches cleanly (protected by sigsetjmp below).
     uintptr_t interaction_addr = reinterpret_cast<uintptr_t>(interaction);
@@ -2061,7 +2061,7 @@ void process_acceptance_query() {
     bool gate_closed = false;
     if ((old_gate & 0xfd) == 0) {
         // Gate is open — close it to block dispatch during acceptance check
-        (void)bridge::pulse_enter_global(   // R1c (ck-6kvq.10, §2.9)
+        (void)bridge::pulse_enter_global(   // R1c (§2.9)
             "COMMAND_DISPATCH_GATE", "acceptance_query", gate_addr, 1, old_gate);
         *reinterpret_cast<uint8_t*>(gate_addr) = old_gate | 0x04;  // set bit 2 to block
         gate_closed = true;
@@ -2245,7 +2245,7 @@ void process_cb_query() {
     g_cb_query.results.clear();
     g_cb_query.results.reserve(cb_count);
 
-    // ck-9fbs: reset ENABLED_FLAG enumeration. Populated below in the cb_arr
+    // Reset ENABLED_FLAG enumeration. Populated below in the cb_arr
     // loop, copied out by cb_query_strict_full_sync into CBStrictSummary.
     g_cb_query.enabled_count = 0;
     g_cb_query.disabled_count = 0;
@@ -2256,30 +2256,30 @@ void process_cb_query() {
     int strict_dropped_disabled_group = 0;
     int strict_dropped_stage2_flag    = 0;
     int strict_dropped_no_group       = 0;
-    int strict_dropped_outer_trigger  = 0;  // ck-p3wn: group-level is_valid drop count
-    int strict_dropped_kind_relation  = 0;  // ck-it6e: per-CB I2 relation-mode drops
-    int strict_dropped_per_cb_outer   = 0;  // ck-laf5: per-CB allowed_for_character drop count
-    int strict_per_cb_outer_evaluated = 0;  // ck-laf5: per-CB triggers actually evaluated
+    int strict_dropped_outer_trigger  = 0;  // Group-level is_valid drop count
+    int strict_dropped_kind_relation  = 0;  // Per-CB I2 relation-mode drops
+    int strict_dropped_per_cb_outer   = 0;  // Per-CB allowed_for_character drop count
+    int strict_per_cb_outer_evaluated = 0;  // Per-CB triggers actually evaluated
     int dropped_script_only_group     = 0;
     ADLOG("CB_QUERY: checking %d CB types (strict_mode=%d)\n",
           cb_count, strict_mode ? 1 : 0);
 
-    // ck-p3wn (ck-exya redo): Stage 2 group-level outer-trigger gate.
+    // Stage 2 group-level outer-trigger gate.
     //
     // Mirrors engine AI_CB_EVALUATE_ALL decomp line 359 —
     //   `ScriptTriggerEvaluator(group+0x48, scope_ctx) != 0`
-    // — closing the bridge↔engine disagreement source named in ck-mvdw. Without
+    // — closing the bridge↔engine disagreement source named in. Without
     // this gate, strict mode reports CBs the engine drops at the group's
     // is_valid script for the (actor, target) pair (faith / era / government /
     // story-flag / DLC mismatches).
     //
-    // KEY DIFFERENCE FROM ck-exya (commit 04c80ba, REVERTED in e1411d4):
-    //   ck-exya called the TLS pipeline on the engine's TLS interaction context
+    // KEY DIFFERENCE FROM (commit 04c80ba, REVERTED in e1411d4):
+    //   called the TLS pipeline on the engine's TLS interaction context
     //   (`fs_base - g_tls_context_offset`). Mutating that slot polluted state
     //   the engine reads on the same thread; AI_CB_EVALUATE_ALL crashed deep
-    //   in recursive trigger eval within 3-11 minutes of launch (ck-8dvo).
+    //   in recursive trigger eval within 3-11 minutes of launch.
     //
-    //   ck-p3wn uses a STACK-LOCAL `scope_buf[CMD_BUF_SIZE]`. Per Ghidra decomp
+    //   uses a STACK-LOCAL `scope_buf[CMD_BUF_SIZE]`. Per Ghidra decomp
     //   of INTERACTION_TLS_CONSTRUCT (FUN_06b3e970), INTERACTION_CTX_INIT
     //   (FUN_06b45300), and InteractionCmd_Destroy (FUN_06b3ec30): each function
     //   operates exclusively on its `param_1` buffer — no FS_BASE writes, no
@@ -2389,11 +2389,11 @@ void process_cb_query() {
                 }
 
                 // --- Step 5: group is_valid trigger eval is now LAZY. ---
-                // ck-3715: the previous pre-evaluation loop ran
+                // The previous pre-evaluation loop ran
                 // SCRIPT_TRIGGER_EVALUATOR for every group in CB_GROUP_DB
                 // (up to 100), regardless of whether their CBs survive the
                 // cheap disabled/stage2/members gates in the per-CB loop
-                // below. With ck-laf5 (per-CB allowed_for_character) on top,
+                // below. With (per-CB allowed_for_character) on top,
                 // service time blew past the 2s strict-mode IPC poll
                 // timeout. Lazy-eval — only call trigger_eval for groups
                 // whose CBs reach the trigger check — drops the work to
@@ -2406,7 +2406,7 @@ void process_cb_query() {
         }
     }
 
-    // ck-it6e Stage 3 I2: per-CB AI_CB_TITLE_RELATION_MODE × alliance/truce gate.
+    // Stage 3 I2: per-CB AI_CB_TITLE_RELATION_MODE × alliance/truce gate.
     //
     // Mirrors AI_CB_EVALUATE_ALL decomp lines 229-241 (flag construction) and
     // lines 374-377 (gate). Flags are query-scope (one alliance + one truce
@@ -2414,7 +2414,7 @@ void process_cb_query() {
     // alongside AI_CB_TITLE_RELATION_MODE(cb_type, actor) which classifies
     // title.+0x738 → 0/1/2/...
     //
-    // Truth table (ck-xdzo §"Truth table"):
+    // Truth table (§"Truth table"):
     //   in_alliance | in_truce | passes for relation mode ∈
     //   0           | 0        | {0, 3+}
     //   0           | 1        | {0, 2, 3+}
@@ -2423,7 +2423,7 @@ void process_cb_query() {
     // Equivalent boolean:
     //   passes = (in_alliance || mode != 1) && (mode != 2 || in_alliance || in_truce)
     //
-    // Per ck-xdzo §"Bridge-mirror implications" #1+#2+#4: searching for
+    // Per §"Bridge-mirror implications" #1+#2+#4: searching for
     // target_char_ptr (vs the realm-walked derived key the engine uses at
     // FUN_06831c70) is the simpler engine-faithful read — under-rejects the
     // doctrine-positive case (faith doctrine 0x247 fast-path at decomp lines
@@ -2443,7 +2443,7 @@ void process_cb_query() {
         return env && env[0] == '1';
     }();
 
-    // ck-laf5: per-CB allowed_for_character trigger gate killswitch. Disabled
+    // Per-CB allowed_for_character trigger gate killswitch. Disabled
     // when stage2_eval_ok==false (no scope buffer set up) — safe degrade to
     // legacy 5-gate behavior.
     static const bool per_cb_outer_disabled = []() {
@@ -2453,7 +2453,7 @@ void process_cb_query() {
 
     // #114: trust the inner engine CB_VALIDITY_CHECK as the authoritative
     // verdict. The two standalone bridge "outer trigger" pre-drops —
-    // ck-p3wn (group is_valid at group+0x48) and ck-laf5 (per-CB
+    // (group is_valid at group+0x48) and (per-CB
     // allowed_for_character at cb+0x38) — evaluate the EXACT SAME two
     // triggers that CB_VALIDITY_CHECK → CB_EXTENDED_TRIGGER (0x6dcec00)
     // evaluates internally a few lines below (it runs bVar1=is_valid on
@@ -2477,7 +2477,7 @@ void process_cb_query() {
     // check, which is the verdict). The cheap STRUCTURAL gates (script-only
     // group, disabled/stage2/no-members group flags) stay hard drops — they
     // filter CBs the inner check can't distinguish. kind_relation_mode is
-    // diagnostic-only too (lane l5, see its site below).
+    // diagnostic-only too (see its site below).
     // Killswitch BRIDGE_DISTRUST_INNER_CB_VALIDITY=1 restores the old
     // pre-drop behavior for A/B debugging.
     static const bool distrust_inner_cb_validity = []() {
@@ -2570,7 +2570,7 @@ void process_cb_query() {
         // Check if CB is enabled
         uint8_t enabled = safe_read<uint8_t>(cb_type + ck3::cb_type::ENABLED_FLAG);
         if (!enabled) {
-            // ck-9fbs: capture the DLC-disabled / has_game_rule subset for
+            // Capture the DLC-disabled / has_game_rule subset for
             // the current install. Disabled CBs never reach `results`, so
             // count + name them here for the summary block.
             g_cb_query.disabled_count++;
@@ -2605,7 +2605,7 @@ void process_cb_query() {
             snprintf(cb_name, sizeof(cb_name), "cb_%u", cb_idx);
         }
 
-        // ck-eteb: universal upfront script-only group filter. The engine's
+        // Universal upfront script-only group filter. The engine's
         // AI declare_war pipeline never selects CBs whose group is one of
         // {civil_war, event, migration, religious_script_only} — those CBs are
         // spawned by event scripts (faction wars, peasant uprisings, scripted
@@ -2676,9 +2676,9 @@ void process_cb_query() {
             continue;
         }
 
-        // Strict mode (ck-39e1 Stage 2 outer-trigger flag mirror, extended in
-        // ck-5qpg to surface per-CB outer verdicts with reason strings,
-        // completed in ck-p3wn (ck-exya redo) which closes the bridge↔engine
+        // Strict mode (Stage 2 outer-trigger flag mirror, extended in
+        // to surface per-CB outer verdicts with reason strings,
+        // completed in (redo) which closes the bridge↔engine
         // disagreement by adding the missing ScriptTriggerEvaluator gate):
         // Apply group-level filter that AI_CB_EVALUATE_ALL runs before
         // CB_VALIDITY_CHECK. The engine iterates CB_GROUP_DB and, per group,
@@ -2690,7 +2690,7 @@ void process_cb_query() {
         // setup failed (`stage2_eval_ok==false`) the cache is empty and the
         // legacy 3-gate behavior applies (conservative — returns candidate
         // set ⊇ engine's). Group resolved via cb_type::SUB_OBJ_PTR (already
-        // read above for the ck-eteb script-only filter).
+        // read above for the script-only filter).
         //
         // Per-CB outer triggers (cb_type::ALLOWED_FOR_CHAR / ALLOWED_AGAINST /
         // VALID_TO_START_*) need a CB-rooted scope context and are not
@@ -2714,8 +2714,8 @@ void process_cb_query() {
                     strict_dropped_no_group++;
                     outer_drop_reason = "group_no_members";
                 } else if (stage2_eval_ok) {
-                    // ck-p3wn: group-level is_valid trigger gate.
-                    // ck-3715: lazy-eval. Trigger runs on the actor-bound
+                    // Group-level is_valid trigger gate.
+                    // Lazy-eval. Trigger runs on the actor-bound
                     // stack scope_buf set up above; never touches engine
                     // TLS. Cache de-duplicates across CBs that share a
                     // group within this query. Crash/throw → fail-closed
@@ -2801,7 +2801,7 @@ void process_cb_query() {
             }
         }
 
-        // ck-it6e Stage 3 I2: per-CB AI_CB_TITLE_RELATION_MODE × alliance/truce
+        // Stage 3 I2: per-CB AI_CB_TITLE_RELATION_MODE × alliance/truce
         // gate. Mirrors AI_CB_EVALUATE_ALL decomp lines 374-377. Bilateral
         // flags `i2_in_alliance` / `i2_in_truce` were computed once before the
         // loop. Skipped silently when `i2_eval_ok==false` (helpers unmapped,
@@ -2841,7 +2841,7 @@ void process_cb_query() {
                     (i2_in_alliance != 0 || relation_mode != 1) &&
                     (relation_mode != 2 || i2_in_alliance != 0 ||
                      i2_in_truce != 0);
-                // lane l5 (F8, re/findings/re_war.md §7): this gate is the AI's own
+                // This gate is the AI's own
                 // candidate filter in ai_cb_evaluate_all, keyed on the CB's TARGET
                 // mode (maybe_ai_cb_title_relation_mode reads cb_type+0x738) and on
                 // two engine lists the bridge approximates as alliance/truce. It
@@ -2884,12 +2884,12 @@ void process_cb_query() {
             }
         }
 
-        // ck-laf5: per-CB allowed_for_character trigger gate.
+        // Per-CB allowed_for_character trigger gate.
         //
         // Mirrors AI_CB_EVALUATE_ALL's per-CB outer filter (after the group
-        // is_valid gate ck-p3wn covered). Calls SCRIPT_TRIGGER_EVALUATOR on
+        // is_valid gate covered). Calls SCRIPT_TRIGGER_EVALUATOR on
         // cb_type+ALLOWED_FOR_CHAR with the actor-bound stack scope_buf set
-        // up by ck-p3wn. When the trigger returns false, the CB is dropped
+        // up. When the trigger returns false, the CB is dropped
         // with outer_reason looked up in the static classification table at
         // bridge/include/cb_outer_filter_table.inc — produced from the 83-CB
         // classifier in re/findings/re_a1_67cb_rejection_classification_2026-04-25.md.
@@ -2903,10 +2903,10 @@ void process_cb_query() {
         // as a generic reason.
         //
         // Gate is skipped when stage2_eval_ok==false (no scope set up — same
-        // condition that would skip ck-p3wn's group-level eval) or when
+        // condition that would skip group-level eval) or when
         // BRIDGE_NO_PER_CB_OUTER_TRIGGER=1. Failure modes (mapped funcs, scope
         // crash) degrade gracefully via the same sigsetjmp pattern used for
-        // ck-p3wn — drop is conservative (skip, treat as pass) to keep the
+        // Drop is conservative (skip, treat as pass) to keep the
         // bridge candidate set as a SUPERSET of the engine's.
         if (strict_mode && stage2_eval_ok && !per_cb_outer_disabled) {
             auto trigger_eval = reinterpret_cast<bool(*)(uintptr_t, uintptr_t)>(
@@ -3068,7 +3068,7 @@ void process_cb_query() {
         result.valid = valid;
         result.target_mode = target_mode;
         result.eval_us = cb_eval_us;
-        // Strict-mode verdict surface (ck-5qpg): inner check ran here, so
+        // Strict-mode verdict surface: inner check ran here, so
         // outer is implicitly "pass" under our Stage 1+2 mirror. In non-strict
         // mode the outer fields stay empty; legacy callers ignore them.
         if (strict_mode) {
@@ -3092,7 +3092,7 @@ void process_cb_query() {
 
     g_cb_query.error[0] = '\0';
 
-    // ck-p3wn: tear down our stack-local scope buffer. Always paired with
+    // Tear down our stack-local scope buffer. Always paired with
     // a successful TLS_CONSTRUCT (`stage2_buf_constructed`), regardless of
     // whether per-group eval succeeded — the destructor null-checks the
     // smart-ptr at +0x330 and the dynamic buffer at +0x300/+0x310 before
@@ -3178,7 +3178,7 @@ void process_cb_query() {
 }
 
 // =============================================================================
-// Synchronous CB validity probe — IPC-thread entry point (ck-l0re)
+// Synchronous CB validity probe — IPC-thread entry point
 // =============================================================================
 //
 // Reuses g_cb_query to drive the engine's per-CB CB_VALIDITY_CHECK pipeline
@@ -3194,14 +3194,14 @@ void process_cb_query() {
 // cb_query_acquire_slot — claim the single-flight g_cb_query slot
 // =============================================================================
 //
-// L13 FF1-B/FF2: every g_cb_query user runs on the GAME thread (the slot
+//-B/: every g_cb_query user runs on the GAME thread (the slot
 // submitters are game-thread reads and service their own slot there; the drain
 // is the only other user), so the slot has one serial owner and the claim needs
 // no CAS and no busy-wait: a slot that is pending (1) or being serviced (4) on
 // this thread cannot clear by waiting, and the callers service a pending one
 // first (service_slots_if_game_thread). Off the game thread there is no serial
 // owner, so the claim refuses (the caller answers cb_query_busy) rather than
-// race one. The pre-L13 busy-wait, stale-slot reclaim and dead-servicer reclaim
+// race one. The earlier busy-wait, stale-slot reclaim and dead-servicer reclaim
 // (D8) existed for an IPC-thread claimant racing the drain and are deleted.
 //
 // Returns true and leaves the slot reset to 0 (empty, ready to submit).
@@ -3296,7 +3296,7 @@ int cb_query_count_valid_sync(uint32_t actor_id,
     // still pending (state 1, game thread never picked it up — e.g. it was
     // re-paused under us), reclaim it via CAS 1→0. If the game thread is
     // actively servicing (state 4) we leave it (on the game thread, where every
-    // slot user runs since L13, a state-4 slot is this thread's own service).
+    // slot user runs since then, a state-4 slot is this thread's own service).
     {
         int expected = 1;
         if (g_cb_query.state.compare_exchange_strong(
@@ -3309,7 +3309,7 @@ int cb_query_count_valid_sync(uint32_t actor_id,
 }
 
 // =============================================================================
-// Strict CB validity probe — Stage 1+2 mirror of AI_CB_EVALUATE_ALL (ck-39e1)
+// Strict CB validity probe — Stage 1+2 mirror of AI_CB_EVALUATE_ALL
 // =============================================================================
 //
 // Mirrors the outer-filter pipeline of AI_CB_EVALUATE_ALL so the bridge's
@@ -3474,7 +3474,7 @@ int cb_query_count_valid_strict(uint32_t actor_id,
 }
 
 // =============================================================================
-// Strict CB validity probe with per-CB result surface (ck-5qpg)
+// Strict CB validity probe with per-CB result surface
 // =============================================================================
 //
 // Same Stage 1 + Stage 2 mirror as cb_query_count_valid_strict, but copies
@@ -3540,7 +3540,7 @@ int cb_query_strict_full_sync(uint32_t actor_id,
     if (actor_death != 0) { set_err("bilateral_actor_dead"); return -4; }
 
     // Acquire the single-flight slot with bounded retry-on-busy + stale reclaim
-    // (ck-#95). L13: on the game thread a slot an IPC caller left pending is
+    // (ck-#95).: on the game thread a slot an IPC caller left pending is
     // serviced here first — this thread is the one that would service it, so
     // waiting for it to clear could only time out.
     if (g_cb_query.state.load(std::memory_order_acquire) == 1) service_slots_if_game_thread();
@@ -3630,7 +3630,7 @@ int cb_query_strict_full_sync(uint32_t actor_id,
 }
 
 // =============================================================================
-// Loud-failure key extraction (ck-wtk7 Strategy C)
+// Loud-failure key extraction (Strategy C)
 // =============================================================================
 //
 // For a FAILING trigger slot, re-evaluate via the loud populator
@@ -3692,7 +3692,7 @@ static bool loud_extract_slot_key(uintptr_t trigger_block,
     typedef void (*fn_diag_dtor)(void*);
     auto fn_populate = reinterpret_cast<fn_eval_with_failures>(
         g_base_addr + ck3::trigger_eval_funcs::EVAL_WITH_FAILURES);
-    // L20-D: destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
+    // Destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
     // refuse the extraction (diag_dtor.h); never jump to an unwitnessed address.
     const uintptr_t dtor_addr = bridge::resolve_diag_dtor(g_base_addr, is_mapped_range);
     if (!dtor_addr) {
@@ -3797,7 +3797,7 @@ static const struct {
 } g_trigger_slots[] = {
     // The offsets by their header names (the Linux values unchanged; the Windows
     // build's header carries the measured +0x18 band). The slot names are the
-    // reply's vocabulary, older than the ck-angk renames beside them.
+    // reply's vocabulary, older than the renames beside them.
     { 0, "is_valid",                       ck3::interaction_def::IS_SHOWN_TRIGGER },        // 0x0BC0
     { 1, "is_shown",                       ck3::interaction_def::IS_VALID_TRIGGER },        // 0x0D80
     { 2, "is_valid_showing_failures_only", ck3::interaction_def::HAS_VALID_TARGET },        // 0x0F40
@@ -3877,7 +3877,7 @@ void process_trigger_query() {
         return;
     }
 
-    // ck-62eo: same guard, same helpers. This copy was missed by my first pass
+    // Same guard, same helpers. This copy was missed by my first pass
     // and caught by the acceptance counting dereferences.
     const TlsGuard tq_guard = read_tls_guard(guard_byte);
     if (tq_guard == TlsGuard::Unreadable) {
@@ -4078,7 +4078,7 @@ void process_trigger_query() {
               s, g_trigger_slots[s].name, g_trigger_slots[s].offset,
               eval_result ? "PASS" : "FAIL");
 
-        // ck-wtk7: opt-in loc-key extraction on failing slots via the loud
+        // Opt-in loc-key extraction on failing slots via the loud
         // populator. Runs self-contained (own sigjmp guard); on any failure
         // res.loc_key stays empty and caller falls back to slot-name key.
         if (extract_loc_keys && !eval_result) {
@@ -4110,7 +4110,7 @@ void process_trigger_query() {
 // The game-thread query slots, serviced: each slot an IPC-side or game-thread
 // handler submitted (state 1) is evaluated here. Called by the drain every pass,
 // and by a handler that submits a slot while it is itself ON the game thread
-// (L13 D1: the slot submitters are game-thread reads now), which is the one
+// (the slot submitters are game-thread reads now), which is the one
 // thread that could ever service it — so it services it at once instead of
 // polling for a drain that cannot run until it returns.
 void service_query_slots() {
@@ -4148,7 +4148,7 @@ void service_query_slots() {
         process_faction_query();
     }
 
-    // Process any pending interaction-cascade probe (ck-e58l.8, deferred from IPC thread)
+    // Process any pending interaction-cascade probe (deferred from IPC thread)
     if (cascade_query_pending()) {
         process_cascade_query();
     }
@@ -4195,7 +4195,7 @@ void drain_and_execute_intents() {
     ADLOG("DRAIN_INTENTS: %zu intents to process\n", snapshot.size());
 
     for (const auto& queued : snapshot) {
-        // L13 FF3 (witness X3): claim the intent under the queue's lock (it is
+        // Claim the intent under the queue's lock (it is
         // consumed + in flight from here) and execute on our own copy; finish()
         // hands the verdict back under the lock. No pointer into the queue is
         // held across the execution, so an enqueue, cancel or clear on the IPC
@@ -4221,7 +4221,7 @@ void drain_and_execute_intents() {
 
         // 2026-06-09: record the in-flight intent so the outer recovery handler
         // can convert a game-thread crash here into a structured rejection
-        // instead of a silent IPC timeout. By seq (FF4, m10). Cleared after
+        // instead of a silent IPC timeout. By seq (m10). Cleared after
         // finish().
         g_inflight_intent_seq = work.seq;
 
@@ -4281,7 +4281,7 @@ void drain_and_execute_intents() {
         }
 
         case IntentType::WAR_DECLARE: {
-            // Full dequeue dump (ck-l8ge): the IPC enqueue logs the intent on
+            // Full dequeue dump: the IPC enqueue logs the intent on
             // arrival, but between enqueue and dequeue any caller-side mutation
             // would otherwise be invisible. Dump all dispatch-relevant fields
             // here so trace-by-tick reconstruction has a single anchor line per

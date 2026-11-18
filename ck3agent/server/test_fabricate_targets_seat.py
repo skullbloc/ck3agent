@@ -1,18 +1,18 @@
-"""L20 r3, witness item 3: do(action_class="fabricate_targets") and the seat.
+"""Do(action_class="fabricate_targets") and the seat.
 
 THE DEFECT (c9610822, redesign.py:5888-5900). The enumeration never passed
 `seat` to query_fabricate_targets, and every row's do_call printed `seat:
 court_chaplain` (FABRICATE_CLAIM_SEAT). For B5's ruler (Cui 13191, ministries:
-smoke17 probe-paused.jsonl:32, set_council_task minister_justice /
+ probe-paused.jsonl:32, set_council_task minister_justice /
 task_fabricate_claim) that call resolves to the chaplain's task. The bridge has
-taken `seat` since L20-A and names the version it evaluated.
+taken `seat` since then and names the version it evaluated.
 
 THE REPLY KEYS are do_query_fabricate_targets' r.key lines
 (bridge/src/action_handlers.cpp): the success reply's task, task_used,
 task_seat, task_seats, counts and targets; the seat_cannot_take_task refusal's
 requested, requested_seat, task_seats; the no_matching_position refusal's
 requested, task_seat, task_seats (the last two added in this round). The
-2026.12.0 empty reply (smoke17 probe-paused.jsonl:22, B6.fab, Cui 13191) carried
+2026.12.0 empty reply (probe-paused.jsonl:22, B6.fab, Cui 13191) carried
 no task_seats; that shape is kept as a row too.
 """
 import asyncio
@@ -96,7 +96,7 @@ def test_a_missing_chaplain_version_warns_with_the_bridges_task_seats():
 
 
 def test_the_2026_12_0_empty_reply_still_says_which_seat_and_how_to_pass_one():
-    # smoke17 probe-paused.jsonl:22 (B6.fab): success, eligible 1093, assignable 0, no task_seats
+    # probe-paused.jsonl:22 (B6.fab): success, eligible 1093, assignable 0, no task_seats
     gw = ScriptedGateway(cid=CUI, replies={"query_fabricate_targets": {
         "success": True, "eligible_count": 1093, "assignable_count": 0, "counties_considered": 3985,
         "seat_vacant": False, "scan_truncated": False, "targets": []}})
@@ -121,7 +121,7 @@ def test_a_seat_with_no_version_is_refused_naming_the_seats_that_have_one():
 
 
 def test_each_row_names_the_task_version_the_bridge_evaluated():
-    """L22 (smoke19 B9): with seat minister_justice the bridge evaluated
+    """With seat minister_justice the bridge evaluated
     task_fabricate_claim_minister_of_rites, but the rows dropped task_used."""
     gw = ScriptedGateway(cid=CUI, replies={"query_fabricate_targets": _ok(
         "task_fabricate_claim_minister_of_rites", JUSTICE,

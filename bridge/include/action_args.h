@@ -1,6 +1,6 @@
 // action_args.h — resolve an inner action's arguments, top-level OR under "params".
 //
-// WHY THIS EXISTS (ck-6kvq.15):
+// WHY THIS EXISTS:
 //
 // The bridge accepts an action two ways. A raw-socket caller sends its
 // arguments FLAT:
@@ -15,7 +15,7 @@
 // client calls it, and — if it was not written to tell "absent" from "empty" —
 // answers success with an empty payload.
 //
-// That is exactly how ck-6kvq.15 shipped: `check` returned
+// That is exactly how shipped: `check` returned
 // {"success":true,"results":[]} for every ticket in every state, making the
 // async API's whole retrieval path non-functional while looking healthy. It is
 // the same shape that bit `target_ids` (query_handlers.cpp, "N4 fix",
@@ -47,7 +47,7 @@ const rapidjson::Value& action_args(const rapidjson::Value& inner, const char* k
 // inner.HasMember(key) in any hand-rolled read.
 bool action_has(const rapidjson::Value& inner, const char* key);
 
-// L18-B: the "decisions" list of list_valid_decisions / list_decisions_annotated
+// The "decisions" list of list_valid_decisions / list_decisions_annotated
 // (strings = decision keys, numbers = name hashes), read through action_args so a
 // framed caller's list is seen. submit_decision_eval read d["decisions"] top-level
 // only, so every MCP call (which frames it under "params") got the light
@@ -58,18 +58,18 @@ bool action_has(const rapidjson::Value& inner, const char* key);
 bool decision_request(const char* params_json, std::vector<uint32_t>* hashes,
                       std::vector<std::string>* names);
 
-// L20-B: the requested decisions no DB entry matched, in request order: each name
+// The requested decisions no DB entry matched, in request order: each name
 // absent from `matched_names`, then each hash absent from `matched_hashes` (as its
 // decimal string). A list-mode evaluation emits these as `unmatched` so the reader
 // can tell "the engine does not know this decision" from "it was evaluated and
 // dropped" — before, a name that matched nothing and a row the reply could not
-// name both came back as no row at all (smoke17 B3).
+// name both came back as no row at all.
 std::vector<std::string> decision_unmatched(const std::vector<std::string>& req_names,
                                             const std::vector<uint32_t>& req_hashes,
                                             const std::vector<std::string>& matched_names,
                                             const std::vector<uint32_t>& matched_hashes);
 
-// L20-B (smoke17 item 5): the sub-operation of a verb that carries one in an
+// The sub-operation of a verb that carries one in an
 // "action" argument (scheme_action: start | cancel | check), read as
 // do_dispatch_scheme_intent reads it: from "params" when the request is framed,
 // else from the object itself. Empty when absent or not a string.

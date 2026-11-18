@@ -1,4 +1,4 @@
-// drain_registry.cpp — ck-6kvq.19. See drain_registry.h for the bug.
+// drain_registry.cpp —. See drain_registry.h for the bug.
 //
 // Engine-free ON PURPOSE. The pre-fix correlation lived inline in pipeline.cpp,
 // which links the whole game-facing bridge, so it could only ever be exercised

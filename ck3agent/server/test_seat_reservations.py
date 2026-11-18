@@ -212,7 +212,7 @@ def test_the_gate_vocabulary_names_both(monkeypatch):
         assert g in redesign.GATE_TABLE and g in redesign.GATE_WHY, g
         assert redesign.why_blocked(g)["gate"] == g          # never unmapped_refusal
     for g in resv.REASONS:
-        assert g in redesign.GATE_NEXT, g                       # witness r1 F3
+        assert g in redesign.GATE_NEXT, g                       # F3
         # the server decides them; the class says so as near as the vocabulary can
         assert redesign.GATE_TABLE[g]["class"] == "steer_vs_control", g
     # server-side, not the bridge's: no set_controlled_character reply carries them
@@ -312,7 +312,7 @@ def test_MUTANT_reading_a_self_reservation_as_valid_is_caught(monkeypatch, tmp_p
     assert resv.parse(f"{D1},{KING}", str(KING)).error is not None   # ... which this tree refuses
 
 
-# ── witness r1 F1: a succession can carry another seat's declared ruler ──────
+# ── F1: a succession can carry another seat's declared ruler ──────
 # `ck3agent run` rewrites CK3_AGENT_CHARACTER_ID to the rulers a continuation
 # CARRIES (cli.py, the carry after a hand-over). After a succession that may be
 # another seat's declared ruler (the lineage rebind, the bridge's heir handoff).

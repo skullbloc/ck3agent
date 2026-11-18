@@ -6,22 +6,22 @@
 #include "pause_alarm.h"
 #include "council_task_family.h"
 #include "council_pin.h"        // COUNCILRE: the per-seat council-task pin verdicts
-#include "optional_id.h"     // witness r1 item 8: an optional id read through json_get_int
+#include "optional_id.h"     // An optional id read through json_get_int
 #include "game_date.h"
 #include "action_dispatch_internal.h"
-#include "action_args.h"      // L20-B: action_sub_op
-#include "diag_dtor.h"   // L20-D: the diag record dtor, witnessed from the engine's call
+#include "action_args.h"      // Action_sub_op
+#include "diag_dtor.h"   // The diag record dtor, witnessed from the engine's call
 #include "declare_war_outcome.h"
 #include "refusal_record.h"
-#include "scope_slot_policy.h"   // ck-zgh4: the scope latch + its one refusal text
+#include "scope_slot_policy.h"   // The scope latch + its one refusal text
 #include "latch_guarded_rows.h"  // construction_check's list: the latch before every row
 #include "scheme_engine.h"     // l3-schemes: is_json_object
 #include "war_side.h"          // which side of a war a character is on
 #include "lobby_view_hook.h"
 #include "observer_data_functions.h"
-#include "script_templates.h"   // lane v4act: the script action layer
-#include "console_call.h"       // lane WINRE: the console-handler ABI per OS
-#include "os/game_logs.h"      // lane WINRE: the game's debug.log/error.log per OS
+#include "script_templates.h"   // The script action layer
+#include "console_call.h"       // The console-handler ABI per OS
+#include "os/game_logs.h"      // The game's debug.log/error.log per OS
 #include <dirent.h>
 #include <map>
 #include <mutex>
@@ -81,9 +81,9 @@ bool do_queue_intent(const char* params_json, std::string* response_out) {
     if (actor_id_raw > 0) {
         actor_id = static_cast<uint32_t>(actor_id_raw);
     } else {
-        // lane ACTOR: the one resolver (actor_resolve.h). A write: this
+        // The one resolver (actor_resolve.h). A write: this
         // session's own primary, never the global mirror (another seat's ruler).
-        // lane ACTORKEY: a character_id it does not read is refused, not ignored.
+        // A character_id it does not read is refused, not ignored.
         const ActorPick pick = resolve_actor_id(0, LegacyChain::MirrorOnly, kActorKeyActorId,
                                                 unread_actor_key(params_json, kActorKeyActorId));
         uint32_t resolved = pick.id;
@@ -173,13 +173,13 @@ bool do_queue_intent(const char* params_json, std::string* response_out) {
         if (secondary_actor_id > 0) { r.key("secondary_actor_id"); r.value_uint(secondary_actor_id & 0xFFFFFF); }
         if (secondary_recipient_id > 0) { r.key("secondary_recipient_id"); r.value_uint(secondary_recipient_id & 0xFFFFFF); }
         r.key("max_age_ticks"); r.value_uint(max_age_ticks);
-        // ck-hzq3: renamed from "request_id" to avoid collision with the
+        // Renamed from "request_id" to avoid collision with the
         // top-level IPC request_id injected by ipc_server.cpp. Python's
         // json.loads keeps the LAST duplicate-key value, so when both
         // coexisted the client's correlation UUID was silently overwritten
         // by this internal intent tracking ID → all responses timed out.
         r.key("intent_request_id"); r.value_string(request_id.c_str());
-        // ck-jsis0: canonical dispatch identifier alias — query_dispatch_result
+        // Canonical dispatch identifier alias — query_dispatch_result
         // accepts either name.
         r.key("dispatch_id"); r.value_string(request_id.c_str());
         r.key("pending_count"); r.value_uint(pending_intent_count());
@@ -196,7 +196,7 @@ bool do_query_intents(const char* /*params_json*/, std::string* response_out) {
     r.begin_object();
     r.key("action"); r.value_string("query_intents");
 
-    // Pending WRITES from the consolidated queue (L14 FB m-6: a queued check is
+    // Pending WRITES from the consolidated queue (a queued check is
     // a read delivered to its asker, never listed; pending_count counts the
     // same list).
     const std::vector<Intent> pending = g_intent_queue.pending_writes();
@@ -314,14 +314,14 @@ bool do_query_intent_results(const char* params_json, std::string* response_out)
         } else {
             status = "rejected";  // consumed but not executed
         }
-        // L14: a check (intent_is_read) never reaches this ring, so no row here
+        // A check (intent_is_read) never reaches this ring, so no row here
         // is a read; the old "checked" status had nothing left to name.
         r.key("status"); r.value_string(status);
 
         if (c.rejected && c.rejection_reason[0]) {
             r.key("rejection_reason"); r.value_string(c.rejection_reason);
         }
-        // Lane l4: what the window held when it was sent, and the executor's detail line.
+        // What the window held when it was sent, and the executor's detail line.
         if (!c.send_options.empty()) { r.key("send_options_requested"); r.value_string(c.send_options.c_str()); }
         if (!c.send_options_applied.empty()) { r.key("send_options_applied"); r.value_string(c.send_options_applied.c_str()); }
         if (!c.console_output.empty()) { r.key("detail"); r.value_string(c.console_output.c_str()); }
@@ -341,7 +341,7 @@ bool do_query_intent_results(const char* params_json, std::string* response_out)
     return true;
 }
 
-// ck-jsis0: probe a single dispatch by its id. Disambiguates the three states
+// Probe a single dispatch by its id. Disambiguates the three states
 // the harness previously could not distinguish through query_intent_results
 // alone (which surfaced only completed entries and only the most recent N):
 //
@@ -413,7 +413,7 @@ bool do_query_dispatch_result(const char* params_json, std::string* response_out
         return true;
     }
     case DispatchLookup::Running: {
-        // L13 FF2 (witness R3): consumed by the drain, not yet in the completed
+        // Consumed by the drain, not yet in the completed
         // ring (same pass). The verdict lands within the pass; never not_found.
         r.key("success"); r.value_bool(true);
         r.key("status"); r.value_string("running");
@@ -463,9 +463,9 @@ bool do_cancel_intent(const char* params_json, std::string* response_out) {
         ResponseBuilder r; r.begin_object();
         r.key("success"); r.value_bool(ok);
         r.key("action"); r.value_string("cancel_intent");
-        // ck-hzq3: renamed to avoid colliding with IPC-injected request_id.
+        // Renamed to avoid colliding with IPC-injected request_id.
         r.key("intent_request_id"); r.value_string(rid.c_str());
-        // ck-jsis0: canonical dispatch identifier alias.
+        // Canonical dispatch identifier alias.
         r.key("dispatch_id"); r.value_string(rid.c_str());
         if (!ok) {
             r.key("reason"); r.value_string("not_found_or_already_consumed");
@@ -561,7 +561,7 @@ bool do_send_interaction(const char* params_json, std::string* response_out) {
     // Copy type since json_get_string uses thread-local buffer
     std::string interaction_name(type);
 
-    // Lane l4: the window's send options, by flag name, comma-separated
+    // The window's send options, by flag name, comma-separated
     // ("matrilineal,hook"). The game thread matches them against the interaction's
     // declared options and refuses a name it does not declare.
     std::string send_options;
@@ -624,9 +624,9 @@ bool do_send_interaction(const char* params_json, std::string* response_out) {
         if (intent.has_target_war) { r.key("war_id"); r.value_uint(intent.target_war_id); }
         if (title_id > 0) { r.key("title_id"); r.value_int(title_id); }
         if (!send_options.empty()) { r.key("send_options"); r.value_string(send_options.c_str()); }
-        // ck-hzq3: renamed to avoid colliding with IPC-injected request_id.
+        // Renamed to avoid colliding with IPC-injected request_id.
         r.key("intent_request_id"); r.value_string(request_id.c_str());
-        // ck-jsis0: canonical dispatch identifier alias. Surfaces the same value
+        // Canonical dispatch identifier alias. Surfaces the same value
         // as intent_request_id so callers can use the unified query_dispatch_result
         // probe without first re-deriving which queue the action enqueued into.
         r.key("dispatch_id"); r.value_string(request_id.c_str());
@@ -643,7 +643,7 @@ bool do_send_interaction(const char* params_json, std::string* response_out) {
     return true;
 }
 
-// query_interaction_check (F16, l10 witness 4): the send pipeline's own checks for one
+// query_interaction_check (F16, l10): the send pipeline's own checks for one
 // interaction from one actor, against target_id or each of `candidates` (up to 64),
 // nothing sent. Drained on the game thread like send_interaction
 // (ai_eval_hook.cpp execute_interaction_check_intent), so the game must run a tick
@@ -752,13 +752,13 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    // ── ck-23hv: ACCEPT character_id TOO, AND SAY WHICH KEY WAS USED ────────
+    // ── ACCEPT character_id TOO, AND SAY WHICH KEY WAS USED ────────
     // resolve_actor reads ONLY "actor_id". ck3agent's tools.py:294 builds this
     // call as {"decision_type": ..., "character_id": actor_id} — so the agent's
     // chosen actor was DROPPED and every send_decision in every episode ran
     // against get_controlled_character() instead. No error, no warning: the
     // parameter is well-formed, accepted by the JSON parser, and ignored. The
-    // logged character_id was decoration (ck-zgh4, from two episodes' logs).
+    // logged character_id was decoration (from two episodes' logs).
     //
     // FIXED HERE RATHER THAN IN resolve_actor, deliberately. Eighteen other
     // handlers share that resolver and I could NOT establish by static scan
@@ -769,7 +769,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
     //
     // actor_id still wins, so nothing that works today changes.
     //
-    // lane ACTORKEY: send_decision READS character_id, so it never goes through
+    // Send_decision READS character_id, so it never goes through
     // resolve_actor with one (that resolver refuses a write whose actor is named
     // under a key it does not read: actor_resolve.h rule 0).
     safe_read_clear();
@@ -783,7 +783,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
         actor = resolve_actor(params_json);
         if (json_get_int(params_json, "actor_id") <= 0) actor_key = "controlled_default";
     }
-    // ck-23hv: AND THE RESOLVED ACTOR'S OWN ID, not just the key. The logged
+    // AND THE RESOLVED ACTOR'S OWN ID, not just the key. The logged
     // character_id was the IGNORED parameter, so no log in either episode says
     // which character a decision actually ran against — and
     // get_controlled_character() is not a constant: g_controlled_primary is
@@ -816,19 +816,19 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
     }
     if (reject_player_actor(actor, "send_decision", response_out)) return false;
 
-    // ── ck-23hv: RESOLVE THE CHAIN THE ENGINE WILL, AND REFUSE IF IT IS NULL ──
+    // ── RESOLVE THE CHAIN THE ENGINE WILL, AND REFUSE IF IT IS NULL ──
     // AI_DECISION_EVALUATION's FIRST act, before any gate, is
     //     controller = *(core_data + AI_CONTROLLER)      (FUN_06788160)
     //     FUN_04e52ed0(controller, 3, &out)
     // which reads *(controller + CHARACTER_PTR) and hands it UNCHECKED to five
     // getters in a row — GetPrestige, GetPiety, GetGold and two more. A null
     // there is fault_addr 0x1a8 at GetPrestige's first instruction, on the
-    // conductor thread, six times across two episodes (ck-duv5 / ck-65lv).
+    // conductor thread, six times across two episodes.
     //
     // WHY A REFUSAL AND NOT A REPAIR. The engine's own helpers for this same
     // object (FUN_04e20b20, FUN_04e20bb0, both called BY the faulting function)
     // null-check EXT_STATE_PTR at +0x20 and return 0 — measured from the
-    // disassembly by ck-zgh4. Same object, adjacent field, defended twice. So a
+    // disassembly. Same object, adjacent field, defended twice. So a
     // null pointer in a CAIStrategy is a state the engine expects; what it does
     // not expect is CHARACTER_PTR being null at this one consumer. We cannot fix
     // the engine's missing check, and we do not need the cause to stop feeding
@@ -839,7 +839,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
     // Every read is safe_read (process_vm_readv — cannot fault the process).
     {
         const uintptr_t actor_addr = reinterpret_cast<uintptr_t>(actor);
-        // ck-t5bc: NAME THE FIRST HOP TOO. It was a bare 0x1a8 beside two named
+        // NAME THE FIRST HOP TOO. It was a bare 0x1a8 beside two named
         // constants — correctness-neutral, and wrong in two ways that cost
         // nothing to fix. The offset travels if the header ever moves it, and
         // more usefully the hop becomes VISIBLE to the cut-time marker check,
@@ -849,7 +849,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
         //
         // REALM_DATA is documented "null if unlanded", so an UNLANDED actor
         // legitimately has core == 0 — and refusing there is still correct,
-        // because the engine would fault reading *(null + 0x278). ck-t5bc
+        // because the engine would fault reading *(null + 0x278).
         // checked that before gating: "the guard refuses a legitimate state"
         // is the failure mode this shape of fix must be audited for, and the
         // three distinct reason codes keep that case distinguishable.
@@ -880,7 +880,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
                 r.key("action"); r.value_string("send_decision");
                 r.key("reason"); r.value_string("ai_controller_unbound");
                 r.key("detail"); r.value_string(which);
-                // ck-23hv / e0's condition: the refusal must be COUNTABLE per
+                // / e0's condition: the refusal must be COUNTABLE per
                 // bundle, not just visible in a log. decision_capture.py reads
                 // success, reason and character_id off the reply and emits them
                 // as an actions[] entry, so carrying the RESOLVED actor here is
@@ -1058,7 +1058,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
 // Player-protection guarded — never sets the human player's focus.
 // ===========================================================================
 bool do_set_lifestyle_focus(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("set_lifestyle_focus", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("set_lifestyle_focus", response_out);   // A fault after the commit marks the reply degraded
     const char* focus_name = json_get_string(params_json, "focus");
     if (!focus_name || !focus_name[0]) {
         if (response_out) *response_out = R"({"success":false,"action":"set_lifestyle_focus","reason":"missing_focus"})";
@@ -1114,12 +1114,12 @@ bool do_set_lifestyle_focus(const char* params_json, std::string* response_out) 
     // a global that `arm` swaps into RandomScopeManager+0x20 — if the call crashes
     // and we longjmp out WITHOUT restoring it, the manager is left pointing at our
     // fake scope and the game thread wedges (tick stops). So arm BEFORE the
-    // sigsetjmp and restore on BOTH paths (normal + crash). (ck-49 harden, 20260614)
+    // sigsetjmp and restore on BOTH paths (normal + crash). (harden, 20260614)
     auto set_focus = reinterpret_cast<void(*)(void*, void*)>(bridge::game_fn(ck3::funcs::SET_FOCUS_APPLY));
     uint64_t saved_rng = 0;
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_lifestyle_focus", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -1229,7 +1229,7 @@ namespace {
     constexpr uintptr_t CTT_NAME       = 0x10;   // key std::string on the task-type obj
     constexpr uintptr_t TASKTYPE_POSREF = 0x30;  // position-type ref on the task-type obj
 
-    // L20-A (B5): every task type of the flat map, with its clone template and
+    // Every task type of the flat map, with its clone template and
     // its seat (council_task_family.h). Pure reads; one pass, as the name scan was.
     std::vector<bridge::council_task_family::Row> read_council_task_rows(uintptr_t table, uint32_t mask) {
         std::vector<bridge::council_task_family::Row> rows;
@@ -1289,7 +1289,7 @@ namespace {
 }
 
 bool do_set_council_task(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("set_council_task", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("set_council_task", response_out);   // A fault after the commit marks the reply degraded
     const char* task_name = json_get_string(params_json, "task");
     if (!task_name || !task_name[0]) {
         if (response_out) *response_out = R"({"success":false,"action":"set_council_task","reason":"missing_task"})";
@@ -1321,7 +1321,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = R"({"success":false,"action":"set_council_task","reason":"task_db_malformed"})";
         return false;
     }
-    // L20-A (B5): every type, with its clone template and its seat, so the task
+    // Every type, with its clone template and its seat, so the task
     // can be resolved to the family member on the asked seat
     // (council_task_family.h: task_fabricate_claim is the chaplain's;
     // task_fabricate_claim_minister_of_rites, its clone, is minister_justice's).
@@ -1362,7 +1362,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     // no_change_already_set. Now: the reply names the seat it used, and an
     // explicit `seat` that is not the task's seat is refused up front.
     //
-    // L20-A (B5): a seat that is not the asked task's own picks the family
+    // A seat that is not the asked task's own picks the family
     // member on that seat (a clone the engine defines for it), and the reply
     // names the task used (`task_used`) beside the one asked (`requested`).
     // Only a seat no family member sits on is refused, with the family's seats.
@@ -1388,7 +1388,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
                 r.key("reason"); r.value_string("seat_cannot_take_task");
                 r.key("requested_seat"); r.value_string(want_seat.c_str(), want_seat.size());
                 r.key("task_seat"); r.value_string(task_seat.c_str(), task_seat.size());
-                // L20-A: every seat that has this task (the template's and its clones').
+                // Every seat that has this task (the template's and its clones').
                 std::string seats_list;
                 r.key("task_seats"); r.begin_array();
                 for (const auto* fm : task_pick.family) {
@@ -1463,11 +1463,11 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     // Everything that calls game code goes under the crash net + RNG scope.
     // Arm the fake RNG scope BEFORE sigsetjmp so the crash branch can restore it —
     // otherwise a SIGSEGV mid-call leaves RandomScopeManager pointing at our global
-    // fake scope and the game thread wedges. (ck-49 harden, 20260614)
+    // fake scope and the game thread wedges. (harden, 20260614)
     uint64_t saved_rng = 0;
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_council_task", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -1623,12 +1623,12 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     // (current_task == want) is true even when the call did nothing: a NO-OP
     // (the seat already held `want`, prior == want) reads back want though
     // nothing changed this call.
-    // L13 D5: `applied` is "the write landed" (read back and changed), in either
+    // `applied` is "the write landed" (read back and changed), in either
     // clock state. The task's PROGRESS is the game's days (the per-ruler council
     // routine and task-progress machinery run on the daily tick) and is read back
     // later; the old was_paused / paused_not_confirmed reported that as a failed
     // apply, which is gone with the bridge's paused refusals.
-    // L20-A: the type written is `task_used` (the seat's clone when one was
+    // The type written is `task_used` (the seat's clone when one was
     // picked), so the read-back compares with that, not with the asked name.
     bool readback_ok = (current_task == task_used);
     bool changed   = readback_ok && (prior != task_used);
@@ -1673,7 +1673,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         r.key("success"); r.value_bool(success);
         r.key("action"); r.value_string("set_council_task");
         r.key("requested"); r.value_string(want.c_str(), want.size());
-        // L20-A: the type actually evaluated/assigned (a seat's clone of `requested`).
+        // The type actually evaluated/assigned (a seat's clone of `requested`).
         r.key("task_used"); r.value_string(task_used.c_str(), task_used.size());
         r.key("assignable"); r.value_bool(assignable != 0);   // game's real CanAssign verdict
         r.key("applied"); r.value_bool(applied);              // the write landed (read-back && changed)
@@ -1737,13 +1737,13 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
 // l6fin4-latch-3).
 // ===========================================================================
 bool do_query_fabricate_targets(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("query_fabricate_targets", response_out);   // L14 (G): a game-thread read; a fault marks the reply degraded
+    FaultScope fault_scope("query_fabricate_targets", response_out);   // A game-thread read; a fault marks the reply degraded
     const char* task_name = json_get_string(params_json, "task");
     std::string want = (task_name && task_name[0]) ? std::string(task_name)
                                                     : std::string("task_fabricate_claim");
     int max_results = json_get_int(params_json, "max_results");
     if (max_results <= 0 || max_results > 200) max_results = 40;
-    // ck-fabtargets: the old loop stopped at the first `max_results` ELIGIBLE
+    // The old loop stopped at the first `max_results` ELIGIBLE
     // counties in raw title-DB index order, so the truly ASSIGNABLE (range-
     // respecting, i.e. nearby) targets were truncated off behind far counties
     // that merely pass the oracle. Now scan the whole county DB (bounded by a
@@ -1754,7 +1754,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     int scan_budget = json_get_int(params_json, "scan_budget");
     if (scan_budget <= 0 || scan_budget > 200000) scan_budget = 50000;
     constexpr size_t HIT_STORAGE_CAP = 512;
-    // ck-fabtargets (L23): when true, return ONLY de-jure-of-actor targets
+    // When true, return ONLY de-jure-of-actor targets
     // (relevance 0) — the natural reconquest/consolidation frontier.
     bool de_jure_only = json_get_bool(params_json, "de_jure_only", false);
     // war_validity_discovery: by default targets[] is the ACTIONABLE
@@ -1783,7 +1783,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         if (response_out) *response_out = R"({"success":false,"action":"query_fabricate_targets","reason":"task_db_malformed"})";
         return false;
     }
-    // L20-A (B5): an optional `seat` resolves the task to that seat's clone
+    // An optional `seat` resolves the task to that seat's clone
     // (council_task_family.h), as set_council_task does, so the targets are
     // evaluated on the type the seat would be given.
     const char* fseat = json_get_string(params_json, "seat");
@@ -1856,7 +1856,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
             r.key("action"); r.value_string("query_fabricate_targets");
             r.key("reason"); r.value_string("no_matching_position");
             r.key("requested"); r.value_string(want.c_str(), want.size());
-            // L20 r3 (witness item 3): the seat evaluated and every seat the
+            // The seat evaluated and every seat the
             // task family has, so a ruler whose government seats the task
             // elsewhere (a ministry's minister_justice) is told which to pass.
             r.key("task_seat"); r.value_string(fab_pick.chosen->seat.c_str(), fab_pick.chosen->seat.size());
@@ -1875,14 +1875,14 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     uint32_t pos_id = safe_read<uint32_t>(position + ck3::globals::COUNCIL_POS_KEY);
     // war_validity_discovery: ctx_a (+0x38) is the SEATED councillor id; sentinel
     // 0/0xFFFFFF == the seat is VACANT. A vacant seat means set_council_task would
-    // store an INERT task on an empty chair (lesson L29 / council-fabrication
+    // store an INERT task on an empty chair (lesson / council-fabrication
     // silent stall). The sibling WRITE handler do_set_council_task already emits
     // this signal (action_handlers.cpp:1067); the READ surface omitted it. Mirror
     // it so the discovery surface stops lying about assignability.
     bool seat_vacant = (ctx_a == 0 || ctx_a == 0xFFFFFF);
     uint32_t actor_id = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(actor) + ck3::character::ID);
 
-    // ck-fabtargets (L23): compute the actor's DE-JURE region (the set of its
+    // Compute the actor's DE-JURE region (the set of its
     // de-jure duchy + kingdom title IDs) so we can surface NEARBY / strategically
     // relevant targets first instead of the lowest-title-id (far English) counties
     // the old title_id sort surfaced. The de-jure-region walk: enumerate the
@@ -1929,7 +1929,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         }
     }
 
-    // ck-fabtargets (L23): relevance of a candidate county to the actor.
+    // Relevance of a candidate county to the actor.
     //   0 = de-jure within the actor's own duchy/kingdom region (reconquest frontier)
     //   2 = everything else (fallback, ordered by title_id)
     // (Tier 1 = realm-adjacent is intentionally skipped — computing 4-way border
@@ -1978,13 +1978,13 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     // Collect eligible counties under the crash net + RNG scope.
     struct Hit { uint32_t title_id; uint32_t holder_id; std::string name; bool assignable; int relevance; };
     std::vector<Hit> hits;
-    size_t n_unassignable_stored = 0;  // ck-fabtargets: cap applies only to these
+    size_t n_unassignable_stored = 0;  // Cap applies only to these
     uint32_t scanned = 0, considered = 0, total_eligible = 0, total_assignable = 0;
 
     // Arm RNG scope BEFORE sigsetjmp so the crash branch restores it (else a
-    // SIGSEGV mid-scan leaves the game thread wedged). (ck-49 harden, 20260614)
+    // SIGSEGV mid-scan leaves the game thread wedged). (harden, 20260614)
     uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -2033,7 +2033,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         char ok = validate(reinterpret_cast<void*>(tasktype), scope_buf, 0);
         if (ok) {
             Hit h; h.title_id = title_id; h.holder_id = holder & 0xFFFFFF; h.assignable = false;
-            // ck-fabtargets (L23): relevance key (0=de-jure-of-actor, 2=other).
+            // Relevance key (0=de-jure-of-actor, 2=other).
             h.relevance = county_relevance(title_id);
             // The title's display name (a game std::string, read through the build's ABI)
             h.name = ad_read_std_string(entry + ck3::title_obj::TITLE_DISPLAY_NAME);
@@ -2054,7 +2054,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
                 ::operator delete(reinterpret_cast<void*>(vsp));
             total_eligible++;
             if (h.assignable) total_assignable++;
-            // ck-fabtargets: ALWAYS store assignable hits — they are the
+            // ALWAYS store assignable hits — they are the
             // actionable, range-respecting targets and are inherently few
             // (bounded by total_assignable). The HIT_STORAGE_CAP applies ONLY
             // to the non-assignable (oracle-only, informational) rows so the
@@ -2075,7 +2075,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     g_in_protected_region = false;
     watchdog_disarm();
 
-    // ck-fabtargets (L23): optional de_jure_only filter — drop everything that
+    // Optional de_jure_only filter — drop everything that
     // isn't in the actor's own de-jure region (relevance 0). The agent uses this
     // to get ONLY consolidation/reconquest targets.
     if (de_jure_only) {
@@ -2096,7 +2096,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     // Sort assignable-first (the actionable, range-respecting targets — these
     // are what was being truncated off behind far oracle-only hits), THEN by
     // relevance ascending (de-jure-of-actor counties before far foreign ones —
-    // ck-fabtargets L23: the old title_id-only sort surfaced the lowest-id =
+    //: the old title_id-only sort surfaced the lowest-id =
     // far English counties for a King of Italy; relevance pulls Italian counties
     // to the front), then by title_id for stable ordering. Agent reads the front.
     std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
@@ -2110,7 +2110,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         r.key("success"); r.value_bool(true);
         r.key("action"); r.value_string("query_fabricate_targets");
         r.key("task"); r.value_string(want.c_str(), want.size());
-        // L20-A: the type evaluated and its seat (a `seat` picks that seat's clone),
+        // The type evaluated and its seat (a `seat` picks that seat's clone),
         // and every seat this task family has.
         r.key("task_used"); r.value_string(fab_pick.chosen->name.c_str(), fab_pick.chosen->name.size());
         r.key("task_seat"); r.value_string(fab_pick.chosen->seat.c_str(), fab_pick.chosen->seat.size());
@@ -2126,7 +2126,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         r.key("assignable_count"); r.value_uint(total_assignable);  // FULL CanAssign (apply would stick)
         // war_validity_discovery: disclose seat occupancy. When the executor seat
         // is vacant, set_council_task stores an INERT task — no target is truly
-        // actionable regardless of per-row assignable (lesson L29).
+        // actionable regardless of per-row assignable (lesson).
         r.key("seat_vacant"); r.value_bool(seat_vacant);
         if (seat_vacant) {
             r.key("seat_warning");
@@ -2149,7 +2149,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
             // target-eligible (oracle) is implied by presence; assignable adds the
             // councillor-side check — true ⇒ set_council_task will apply + stick.
             r.key("assignable"); r.value_bool(h.assignable);
-            // ck-fabtargets (L23): relevance to the actor — de_jure=true means the
+            // Relevance to the actor — de_jure=true means the
             // county is within the actor's own de-jure duchy/kingdom region (the
             // reconquest/consolidation frontier); these sort to the front.
             r.key("relevance"); r.value_uint(static_cast<uint32_t>(h.relevance));
@@ -2164,7 +2164,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
 }
 
 // ===========================================================================
-// Building construction: the player's path (cleanup 2026.11, lane l6).
+// Building construction: the player's path.
 //
 // The game builds a player's order with CAddConstructionCommand: the command's
 // validity (ADD_CONSTRUCTION_VALIDITY, which writes its reasons into a string)
@@ -2230,7 +2230,7 @@ namespace {
     bool resolve_build_target(const char* params_json, const char* action, const std::string& want,
                               BuildTarget& t, std::string* out) {
         // json_get_int answers -1 for an absent key: masked, that was the id
-        // 0xFFFFFF and missing_location_id never fired (L20-A, the A3 class;
+        // 0xFFFFFF and missing_location_id never fired (the A3 class;
         // optional_id.h, tested by test_optional_id).
         t.barony_id = bridge::optional_id(json_get_int(params_json, "location_id"));
         if (want.empty()) { build_refusal(out, action, "missing_building", want, 0); return false; }
@@ -2378,7 +2378,7 @@ namespace {
 // this one call, one row each. A game-thread read (snapshot.cpp
 // is_game_thread_read): the validity and the price run under the fake random
 // scope, which is only safe where the engine's RandomScopeManager slot is stable.
-// Served inline on the IPC thread while paused (until lane l6, witness #2), an
+// Served inline on the IPC thread while paused (until), an
 // engine scope another thread held was popped under the bridge's arm and the
 // restore tripped the scope latch for the rest of the process.
 namespace {
@@ -2417,7 +2417,7 @@ namespace {
 }
 
 bool do_construction_check(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("construction_check", response_out);   // L14 (G): a game-thread read; a fault marks the reply degraded
+    FaultScope fault_scope("construction_check", response_out);   // A game-thread read; a fault marks the reply degraded
     bool listed = false;
     std::vector<std::string> names = json_building_list(params_json, &listed);
     if (bridge::scope_latched()) {
@@ -2513,12 +2513,12 @@ bool do_construction_check(const char* params_json, std::string* response_out) {
 // (the game's tooltip lines: the holding, the slot, the innovation, the gold);
 // otherwise the command's execute starts the construction and takes the price.
 bool do_construct_building(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("construct_building", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("construct_building", response_out);   // A fault after the commit marks the reply degraded
     BuildTarget t;
     const char* want = json_get_string(params_json, "building");
     if (!resolve_build_target(params_json, "construct_building", want ? want : "", t, response_out)) return false;
     if (reject_player_actor(t.actor, "construct_building", response_out)) return false;
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("construct_building", response_out);
     if (bridge::scope_latched()) {
         bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
@@ -2609,7 +2609,7 @@ bool do_construct_building(const char* params_json, std::string* response_out) {
     return started;
 }
 
-// L13 FF2 (witness R6): declare_war's two waits, sized so the whole call fits
+// Declare_war's two waits, sized so the whole call fits
 // the client's 8 s read deadline: the pre-validation on the game thread (its CB
 // check is itself bounded by kGameThreadEvalBudgetMs) and the intent's verdict.
 static constexpr int kDeclareWarPrevalWaitMs = 3000;
@@ -2618,7 +2618,7 @@ static_assert(kDeclareWarPrevalWaitMs + kDeclareWarIntentWaitMs < 8000,
               "declare_war must answer inside the client's 8 s deadline");
 
 bool do_declare_war(const char* params_json, std::string* response_out) {
-    // ck-j3vb0: force_player_path bypass.
+    // Force_player_path bypass.
     // The default declare_war path queues a WAR_DECLARE intent → AI war
     // pipeline (target eval + post_decl with force=1), which routinely
     // returns dispatched_but_no_war when the AI's evaluator rejects the
@@ -2725,7 +2725,7 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
     bool skip_preval = json_get_bool(params_json, "skip_prevalidation", false);
     if (!skip_preval) {
         std::string preval_result;
-        // L13 D1: the pre-validation reads the pair and runs the engine's CB check
+        // The pre-validation reads the pair and runs the engine's CB check
         // on the GAME thread (it is the game-thread read pre_validate_war); this
         // handler, an intent enqueuer that polls, stays on the IPC thread and
         // waits for it. Its faults are counted on that thread, where
@@ -2844,10 +2844,10 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
     // dispatches via execute_war_intent (AI war pipeline: target eval →
     // declare exec → post-decl with force=1). The prior INTERACTION route
     // went through CSendCharacterInteractionCommand which is structurally
-    // incapable of reaching WAR_CREATE_CORE (see ck-e58l.17.1). The AI
+    // incapable of reaching WAR_CREATE_CORE. The AI
     // pipeline is one of the 25 type-7 callers that does reach war creation.
     // Caveat: the AI selects the actual target and CB; target_id and
-    // cb_title_id become suggestions rather than commands (ck-e58l.24 FIX-1
+    // cb_title_id become suggestions rather than commands (FIX-1
     // Option A).
     bool queued = queue_intent(
         actor_id, static_cast<uint32_t>(target_id),
@@ -2888,7 +2888,7 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
     bool intent_succeeded = false;
     char result_reason[128] = {};
 
-    // L13 FF2 (witness R6): 4 s (was 5): with the 3 s pre-validation wait the
+    // 4 s (was 5): with the 3 s pre-validation wait the
     // whole call fits the client's 8 s deadline. The timeout reason keeps its
     // registered spelling, intent_not_completed_within_5s (wire vocabulary).
     for (int poll = 0; poll < kDeclareWarIntentWaitMs / 50; poll++) {
@@ -2977,7 +2977,7 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
         }
     }
 
-    // ck-65la: do NOT upgrade global-DB-only deltas to war_created. In the
+    // Do NOT upgrade global-DB-only deltas to war_created. In the
     // WAR_DECLARE path the actor is the attacker, whose active_wars list must
     // gain the new war. Other AI characters declare wars every few ticks in a
     // populated game, and the prior "war may be target-owned" fallback
@@ -2999,9 +2999,9 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
     if (response_out) {
         ResponseBuilder r; r.begin_object();
         r.key("action"); r.value_string("declare_war");
-        // ck-hzq3: renamed to avoid colliding with IPC-injected request_id.
+        // Renamed to avoid colliding with IPC-injected request_id.
         r.key("intent_request_id"); r.value_string(request_id.c_str());
-        // ck-jsis0: canonical dispatch identifier alias.
+        // Canonical dispatch identifier alias.
         r.key("dispatch_id"); r.value_string(request_id.c_str());
         r.key("target_id"); r.value_int(target_id);
 
@@ -3024,7 +3024,7 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
                                            "read. Read the actor's wars (query_wars) to see.");
         } else if (intent_succeeded) {
             // AI war pipeline ran but no war count increase. Under the
-            // WAR_DECLARE routing (see ck-e58l.24 FIX-1), this usually means
+            // WAR_DECLARE routing (FIX-1), this usually means
             // the AI target-evaluation rejected the suggested target or
             // picked zero candidates; target_id is a hint, not a command.
             r.key("reason"); r.value_string("ai_pipeline_ran_but_did_not_declare");
@@ -3107,7 +3107,7 @@ bool do_set_speed(const char* params_json) {
     return clock_verb_speed(ClockOrigin::Session, params_json);
 }
 
-// L20-A: the game-day pause alarm (pause_alarm.h). One guarded date read, the
+// The game-day pause alarm (pause_alarm.h). One guarded date read, the
 // arm, then the same unpause write as unpause_game. A refusal unpauses nothing
 // and leaves a previously armed alarm as it was.
 bool do_unpause_game_with_alarm(const char* params_json, std::string* out) {
@@ -3162,10 +3162,10 @@ bool do_unpause_game_with_alarm(const char* params_json, std::string* out) {
     if (out) *out = r.take();
     return true;
 }
-#ifdef CK3_BRIDGE_DEBUG_VERBS  // rc2 B2: input injection is compiled out of release builds
+#ifdef CK3_BRIDGE_DEBUG_VERBS  // Input injection is compiled out of release builds
 
 // =============================================================================
-// X11 Mouse Click Injection (ck-77pb, rewritten under ck-vfj7)
+// X11 Mouse Click Injection (rewritten under)
 //
 // CK3 does not link or load SDL2 (verified: ck3 binary's NEEDED list and the
 // process map both contain zero libSDL*). The original SDL_PushEvent path was
@@ -3300,7 +3300,7 @@ bool xtest_click_locked(XInjector& inj, int x, int y, unsigned int button,
 }  // namespace
 
 // =============================================================================
-// uinput Mouse Injection Fallback (ck-dq7ym.4)
+// uinput Mouse Injection Fallback
 //
 // When the X11/XTest path above is unavailable — typically because the bridge
 // process inherited a context without DISPLAY/XAUTHORITY or the X server is
@@ -3512,7 +3512,7 @@ bool do_inject_mouse_click(const char* params_json, std::string* response_out) {
 
 // =============================================================================
 // Auto-complete the character-select / multiplayer-lobby Observer flow
-// (ck-li56t, ck-dq7ym.4). Default coords are the 1920x1080 estimates from
+// Default coords are the 1920x1080 estimates from
 // re/findings/observer_button_coords.md (Random Character button at
 // (540, 1015); Observe button at (540, 1060)). Override via params for
 // non-default resolutions.
@@ -3707,22 +3707,22 @@ bool do_select_observe_default(const char* params_json, std::string* response_ou
     }
     return success;
 }
-#endif  // CK3_BRIDGE_DEBUG_VERBS (rc2 B2)
+#endif  // CK3_BRIDGE_DEBUG_VERBS
 
 // =============================================================================
 // Set Character AI
 // =============================================================================
 
 bool do_set_character_ai(const char* params_json) {
-    // ── ck-vf92: `< 0` ACCEPTS ZERO, AND ZERO IS NOT A CHARACTER ────────────
-    // This was the root of ck-bl15's four faults. All four calls were
-    // {"character_id":0,"enabled":true} (ck-zgh4, from armb1's SEALED bundle):
+    // ── `< 0` ACCEPTS ZERO, AND ZERO IS NOT A CHARACTER ────────────
+    // This was the root of four faults. All four calls were
+    // {"character_id":0,"enabled":true} (from armb1's SEALED bundle):
     // 0 is not < 0, so this guard passed it, lookup_character(0) returned
     // something neither null nor the sentinel, and the AI_CHAR_TOGGLE store
     // faulted on the controller derived from it.
     //
     // ELEVEN sites in this file take a character_id from json_get_int. TEN
-    // reject zero — eight `<= 0`, and `> 0` at do_send_decision (ck-23hv) — so
+    // reject zero — eight `<= 0`, and `> 0` at do_send_decision — so
     // "0 is not a character" is the convention of every other call site, and
     // this one was the sole outlier.
     //
@@ -3756,7 +3756,7 @@ bool do_set_character_ai(const char* params_json) {
     }
 
     void* ctrl = g_get_ai_ctrl(character);
-    // ── ck-bl15: `if (ctrl)` IS A NULL TEST, NOT A VALIDITY TEST ────────────
+    // ── `if (ctrl)` IS A NULL TEST, NOT A VALIDITY TEST ────────────
     // AI_CHAR_TOGGLE is five bytes and its whole body is `*(p+0x28) = v` — a
     // STORE. So a non-null-but-invalid controller is not a bad read, it is a
     // WRITE to unmapped memory, and the null check above cannot see it.
@@ -3764,11 +3764,11 @@ bool do_set_character_ai(const char* params_json) {
     // MEASURED, arm B on deploy-20: four byte-identical recovered faults,
     // thread=ipc_reader, rip_off 0x4d1f190 == ck3::funcs::AI_CHAR_TOGGLE, with
     // fault_addr - rdi == 0x28 — exactly the documented store, on a controller
-    // pointer that was NOT MAPPED. ck-duv5 gave the thread and instruction,
-    // ck-65lv's frame word named this call site, and ck-2ptx's range check is
+    // pointer that was NOT MAPPED. gave the thread and instruction,
+    // frame word named this call site, and range check is
     // what revealed the return address lay in the BRIDGE rather than in CK3.
     //
-    // Same defect as check_delayed_unpause (ck-cg3b): `if (idler)` guarding a
+    // Same defect as check_delayed_unpause: `if (idler)` guarding a
     // raw engine deref. A pointer the engine handed back is not thereby a
     // pointer the engine can survive being handed back.
     //
@@ -3803,7 +3803,7 @@ bool do_set_character_ai(const char* params_json) {
 
 // =============================================================================
 // change_realm_law: change a realm law by name
-// Uses AddLawToCharacter(char, law, mode, 0). Static RE (ck-iglm) shows
+// Uses AddLawToCharacter(char, law, mode, 0). Static RE shows
 // the binary's callers pass only two mode values:
 //   mode=7 → fire the law's on_pass SCRIPT + the pass notification (used by the
 //            default `add_realm_law` console handler + script-effect paths).
@@ -3830,12 +3830,12 @@ static bool is_high_stakes_law(const char* law_name) {
     // Without this entry, act(type=law, law_name=tribal_authority_3) fell through to
     // the illegitimate AddLawToCharacter path (the "cannot enact" failures the agent
     // hit on the feudalize prerequisite — tribal_authority_3 gates
-    // convert_whole_realm_to_feudalism_decision). (ck-feudalize-authority)
+    // convert_whole_realm_to_feudalism_decision).
     return strstr(law_name, "crown_authority")  != nullptr ||
            strstr(law_name, "tribal_authority") != nullptr ||
            strstr(law_name, "succession")       != nullptr;
 }
-// ck-84: the UNCOSTED AddLawToCharacter path is illegitimate for high-stakes laws.
+// The UNCOSTED AddLawToCharacter path is illegitimate for high-stakes laws.
 // do_change_realm_law now routes high-stakes laws through the COSTED player command
 // (dispatch_costed_law_command), so the guard below only refuses the case where the
 // caller has explicitly FORCED the uncosted setter (mode!=0 / force_uncosted) on a
@@ -3865,7 +3865,7 @@ static bool reject_forced_uncosted_high_stakes_law(const char* law_name, const c
 // ── #109: SPECIFIC law-refusal reason harvesting ────────────────────────────────
 // When the CAddLawCommand CanExecute pre-gate (FUN_06e30000) rejects a change, the
 // coarse "not_allowed_or_unaffordable" hides WHICH sub-check failed. The CanExecute
-// structure (decompiled, ck-84) is:
+// structure (decompiled) is:
 //   1. !IsRuler(char)                                  → not_a_ruler
 //   2. law+0xb08 >= 10 || !((0x23d>>level)&1)          → not_eligible_yet (tier slot)
 //   3. CharacterHasLaw(char,law)                       → already_active
@@ -3934,7 +3934,7 @@ static bool law_extract_block_failure(uintptr_t trigger_block, uintptr_t scope_c
     typedef void (*fn_diag_dtor)(void*);
     auto fn_populate = reinterpret_cast<fn_eval_with_failures>(
         g_base_addr + ck3::trigger_eval_funcs::EVAL_WITH_FAILURES);
-    // L20-D: destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
+    // Destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
     // refuse the extraction (diag_dtor.h); never jump to an unwitnessed address.
     const uintptr_t dtor_addr = bridge::resolve_diag_dtor(g_base_addr, is_mapped_range);
     if (!dtor_addr) {
@@ -4098,7 +4098,7 @@ static void diagnose_law_refusal(void* actor, uintptr_t law_obj, uintptr_t char_
     }
 }
 
-// ck-84: dispatch the COSTED player Change-Realm-Law command (CAddLawCommand) for an
+// Dispatch the COSTED player Change-Realm-Law command (CAddLawCommand) for an
 // EXPLICIT actor. Uses the command-dispatch template (as do_maa_recruit): build the typed
 // CJominiCommandBase command via its ctor, stamp the actor char id (+0x20) and law
 // object (+0x28), then prepare (vtable[9]) + GAME_COMMAND_DISPATCH(mgr,&cmd,0xe,0).
@@ -4106,7 +4106,7 @@ static void diagnose_law_refusal(void* actor, uintptr_t law_obj, uintptr_t char_
 // Execute, applying the prestige cost + ~10yr cooldown + powerful-vassals vote +
 // vassal-opinion penalty natively.
 //
-// ── ck-84 ROOT-CAUSE FIX (2026-06-21) ────────────────────────────────────────────
+// ── ROOT-CAUSE FIX (2026-06-21) ────────────────────────────────────────────
 // The previous live attempt HARD-CRASHED because the recorded ADD_LAW_COMMAND_* header
 // offsets were 0x100000 TOO HIGH (image VAs stored as header offsets). At runtime
 // `g_base_addr + 0x067cd2f0` landed inside FUN_068cd200 — a generic hashmap-INSERT
@@ -4127,7 +4127,7 @@ static void diagnose_law_refusal(void* actor, uintptr_t law_obj, uintptr_t char_
 // advance RNG → same RandomScopeManager null-deref class as war/lifestyle) + watchdog +
 // sigsetjmp protected region, with RNG restore + region/watchdog teardown on EVERY path.
 // An engine object's virtual destructor (vtable slot 1), its vtable and slot read
-// through safe_read (L14 G-raw): one that cannot be read is not called. Runs
+// through safe_read (G-raw): one that cannot be read is not called. Runs
 // under the caller's watchdog and sigsetjmp.
 static void engine_virtual_dtor(void* obj) {
     const uintptr_t vt = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(obj));
@@ -4178,7 +4178,7 @@ static bool dispatch_costed_law_command(void* actor, uintptr_t law_obj,
         // Returns nonzero iff eligible+affordable. On 0 we refuse without dispatching,
         // so the (potentially crash-prone) Execute path is never reached for an
         // ineligible change.
-        // CJominiCommand's vt[7] returns a C++ bool: AL only (engine_bool.h, L14 S3;
+        // CJominiCommand's vt[7] returns a C++ bool: AL only (engine_bool.h,
         // the create-title override of this slot read a refusal as a pass).
         auto can_exec = reinterpret_cast<bridge::EngineBoolFn<void*, void*>>(vt[7]);  // FUN_067cd410(cmd,ctx)
         const bool eligible = can_exec(cmd, nullptr);
@@ -4197,7 +4197,7 @@ static bool dispatch_costed_law_command(void* actor, uintptr_t law_obj,
         dispatch(reinterpret_cast<void*>(g_base_addr + ck3::globals::COMMAND_DISPATCH_MGR),
                  &out_b, 0xe, 0);
         // Cleanup: virtual dtor (vtable+8) on out holders, then base dtor on cmd.
-        // L14 (G-raw): the holder's vtable and its slot through safe_read; a
+        // The holder's vtable and its slot through safe_read; a
         // holder whose vtable cannot be read is left alone (a leak, not a jump).
         if (out_b) engine_virtual_dtor(out_b);
         if (out_a) engine_virtual_dtor(out_a);
@@ -4221,13 +4221,13 @@ static int64_t read_char_prestige_fp(void* actor) {
 }
 
 bool do_change_realm_law(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("change_realm_law", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("change_realm_law", response_out);   // A fault after the commit marks the reply degraded
     const char* law_name = json_get_string(params_json, "law_name");
     if (!law_name || !law_name[0]) {
         if (response_out) *response_out = R"({"success":false,"action":"change_realm_law","reason":"missing_law_name"})";
         return false;
     }
-    // ── ck-84: high-stakes (crown_authority_*, *succession*) law routing ────────
+    // ── High-stakes (crown_authority_*, *succession*) law routing ────────
     // The COSTED player command path (CAddLawCommand → GAME_COMMAND_DISPATCH) is the
     // LEGITIMATE applier: the engine pipeline runs CanExecute (eligibility + scripted
     // affordability) then Execute, applying the prestige cost + ~10yr cooldown +
@@ -4268,7 +4268,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
         }
     }
 
-    // Optional mode override (ck-iglm). Default 7 = full effects; 4 is the
+    // Optional mode override. Default 7 = full effects; 4 is the
     // only other value observed in the binary (debug/skip-effects path).
     int mode = json_get_int(params_json, "mode");
     if (mode < 0) mode = 7;
@@ -4346,11 +4346,11 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("change_realm_law", response_out);
     void* law_obj = reinterpret_cast<void*>(law_obj_addr);
 
-    // ── ck-84: COSTED player command path (legitimate) ──────────────────────────
+    // ── COSTED player command path (legitimate) ──────────────────────────
     // For high-stakes laws (default) or any law with costed=true, dispatch the
     // engine's CAddLawCommand through the player command queue. The engine applies
     // the prestige cost + ~10yr cooldown + powerful-vassals vote + vassal-opinion
@@ -4384,7 +4384,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
                 }
             }
         }
-        // ck-zgh4 scope latch, guarded HERE rather than inside
+        // scope latch, guarded HERE rather than inside
         // dispatch_costed_law_command: that helper reports through out-params
         // (out_crashed / out_eligible) and the caller turns them into specific
         // responses, so a refusal from inside would have to borrow one of those
@@ -4396,7 +4396,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
             return false;
         }
         int64_t prestige_before = read_char_prestige_fp(actor);
-        // L14 FB M-7 (G-commit): the at-war guard and the prestige witness read
+        // The at-war guard and the prestige witness read
         // after the decision above. A war count that faulted reads 0 and would
         // skip the at-war refusal (#109: the costed path at war hangs the game
         // thread), so a fault in them refuses here, before the engine is touched.
@@ -4428,7 +4428,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
             // pulls the failing trigger block's loud-failure loc-key. Fully crash-net-
             // wrapped; on any fault it leaves reason=nullptr and we keep the coarse key.
             LawRefusalDetail detail;
-            // ck-zgh4 scope latch: this block is a READ-ONLY ENRICHMENT of a
+            // scope latch: this block is a READ-ONLY ENRICHMENT of a
             // refusal that has ALREADY been decided — the law change is not
             // happening either way, and `reason` below falls back to the
             // coarse key on its own. So when latched we skip it and make NO
@@ -4524,9 +4524,9 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
     // war/council/lifestyle). Fabricate a fake RNG scope bound to this thread around
     // the call. Arm BEFORE sigsetjmp so the crash branch restores it — else a
     // SIGSEGV leaves the game thread wedged. (20260614: missing-RNG-scope was the
-    // `crashed_during_execution` cause; ck-49 harden = restore-on-crash.)
+    // `crashed_during_execution` cause; harden = restore-on-crash.)
     uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -4557,7 +4557,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
 
     bool success = false;
     try {
-        // mode is 7 (default, full effects) or 4 (skip effects) — see ck-iglm.
+        // mode is 7 (default, full effects) or 4 (skip effects) —.
         add_law(actor, law_obj, mode, 0);
         success = true;
         ADLOG("change_realm_law: applied law '%s' mode=%d to char %u\n",
@@ -4674,7 +4674,7 @@ static bool character_has_raised_armies(uint32_t actor_char_id,
 }
 
 bool do_pre_validate_war(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("pre_validate_war", response_out);   // L14 S4 (audit 3(iii)): nests; a caller's fault record survives this handler
+    FaultScope fault_scope("pre_validate_war", response_out);   // (audit 3(iii)): nests; a caller's fault record survives this handler
     int target_id_raw = json_get_int(params_json, "target_id");
 
     // Resolve actor — 0 means controlled character
@@ -4804,11 +4804,11 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
 
     // A5: Has valid CB — drive the deferred CB validity pipeline so we mirror
     // the engine's per-CB script `is_valid` trigger rather than vouching for
-    // triples that AI_CB_EVALUATE_ALL will reject (ck-l0re,
-    // failure_class=cb_validity_trigger_delta). Caller can opt out via
+    // triples that AI_CB_EVALUATE_ALL will reject
+    // (failure_class=cb_validity_trigger_delta). Caller can opt out via
     // skip_cb_validity_check=true (e.g. fast-path discovery scans).
     //
-    // ck-5qpg: default routing is now query_cb_validity_strict
+    // Default routing is now query_cb_validity_strict
     // (cb_query_strict_full_sync), which:
     //   - applies AI_CB_EVALUATE_ALL Stage 1 bilateral pre-filter (target
     //     IsRuler + IsAlive + actor!=target) on the IPC thread,
@@ -4839,11 +4839,11 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
             char cb_err[64] = {};
             int valid_cbs = -1;
             const char* mode_tag = strict_cb ? "strict" : "engine pipeline";
-            // ck-laf5: per_cb lifted to outer scope so the NO_VIABLE_PAIR
+            // Per_cb lifted to outer scope so the NO_VIABLE_PAIR
             // branch below can compute top-outer-reasons enrichment.
             std::vector<CBQueryResult> per_cb;
-            // ck-z44u: the g_cb_query slot is serviced on the game thread, where
-            // this read runs (L13): the strict check services it inline.
+            // The g_cb_query slot is serviced on the game thread, where
+            // this read runs: the strict check services it inline.
             auto cb_check = [&](std::string* /*out*/) {
                     if (strict_cb) {
                         CBStrictSummary sum{};
@@ -4861,7 +4861,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
                                                              cb_err, sizeof(cb_err));
                     }
             };
-            // L13: pre_validate_war is a game-thread read (and declare_war runs it
+            // Pre_validate_war is a game-thread read (and declare_war runs it
             // there); the CB check services its slot inline and the drain is
             // serial, so no single-flight lock is taken.
             cb_check(nullptr);
@@ -4881,7 +4881,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
                 emit("A5", "has_valid_cb", true, detail_buf);
             } else if (valid_cbs == 0) {
                 if (strict_cb) {
-                    // ck-laf5: NO_VIABLE_PAIR enrichment — surface the dominant
+                    // NO_VIABLE_PAIR enrichment — surface the dominant
                     // outer_reason (top-3) from the per-CB result vector so
                     // callers can distinguish "feudal actor dropped 34
                     // government_specific CBs" from "all dropped on liege
@@ -5132,7 +5132,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
     }
 
     // A11: Not imprisoned (actor)  — read-side honesty fix
-    // L7 fix: ck3::funcs::IS_IMPRISONED (0x0664adf0) is maybe_realm_predicate_inverted
+    // fix: ck3::funcs::IS_IMPRISONED (0x0664adf0) is maybe_realm_predicate_inverted
     // (independence predicate), NOT imprisonment. Use the AUTHORITATIVE pure-memory
     // signal instead (same read as do_query_character query_handlers.cpp:124-130 and
     // R4 above): actor core_data = *(actor+0x1A8); imprisoned == *(core_data+0x288)
@@ -5186,7 +5186,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
     //
     // ROOT CAUSE (doubly broken before): (1) it read target_ptr+0x1B8
     // (TITLE_REALM_DATA), not core_data (target_ptr+0x1A8); (2) it called
-    // ck3::funcs::IS_IMPRISONED (0x0664adf0), which the L7 note / re_imprisonment.md
+    // ck3::funcs::IS_IMPRISONED (0x0664adf0), which the note / re_imprisonment.md
     // document is maybe_realm_predicate_inverted (an INDEPENDENCE predicate, not an
     // imprisonment check); (3) it emitted pass=true in BOTH branches so R4 could
     // never fail. Net: an imprisoned target (Louis of Italy / Tortona) reported
@@ -5298,14 +5298,14 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
 }
 
 // =============================================================================
-// WAR_CREATE_CORE direct invocation (ck-eyfb)
+// WAR_CREATE_CORE direct invocation
 // =============================================================================
 // Bypasses CStartWarEffect (no scope-evaluator construction) and the
 // declare_war_interaction pipeline (no AI gate). Mirrors the 22-line
 // WAR_DECLARE_SPECIAL_HANDLER (FUN_065db970): builds a minimal CB-params
 // struct + direct call to WAR_CREATE_CORE on the game thread.
 //
-// Designed for the LLM-as-player claim-war scenario (A.6 / ck-1qzw): caller
+// Designed for the LLM-as-player claim-war scenario (A.6 /): caller
 // supplies a pre-validated (attacker, target, claim CB, claimed title,
 // claimant) tuple. Validity gates are the caller's responsibility — the
 // engine still runs Block-J vtable[2] but typically passes for hand-curated
@@ -5330,7 +5330,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
     if (target_raw <= 0) target_raw = json_get_int(params_json, "target_character_id");
     const char* cb_name = json_get_string(params_json, "casus_belli");
     if (!cb_name || !cb_name[0]) cb_name = json_get_string(params_json, "cb_name");
-    // ck-yh5d.3: declare_war's force_player_path passes the original
+    // Declare_war's force_player_path passes the original
     // params_json through verbatim, and declare_war's caller-facing
     // convention is "cb_title_id" (see do_declare_war:644). Earlier
     // versions only accepted "title_id"/"target_title_id", silently
@@ -5341,7 +5341,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
     if (title_raw <= 0) title_raw = json_get_int(params_json, "target_title_id");
     int claimant_raw = json_get_int(params_json, "claimant_id");
 
-    // ck-yh5d.3: reflection logging of the parsed param dict before
+    // Reflection logging of the parsed param dict before
     // dispatch. Logs every key consumed by this handler so future
     // envelope renames or stripping steps are caught on the first
     // failing call instead of silently bottoming out as title=0.
@@ -5384,7 +5384,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
     // declare_war's force path runs this inline on the reader thread: a player
     // id that could not be read guarded nothing, so it refuses before the AI
     // RNG seed is advanced and before the enqueue (nothing done).
-    FaultScope fault_scope("call_war_create_core", response_out);   // L14 S4 (audit 3(iii)): nests; declare_war's force path calls it
+    FaultScope fault_scope("call_war_create_core", response_out);   // (audit 3(iii)): nests; declare_war's force path calls it
     if (reject_player_actor(actor_id, "call_war_create_core", response_out)) return false;
     if (safe_read_had_fault()) return answer_memory_access_fault(action_label, response_out);
     uint32_t target_id = static_cast<uint32_t>(target_raw) & 0xFFFFFF;
@@ -5428,7 +5428,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
     // and its intent_not_completed_within_5s reply are live: declare_war is a
     // Tier-1 handler (snapshot.cpp is_bridge_internal_query, the IPC reader
     // thread) and its force_player_path forwards here (do_declare_war), off the
-    // game thread (L14 FB2: witness N-9 read call_war_create_core's own
+    // game thread (FB2: read call_war_create_core's own
     // classification only).
     for (int poll = 0; poll < 100 && !bridge::on_game_thread(); poll++) {  // 100 * 50ms = 5 seconds
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -5461,7 +5461,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
         if (title_id > 0)    { r.key("title_id"); r.value_int(title_id); }
         if (claimant_id != 0){ r.key("claimant_id"); r.value_uint(claimant_id); }
         r.key("intent_request_id"); r.value_string(request_id.c_str());
-        // ck-jsis0: canonical dispatch identifier alias.
+        // Canonical dispatch identifier alias.
         r.key("dispatch_id"); r.value_string(request_id.c_str());
         if (found_result) {
             if (!output_str.empty()) {
@@ -5476,7 +5476,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
                 r.key("status"); r.value_string("war_created");
             }
         } else if (bridge::on_game_thread()) {
-            // L14 S4 (audit 3(i)): on the game thread the poll is skipped (the
+            // (audit 3(i)): on the game thread the poll is skipped (the
             // drain runs the intent after this handler returns), so no wait
             // happened: say that, and when the verdict comes.
             r.key("status"); r.value_string("queued");
@@ -5501,14 +5501,14 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
 // resolved from query(domain="conquest_targets")). This handler resolves the key→id,
 // validates the actor and queues a CREATE_TITLE intent; it runs only on the game
 // thread (a game-thread action, snapshot.cpp), so it answers "queued" at once and
-// the drain runs the intent on the next pass (L14 FB m-5: the poll for the
+// the drain runs the intent on the next pass (the poll for the
 // result and its not_confirmed_within_12s reply, reachable only off the game
 // thread, are deleted; no IPC-thread route reaches this handler). The command build, the engine's IsValid, the price and the synchronous
 // Execute run on the game thread in execute_create_title_intent (the engine applies
 // the cost and creates the title). A ruler short of the price is refused
 // "create_title_cannot_afford" with `price` {currency, cost, have}; any other engine
 // refusal (de-jure control, extant) is "create_title_refused_by_engine_gate".
-// L14 S3: the old claim here ("can't afford is refused by the engine gate") was false
+// The old claim here ("can't afford is refused by the engine gate") was false
 // in practice — the bridge read the gate's bool refusal as a pass (engine_bool.h), and
 // rulers minted titles into debt (Murchad, k_ireland, 17.85 gold -> -302.21).
 //
@@ -5539,7 +5539,7 @@ uint32_t resolve_title_id_by_key(const char* key) {
 }
 
 bool do_create_title(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("create_title", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("create_title", response_out);   // A fault after the commit marks the reply degraded
     int actor_raw = json_get_int(params_json, "actor_id");
     if (actor_raw <= 0) actor_raw = json_get_int(params_json, "character_id");
 
@@ -5578,7 +5578,7 @@ bool do_create_title(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("create_title", response_out);
     uint64_t current_tick = g_tick_id.load(std::memory_order_relaxed);
     char req_id_buf[64];
@@ -5607,7 +5607,7 @@ bool do_create_title(const char* params_json, std::string* response_out) {
         if (!resolved_from.empty()) { r.key("title_key"); r.value_string(resolved_from.c_str()); }
         r.key("intent_request_id"); r.value_string(request_id.c_str());
         r.key("dispatch_id"); r.value_string(request_id.c_str());
-        // L14 S4 (audit 3(i)): no poll runs on the game thread; the drain runs
+        // (audit 3(i)): no poll runs on the game thread; the drain runs
         // the intent on the next pass. The verdict and the price are the
         // completed intent's (query_intents / the server's settle).
         r.key("status"); r.value_string("queued");
@@ -5621,7 +5621,7 @@ bool do_create_title(const char* params_json, std::string* response_out) {
 }
 
 // =============================================================================
-// L14 S3 — query_create_title_cost: the engine's verdict and the price, no mint
+// Query_create_title_cost: the engine's verdict and the price, no mint
 // =============================================================================
 // What the "Create Title" button would show: the engine's IsValid with its reasons
 // (the tooltip text, std::string *why as CAddLawCommand's IsValid takes it) and the
@@ -5630,7 +5630,7 @@ bool do_create_title(const char* params_json, std::string* response_out) {
 // is_game_thread_read): IsValid runs scripted triggers under the fake random scope.
 // The #131 de-jure-majority bar is the bridge's own, read by query_dejure_progress.
 bool do_query_create_title_cost(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("query_create_title_cost", response_out);   // L14 (G): a game-thread read; a fault marks the reply degraded
+    FaultScope fault_scope("query_create_title_cost", response_out);   // A game-thread read; a fault marks the reply degraded
     extern thread_local sigjmp_buf g_recovery_point;
     extern thread_local bool g_in_protected_region;
     static const char* kAction = "query_create_title_cost";
@@ -5737,7 +5737,7 @@ bool do_query_create_title_cost(const char* params_json, std::string* response_o
 
 
 // =============================================================================
-// enter_observe_mode (ck-dq7ym.8): programmatic entry into observer mode.
+// enter_observe_mode: programmatic entry into observer mode.
 //
 // Premise: the GUI button at multiplayer_lobby.gui:1081-1165 (the one the
 // uinput fallback clicks at 540,1060) fires two onclick handlers in order:
@@ -5780,7 +5780,7 @@ bool do_enter_observe_mode(const char* /*params_json*/, std::string* response_ou
     // Best-effort unpause: even without driving CloseGameView/ToggleObserve
     // directly, prodding the engine out of pause exercises the
     // GameCommandDispatch queue drain. For pinned-bookmark saves (per
-    // ck-cxsk observation) this alone has been enough on occasion; for
+    // observation) this alone has been enough on occasion; for
     // others, the click is still required and ck3ctl will fall back.
     bool unpaused = false;
     if (captured) {
@@ -5804,7 +5804,7 @@ bool do_enter_observe_mode(const char* /*params_json*/, std::string* response_ou
         // is itself a useful state signal for the caller.
         r.key("success");             r.value_bool(captured);
         r.key("singleton_captured");  r.value_bool(captured);
-#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // A process VA defeats ASLR; debug builds only
         if (captured) {
             char hex[32];
             snprintf(hex, sizeof(hex), "0x%lx", reinterpret_cast<uintptr_t>(lobby));
@@ -5899,7 +5899,7 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
     };
 
     // lane-scheme 2026-10-18 refused a PAUSED call up front with game_paused,
-    // because the intent then drained only on a sim tick. L13 D1: the drain runs
+    // because the intent then drained only on a sim tick.: the drain runs
     // every session pass, paused or running, so the intent drains within a pass
     // and the bounded wait below sees its verdict.
 
@@ -5923,7 +5923,7 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
         }
         // Retire, not erase (see IntentQueue::retire_pending_by_request_id). A
         // retired intent was unclaimed, so it never runs. If the retire finds
-        // nothing, the drain had claimed it (L13 FF3): its verdict is the drain's,
+        // nothing, the drain had claimed it: its verdict is the drain's,
         // read once more.
         if (g_intent_queue.retire_pending_by_request_id(
                 rid, "intent_timeout_cancelled_not_executed"))
@@ -6117,7 +6117,7 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
 // params: actor_id, title_id (the target COUNTY title). (re_heavy_re_synthesis.md.)
 // =============================================================================
 bool do_move_capital(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("move_capital", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("move_capital", response_out);   // A fault after the commit marks the reply degraded
     extern thread_local sigjmp_buf g_recovery_point;
     extern thread_local bool g_in_protected_region;
 
@@ -6138,7 +6138,7 @@ bool do_move_capital(const char* params_json, std::string* response_out) {
     uint32_t actor_id = static_cast<uint32_t>(actor_raw) & 0xFFFFFF;
     if (reject_player_actor(actor_id, "move_capital", response_out)) return false;
     void* actor = lookup_character(actor_id);
-    // L14 (G-char): a miss resolves to the database SENTINEL, not null.
+    // A miss resolves to the database SENTINEL, not null.
     if (const char* why = actor_refusal(actor)) { short_error(why); return false; }
 
     uintptr_t county_addr = lookup_title_obj(static_cast<uint32_t>(title_raw) & 0xFFFFFF);
@@ -6152,9 +6152,9 @@ bool do_move_capital(const char* params_json, std::string* response_out) {
 
     bool valid = false, relocated = false;
     uint64_t saved_rng = 0;
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("move_capital", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6206,7 +6206,7 @@ bool do_move_capital(const char* params_json, std::string* response_out) {
 // params: actor_id (liege), vassal_id, obligation (type key), level (0..N).
 // =============================================================================
 bool do_set_obligation_level(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("set_obligation_level", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("set_obligation_level", response_out);   // A fault after the commit marks the reply degraded
     int actor_raw  = json_get_int(params_json, "actor_id");
     int vassal_raw = json_get_int(params_json, "vassal_id");
     const char* obligation = json_get_string(params_json, "obligation");
@@ -6231,16 +6231,16 @@ bool do_set_obligation_level(const char* params_json, std::string* response_out)
     uint32_t vassal_id = static_cast<uint32_t>(vassal_raw) & 0xFFFFFF;
 
     void* actor = lookup_character(actor_id);
-    // L14 (G-char): a miss resolves to the database SENTINEL, not null.
+    // A miss resolves to the database SENTINEL, not null.
     if (const char* why = actor_refusal(actor)) { short_error(why); return false; }
     uintptr_t tr = resolve_title_realm(reinterpret_cast<uintptr_t>(actor));
     if (!tr || !is_mapped(tr)) { short_error("actor_no_realm"); return false; }
 
     // The liege's contract with this vassal (vassal_roster.h: the contract refs in
     // the liege's title_realm, looked up in VASSAL_CONTRACT_DB by their REF_KEY, the
-    // subject a CCharacter* at subject_contract::SUBJECT). Until lane l6 this walk
+    // subject a CCharacter* at subject_contract::SUBJECT). Until this walk
     // looked the refs up keyed at +0x10 and compared SUBJECT's pointer as an id: it
-    // found no contract (witness #2).
+    // found no contract.
     uintptr_t contract = vassal_contract_with(tr, actor_id, vassal_id);
     if (!contract) { short_error("no_contract_with_that_vassal"); return false; }
 
@@ -6267,8 +6267,8 @@ bool do_set_obligation_level(const char* params_json, std::string* response_out)
     // Direct guarded uint8 write — the obligation-level byte.
     uintptr_t level_addr = hit->level_addr;
     if (!is_mapped(level_addr)) { short_error("level_addr_unmapped"); return false; }
-    uint8_t old_level = safe_read<uint8_t>(level_addr);   // L14 (G-raw)
-    // L14 (G-commit): a read that faulted decides before the byte is compared or written.
+    uint8_t old_level = safe_read<uint8_t>(level_addr);   // (G-raw)
+    // A read that faulted decides before the byte is compared or written.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_obligation_level", response_out);
 
     // LEGITIMACY GATE (re_write_action_legitimacy_audit.md §3.3): this is a raw byte
@@ -6313,7 +6313,7 @@ bool do_set_obligation_level(const char* params_json, std::string* response_out)
 }
 
 // =============================================================================
-// do_appoint_councillor — seat a character in a council position (L29 fix; the
+// do_appoint_councillor — seat a character in a council position (fix; the
 // vacant-chaplain-seat blocker for fabrication). SYNCHRONOUS, clones the
 // do_set_council_task council walk + crash-net, then calls the assign-councillor
 // effect Execute. Safe at MEDIUM Execute-confidence: a bad call is caught by the
@@ -6323,12 +6323,12 @@ bool do_set_obligation_level(const char* params_json, std::string* response_out)
 //
 // A VACANT seat is refused (vacant_seat_fill_unsupported): the only fill path
 // (COUNCIL_SEAT_ASSIGN with the candidate's full handle, #79) was never
-// confirmed live and was deleted with its arming verb in cleanup 2026.11 (D4);
+// confirmed live and was deleted with its arming verb in (D4);
 // re/findings/re_council_vacant_fill_status.md keeps the RE record.
 // =============================================================================
 
 bool do_appoint_councillor(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("appoint_councillor", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("appoint_councillor", response_out);   // A fault after the commit marks the reply degraded
     extern thread_local sigjmp_buf g_recovery_point;
     extern thread_local bool g_in_protected_region;
 
@@ -6355,7 +6355,7 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
     uint32_t position_id = static_cast<uint32_t>(pos_raw) & 0xFFFFFF;
     uint32_t character_id = static_cast<uint32_t>(char_raw) & 0xFFFFFF;
     void* actor = lookup_character(actor_id);
-    // L14 (G-char): a miss resolves to the database SENTINEL, not null.
+    // A miss resolves to the database SENTINEL, not null.
     if (const char* why = actor_refusal(actor)) { short_error(why); return false; }
 
     // Resolve the position-instance object (same chase as do_set_council_task),
@@ -6410,9 +6410,9 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
     auto swap_leaf = reinterpret_cast<void(*)(void*, void*, uint32_t, uint32_t)>(
         bridge::game_fn(ck3::funcs::SWAP_COUNCIL_RAW_LEAF));
 
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("appoint_councillor", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6420,7 +6420,7 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = bridge::scope_latched_refusal_json("appoint_councillor");
         return false;
     }
-    // L14 (S4, audit 3(ii)): armed before the guard, so the crash branch below
+    // (S4, audit 3(ii)): armed before the guard, so the crash branch below
     // (siglongjmp does not unwind) restores the scope in the frame that armed it.
     uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
     watchdog_arm(4);
@@ -6489,7 +6489,7 @@ static uintptr_t resolve_maa_type_obj(const std::string& want) {
 // params: actor_id (AI ruler), maa_type (type key, e.g. "huscarl").
 // =============================================================================
 bool do_maa_recruit(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("maa_recruit", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("maa_recruit", response_out);   // A fault after the commit marks the reply degraded
     const char* mt = json_get_string(params_json, "maa_type");
     if (!mt || !mt[0]) {
         if (response_out) *response_out = R"({"success":false,"action":"maa_recruit","reason":"maa_type_required"})";
@@ -6569,9 +6569,9 @@ bool do_maa_recruit(const char* params_json, std::string* response_out) {
 
     uint8_t cmd[0x40]; memset(cmd, 0, sizeof(cmd));   // struct >=0x38; 0x40 buffer is safe
 
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("maa_recruit", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6579,7 +6579,7 @@ bool do_maa_recruit(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = bridge::scope_latched_refusal_json("maa_recruit");
         return false;
     }
-    // L14 (S4, audit 3(ii)): armed before the guard, so the crash branch below
+    // (S4, audit 3(ii)): armed before the guard, so the crash branch below
     // (siglongjmp does not unwind) restores the scope in the frame that armed it.
     uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
     watchdog_arm(4);
@@ -6657,7 +6657,7 @@ static bool actor_owns_regiment(void* actor, uint32_t full_ref) {
 static bool maa_origin_dispatch(const char* params_json, std::string* response_out,
                                 bool station) {
     const char* action_label = station ? "maa_station" : "maa_unstation";
-    FaultScope fault_scope(action_label, response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope(action_label, response_out);   // A fault after the commit marks the reply degraded
 
     void* actor = resolve_actor(params_json);
     if (reject_player_actor(actor, action_label, response_out)) return false;
@@ -6732,9 +6732,9 @@ static bool maa_origin_dispatch(const char* params_json, std::string* response_o
     *reinterpret_cast<uint32_t*>(cmd + 0x20) = regiment_id;
     if (station) *reinterpret_cast<uint32_t*>(cmd + 0x24) = location_id;
 
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault(action_label, response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6742,7 +6742,7 @@ static bool maa_origin_dispatch(const char* params_json, std::string* response_o
         if (response_out) *response_out = bridge::scope_latched_refusal_json(station ? "maa_station" : "maa_unstation");
         return false;
     }
-    // L14 (S4, audit 3(ii)): armed before the guard, so the crash branch below
+    // (S4, audit 3(ii)): armed before the guard, so the crash branch below
     // (siglongjmp does not unwind) restores the scope in the frame that armed it.
     uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
     watchdog_arm(4);
@@ -6812,7 +6812,7 @@ bool do_maa_unstation(const char* params_json, std::string* response_out) {
 // params: actor_id (AI ruler), company_id, optional contract_len (default 1).
 // =============================================================================
 bool do_hire_mercenary(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("hire_mercenary", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("hire_mercenary", response_out);   // A fault after the commit marks the reply degraded
     void* actor = resolve_actor(params_json);
     if (reject_player_actor(actor, "hire_mercenary", response_out)) return false;
     if (const char* why = actor_refusal(actor)) {
@@ -6853,9 +6853,9 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
     uint8_t cmd[0x40]; memset(cmd, 0, sizeof(cmd));   // struct is 0x30; 0x40 buffer is safe
     uint8_t can = 0;
 
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("hire_mercenary", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6863,7 +6863,7 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = bridge::scope_latched_refusal_json("hire_mercenary");
         return false;
     }
-    // L14 (S4, audit 3(ii)): armed before the guard, so the crash branch below
+    // (S4, audit 3(ii)): armed before the guard, so the crash branch below
     // (siglongjmp does not unwind) restores the scope in the frame that armed it.
     uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
     watchdog_arm(4);
@@ -6917,7 +6917,7 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
 
 // faith_lookup (dispatch_router.cpp, action_dispatch_internal.h): THE faith
 // lookup, FAITH_DB keyed at faith::FAITH_ID (+0x08). (#faith RE FIX 2026-06-19;
-// one definition since L14 FB.)
+// one definition since then FB.)
 
 // ===========================================================================
 // do_set_doctrine — swap one doctrine/tenet on the actor's CURRENT faith.
@@ -6928,7 +6928,7 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
 // (Ported from worktree-agent-a229c89ab82637c48; re_faith_reform_doctrine.md.)
 // ===========================================================================
 bool do_set_doctrine(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("set_doctrine", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("set_doctrine", response_out);   // A fault after the commit marks the reply degraded
     const char* doctrine_name = json_get_string(params_json, "doctrine");
     if (!doctrine_name || !doctrine_name[0]) {
         if (response_out) *response_out = R"({"success":false,"action":"set_doctrine","reason":"missing_doctrine"})";
@@ -6992,9 +6992,9 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
     cmd_data.args = args; cmd_data.arg_count = 2;
     cc::Result result;
 
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_doctrine", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -7039,7 +7039,7 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
 }
 
 // ===========================================================================
-// THE SCRIPT ACTION LAYER (lane v4act; re/findings/re_console_effect.md).
+// THE SCRIPT ACTION LAYER (re/findings/re_console_effect.md).
 //
 // do_script_action carries a write out as one of the game's own script effects,
 // run through the engine's `effect` console handler (CMD_EFFECT) natively, with
@@ -7085,7 +7085,7 @@ std::map<uint32_t, std::map<std::string, bool>> g_policy_ledger;
 std::atomic<bool> g_policy_mod_seen{false};
 
 // The game's own log files, found by what the game holds open, and read
-// through the os layer (os/game_logs.h, lane WINRE): on Linux the v4act
+// through the os layer (os/game_logs.h): on Linux the
 // /proc/self/fd walk, moved there unchanged; on Windows the process's own file
 // handles, read shared.
 using GameLogs = bridge::os::GameLogs;
@@ -7135,7 +7135,7 @@ void emit_errors(ResponseBuilder& r, const std::vector<std::string>& errs) {
     r.end_array();
 }
 
-// lane QMOD: what a proposal template wrote between its <token>_BEGIN and
+// What a proposal template wrote between its <token>_BEGIN and
 // <token>_END. proposal_list: proposals[] and list_complete (false is a
 // refusal upstream, never an empty list); proposal_answer: outcome and
 // outcome_reason (outcome null until the window is complete).
@@ -7288,7 +7288,7 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         s.policy = p;
         break;
     }
-    // lane QMOD: the incoming-proposal queue. Every argument is checked against
+    // The incoming-proposal queue. Every argument is checked against
     // script_templates.h's tables; the refusal codes are the header's (one
     // place), sent as they come back from compose or the checks below.
     case st::Template::kProposalSeat: {
@@ -7494,7 +7494,7 @@ bool do_query_script_log(const char* params_json, std::string* response_out) {
     }
     bool lines_flag = false;
     if (json_get_bool_strict(params_json, "proposal_lines", &lines_flag) && lines_flag) {
-        // lane QMOD: the proposal queue's HELD / RESOLVED / VOID lines written
+        // The proposal queue's HELD / RESOLVED / VOID lines written
         // since debug_log_offset (a pure read). next_offset is where the next
         // read starts; a debug.log shorter than the offset (a new game) reads
         // from 0 and says so (log_restarted).
@@ -7589,7 +7589,7 @@ bool do_query_script_log(const char* params_json, std::string* response_out) {
     for (const auto& w : marks) r.value_string(w.c_str(), w.size());
     r.end_array();
     emit_errors(r, errs);
-    // lane QMOD: a proposal template's window, read late (the logger had not
+    // A proposal template's window, read late (the logger had not
     // written it when do_script_action answered): both readings, the caller
     // takes the one of the template it sent.
     const st::ProposalWindow pw = st::proposal_window(dbg_text, token);
@@ -7658,7 +7658,7 @@ static uint32_t faith_lookup_by_key(const std::string& key) {
 // classified safe-action so it runs UNPAUSED (drained on_tick).
 // ===========================================================================
 bool do_set_character_faith(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("set_character_faith", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("set_character_faith", response_out);   // A fault after the commit marks the reply degraded
     void* actor = resolve_actor(params_json);
     if (reject_player_actor(actor, "set_character_faith", response_out)) return false;
     if (const char* why = actor_refusal(actor)) {
@@ -7741,9 +7741,9 @@ bool do_set_character_faith(const char* params_json, std::string* response_out) 
     auto set_faith = reinterpret_cast<void(*)(void*, unsigned int, char, char)>(
         bridge::game_fn(ck3::funcs::SET_FAITH));
     uint64_t saved_rng = 0;
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_character_faith", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -7877,7 +7877,7 @@ static uintptr_t culture_lookup_by_key(const std::string& key) {
 // RandomScopeManager+0x20 is null.
 // ===========================================================================
 bool do_set_character_culture(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("set_character_culture", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("set_character_culture", response_out);   // A fault after the commit marks the reply degraded
     void* actor = resolve_actor(params_json);
     if (reject_player_actor(actor, "set_character_culture", response_out)) return false;
     if (const char* why = actor_refusal(actor)) {
@@ -7953,9 +7953,9 @@ bool do_set_character_culture(const char* params_json, std::string* response_out
     auto set_culture = reinterpret_cast<void(*)(void*, void*, char)>(
         bridge::game_fn(ck3::funcs::SET_CULTURE));
     uint64_t saved_rng = 0;
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_character_culture", response_out);
-    // ck-zgh4 scope latch: a restore was refused earlier in this
+    // scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -8005,8 +8005,8 @@ bool do_set_character_culture(const char* params_json, std::string* response_out
 }
 
 // ===========================================================================
-// do_set_title_law — the title-law window's own command (lane l4,
-// re/findings/re_interactions.md §5). Builds a CAddTitleLawCommand(title, actor, law),
+// do_set_title_law — the title-law window's own command
+// (re/findings/re_interactions.md §5). Builds a CAddTitleLawCommand(title, actor, law),
 // asks the engine's IsValid (vt[7]) — the same check, with the same refusal text, the
 // window shows — and on a yes clones it (vt[9]) and hands the clone to the command
 // queue, which runs IsValid again and Execute (the law is added to the title) on its
@@ -8015,7 +8015,7 @@ bool do_set_character_culture(const char* params_json, std::string* response_out
 // the title's laws are read back with query_title_succession(title_id).title_laws.
 // ===========================================================================
 bool do_set_title_law(const char* params_json, std::string* response_out) {
-    FaultScope fault_scope("set_title_law", response_out);   // L14 (G): a fault after the commit marks the reply degraded
+    FaultScope fault_scope("set_title_law", response_out);   // A fault after the commit marks the reply degraded
     auto refuse = [&](const char* reason, const char* detail) {
         if (response_out) {
             ResponseBuilder r; r.begin_object();
@@ -8062,7 +8062,7 @@ bool do_set_title_law(const char* params_json, std::string* response_out) {
     const uintptr_t type_ptr = safe_read<uintptr_t>(tobj + ck3::title_obj::TITLE_TYPE_PTR);
     if (type_ptr && is_mapped(type_ptr)) title_key = ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY);
 
-    // L14 (G-commit): a read that faulted decides before the engine is touched.
+    // A read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_title_law", response_out);
     if (bridge::scope_latched()) {
         bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
@@ -8103,7 +8103,7 @@ bool do_set_title_law(const char* params_json, std::string* response_out) {
                 dispatch(reinterpret_cast<void*>(g_base_addr + ck3::globals::COMMAND_DISPATCH_MGR),
                          &clone, 0xe, 0);
                 if (clone) {   // the queue did not take it
-                    engine_virtual_dtor(clone);   // L14 (G-raw)
+                    engine_virtual_dtor(clone);   // (G-raw)
                     clone = nullptr;
                 } else {
                     queued = true;
@@ -8121,7 +8121,7 @@ bool do_set_title_law(const char* params_json, std::string* response_out) {
           full_tid & 0xFFFFFF, title_key.c_str(), law.c_str(), full_aid & 0xFFFFFF,
           valid ? 1 : 0, queued ? 1 : 0, crashed ? 1 : 0, why.c_str());
 
-    // L13 FF2 (witness m-15): the engine's verdict on the command, as an intent
+    // The engine's verdict on the command, as an intent
     // in the completed ring under its own id, in the shape every other intent
     // answers (intent_request_id + dispatch_id; query_dispatch_result reads it).
     // Like create_title, "executed" means the engine's IsValid passed and its

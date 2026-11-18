@@ -2,7 +2,7 @@
 
 Each connection is its own session. A release from any session but the owner
 gets `not_owned_by_session`, and a control session may not release its LAST
-claim (`last_claim_of_control_session`, ck-cwal): both as
+claim (`last_claim_of_control_session`): both as
 bridge/src/dispatch_router.cpp `do_release_character` replies. A closed session
 is destroyed with its token and its claims, as the real bridge does in free play
 (ipc_server.cpp `release_slot_locked`, "FREE PLAY IS NOT AN EPISODE"); with

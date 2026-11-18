@@ -1,4 +1,4 @@
-"""Lane l5 (F8): war completion from the player's seat.
+"""War completion from the player's seat.
 
 Driven through the real redesign/tools functions with a scripted gateway, so a
 row reds on what the function SENDS and RETURNS. Where the contract is with the
@@ -83,7 +83,7 @@ class WarGateway:
 
     async def write(self, action, params=None):
         self.writes.append((action, dict(params or {})))
-        # Lane v4act: this write goes through the script layer first; these rows
+        # This write goes through the script layer first; these rows
         # grade the path it falls back to (a character with no title to name him by).
         if action == "script_action":
             return {"success": False, "action": "script_action", "reason": "target_not_script_addressable", "detail": "target_id"}
@@ -149,7 +149,7 @@ def test_make_peace_sends_the_terms_interaction_to_the_enemy_leader(terms, side,
 
 @pytest.mark.parametrize("terms", ["surrender", "white_peace", "enforce_demands"])
 def test_only_a_surrender_says_it_is_your_defeat(terms):
-    """L18-C: six budget-pilot seats surrendered believing it free (Eung-ryeom e2/s4
+    """Six budget-pilot seats surrendered believing it free (Eung-ryeom e2/s4
     0869.05.30, "surrendering costs me nothing"; the reply's before/after then read
     prestige 456.3 -> 306.3). The surrender reply says it is a defeat with a cost."""
     outcome = {"surrender": "defender_victory", "white_peace": "white_peace",
@@ -546,7 +546,7 @@ def test_bridge_cbs_view_names_the_invasion_family():
 
 
 def test_query_wars_places_a_siege_by_the_one_attribution_rule():
-    # witness #4 (blocker 2): a siege was listed under every war whose attackers
+    # A siege was listed under every war whose attackers
     # included the besieger, with that war's primary defender written in. The rule
     # is siege_attribution.h (host test bridge/test/test_siege_attribution.cpp).
     src = _src("src", "query_handlers.cpp")
@@ -587,7 +587,7 @@ def _fn_body(src, signature):
 
 
 def test_cbs_bridge_query_is_a_game_thread_read_that_services_its_own_slot():
-    """L13 FF1-B (witness W6): query_cbs_for_target(s) and query_cb_validity_strict
+    """-B: query_cbs_for_target(s) and query_cb_validity_strict
     read the pair before they submit, so they are game-state reads, run by the drain
     on the game thread, the one thread that services g_cb_query. The failure
     live867 l5-r1 recorded (queued to the game thread, a cbs poll waited on the slot
@@ -615,10 +615,10 @@ def test_cbs_bridge_query_is_a_game_thread_read_that_services_its_own_slot():
 
 def test_cb_slot_is_serviced_inline_from_the_game_thread_drain():
     """query_conquest_targets is a game-state read, run by the drain on the game
-    thread (the session thread since L13), the one thread that services the
+    thread (the session thread since), the one thread that services the
     g_cb_query slot; before that its engine checks waited out the timeout on
-    themselves (live867 l5-r3: engine_checks_done 2, no holder checked). Since L13
-    FF1-B every slot submit calls service_slots_if_game_thread(): on the drain
+    themselves (live867 l5-r3: engine_checks_done 2, no holder checked). Since
+   -B every slot submit calls service_slots_if_game_thread: on the drain
     thread it runs the slot processing (service_query_slots, process_cb_query among
     it) under the caller's saved fault recovery point. The predicate is the drain
     thread's own identity, not a flag a caller sets around the dispatch."""
@@ -697,7 +697,7 @@ def _unresolved_county(**extra):
 
 
 def test_plan_war_an_unresolved_top_liege_is_no_target():
-    """L15 A3. The bridge writes holder_top_liege_unresolved and no
+    """The bridge writes holder_top_liege_unresolved and no
     holder_top_liege_id when the holder's liege walk cannot finish
     (query_handlers.cpp do_query_conquest_targets, liege_walk.h). RED on
     55a66b0c: plan_war fell back to holder_id and probed the vassal 777 as the
@@ -824,7 +824,7 @@ def test_plan_war_never_offers_a_claim_war_the_strict_row_calls_undeclarable():
     assert "claim_cb" not in cbs, env["result"]
 
 
-# ── muster is gone (owner ruling 2026-10-21) ──────────────────────────────────
+# ── muster is gone ──────────────────────────────────
 
 def test_muster_and_the_raise_actions_are_gone():
     # The raise primitive raised nothing live (re_raise_armies.md, "Refuted"); the
@@ -840,7 +840,7 @@ def test_muster_and_the_raise_actions_are_gone():
 
 
 def test_every_name_the_signature_generator_lists_is_an_offset_header_name():
-    # witness #4 (blocker 5): AutoGenerateSignatures' built-in table still named
+    # AutoGenerateSignatures' built-in table still named
     # ARMY_RAISE_ALL and ARMY_RAISE_ALL_WRAPPER after the header deleted them, and
     # INTERACTION_COMPUTE_ACCEPT, a name the header never had (its 0x06b441c0 is
     # FUN_06b441c0, the header's GET_AI_WILL_DO_SCORE).
@@ -857,7 +857,7 @@ def test_every_name_the_signature_generator_lists_is_an_offset_header_name():
     assert len(names) == len(set(names)), "a name is listed twice"
 
 
-# ── force_offensive_stance is gone (owner ruling 2026-10-22) ──────────────────
+# ── force_offensive_stance is gone ──────────────────
 
 def test_force_offensive_stance_is_gone_end_to_end():
     # The engine's own coordinator already held attacker_offensive when it ran
@@ -912,8 +912,8 @@ def test_every_phase_genome_is_distinct_so_the_read_can_name_it():
 
 
 def test_the_phase_is_named_from_engine_axes_only():
-    # witness #4 (minor 7): the lock map (the write's own record) does not
-    # decide the name; the bridge's lock-only dominance is in no genome (L14).
+    # The lock map (the write's own record) does not
+    # decide the name; the bridge's lock-only dominance is in no genome.
     g = R.PHASE_GENOME["expansion"]
     assert "dominance" not in {k for gen in R.PHASE_GENOME.values() for k in gen}
     pers = _pers(g)
@@ -955,7 +955,7 @@ def test_game_thread_handlers_do_not_wait_for_their_own_intent():
         polled.append(action)
         loops = re.findall(r"for \(int poll = 0;[^)]*\)", body)
         assert loops and all("on_game_thread()" in l for l in loops), (action, loops)
-    # create_title no longer polls at all (L14 FB m-5: nothing reaches it off
+    # create_title no longer polls at all (nothing reaches it off
     # the game thread, so its poll and its 12 s reply were deleted).
     assert "call_war_create_core" in polled and "create_title" not in polled, polled
     assert "s_game_thread" in _src("src", "intent_dispatch.cpp")
@@ -1041,7 +1041,7 @@ def test_the_steered_war_reads_its_own_intent_not_the_client_request_id():
 
 
 def test_declare_war_pending_is_dos_spelling_and_asserts_no_reason_it_was_not_given():
-    """L14 FF1 m-4: declare_war's pending is ok:true, verdict pending, no blocked
+    """Declare_war's pending is ok:true, verdict pending, no blocked
     (do()'s spelling), and a reply that named no reason carries none (no
     "no_poll_on_game_thread" default)."""
     gw = WarGateway(replies={"query_wars": _active(),
@@ -1061,7 +1061,7 @@ def test_declare_war_pending_is_dos_spelling_and_asserts_no_reason_it_was_not_gi
     (0, {"stance": "defensive", "will_siege": False}, False),  # the engine's stance read
 ])
 def test_an_inferred_stalled_attack_says_no_lever_moves_it(occupation, native, expected):
-    """L18-A: the engine's offensive stance is a strength gate (1.333x, constants;
+    """The engine's offensive stance is a strength gate (1.333x, constants;
     personality does not enter), so a war row inferred `attacker_not_sieging` carries
     the typed `war_stalled_no_lever` limitation naming the one lever there is (allies).
     Only the inferred row: an engine_stance_db row is the engine's own word."""
@@ -1089,7 +1089,7 @@ def test_an_inferred_stalled_attack_says_no_lever_moves_it(occupation, native, e
 
 
 def test_a_stance_read_for_the_other_side_is_not_shown_as_this_sides():
-    """L22 (smoke19 A3): at 0868.01.09 Charles, war 13's primary attacker with
+    """At 0868.01.09 Charles, war 13's primary attacker with
     occupation 8, got `side attacker, stance defender_defensive` from
     inspect(war_stance): the bridge's row was the defender's coordinator record.
     A native row whose is_attacker disagrees with the war row is not used."""

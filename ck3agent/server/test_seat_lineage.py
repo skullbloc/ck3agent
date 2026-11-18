@@ -1,4 +1,4 @@
-"""v3 §7.5 (lane s0-seats): the seat is a LINEAGE — the MCP-side step.
+"""v3 §7.5: the seat is a LINEAGE — the MCP-side step.
 
 `decide` is pure over four reads; every branch is driven here without a
 bridge. `step` is driven through a fake gateway that answers the same verbs
@@ -191,7 +191,7 @@ def test_step_ends_the_seat_lost_when_the_title_has_no_holder(tmp_path):
 
 
 def test_step_never_raises_and_a_failed_step_is_no_verdict(tmp_path):
-    """2026.12.6 (owner ruling 2026-11-10): a step whose reads raise is retried
+    """2026.12.6: a step whose reads raise is retried
     at the next observe, never counted as an unbind. Red on c4884cc4: it wrote
     `seat_unbound step_failed:RuntimeError`."""
     class Boom(_GW):
@@ -264,7 +264,7 @@ def test_a_living_seat_writes_one_bound_row_at_its_first_step_and_nothing_while_
 
 
 def test_a_step_that_finds_no_ruler_writes_no_bound_row(tmp_path):
-    """No `bound` row without a ruler. Since 2026.12.6 (TK6 witness r2 item 3)
+    """No `bound` row without a ruler. Since 2026.12.6 (TK6)
     the step is a counted, non-terminal `not_bound_yet` note."""
     sink = tmp_path / "seat.jsonl"
     gw = _GW(_row(primary_character_id=0), alive=True, holder=None)
@@ -276,7 +276,7 @@ def test_a_step_that_finds_no_ruler_writes_no_bound_row(tmp_path):
 
 
 def test_a_resumed_seats_server_seeds_its_lineage_from_the_sink(monkeypatch, tmp_path):
-    """L23 witness r2 item 1: a cell's resumed claude starts a NEW server whose
+    """A cell's resumed claude starts a NEW server whose
     in-memory Prior was None, so it re-learned the seat from scratch (a second
     `bound` row, or the dead original). Its first observe now seeds the Prior
     from the sink: the rebind's ruler and title. Red on b6998ec5: prior None."""
@@ -330,7 +330,7 @@ def test_a_seeded_seat_holding_its_heir_writes_no_second_bound_row(tmp_path):
 
 
 def test_a_resumed_seat_holding_its_heir_writes_exactly_one_bound_row(monkeypatch, tmp_path):
-    """L23 witness r3 item 2, red by ASSERTION on a tree without the seeding:
+    """Red by ASSERTION on a tree without the seeding:
     the seat's sink already holds its `bound` row and the rebind to the heir;
     a resumed server's observe runs the REAL step on a bridge where the seat
     holds the living heir. Seeded from the sink it writes nothing; unseeded
@@ -465,7 +465,7 @@ FAILED = [None, {}, "x", {"reason": "bridge_disconnected"},
           {"error": "game_thread_timeout", "action": "query_character", "waited_ms": 2000,
            "hint": "The game-thread drain did not run this read in time. Nothing was read."},
           {"error": "memory_access_fault"},
-          # TK6 witness r1 P1a/P1b: the listener fails a read IN FLIGHT when the
+          # TK6 P1a/P1b: the listener fails a read IN FLIGHT when the
           # connection drops with {"error": "bridge_disconnected"} (mcp_server
           # _bridge_listener). Red on 10e9cea5 for the character and title reads.
           {"error": "bridge_disconnected"},
@@ -665,7 +665,7 @@ def test_a_recovered_row_resets_the_count_for_the_next_server(tmp_path):
 
 
 
-# ── TK6 witness r1 ──────────────────────────────────────────────────────────
+# ── TK6 ──────────────────────────────────────────────────────────
 
 def test_the_gateway_spells_its_failure_with_the_predicates_code():
     """One definition (item 1): the gateway's no-connection answer is built from
@@ -751,7 +751,7 @@ def test_after_a_recovery_the_bound_is_dated_at_the_first_miss_of_the_new_run(tm
 
 
 
-# ── TK6 witness r2 ──────────────────────────────────────────────────────────
+# ── TK6 ──────────────────────────────────────────────────────────
 
 class _Script(_GW):
     """Each step answers the next dict of `steps` ({action: reply}; missing
@@ -933,7 +933,7 @@ def test_a_run_mixing_not_bound_yet_and_a_failed_read_is_reads_failed_repeatedly
     assert rows[-1]["kind"] == "seat_unbound" and rows[-1]["reason"] == sl.R_READS_FAILED_REPEATEDLY
 
 
-# ── TK6 witness r3 ──────────────────────────────────────────────────────────
+# ── TK6 ──────────────────────────────────────────────────────────
 
 NO_RULER = {"get_bridge_state": {"sessions": [_row(primary_character_id=0)], "player_character_id": 0}}
 
@@ -996,7 +996,7 @@ def test_a_degraded_profile_whose_id_faulted_to_zero_is_a_failed_read(tmp_path):
     assert not prior.ended
 
 
-# ── INTEG item 2 (owner ruling 2026-11-11): K's seat follows the PLAYED LINE ──
+# ── INTEG item 2: K's seat follows the PLAYED LINE ──
 # K's seat reads the bridge's line watch (query_handlers.cpp emit_played_line:
 # start_character_id, line_character_id, previous_character_id,
 # carrying_title_id, primary_title_id, successions, why, status,
@@ -1021,7 +1021,7 @@ def _kprior():
 
 
 def test_K_dead_registered_title_unheld_follows_the_line_not_lost():
-    """The v3reg2 block-1 shape: K took e_hre, k_france went holderless; K dies
+    """The block-1 shape: K took e_hre, k_france went holderless; K dies
     and the line goes to e_hre's holder 12. The title rule read `lost`."""
     d = sl.decide(_kprior(), _row(), {"id": 5, "alive": False}, _title(None),
                   registered_title=K_FRANCE, watch_read=_watch(12, carrying=E_HRE, previous=5))
@@ -1191,7 +1191,7 @@ def test_K_step_a_failed_watch_read_is_no_verdict(tmp_path):
     assert prior.ruler == 5 and not prior.ended
 
 
-# ── owner ruling 2026-11-12 (v3reg2 s3 D1 moved onto the rival king Carloman):
+# ──
 # a succession never moves a seat outside its registered realm; the bridge
 # refuses and the seat records it `lost heir_outside_realm`. Keys from the
 # emitters: session.cpp sessions_json (unbound_reason, unbound_heir_id,

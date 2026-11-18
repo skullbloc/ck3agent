@@ -1,4 +1,4 @@
-// faction_war.h — a faction's war, as the game itself reads it (cleanup 2026.11, F16).
+// faction_war.h — a faction's war, as the game itself reads it (F16).
 //
 // The game's "faction is in war" check, CFactionPressDemandCommand::CanExecute
 // (CAN_FIRE_ULTIMATUM, Ghidra FUN_05f8ca90, the source of the press refusal

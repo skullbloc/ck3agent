@@ -1,6 +1,6 @@
-"""L13: no tool but session() changes the clock (contract D5/D6).
+"""No tool but session changes the clock (contract D5/D6).
 
-The owner's rule: every tool works whether the game is paused or running, and
+Every tool works whether the game is paused or running, and
 only session(action="pause"|"unpause"|"speed"|"wait") touches the clock, on the
 player's call. These rows drive a REAL mcp_server.BridgeGateway (and the agent
 loop's _AgentGateway) over a recording fake bridge that answers every call and
@@ -39,8 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 ms = pytest.importorskip("mcp_server")
 import redesign as R  # noqa: E402
 
-#: The bridge verbs that move the game clock. Only session() sends them (L13
-#: contract D5/D6); the rows below prove no other gateway path does.
+#: The bridge verbs that move the game clock. Only session sends them
+#: (contract D5/D6); the rows below prove no other gateway path does.
 CLOCK = {"pause_game", "unpause_game", "set_speed", "set_pause"}
 ME, FOE = 7, 9
 
@@ -96,7 +96,7 @@ def wired(monkeypatch):
         rec = Recorder(paused)
         state = ms.BridgeState()
         state.connected = True
-        # THE LIVE STATE: the bridge pushes no tick_start (witness W1), so the
+        # THE LIVE STATE: the bridge pushes no tick_start, so the
         # gateway's view of the clock can only come from get_tick_info.
         state.game_date = "867.1.2"
 

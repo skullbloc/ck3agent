@@ -1,4 +1,4 @@
-"""L20-B item 3 (smoke17 R2): every refusal code the bridge's write paths emit
+"""Every refusal code the bridge's write paths emit
 maps to a typed gate; none reaches a seat as unmapped_refusal.
 
 THE SMOKE. probe-paused.jsonl line 35 (R2.declare_synth):
@@ -97,7 +97,7 @@ def test_the_walker_finds_the_write_paths_codes():
     found, hits = census()
     assert len(found) >= FLOOR, len(found)
     assert all(hits.values()), hits
-    # the code smoke17 R2 carried is one the walker finds, at the strict read
+    # the code carried is one the walker finds, at the strict read
     assert found.get("engine_cb_validity_check_failed", "").startswith("query_handlers.cpp")
 
 

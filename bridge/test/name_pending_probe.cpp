@@ -304,7 +304,7 @@ void test_bad_pointer_is_silent() {
 
 }  // namespace
 
-// [6] L14 (surface-eval finding 7): a hook buffer row (query_scheme_inits,
+// [6] (surface-eval finding 7): a hook buffer row (query_scheme_inits,
 // query_war_declarations, query_council_tasks: query(event_log)) recorded ""
 // because the cache missed when the engine acted; the row reads the cache when
 // it is read. Runs after [2], so 13902 is cached.

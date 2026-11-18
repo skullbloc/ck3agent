@@ -1,4 +1,4 @@
-"""rc2 B6: nothing bound must not read as ok=true.
+"""Nothing bound must not read as ok=true.
 
 Before: with no ruler bound, query_character(character_id=0) failed, and
 _resolve_actor never checked. actor_echo's defaults (alive=True,
@@ -154,7 +154,7 @@ def test_control_without_an_id_is_refused_and_sends_nothing():
     assert gw.writes == [], "the unbind must not reach the bridge"
 
 
-# ── L14 finding 4: no phase arms the off-goal veto ─────────────────────────
+# ── finding 4: no phase arms the off-goal veto ─────────────────────────
 #
 # set_phase("expansion") armed the veto process-wide although every reply about
 # it says "unvalidated". Neither the pre-registration nor
@@ -187,7 +187,7 @@ def test_CONTROL_the_explicit_call_still_arms_it():
     ("set_experimental", {"flag": "off_goal_veto"}),
 ])
 def test_a_switch_without_enabled_is_refused_and_writes_nothing(action, kw):
-    """L14 finding 4: set_experimental without enabled ARMED the flag (enabled
+    """ finding 4: set_experimental without enabled ARMED the flag (enabled
     defaulted to true). Now the value is required."""
     redesign._FLAG_WRITES.clear()
     gw = Gw(BOUND)
@@ -328,12 +328,12 @@ def test_CONTROL_inspect_unknown_subject_is_unknown_not_unbound():
     assert out["blocked"]["gate"] == "unknown_subject"
 
 
-# ── round 4 + L14 finding 6: ONE unbound answer, from every actor tool ─────
+# ── round 4 + finding 6: ONE unbound answer, from every actor tool ─────
 #
 # One list, two readers: the blocking tools are checked against the code by
 # DRIVING each with nothing bound, and against each doc by reading the paragraph
 # that names them. A tool added to the MCP surface with a character_id must be
-# classified here, or the census reds. L14: query, discover and steer answered
+# classified here, or the census reds.: query, discover and steer answered
 # three other ways (unmapped_refusal; ok:true with a list; errors[]); now every
 # one answers _resolve_actor's refusal, the same block.
 
@@ -356,7 +356,7 @@ MCP_BLOCKS = {
     "steer": lambda ms: ms.steer(),
 }
 # character_id there names the ruler to control or release; whoami is driven above.
-# pass_turn (L18-B): character_id labels the decision-log row of the ruler who
+# pass_turn: character_id labels the decision-log row of the ruler who
 # passes; the tool reads and writes nothing in the game, so there is no ruler to bind.
 NOT_ACTOR_SCOPED = {"session", "pass_turn"}
 
@@ -446,7 +446,7 @@ def test_every_tool_answers_the_same_unbound_refusal(wired):
     lambda ms: ms.query(domain="characters", filter="ruler"),
     lambda ms: ms.query(domain="traits"),
     lambda ms: ms.discover(what="interactions"),
-    # L14 FF1 m-20: list_decisions ignores its params, like list_interactions, so it
+    # List_decisions ignores its params, like list_interactions, so it
     # is a catalog too (actor_doors), whatever character_id key the server sends.
     lambda ms: ms.discover(what="decisions"),
     lambda ms: ms.query(domain="council_tasks"),

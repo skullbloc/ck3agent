@@ -6,11 +6,11 @@
 
 #include "faction_war.h"
 #include "bridge.h"
-#include "engine_bool.h"     // L14 S3: a game function's bool is its AL
+#include "engine_bool.h"     // A game function's bool is its AL
 #include "ck3_offsets.h"
 #include "name_tables.h"
 #include "personality_locks.h"
-#include "actor_resolve.h"   // lane ACTOR: the one resolver of an unnamed actor
+#include "actor_resolve.h"   // The one resolver of an unnamed actor
 
 #include <cstdio>
 #include <cstring>
@@ -42,7 +42,7 @@ extern thread_local bool g_in_protected_region;
 // A war's target titles: the casus belli's title array, uint32 title refs
 // (war_obj::CB_TITLE_ARRAY, count CB_TITLE_COUNT). Writes up to `cap` ids
 // (24-bit) to `out`, returns how many. Every reader of a war's targets goes
-// through this. Until cleanup 2026.11 (lane l6, F10) four readers stepped the
+// through this. Until (F10) four readers stepped the
 // array by 8 bytes: the first id was right and every later one was the bytes
 // past it (Saffarid-Tahirid War in dump ck3_20260625_152901_ivar867 holds
 // 0x186b, 0x181d, and the second came back as whatever followed), so
@@ -73,10 +73,10 @@ extern fn_get_council_instance g_get_council_instance;
 
 // PersonalityLock, the lock tables and the world-reset (quarantine) half now
 // live in personality_locks.h — an engine-free header, so the reset path can be
-// compiled and asserted on a host with no CK3 (ck-hxh7 / ck-9fc3).
+// compiled and asserted on a host with no CK3.
 
 // save_personality_locks_locked() and the lock-file reader moved to
-// personality_persist.cpp and are declared in personality_locks.h (ck-9fc3).
+// personality_persist.cpp and are declared in personality_locks.h.
 // load_personality_locks() is GONE: it had no reachable caller, took no save
 // identity, and restoring a previous world's steering is exactly the P1.
 
@@ -130,7 +130,7 @@ public:
         char tmp[48]; format_fixed2(v, tmp, sizeof(tmp));
         buf_ += tmp; buf_ += ',';
     }
-    // ck-ijfa: a RATE needs more than two decimals. 0.076 game-days per
+    // A RATE needs more than two decimals. 0.076 game-days per
     // wall-second rounds to 0.08 at %.2f — a 5% error in the very conversion
     // factor the pre-registered thresholds are restated against, introduced by
     // the printer.
@@ -160,7 +160,7 @@ private:
 // that skipped an unreadable entry, a field it could not read): the reply says
 // so instead of passing a 0 off as a value. Call it inside the open reply
 // object when safe_read_had_fault() after the handler's own safe_read_clear().
-// The process VA (fault_addr) is a debug-build key: it defeats ASLR (rc2 B2).
+// The process VA (fault_addr) is a debug-build key: it defeats ASLR.
 inline void emit_degraded(ResponseBuilder& r, const char* action) {
     r.key("degraded");    r.value_bool(true);
     r.key("fault_count"); r.value_int(safe_read_fault_count());
@@ -195,7 +195,7 @@ inline void mark_reply_degraded(std::string& reply, int fault_count) {
 // safe_read_had_fault() and, when a read faulted, the reply the handler left in
 // *out says so (mark_reply_degraded) and the bridge log names the address
 // (log_degraded_read). It nests: it saves the fault record it found on
-// entry and adds it back on exit (L14 S4), so a handler that another handler
+// entry and adds it back on exit, so a handler that another handler
 // calls (query's routes, declare_war's pre-validation) reports its own faults in
 // its own reply and wipes nothing its caller recorded (a siglongjmp past it
 // skips the restore: that path answers memory_access_fault). A 0 that a
@@ -258,7 +258,7 @@ void* get_controlled_character();
 uint32_t get_player_character_id();
 void* resolve_character(const char* params_json);
 void* resolve_actor(const char* params_json);
-// lane ACTORKEY (actor_resolve.h rule 0): the OTHER actor key (actor_id <->
+// The OTHER actor key (actor_id <->
 // character_id) when the request names an actor (> 0) under it and none under
 // `read_key`, the key this handler reads; nullptr otherwise. Fed to
 // resolve_actor_id, whose pick_actor refuses a write with it.
@@ -309,7 +309,7 @@ uint32_t resolve_title_id_by_key(const char* key);
 // de-jure meter. Defined in intent_dispatch.cpp.
 void collect_dejure_counties(uint32_t title_id, std::vector<uint32_t>& out,
                              std::vector<uint32_t>& seen, int depth);
-// THE de-jure share (L14 FB m-2), intent_dispatch.cpp: the de-jure counties of
+// THE de-jure share, intent_dispatch.cpp: the de-jure counties of
 // a title and how many a character in `ruler`'s realm (the ruler or a vassal at
 // any depth: char_in_realm_of) holds. The create_title gate and the meter
 // (query_dejure_progress) both count through it.
@@ -334,8 +334,8 @@ std::string ad_read_std_string(uintptr_t str_addr);
 // The war's CB script name ("county_conquest_cb"): the CCasusBelli sub-object's
 // type ref (war_obj::CB_TYPE_REF, HIGH) names a CB db object whose NAME_KEY is
 // the key declare_war sends as casus_belli. "" when the ref is null or the name
-// unreadable (never a guessed name). THE one read of a war's CB type name (L15
-// witness n1): query_wars' two paths and get_active_wars (query_handlers.cpp),
+// unreadable (never a guessed name). THE one read of a war's CB type name
+// query_wars' two paths and get_active_wars (query_handlers.cpp),
 // the observation war list (observation.cpp), the declaration hook and the
 // war-history hook all call it. The string read is safe_read_game_string's
 // (EFAULT-safe, length-bounded), so a stale ref reads "" rather than faulting.
@@ -348,12 +348,12 @@ inline std::string war_cb_type_name(uintptr_t war_ptr) {
 uintptr_t ad_db_lookup(uintptr_t db_global, uint32_t id);
 uintptr_t ad_db_lookup_keyed(uintptr_t db_global, uint32_t id, size_t key_offset);
 
-// Lane l4 (re/findings/re_interactions.md, defined in ai_eval_hook.cpp): the name of a
+// The name of a
 // scope-name registry id, and an interaction's send-option flag names in script order.
 std::string scope_name_for_id(uint32_t id);
 std::vector<std::string> interaction_send_option_names(void* interaction);
 
-// Lane l4 (defined in query_handlers.cpp): the engine's matrilinear_marriage reading of
+// The engine's matrilinear_marriage reading of
 // two spouses (re_interactions.md §4) — true when the husband->wife relation carries the
 // matrilineal flag. Pure reads.
 bool marriage_is_matrilineal(uintptr_t char_a, uintptr_t char_b);
@@ -382,9 +382,9 @@ std::string ad_read_char_name(uintptr_t c);
 // carries a top-level `name` goes through this.
 void emit_char_name(ResponseBuilder& r, uintptr_t c);
 void emit_char_names(ResponseBuilder& r, uintptr_t c);
-std::string dynasty_name(uintptr_t dyn_obj);    // THE dynasty-name reader: NAME (+0x80); "" when absent (L14 S4, FB M-2)
+std::string dynasty_name(uintptr_t dyn_obj);    // THE dynasty-name reader: NAME (+0x80); "" when absent (FB M-2)
 std::string char_dynasty_name(uintptr_t c);     // a character's dynasty, through dynasty_name; "" when it does not resolve
-std::string house_name(uintptr_t house_obj);    // THE house-name reader: NAME (+0x248, House_GetName); "" when absent (L14 FB M-1)
+std::string house_name(uintptr_t house_obj);    // THE house-name reader: NAME (+0x248, House_GetName); "" when absent
 std::string char_house_name(uintptr_t c);       // a character's house, through house_name; "" when it does not resolve
 // A localized name and its scripted key ("Norse"/"norse"); empty when unread.
 struct NamePair {
@@ -477,11 +477,11 @@ bool do_query_map_graph(const char* params_json, std::string* out);
 void map_graph_init();
 bool do_query_title_hierarchy(const char* params_json, std::string* out);
 bool do_query_wars(const char* params_json, std::string* out);
-// L6: unpaused-safe minimal active-wars brief for the per-turn agent report.
+// Unpaused-safe minimal active-wars brief for the per-turn agent report.
 // Bridge-internal (served inline even while UNPAUSED) — best-effort safe_read.
 bool do_get_active_wars(const char* params_json, std::string* out);
 bool do_query_war_db_scan(const char* params_json, std::string* out);
-// ck-sd4d: ended wars, from the WAR_END_CORE hook ledger (war_history_hook.cpp).
+// Ended wars, from the WAR_END_CORE hook ledger (war_history_hook.cpp).
 bool do_query_war_history(const char* params_json, std::string* out);
 bool do_query_war_score_breakdown(const char* params_json, std::string* out);
 // READ-ONLY per-war AI war-stance / siege-intent visibility (re_query_war_stance.md,
@@ -525,12 +525,12 @@ bool do_query_diplomatic_range(const char* params_json, std::string* out);
 bool do_query_cb_catalog(const char* params_json, std::string* out);
 bool do_get_tick_info(const char* params_json, std::string* out);
 
-// ck-9fc3: the harness declares WHICH SAVE is loaded; the bridge decides whether
+// The harness declares WHICH SAVE is loaded; the bridge decides whether
 // quarantined agent steering may be restored. See include/world_identity.h.
 bool do_declare_save_identity(const char* params_json, std::string* out);
 
-// ck-6kvq.5: install the SessionRegistry steering-purge hook.  Called once from
-// bridge_init(), never from a static initialiser (ck-22n3 / ck-xqol: dll_init
+// Install the SessionRegistry steering-purge hook.  Called once from
+// bridge_init, never from a static initialiser (dll_init
 // runs before most .init_array entries, so anything a constructor installs may
 // not exist yet when the reader thread first touches it).
 void install_steering_purge_hook();
@@ -568,7 +568,7 @@ bool do_query_research_speed(const char* params_json, std::string* out);
 std::string enumerate_interactions();
 std::string enumerate_decisions();
 
-// Annotated decision enumeration (ck-decision-validity). Evaluates each
+// Annotated decision enumeration. Evaluates each
 // decision's is_shown/is_valid/cost triggers against `char_id` under the
 // crash-net (fake RNG scope + watchdog + sigsetjmp) and emits, per decision,
 // {name, hash, shown, valid, cost_ok, available, failures[], cost{}, current{}}.
@@ -605,7 +605,7 @@ bool do_declare_war(const char* params_json, std::string* response_out);
 bool do_queue_intent(const char* params_json, std::string* response_out);
 bool do_query_intents(const char* params_json, std::string* response_out);
 bool do_query_intent_results(const char* params_json, std::string* response_out);
-// ck-jsis0: probe a single dispatch by id. Returns success / rejected /
+// Probe a single dispatch by id. Returns success / rejected /
 // crashed / pending / not_found. Disambiguates the cases query_intent_results
 // silently rolled together — "not in the last N completed" used to overlap
 // with "still pending" and "evicted from the completed ring".
@@ -614,8 +614,8 @@ bool do_cancel_intent(const char* params_json, std::string* response_out);
 bool do_clear_intents(const char* params_json, std::string* response_out);
 bool do_change_realm_law(const char* params_json, std::string* response_out);
 bool do_pre_validate_war(const char* params_json, std::string* response_out);
-// ck-eyfb: direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect.
-// ck-j3vb0: `action_label` overrides the response's "action" string so
+// Direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect.
+// `action_label` overrides the response's "action" string so
 // declare_war's force-path branch can surface a unified action name to
 // callers. When `include_path_marker` is true, the response also carries
 // a "path":"force_player_path" field for caller routing diagnostics.
@@ -627,7 +627,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
 bool do_query_war_declarations(const char* params_json, std::string* out);
 bool do_query_scheme_inits(const char* params_json, std::string* out);
 
-// AI_CB_SELECTOR Path B' override (ai_cb_selector_hook.cpp, ck-8weg)
+// AI_CB_SELECTOR Path B' override (ai_cb_selector_hook.cpp)
 bool do_set_cb_selector_override(const char* params_json, std::string* response_out);
 void set_cb_selector_override(uint64_t cb_ref,
                               uint64_t cb_titles_ref,
@@ -647,7 +647,7 @@ void init_war_decl_handler_hook();
 // Marriage Observation Observer (marriage_observation_hook.cpp)
 bool do_query_marriage_observations(const char* params_json, std::string* out);
 
-// Phase-3 Wave-2 probes (phase3_probes.cpp, ck-e58l.8)
+// Phase-3 Wave-2 probes (phase3_probes.cpp)
 bool do_probe_interaction_cascade(const char* params_json, std::string* response_out);
 bool do_probe_gate_4_slots(const char* params_json, std::string* response_out);
 bool do_list_pending_interactions(const char* params_json, std::string* response_out);
@@ -689,7 +689,7 @@ bool do_set_offgoal_veto(const char* params_json, std::string* out);
 // another origin (the pipeline's flush effects). Both go through clock_write.
 bool do_pause_game(const char* params_json);
 bool do_unpause_game(const char* params_json);
-// L20-A: unpause_game {"pause_at":"Y.M.D"} — arm the game-day pause alarm
+// Unpause_game {"pause_at":"Y.M.D"} — arm the game-day pause alarm
 // (pause_alarm.h), then unpause. Refuses, unpausing nothing, a target that does
 // not parse or is not after the game date. Writes its own reply.
 bool do_unpause_game_with_alarm(const char* params_json, std::string* out);
@@ -715,7 +715,7 @@ bool do_set_ai_personality(const char* params_json, std::string* out);
 
 bool execute_direct_dispatch(Intent* intent, void* character, void* interaction);
 
-// ck-eyfb: direct WAR_CREATE_CORE invocation (intent_dispatch.cpp).
+// Direct WAR_CREATE_CORE invocation (intent_dispatch.cpp).
 // Mirrors WAR_DECLARE_SPECIAL_HANDLER (FUN_065db970): resolves CB by name,
 // builds a minimal CB-params struct with a single-title array, and invokes
 // WAR_CREATE_CORE on the game thread. Sets intent->executed/rejected and
@@ -768,7 +768,7 @@ void emit_faction_demand(ResponseBuilder& r, const FactionDemandState& s);
 // synchronously. Game-thread only (drained from on_tick). Queued by do_create_title.
 bool execute_create_title_intent(Intent* intent);
 bool do_create_title(const char* params_json, std::string* out);
-// L14 S3 (re_create_title_action.md "L14 S3"): what creating `title_obj` costs
+// What creating `title_obj` costs
 // `ruler`, in the currency the engine charges, and what the ruler holds of it — both
 // from the engine's own functions (CREATE_TITLE_GOLD_COST / _PIETY_COST, GOLD_GET /
 // PIETY_GET). `known` is false (with `why`) when a function is unmapped (the Windows
@@ -811,8 +811,8 @@ bool do_maa_station(const char* params_json, std::string* out);
 bool do_maa_unstation(const char* params_json, std::string* out);
 bool do_hire_mercenary(const char* params_json, std::string* out);
 bool do_set_doctrine(const char* params_json, std::string* out);
-bool do_script_action(const char* params_json, std::string* out);     // lane v4act
-bool do_query_script_log(const char* params_json, std::string* out);  // lane v4act
+bool do_script_action(const char* params_json, std::string* out);
+bool do_query_script_log(const char* params_json, std::string* out);
 bool do_set_character_faith(const char* params_json, std::string* out);
 bool do_set_character_culture(const char* params_json, std::string* out);
 bool do_set_title_law(const char* params_json, std::string* out);
@@ -865,9 +865,9 @@ struct CBQueryResult {
     char     cb_name[128];
     bool     valid;
     int32_t  target_mode;  // 0=none, 6=claim, other=title
-    uint64_t eval_us;      // CB_VALIDITY_CHECK wall time, microseconds (ck-wc9w)
+    uint64_t eval_us;      // CB_VALIDITY_CHECK wall time, microseconds
 
-    // Strict-mode per-CB outer/inner verdicts (ck-5qpg).
+    // Strict-mode per-CB outer/inner verdicts.
     // Populated only when CBQuery::strict_mode==true. In non-strict mode the
     // outer fields are left as their default-initialised state ("" / pass /
     // unrun) and only `valid` carries inner-pass status, matching the legacy
@@ -899,7 +899,7 @@ struct CBQuery {
     std::vector<CBQueryResult> results;
     char error[128];
 
-    // ck-9fbs: per-CB ENABLED_FLAG enumeration. Populated by process_cb_query
+    // Per-CB ENABLED_FLAG enumeration. Populated by process_cb_query
     // alongside `results`. Disabled CBs are skipped before any per-pair
     // evaluation, so they never appear in `results`; counting them here
     // surfaces the DLC-disabled / has_game_rule subset for the current install
@@ -921,7 +921,7 @@ struct CBQuery {
     // 0=empty, 1=pending, 2=done, 3=error, 4=in-progress
     std::atomic<int> state{0};
 
-    // --- Servicing instrumentation (ck-wc9w) ---
+    // --- Servicing instrumentation ---
     // steady_clock ns at state transitions — set by submit/service sides
     // respectively, read on timeout to classify race vs hang vs empty.
     std::atomic<uint64_t> submit_ns{0};         // IPC thread: set when state 0→1
@@ -943,7 +943,7 @@ extern std::atomic<uint64_t> g_cb_query_busy_count;
 // Called from drain_and_execute_intents().
 void process_cb_query();
 
-// L13 D1: the game-thread query slots (cb / acceptance / trigger / decision eval
+// The game-thread query slots (cb / acceptance / trigger / decision eval
 // / faction / cascade). service_query_slots evaluates every pending slot (the
 // drain calls it each pass). A handler that submits a slot calls
 // service_slots_if_game_thread() right after the submit: on the game thread —
@@ -981,7 +981,7 @@ int cb_query_count_valid_sync(uint32_t actor_id,
 // on the IPC thread, then submits the deferred query in strict mode so the
 // game thread additionally applies the Stage 2 group-level outer-trigger
 // flag filter (cb_group::DISABLED_FLAG + STAGE2_FLAG) before each
-// CB_VALIDITY_CHECK call. Mirrors ck-39e1 Stages 1 and 2; Stage 4 (the score
+// CB_VALIDITY_CHECK call. Mirrors Stages 1 and 2; Stage 4 (the score
 // evaluator) is not mirrored.
 //
 // Returns:
@@ -998,7 +998,7 @@ int cb_query_count_valid_strict(uint32_t actor_id,
                                 char*    out_error,
                                 size_t   error_size);
 
-// Aggregate verdict counts populated by cb_query_strict_full_sync (ck-5qpg).
+// Aggregate verdict counts populated by cb_query_strict_full_sync.
 // Mirrors the spec's `summary` block for query_cb_validity_strict.
 struct CBStrictSummary {
     int total_cbs;            // total CBs visited (incl. disabled-skipped)
@@ -1006,7 +1006,7 @@ struct CBStrictSummary {
     int candidates_post_outer;// outer-pass CBs (inner ran on these)
     int inner_valid;          // CB_VALIDITY_CHECK pass
     int inner_invalid;        // CB_VALIDITY_CHECK fail
-    // ck-9fbs: ENABLED_FLAG enumeration of the per-install CB DB. Lets agents
+    // ENABLED_FLAG enumeration of the per-install CB DB. Lets agents
     // deterministically enumerate the DLC-disabled subset without heuristic
     // name-prefix matching (fp1_, ep3_, mpo_, …). `disabled_cb_names` is
     // unsorted as captured; do_query_cb_validity_strict sorts before emit.
@@ -1026,7 +1026,7 @@ struct CBStrictSummary {
 // pre-filter as cb_query_count_valid_strict; same Stage-2 game-thread
 // filter inside process_cb_query. Per-CB outer triggers
 // (allowed_for_character / allowed_against_character / valid_to_start) are
-// not evaluated here (ck-39e1); only the outer_reason values listed above
+// not evaluated here; only the outer_reason values listed above
 // are produced.
 //
 // Returns: same return-code shape as cb_query_count_valid_strict.
@@ -1058,7 +1058,7 @@ struct TriggerSlotResult {
     uint32_t offset;         // offset within interaction_def
     bool     present;        // trigger block exists (non-null)
     bool     result;         // evaluation result (true=pass, false=fail/absent)
-    // Loc key from the loud-failure evaluator (ck-wtk7). Populated only when
+    // Loc key from the loud-failure evaluator. Populated only when
     // TriggerQuery::extract_loc_keys is set AND the slot was present+failed.
     // Empty string when extraction is disabled, the slot passed, or the loud
     // evaluator produced no SCREAMING_SNAKE_CASE identifier.
@@ -1071,7 +1071,7 @@ struct TriggerQuery {
     uint32_t target_id;
     char interaction_type[128];
     int  trigger_slot;       // -1 = evaluate all 7 slots, 0-6 = specific slot
-    // Opt-in loc-key extraction via FUN_0763ddc0 on failing slots (ck-wtk7).
+    // Opt-in loc-key extraction via FUN_0763ddc0 on failing slots.
     // Requires live CK3 with bridge loaded; off by default.
     bool extract_loc_keys;
 
@@ -1122,10 +1122,10 @@ bool do_get_bridge_state(const char* params_json, std::string* out);
 bool do_query_trigger_result(const char* params_json, std::string* out);
 
 // Synchronous: reads trigger slot structure from memory (IPC-thread safe)
-// Returns RTTI class names, children count, child types, label strings (ck-vqth)
+// Returns RTTI class names, children count, child types, label strings
 bool do_query_trigger_slots(const char* params_json, std::string* out);
 
-// Synchronous: reads current debug flag state from DEBUG_FLAGS_BASE (ck-oaqw)
+// Synchronous: reads current debug flag state from DEBUG_FLAGS_BASE
 bool do_query_debug_flags(const char* params_json, std::string* out);
 
 // =============================================================================
@@ -1138,14 +1138,14 @@ bool do_query_debug_flags(const char* params_json, std::string* out);
 // already answer). nullptr: a living character. The MCP maps them to
 // character_not_found and character_dead (redesign.py RAW_REASON_TO_GATE); the
 // one word no_living_actor said both and was read as "dead".
-// lane ACTOR: a null actor whose resolve was REFUSED (actor_resolve.h: a write,
+// A null actor whose resolve was REFUSED (actor_resolve.h: a write,
 // or a seat's read, with no actor of its own) answers that refusal, "no_actor",
 // not "actor_not_found": nobody was looked up.
 inline const char* actor_refusal(void* actor) {
     // (last_actor_refusal() is kActorRefusalReason, spelled here as a literal so
     // test_dead_actor_gate.py reads every reason this helper can answer.)
     if (!actor && last_actor_refusal()) {
-        // lane ACTORKEY: the request named its actor under a key this verb does not read.
+        // The request named its actor under a key this verb does not read.
         if (std::strcmp(last_actor_refusal(), kActorKeyNotRead) == 0) return "actor_key_not_read";
         return "no_actor";
     }

@@ -56,7 +56,7 @@ Linux — see below) or `-DCK3_PLATFORM=macos` (Apple clang); the CMake file the
 stops before the Linux bridge. `-DBUILD_BRIDGE_TESTS=ON` builds the tests: a
 portable `test_os_<helper>` everywhere, `test_os_stubs` for the refusals, and a
 `test_os_win_<cell>` per Windows cell. CI runs these on `windows-latest` and
-`macos-14`; the ADR's "P2 cell status" table lists which cell each test covers.
+`macos-15`; the ADR's "P2 cell status" table lists which cell each test covers.
 
 ### Cross-building the Windows layer from Linux
 

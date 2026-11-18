@@ -1,4 +1,4 @@
-// test/acceptance_save_identity.cpp — ck-9fc3 ACCEPTANCE.
+// test/acceptance_save_identity.cpp — ACCEPTANCE.
 //
 // THE CLAIM UNDER TEST, in one sentence: after a save is loaded into a live CK3
 // process, agent personality steering is restored ONLY when the loaded world is
@@ -7,7 +7,7 @@
 //
 // WHY IT MATTERS. g_personality_locks is keyed by CHARACTER ID; character ids
 // are reused across saves; apply_personality_locks() pokes the int8 axes into
-// character structs three times per on_tick. ck-hxh7 stopped the write by
+// character structs three times per on_tick. stopped the write by
 // emptying the live set on every detected reload and quarantining the entries,
 // which is correct and incomplete: a legitimate same-save resume (R7) then
 // loses its steering for the rest of the episode. Restoring on the wrong world
@@ -83,7 +83,7 @@ static void check_eq_str(const char* lane, const std::string& actual,
 // identity has to come from the save's bytes.
 // ---------------------------------------------------------------------------
 // The real sha256 of ~/ck3_dumps/william_1066_baseline.save, as verified by
-// scripts/save_verify.py and recorded in ck-6kvq.2's run_summary.json.
+// scripts/save_verify.py and recorded in run_summary.json.
 static const char* kSaveA = "0c94b59880e0549a5a0c8fbe4dc675a3de171f28d79f7628ad765116de782d5d";
 static const char* kSaveB = "7f21aa0c1d3e4b5968708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6";
 static const char* kEpisodeA = "ep-20260912T033051Z-e0-paper-9eae1e0e";
@@ -97,7 +97,7 @@ static WorldIdentity ident(const char* episode, const char* sha, uint32_t year =
     return id;
 }
 
-// Dates are built through the ONE renderer's own inverse (ck-05mg), so the
+// Dates are built through the ONE renderer's own inverse, so the
 // fixture cannot drift from what the bridge will print.
 static int32_t raw_for(int y, int m, int d) { return ck3::game_date::ymd_to_raw(y, m, d); }
 

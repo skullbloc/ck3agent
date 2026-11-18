@@ -1,8 +1,8 @@
-// test/test_diag_dtor.cpp — L20-D: the diag record dtor is the function the engine calls.
+// test/test_diag_dtor.cpp —: the diag record dtor is the function the engine calls.
 //
 // THE BUG: ck3::trigger_eval_funcs::DIAG_OBJECT_DTOR was 0x04a5b060, the middle of a
 // sort helper (Ghidra FUN_04b5af30). Every failing decision eval jumped there and
-// SIGSEGVed (smoke17 bridge.log 24130: rip_off 0x4a5b0d3), so B3 answered
+// SIGSEGVed (bridge.log 24130: rip_off 0x4a5b0d3), so B3 answered
 // decision_eval_faulted.
 //
 // THE FIXTURE is not written from a model: it is the 99 bytes of EVAL_WITH_FAILURES
@@ -55,7 +55,7 @@ static const uint8_t kDtorEntry[21] = {
     0x4b, 0x06, 0x48, 0x83, 0xc0, 0x10, 0x48, 0x89, 0x07,
 };
 
-static constexpr uint64_t kPreFixDtor = 0x04a5b060;  // the value smoke17 ran with
+static constexpr uint64_t kPreFixDtor = 0x04a5b060;  // the value ran with
 
 int main() {
     namespace te = ck3::trigger_eval_funcs;

@@ -1,4 +1,4 @@
-// speed_read_probe.cpp — ck-k57a. The BRIDGE's own emission, on a host.
+// speed_read_probe.cpp —. The BRIDGE's own emission, on a host.
 //
 // WHY THIS EXISTS. The python acceptance needs `get_tick_info` payloads for a
 // faulted speed read, and CK3 is not running on the host lane. A python model

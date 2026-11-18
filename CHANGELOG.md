@@ -18,6 +18,18 @@ All notable changes to ck3agent. Versions are calendar-based
   compares long path names. The CI's installer-parse step itself no longer
   fails to parse (`"${f}: $_"`; PowerShell read `$f:` as a drive-qualified
   variable). No behaviour change on Linux.
+* **CI: the Windows MSVC job now gates.** It has been green on real MSVC, so
+  it no longer runs with `continue-on-error`. The non-gating "Python unit
+  tests" steps on the Windows and macOS legs are removed: the MCP server and
+  the CLI are Linux-only (they use `fcntl`, POSIX signals and Unix sockets), so
+  on Windows the suite never collected. Both legs still run the portable
+  `tools/inspect_binary.py` tests.
+* **A tidier repository.** Comments in shipped code no longer carry the
+  research tree's internal tracking labels; code, strings and line numbers are
+  unchanged. The Windows VM runbook, a plan that was never run, is withdrawn
+  (the ADR's P7 row says what that run needs). The docs index is renumbered,
+  and every relative link and anchor in shipped Markdown is now checked when
+  the repository is built. No behaviour change.
 
 ## 2026.12.10 — 2026-11-17
 
@@ -452,7 +464,7 @@ a lineage sink is set. The surface is still thirteen tools.
 
 ## 2026.12.3 — 2026-11-07
 
-The third round of toolkit fixes, from the node smoke of the 2026.12.2 draft.
+The third round of toolkit fixes, from the smoke test of the 2026.12.2 draft.
 `query_war_stance` reads each side's own stance: a war's primary attacker read
 as the defender because the bridge kept one of the war's two AI records, the
 one it walked last (the defender's, in 39 of 87 wars in a core dump).
@@ -524,7 +536,7 @@ changed: the surface is still thirteen tools.
 * **`ck3agent launch --save` and `--continue` no longer crash the game while
   it loads.** In 2026.12.1 every `--save` and `--continue` launch that got
   past "End loading of history" died about 17 seconds later, before the main
-  menu (four of four in the node smoke; SIGSEGV at ck3+0x80a6090, address
+  menu (four of four in the smoke test; SIGSEGV at ck3+0x80a6090, address
   0x20). The cause was the `continue_game.json` that `launch` wrote into the
   game's new directory: it held only `title`. Before the menu, CK3 reads
   `title`, `desc` and `date` from that file and does not check that each one
@@ -572,7 +584,7 @@ Erratum: in this release `ck3agent launch --save` and `launch --continue`
 crashed CK3 while it loaded (fixed in 2026.12.2); a plain `launch` was not
 run. The date above is one day late. It was published on 2026-11-04.
 
-The second round of toolkit fixes, from the node smoke of 2026.12.0 and the
+The second round of toolkit fixes, from the smoke test of 2026.12.0 and the
 November pilots' transcripts. `ck3agent launch` runs the game in a user-data
 directory of its own and no longer writes into your saves.
 `session(action="wait", game_days=N)` stops at N days: the bridge holds the
@@ -590,7 +602,7 @@ the documentation. The surface is still thirteen tools.
 * **`ck3agent launch` no longer writes into your own CK3 saves.** The game it
   started used your `~/.local/share/Paradox Interactive/Crusader Kings III/`,
   so its autosave rotation replaced your `save games/autosave.ck3` (the
-  2026.12.0 node smoke found a new one after a run) and `--save` rewrote your
+  2026.12.0 smoke test found a new one after a run) and `--save` rewrote your
   `continue_game.json`. The game now runs with `-userdir=` pointing at its own
   directory, `~/.local/state/ck3agent/game/` (`$XDG_STATE_HOME`; `ck3agent
   config` prints it). `--save` copies the save there. The first `--continue`
@@ -729,8 +741,8 @@ the documentation. The surface is still thirteen tools.
   saw bound as unattributed.
 * **`ck3agent doctor` checks only the play directory it is told.** With no
   setup record it read `~/ck3agent-play/.mcp.json` anyway, so a directory left
-  by another install failed the check (rc 1 on a clean `XDG_CONFIG_HOME`, node
-  smoke of 2026.12.0). Doctor now reads `--play-dir` or the directory `setup`
+  by another install failed the check (rc 1 on a clean `XDG_CONFIG_HOME`, in
+  the smoke test of 2026.12.0). Doctor now reads `--play-dir` or the directory `setup`
   recorded in the config. With neither it warns `play directory not set up: no
   --play-dir and none recorded in <config>` and reads nothing.
 * **Setup and doctor say when Claude Code has not trusted the play
@@ -1430,7 +1442,7 @@ proven against a live game before they were merged.
   game had built its interaction context; the bridge read the wrong
   guard byte and now reads the one the game checks.
 * **The Windows VM runbook's live step grades the Windows game against Linux.**
-  Step 4 of `docs/porting/p7-windows-vm-runbook.md` attaches the live suite to
+  Step 4 of the Windows VM runbook (since withdrawn) attaches the live suite to
   the Windows game (no lock, no launch, no kill) and grades its replies against
   two Linux runs of the same build on the same DLC-stripped save, which the step
   names; the ADR's phase W4 names the same suite.

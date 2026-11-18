@@ -1,4 +1,4 @@
-"""L18-B defects 2 and 5: the registered schema accepts what the toolkit itself
+""" defects 2 and 5: the registered schema accepts what the toolkit itself
 tells a seat to send, and drops nothing silently.
 
 D2 (budget0 e1/s4 0867.01.01 Eung-ryeom 14942, scale0 n8/s7 Nasr 12843). plan_war

@@ -1,7 +1,7 @@
-// ck-475j — count every typed refusal, so a fix that made a caller's bug QUIET
+// Count every typed refusal, so a fix that made a caller's bug QUIET
 // does not also make it invisible.
 //
-// WHY THIS EXISTS. ck-vf92 stopped `{"character_id":0}` from crashing the
+// WHY THIS EXISTS. stopped `{"character_id":0}` from crashing the
 // bridge. Before it, that input produced four unmissable recovered SIGSEGVs in
 // armb1; after it, the call is refused with a typed reason and the episode
 // carries on. THE CALLER'S BUG IS UNCHANGED — only its visibility changed. The
@@ -12,9 +12,9 @@
 //
 // THAT SHAPE HAPPENED THREE TIMES IN ONE NIGHT and is the reason this is a
 // header rather than a one-off counter:
-//   - log rotation truncated the trace it existed to preserve (ck-otj9)
-//   - the backpressure throttle hid drops 2-99 process-wide (ck-0zfc)
-//   - ck-vf92 turned four SIGSEGVs into one uncounted line (this bead)
+//   - log rotation truncated the trace it existed to preserve
+//   - the backpressure throttle hid drops 2-99 process-wide
+//   - turned four SIGSEGVs into one uncounted line (this bead)
 // Each time, the thing that made a problem LEGIBLE was removed by the thing
 // that made it SAFE.
 //
@@ -26,7 +26,7 @@
 //
 // Lock-free by construction: a fixed enum-indexed table of atomics. Refusals
 // are rare, but they are recorded from the reader thread and the game thread
-// both, and after ck-1v1t I am not adding a mutex to a path that a siglongjmp
+// both, and after I am not adding a mutex to a path that a siglongjmp
 // can escape.
 #pragma once
 
@@ -42,9 +42,9 @@ extern FILE* g_logfile;
 // without adding it here is the failure this guards against, so the acceptance
 // counts REFUSING sites against this enum and reds when they diverge.
 enum class RefusalReason : uint8_t {
-    kCharacterIdInvalid = 0,   // ck-vf92: character_id <= 0 for set_character_ai
-    kAiControllerUnmapped,     // ck-bl15: controller non-null but +0x28 unreadable
-    kAiControllerUnbound,      // ck-23hv: decision actor's AI controller unbound
+    kCharacterIdInvalid = 0,   // Character_id <= 0 for set_character_ai
+    kAiControllerUnmapped,     // Controller non-null but +0x28 unreadable
+    kAiControllerUnbound,      // Decision actor's AI controller unbound
     kCount
 };
 
@@ -71,12 +71,12 @@ inline const char* refusal_name(RefusalReason r) {
 // initialiser rather than removing one. Measured against this header in a TU
 // that calls record_refusal: `= {}` -> _GLOBAL__sub_I = 0; without it -> 1.
 //
-// Caught by ck-t5bc. reply_record.h one header over braces every counter `{0}`
+// Caught. reply_record.h one header over braces every counter `{0}`
 // for this reason — I had already solved it and then wrote the array without.
 //
 // No check is added here for it: test_init_order owns this property repo-wide
 // and measures real initialisers. A second spelling of it in this acceptance is
-// precisely what cost two lanes on ck-1v1t.
+// precisely what cost two lanes on.
 inline std::atomic<uint64_t> g_refusals[static_cast<size_t>(RefusalReason::kCount)] = {};
 
 inline void record_refusal(RefusalReason r) {

@@ -1,5 +1,5 @@
 // test_console_call.cpp — the console-handler ABI (console_call.h) under both
-// std::string layouts the game is built with. Lane WINRE, 2026-11-15.
+// std::string layouts the game is built with., 2026-11-15.
 //
 // The readers below are the GAME's reads, transcribed from the binaries:
 //   msvc_game_reads_arg   ck3.exe 1.18.3.1 0x7B3980 (the copy CMD_EFFECT runs on

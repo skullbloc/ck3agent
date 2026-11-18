@@ -1,4 +1,4 @@
-// pulse_ledger.h — R1c: the pulse ledger (ck-6kvq.10).
+// pulse_ledger.h — R1c: the pulse ledger.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.9.
 //
@@ -217,7 +217,7 @@ struct PulseVerdict {
     PulseLeak   first;        // the first one, which is the one that broke it
 
     // §2.9: "in experiment mode abort the episode with that typed reason".
-    // The bridge cannot terminate an episode — that is ck-6kvq.1's abort ladder
+    // The bridge cannot terminate an episode — that is abort ladder
     // (reason `pulse_leak`, exit 13). What it does is latch this, publish it as
     // `pipeline.pulse_leak`, and refuse further control-session work so nothing
     // else contaminates a run whose validity is already gone. In FREE-PLAY a

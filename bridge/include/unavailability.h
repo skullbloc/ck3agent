@@ -1,5 +1,5 @@
 // unavailability.h — R3 as REVERSED: the clock runs; unavailability is measured
-// (ck-6kvq.10).
+//
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.7 (rewritten
 // 2026-09-12), §2.10, §6.1. Pre-registration §7.1/§7.3.
@@ -17,7 +17,7 @@
 //   * an episode in which any English session exceeds X cumulative game-days
 //     is INVALID — archived and reported, never silently dropped.
 //
-// THE ANOMALY GATE (PROGENITOR RULING, 2026-09-13, via bt-bbd — ck-ijfa).
+// THE ANOMALY GATE (PROGENITOR RULING, 2026-09-13, via bt-bbd —).
 // A gap between a control session's activities counts as UNAVAILABILITY only if
 // it exceeds THREE HEARTBEAT INTERVALS = 360 WALL-SECONDS, measured from
 // wall-clock stamps on the activity records. Under three beats is a slow turn;
@@ -25,7 +25,7 @@
 // SPANNED BY ANOMALOUS GAPS ONLY, and more than X of them invalidates the
 // episode.
 //
-// X IS A RULE, NOT A CONSTANT (ck-2ngg). "5% of the horizon unsteered" is the
+// X IS A RULE, NOT A CONSTANT. "5% of the horizon unsteered" is the
 // threshold; 365 is that rule EVALUATED AT THE REGISTERED 20-game-year horizon
 // (7300 game-days x 0.05 = 365.0) and is wrong at every other one. This ledger
 // used to store `exclusion_days_ = 365` outright, so a smoke episode whose
@@ -46,14 +46,14 @@
 // See exclusion_rule.h for the rule and episode_policy.h for its constants.
 //
 // WHAT THIS SUPERSEDES, and why, because the failure is worth keeping.
-// ck-6kvq.10 gated in GAME-DAYS: a gap of at least `min_span_days` (30) counted
+// gated in GAME-DAYS: a gap of at least `min_span_days` (30) counted
 // IN FULL. That number was derived under the GATED design — 30 game-days was one
 // agent turn because the world WAITED for the agent — and it crossed the
 // same-day G3' reversal with its justification intact. Once the clock
 // free-runs, the game-days a gap spans are a function of GAME SPEED and have
-// nothing to do with whether the agent was late. ck-ijfa's arithmetic:
+// nothing to do with whether the agent was late. arithmetic:
 //
-//   at the node's free-running ~1.73 game-days/wall-second, one HEALTHY
+//   at the test host's free-running ~1.73 game-days/wall-second, one HEALTHY
 //   2-minute heartbeat interval spans ~204 game-days. 204 >= 30, so under the
 //   old rule EVERY inter-turn gap was "unavailability" and was counted whole —
 //   and because the gaps partition the timeline, `unavailable_game_days` did
@@ -90,7 +90,7 @@
 //
 // TIME IS A GAME DAY NUMBER, never a formatted date. The bridge's own
 // `(raw_date - DATE_EPOCH)/24` is monotone and exact; "YYYY.MM.DD" is a display
-// string (and was wrong until ck-05mg). Wall stamps are MONOTONIC milliseconds
+// string (and was wrong until). Wall stamps are MONOTONIC milliseconds
 // from the same clock the conductor already reads.
 //
 // PURE. No engine dependencies; host-tested with no CK3 binary
@@ -123,7 +123,7 @@ struct UnavailSpan {
     int64_t days      = 0;
     bool    open      = false;
 
-    // THE SAME GAP IN WALL-CLOCK (ck-ijfa). `wall_measured == false` means the
+    // THE SAME GAP IN WALL-CLOCK. `wall_measured == false` means the
     // endpoints carried no stamp, so the duration is UNKNOWN and the gap is
     // UNJUDGED — never a game-day figure converted at an assumed rate.
     bool     wall_measured = false;
@@ -138,7 +138,7 @@ struct UnavailSpan {
 
 // One control session's record. Kept after the session ends: a session that is
 // gone keeps accruing, because a phantom agent is exactly what the covariate is
-// supposed to make visible (§2.7 knock-on to ck-6kvq.5 — a refused resume must
+// supposed to make visible (§2.7 knock-on to — a refused resume must
 // inflate the covariate, not quietly vanish).
 struct UnavailSession {
     std::string session_id;
@@ -157,7 +157,7 @@ struct UnavailSession {
     // THE COVARIATE — ANOMALOUS GAPS ONLY (gaps whose WALL duration exceeds
     // anomaly_wall_seconds). `unavailable_game_days` is the GAME-DAYS those
     // gaps spanned, and it is what X is tested against — X being the RULE's
-    // answer for THIS episode's declared horizon (ck-2ngg), not a constant.
+    // answer for THIS episode's declared horizon, not a constant.
     int64_t  unavailable_game_days    = 0;
     double   unavailable_wall_seconds = 0.0;
     size_t   span_count               = 0;   // anomalous gaps, exact
@@ -170,7 +170,7 @@ struct UnavailSession {
     std::vector<UnavailSpan> spans;      // the gaps, newest last, CAPPED
     bool     spans_truncated       = false;
 
-    // ck-48lf: THE EXTREMA, OVER EVERY GAP, because `spans` is capped and a
+    // THE EXTREMA, OVER EVERY GAP, because `spans` is capped and a
     // reader cannot get a maximum out of a truncated list. Measured on d50:
     // `spans_truncated` was true on all six seats with 128 retained of 418-853
     // gaps, and the figure that travelled -- "max gap <=66 s on all six" --
@@ -197,7 +197,7 @@ struct UnavailSession {
 // At most this many spans are RETAINED per session. The totals and the counts
 // stay exact when it bites; only the itemisation is lost.
 //
-// AN ANOMALOUS GAP ALWAYS GETS IN (ck-ijfa). When the list is full, an anomalous
+// AN ANOMALOUS GAP ALWAYS GETS IN. When the list is full, an anomalous
 // gap EVICTS the oldest non-anomalous one, because the anomalous gaps ARE the
 // covariate and a chatty session must not be able to crowd its own evidence out
 // of the record with ordinary turn-taking.
@@ -215,7 +215,7 @@ public:
     // `anomaly_wall_s` is the WALL-CLOCK gate; `exclusion_days` is X, in
     // GAME-DAYS. Two units on purpose — see the header note above.
     //
-    // `exclusion_armed` HAS NO DEFAULT, deliberately (ck-2ngg): every call site
+    // `exclusion_armed` HAS NO DEFAULT, deliberately: every call site
     // must state whether this episode has an X at all. A defaulted `true` is
     // how the constant got in, and a defaulted `false` would silently disarm a
     // real episode.
@@ -233,7 +233,7 @@ public:
     // unavailable from the moment it connected, which is the honest reading.
     // Calling this again for a known id is an ATTACH, not a reset — .5's resume
     // must not erase the gap it just finished accruing.
-    // `wall_ms` is a MONOTONIC wall stamp (ck-ijfa); 0 means "not stamped".
+    // `wall_ms` is a MONOTONIC wall stamp; 0 means "not stamped".
     void note_session(const std::string& session_id, int64_t day,
                       uint64_t wall_ms = 0);
 
@@ -245,7 +245,7 @@ public:
     // The record is KEPT and KEEPS ACCRUING — see UnavailSession.
     void note_session_ended(const std::string& session_id);
 
-    // ck-j6lk: FORGET the record entirely — a SEPARATE VERB, not a flag on the one
+    // FORGET the record entirely — a SEPARATE VERB, not a flag on the one
     // above, and the distinction is the whole bead.
     //
     // note_session_ended keeps the record and keeps accruing, which is correct and
@@ -280,7 +280,7 @@ public:
     uint64_t day_regressions() const;
     bool     has_day() const;
 
-    // ── DECLARED vs OBSERVED (ck-2ngg, raised by ck-7pw9/ck-zgh4) ──────────
+    // ── DECLARED vs OBSERVED (raised) ──────────
     // X is 5% of the DECLARED horizon, as ruled. That makes the tolerance a
     // property of the episode's CONFIGURATION, and an episode that declares
     // twenty game-years and stops after one has bought a budget proportional to
@@ -327,7 +327,7 @@ private:
         double   unavail_wall_closed = 0.0;
         size_t   span_count_closed   = 0;
         size_t   unjudged_closed     = 0;
-        // ck-48lf: extrema over CLOSED gaps; the open one joins at render.
+        // Extrema over CLOSED gaps; the open one joins at render.
         double   max_gap_wall_closed = 0.0;
         int64_t  max_gap_days_closed = 0;
 
@@ -339,7 +339,7 @@ private:
         uint64_t last_activity_wall_ms = 0;
     };
 
-    // ck-ijfa: advance the wall cursor. Called with mu_ HELD.
+    // Advance the wall cursor. Called with mu_ HELD.
     void           note_wall_locked(uint64_t wall_ms);
     UnavailSession render_locked(const std::string& id, const Rec& r) const;
     void           push_span_locked(Rec& r, const UnavailSpan& s) const;
@@ -350,13 +350,13 @@ private:
     mutable std::mutex          mu_;
     std::map<std::string, Rec>  recs_;
     int64_t                     current_day_     = 0;
-    int64_t                     first_day_       = 0;   // ck-2ngg: what was OBSERVED
+    int64_t                     first_day_       = 0;   // What was OBSERVED
     bool                        have_day_        = false;
-    uint64_t                    current_wall_ms_ = 0;   // ck-ijfa
+    uint64_t                    current_wall_ms_ = 0;
     bool                        have_wall_       = false;
     uint64_t                    day_regressions_ = 0;
     int64_t                     anomaly_wall_s_  = kDefaultAnomalyWallSeconds;
-    // ck-2ngg: NO DEFAULT THRESHOLD. An un-configured ledger has no X — it is
+    // NO DEFAULT THRESHOLD. An un-configured ledger has no X — it is
     // UNARMED — because the only honest default for "5% of a horizon nobody
     // declared" is "I cannot say". The 365 that used to sit here was the rule's
     // answer at one horizon, applied to all of them.

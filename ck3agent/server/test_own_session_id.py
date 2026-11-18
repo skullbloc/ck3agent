@@ -1,4 +1,4 @@
-"""ck-switch — a seat has to know WHICH seat it is, and the paths are traced.
+"""A seat has to know WHICH seat it is, and the paths are traced.
 
 `session(action='whoami')` used to report `controlled_primary`, which is the
 GLOBAL primary — the front of the claim order. In a six-seat arm every seat
@@ -19,7 +19,7 @@ no object.
 
 So these rows check the REAL class. If someone renames BridgeState._client, a
 row here reds — rather than every seat quietly losing its identity in the next
-arm. (cleanup 2026.11: the retired autonomous loop's path, ("_a", "bridge"),
+arm. (the retired autonomous loop's path, ("_a", "bridge"),
 was removed with the rest of its leftovers; the production seat is the MCP
 server.)
 """

@@ -1,5 +1,5 @@
 #pragma once
-// ck-dzxr: IS THIS LINE A REQUEST AT ALL?
+// IS THIS LINE A REQUEST AT ALL?
 //
 // Every handler in ipc_server's ladder begins by requiring a top-level "actions"
 // ARRAY. An envelope without one — a bare {"action":"..."}, an {"action_type":...},
@@ -11,7 +11,7 @@
 // the NEXT broadcast, which is some other request's answer, well-formed and
 // complete and about something else entirely.
 //
-// ck-zgh4 hit this probing a live world: two malformed envelopes each came back
+// hit this probing a live world: two malformed envelopes each came back
 // with a full query_character payload for Harold Godwinson. They read a field
 // off it, wrote the OPPOSITE of the truth into a report, and caught it only
 // because they recognised the character name. That is the plausible-wrong-answer
@@ -28,7 +28,7 @@
 
 namespace bridge {
 
-// rc2 B9: limits checked on every socket line BEFORE any parse. RapidJSON's
+// Limits checked on every socket line BEFORE any parse. RapidJSON's
 // Accept() (used to re-serialize params) recurses even when Parse() is
 // iterative, so depth is capped here, at the one choke point.
 constexpr size_t kMaxLineBytes = 1u << 20;   // 1 MiB; longer drops the client

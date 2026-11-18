@@ -1,4 +1,4 @@
-// test_war_stance_record.cpp — L22, smoke19 row A3 (stance half): which
+// test_war_stance_record.cpp — row A3 (stance half): which
 // coordinator record answers a query_war_stance row, on a fixture read from the
 // 1097 core dump.
 //
@@ -12,7 +12,7 @@
 // Read 2026-11-06 with re/coredump/core_reader.py. All 87 wars carry exactly
 // one attacker and one defender record; six are below, in ARRAY order, three of
 // them (0x10000000, 0x10000005, 0x10000009) with the defender's record last (the
-// smoke19 shape: Charles, primary attacker, read `is_attacker false,
+// shape: Charles, primary attacker, read `is_attacker false,
 // defender_defensive`). Only the attacker rows can occur live: stance_row_selected
 // emits primary-attacker rows only; the primary-defender and absent checks cover
 // the helper's contract, not a handler path.

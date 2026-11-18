@@ -1,6 +1,6 @@
-"""ck-ey8p — a frame the listener does not handle must leave a TRACE.
+"""A frame the listener does not handle must leave a TRACE.
 
-ck-760i's trace of ep-02: `_bridge_listener`'s type dispatch had branches for
+ trace of ep-02: `_bridge_listener`'s type dispatch had branches for
 tick_start, observation, action_result, handshake_ack, notification, ping and
 error — and no `result` branch and no terminal else. The ledger record is
 `"type":"result"`, so one that matched no pending request_id fell through every
@@ -135,8 +135,8 @@ class AnUnmatchedFrameIsWitnessed(unittest.TestCase):
 
 
 
-#: ck-324r's management-ledger record exactly as management_ledger_frame.h builds
-#: it: the caller's id under caller_request_id, no request_id (ck-h4pn). The
+#: management-ledger record exactly as management_ledger_frame.h builds
+#: it: the caller's id under caller_request_id, no request_id. The
 #: bridge broadcasts one on every set_controlled_character / release_character
 #: for the ARM relay; a live launch carried 53 and logged each as UNMATCHED.
 BROADCAST = {"type": "result", "caller_request_id": "someone-elses-call",

@@ -1,10 +1,10 @@
 #pragma once
-// L13 D2: the bridge goes DORMANT -> ACTIVE on the first game-thread drain.
+// The bridge goes DORMANT -> ACTIVE on the first game-thread drain.
 //
-// Before L13 the transition happened at the top of on_tick, i.e. on the first
+// Before that the transition happened at the top of on_tick, i.e. on the first
 // AI tick, so a save loaded paused stayed DORMANT until something unpaused it —
 // which is why the bridge used to unpause the game itself at load (the
-// ck-w809/ck-7kbi auto-unpause, deleted). The drain runs on every session pass,
+// auto-unpause, deleted). The drain runs on every session pass,
 // paused or running, so the transition needs no tick.
 //
 // The decision is this one function, called by drain_game_thread_work

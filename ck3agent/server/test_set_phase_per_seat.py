@@ -1,4 +1,4 @@
-"""ck-zgh4 deploy-51 — `set_phase` writes nothing outside the calling seat.
+""" deploy-51 — `set_phase` writes nothing outside the calling seat.
 
 RULED by the progenitor, verbatim: "Remove the world-wide write". The option
 read: "set_phase stops touching the world-wide war switch. Seats lose that lever
@@ -106,7 +106,7 @@ def test_TWO_SEATS_WITH_OPPOSITE_PHASES_leave_the_global_byte_untouched():
 
 
 def test_the_phase_writes_the_genome_for_this_seat_and_no_toggle():
-    """cleanup 2026.11: the per-character subsystem mask (a record the engine
+    """The per-character subsystem mask (a record the engine
     never read) is deleted. The phase is still per-seat, not a no-op: it writes
     this seat's genome."""
     gw, env = _run("expansion")
@@ -166,7 +166,7 @@ class FaultingGateway(RecordingGateway):
 
 
 def test_a_faulted_personality_write_blocks_the_phase():
-    """L14 FF2 N-MAJ-1: the personality write IS the phase. Its fault used to
+    """The personality write IS the phase. Its fault used to
     become a `personality_write_warning` beside verdict applied. RED on b84e3634."""
     gw = FaultingGateway({"error": "memory_access_fault"})
     env = asyncio.run(redesign.set_phase_impl(gw, phase="expansion", character_id=30853))

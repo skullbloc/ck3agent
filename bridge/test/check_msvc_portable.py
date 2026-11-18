@@ -5,7 +5,7 @@ The public CI's "platform layer (windows-latest)" job builds the whole Windows
 bridge with real MSVC (cl.exe): ck3_bridge_core_win (the Linux bridge sources
 over the POSIX shim), ck3_os (the Windows cells), version.dll and their tests.
 The node cross-builds the same targets with clang-cl, which ACCEPTS the GNU
-spellings cl.exe rejects, so 2026.12.1-2026.12.9 built on the node and failed
+spellings cl.exe rejects, so 2026.12.1-2026.12.9 built on the test host and failed
 there (1491 cl.exe errors on 2026.12.9: __attribute__ from CK3_EARLY_INIT and
 weak/format attributes, the shim's __extension__ statement expression, the
 __atomic_* builtins). This census stands in for cl.exe on a Linux host that has
@@ -42,7 +42,7 @@ WHAT IS FLAGGED (each a cl.exe error, or a GNU meaning cl.exe does not share):
             operand omitted; a case range `case a ... b:`; a zero-length
             member array `T name[0];`; a C++20 designated initializer
             `{ .x = ... }` (the bridge is C++17; cl.exe /std:c++17 is C7555)
-Not seen (the clang-cl stand-in flags and msvc_standin_lint.py on the node
+Not seen (the clang-cl stand-in flags and msvc_standin_lint.py on the test host
 see them; cl.exe in the public CI is the authority): VLAs, two-phase lookup and
 other front-end differences.
 

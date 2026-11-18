@@ -1,4 +1,4 @@
-// test_fault_reply.cpp — ff3 N1 (witness #9 minor 1). NO GAME.
+// test_fault_reply.cpp — ff3 N1 (minor 1). NO GAME.
 //
 // THE CLAIM: a read that faulted on a path the reader thread serves inline is
 // answered, never passed off as a 0. safe_read answers T{} on a fault; before
@@ -18,11 +18,11 @@
 //       reader's sigsetjmp recovery answers;
 //   [2] FaultScope: a reply left by a handler whose read faulted says
 //       degraded (and one with no fault, or that already says so, is untouched);
-//       [2b] it nests: the caller's fault record survives it (L14 S4);
+//       [2b] it nests: the caller's fault record survives it;
 //   [3] the handlers: get_player_character, get_controlled_roster and
 //       set_controlled_character answer memory_access_fault on an unreadable
 //       player id (and the take does not happen); get_bridge_state says degraded.
-//   [4] a write handler (ff4 P1, witness #10's REJECT): a read that faults
+//   [4] a write handler (ff4 P1, REJECT): a read that faults
 //       BEFORE the store refuses (memory_access_fault) and the store is not
 //       made, read back from the byte; a read that faults AFTER the store (the
 //       read-back) answers success with degraded, the fault count and what was
@@ -32,18 +32,18 @@
 //       read-back faulting while the write did not. The toggles store an image
 //       global no read decides, so they have no "before".
 //   [5] the reply the dispatch wrapper makes for a handler that faulted and
-//       left none says degraded (witness #10 R1 shape (a)), and
+//       left none says degraded (R1 shape (a)), and
 //       get_offset_validation's own verdict is offsets_degraded, so the fault
 //       marker is not suppressed by it (shape (b)).
 //   [6] release_character's degraded reply says whether the character's native
-//       AI was handed back (witness #10 minor 8).
+//       AI was handed back (minor 8).
 //   [7] declare_war's verdict after its dispatch: a war count that could not be
 //       read is war_unverified, never dispatched_but_no_war (minor 9).
-//   [8] the dynasty name: NAME (+0x80) only (L14 S4; the custom-name branch
-//       deleted in L14 FB M-2: +0x110 overlaps HOUSES_ARRAY).
+//   [8] the dynasty name: NAME (+0x80) only (the custom-name branch
+//       deleted in: +0x110 overlaps HOUSES_ARRAY).
 //   [9] the house (NAME +0x248), culture (+0x260/+0x1C8) and faith
 //       (FAITH_DB keyed at +0x08; DISPLAY_NAME/FAITH_KEY) readers, and
-//       emit_char_names through them (L14 FB M-1).
+//       emit_char_names through them.
 //
 // CONTROLS (run by hand, recorded in the commits): this source against the
 // pre-fix dispatch_router.cpp (blob of cleanup/final-fix 720e5757) fails [3];

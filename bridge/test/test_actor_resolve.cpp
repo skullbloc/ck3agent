@@ -1,4 +1,4 @@
-// test_actor_resolve.cpp — lane ACTOR: an unnamed actor resolves by ONE rule.
+// test_actor_resolve.cpp —: an unnamed actor resolves by ONE rule.
 //
 // v4 seats a king and several dukes in one game, one bridge session each. The
 // pre-fix tree resolved a request that names no actor by its handler's own
@@ -110,7 +110,7 @@ bool do_queue_intent(const char* /*params_json*/, std::string* out) {
     }
     return true;
 }
-// lane ACTORKEY. action_handlers.cpp do_set_council_task: resolve_actor (the
+// Action_handlers.cpp do_set_council_task: resolve_actor (the
 // REAL one, dispatch_router.cpp), which reads actor_id; a refused actor answers
 // actor_refusal's reason and writes nothing. g_council_wrote says whether the
 // stand-in got as far as the write (the resolve did not refuse).
@@ -256,7 +256,7 @@ void part_a_pure() {
     row("a09_no_seat_read_byte_for_byte_with_pre_fix_chains", bad == 0,
         std::to_string(checked) + " cases, " + std::to_string(bad) + " differ " + first_bad);
 
-    // lane ACTORKEY, rule 0: a write whose actor is named under the key the
+    // Rule 0: a write whose actor is named under the key the
     // handler does not read is refused, in every layout and chain, naming both keys.
     all = true;
     std::string first;
@@ -383,7 +383,7 @@ void part_b_dispatch() {
     row("b11_unbound_seat_query_character_typed_empty_reply",
         r == R"({"success":false,"action":"query_character","actor_refused":"no_actor","actor_rule":"seat_read_requires_actor"})", r);
 
-    // lane ACTORKEY, through the real dispatch and the real resolve_actor /
+    // Through the real dispatch and the real resolve_actor /
     // resolve_character / unread_actor_key. The live defect (q13 qf4, C2): the
     // duke's session sent set_council_task naming the KING under character_id;
     // the verb read actor_id and wrote on the duke. The ownership gate vets the
@@ -436,7 +436,7 @@ int main() {
         "b05_unbound_write_refused_not_the_king",
         "b06_unbound_write_reason_no_actor",
         "b11_unbound_seat_query_character_typed_empty_reply",
-        // lane ACTORKEY: the pre-fix resolver ignores the unread key and writes
+        // The pre-fix resolver ignores the unread key and writes
         "b12_write_actor_under_unread_key_refused_nothing_written",
         "b13_refusal_reply_names_both_keys_exactly",
         "b18_reverse_pair_resolve_character_given_actor_id_refused",

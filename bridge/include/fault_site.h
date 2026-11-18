@@ -1,5 +1,5 @@
 #pragma once
-// ck-duv5: the ONE spelling of a faulting instruction, shared by the SIGSEGV
+// The ONE spelling of a faulting instruction, shared by the SIGSEGV
 // handler (bridge_init.cpp, three log sites) and by the probe that grades it
 // (bridge/test/fault_location_probe.cpp).
 //
@@ -11,7 +11,7 @@
 //
 // Async-signal-safety: snprintf is not formally async-signal-safe, and neither
 // is the fprintf this feeds. That is pre-existing on all three handler paths
-// (ck-e3dp/ck-26fm) and is NOT changed here; flagged, not fixed. No allocation,
+// and is NOT changed here; flagged, not fixed. No allocation,
 // no locks, caller-owned buffer.
 #include <cstdio>
 #include <cstddef>
@@ -72,9 +72,9 @@ inline const char* format_fault_regs(char* buf, size_t n, const void* ctx) {
     return buf;
 }
 
-// ── ck-65lv: THE WORD AT [rsp], EMITTED UNINTERPRETED ─────────────────────
+// ── THE WORD AT [rsp], EMITTED UNINTERPRETED ─────────────────────
 //
-// ck-duv5's first live capture resolved to GetPrestige with the ip at its FIRST
+// first live capture resolved to GetPrestige with the ip at its FIRST
 // instruction. It named the instruction and could not name the CALLER, because
 // GetPrestige has 16 callers and the caller's identity is in the return address.
 // At a function's first instruction the return address is exactly at [rsp] —
@@ -83,8 +83,8 @@ inline const char* format_fault_regs(char* buf, size_t n, const void* ctx) {
 // MY FIRST CUT GATED THE READ ON ip_is_at_entry AND THE ONLY SHIPPED CALLER
 // PASSES FALSE, because a signal handler cannot know function bounds. So it
 // would have printed NOT_AT_ENTRY on every real capture and named nobody: the
-// capability present, the only caller that could use it passing false. ck-cg3b's
-// asymmetry, inside the fix for ck-duv5's own instrument, caught by ck-t5bc
+// capability present, the only caller that could use it passing false.
+// asymmetry, inside the fix for own instrument, caught
 // counting call sites — and I had already told them it would name the caller.
 //
 // SO THE VALUE IS ALWAYS EMITTED AND NEVER MISLABELLED. The word is reported as
@@ -100,7 +100,7 @@ inline const char* format_fault_regs(char* buf, size_t n, const void* ctx) {
 // The read cannot fault: rsp during a SIGSEGV can be anything, so it goes
 // through a caller-supplied probe (the bridge passes safe_read_bytes, which is
 // process_vm_readv) rather than a dereference.
-// ── ck-2ptx COMPLETED (found reviewing the ladder, 2026-09-22): THE RANGE HAS
+// ── COMPLETED (found reviewing the ladder, 2026-09-22): THE RANGE HAS
 // TWO ENDS. `word > base` alone let a STACK or HEAP address — above the base by
 // construction — render with an off= and a Ghidra VA, in a line whose header
 // calls such words return-address candidates; the dare's own register values
@@ -146,7 +146,7 @@ inline const char* format_frame_word(char* buf, size_t n, uintptr_t rsp,
                  (unsigned long)(word - base + kGhidraImageBias),
                  assumed ? " (extent assumed)" : "");
     } else {
-        // ck-2ptx's rule, BOTH ends: a value below the base or beyond the image
+        // rule, BOTH ends: a value below the base or beyond the image
         // end is not an offset into it, so the subtraction is refused rather
         // than rendered.
         snprintf(buf, n,
@@ -159,7 +159,7 @@ inline const char* format_frame_word(char* buf, size_t n, uintptr_t rsp,
     return buf;
 }
 
-// ── ck-65lv (the dare, 2026-09-22): THE LADDER — N WORDS ABOVE rsp ────────────
+// ── THE LADDER — N WORDS ABOVE rsp ────────────
 //
 // The one-word capture named the caller of FUN_0784a4a0 (an engine lock-owner
 // read passed a pointer that held 0xa) and could not name who called THAT: the
@@ -168,7 +168,7 @@ inline const char* format_frame_word(char* buf, size_t n, uintptr_t rsp,
 // instrument buys a second sample of the same word. So the ladder: the eight
 // machine words at [rsp], [rsp+8], … [rsp+0x38], each probed INDEPENDENTLY
 // through the same fault-tolerant reader as the first and each labelled as what
-// it literally is. Rules, all inherited from the one-word line and from ck-2ptx:
+// it literally is. Rules, all inherited from the one-word line and from:
 //   * every word goes through `probe`; never a dereference — the handler is
 //     already recovering from one fault and a second inside it is the
 //     chained-FATAL path;

@@ -1,4 +1,4 @@
-// test_speed_read.cpp — ck-k57a. NO GAME. The classifier is a pure function of
+// test_speed_read.cpp —. NO GAME. The classifier is a pure function of
 // three facts, so every case including the memory fault is reachable host-side.
 //
 // THE CLAIM: a read that did not happen cannot leave this code wearing a legal

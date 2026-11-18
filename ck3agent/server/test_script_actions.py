@@ -1,4 +1,4 @@
-"""Lane v4act: the script action layer and the standing policies, server side.
+"""The script action layer and the standing policies, server side.
 
 The bridge's `script_action` verb runs one of the game's own script effects,
 composed by the BRIDGE from a fixed template (bridge/include/script_templates.h),
@@ -345,7 +345,7 @@ def test_observe_carries_the_standing_policies():
     assert view["mod_enabled"] is True and "set_policy" in view["set_with"]
 
 
-# lane COUNCILRE: the bridge pins the seat a seat set (council_pin.h) and says so
+# The bridge pins the seat a seat set (council_pin.h) and says so
 # in `ai_pin`; the council task's standing warning carries that word, and a reply
 # without it reads None, never "pinned".
 def _council_warning(env):

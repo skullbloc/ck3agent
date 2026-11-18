@@ -1,9 +1,9 @@
-"""Every war id a player can see is the same full handle (cleanup 2026.11, L12 item 6).
+"""Every war id a player can see is the same full handle.
 
 A war's id is its WAR_ID: generation byte << 24 | slot index (ck3_offsets.h
 war_db::WAR_ID_*). The slot is reused after a war ends, so the index alone
 names a different war later, and two reads that emit the two forms never join.
-Before L12, query_war_stance (inspect war_stance, observe's stance join),
+Before, query_war_stance (inspect war_stance, observe's stance join),
 query_call_to_arms (the calls a player answers) and the WAR_CREATE_CORE reply
 (declare_war) emitted the slot index; query_wars, get_active_wars, faction rows
 (faction_war.h), war history, war declarations and observe emitted the handle.
@@ -24,7 +24,7 @@ import redesign as R
 
 REPO = Path(__file__).resolve().parents[2]
 
-# L13 FF3 (witness X4): the one C++ tokenizer (bridge/scripts/cpp_strip.py).
+# The one C++ tokenizer (bridge/scripts/cpp_strip.py).
 import sys  # noqa: E402
 sys.path.insert(0, str(REPO / "bridge" / "scripts"))
 import cpp_strip  # noqa: E402

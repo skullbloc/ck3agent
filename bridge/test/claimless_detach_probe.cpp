@@ -1,4 +1,4 @@
-// ck-j6lk — the claim pin must be keyed on CLAIMS, not on being a control session.
+// The claim pin must be keyed on CLAIMS, not on being a control session.
 //
 // shakedown-2 sealed INVALID on unavailability_over_x with the agent blameless: its
 // seat had 70 activities and zero unavailable days. Two driver helpers did it —
@@ -171,7 +171,7 @@ int main() {
                                                    x->claims_ever.load());
     };
 
-    // (b) A DECLARED SEAT THAT NEVER CLAIMED — ck-3ru8's pre-claim window. The world
+    // (b) A DECLARED SEAT THAT NEVER CLAIMED — pre-claim window. The world
     // loads ~17s after first connection; a seat that dies in there must stay a
     // MEASURED HOLE, not vanish.
     {

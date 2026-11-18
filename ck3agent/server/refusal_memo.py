@@ -95,7 +95,7 @@ class Memo:
         if row is None:
             return None
         env = copy.deepcopy(row["env"])
-        # THIS call reached nothing (lane QTRIAGE, live qf1 Q3s: the replay carried
+        # THIS call reached nothing (live qf1 Q3s: the replay carried
         # the earlier call's `sent: true` and token beside "not sent"): the result
         # says so, and what the earlier call did is kept under repeat_of.
         res = env.get("result")

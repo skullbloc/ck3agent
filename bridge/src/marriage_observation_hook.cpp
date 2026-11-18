@@ -11,7 +11,7 @@
 // This is a pure observer — it does not modify any game state.
 
 #include "action_dispatch_internal.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 
 #include <shared_mutex>
 #include <deque>

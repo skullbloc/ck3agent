@@ -1,4 +1,4 @@
-// test/test_world_epoch.cpp — ck-hxh7 regression test.
+// test/test_world_epoch.cpp — regression test.
 //
 // THE BUG: the bridge .so lives for the whole CK3 process, but the process can
 // load a different save. Character ids are reused across saves. g_name_cache in

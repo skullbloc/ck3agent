@@ -1,4 +1,4 @@
-// ck-handoff-swap — the SUCCESSION handoff at a full roster.
+// The SUCCESSION handoff at a full roster.
 //
 // check_controlled_handoff() used to claim the heir and release the corpse
 // afterwards, which asks for a slot while holding the only one available. At
@@ -6,7 +6,7 @@
 // corpse and the function re-walked up to 64 candidates every tick — 2,574
 // watchlist_full lines in diag25, none of which said anything the first had not.
 //
-// These rows are at the REGISTRY, not in a log: ck-zgh4 established that a
+// These rows are at the REGISTRY, not in a log: established that a
 // refusal count read from a sealed bundle returns 0 both when the fix works and
 // when the evidence has rotated away, so the grading cannot live in a log.
 #include "bridge.h"
@@ -113,7 +113,7 @@ int main() {
         !g_session_registry.release_character(seat, corpse),
         "the corpse left with the swap; release(corpse) is already false");
 
-    // ── ck-7rk6's CASE IS PRESERVED, NOT SWALLOWED. The walk exists for a
+    // ── CASE IS PRESERVED, NOT SWALLOWED. The walk exists for a
     // COLLISION: the game's heir is already held by another session. If the swap
     // quietly succeeded there it would seize another seat's character, and the
     // walk would become unreachable — the fix eating the case it must leave

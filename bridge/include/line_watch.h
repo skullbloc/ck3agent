@@ -1,5 +1,5 @@
 // line_watch.h — the PLAYED LINE, followed by the bridge itself, per tick
-// (METERLINE, orchestrator ruling on follow-up 2; owner ruling 2026-11-11).
+// (METERLINE, on follow-up 2).
 //
 // THE GAP THIS CLOSES. The growth meter samples every 30 game-days; the heir
 // handoff (`bridge_init.cpp` `check_controlled_handoff`) re-reads a control
@@ -21,7 +21,7 @@
 // While no heir resolves, the watch is `successor_pending` and retries every
 // tick, as the handoff does.
 //
-// THE LINE ENDS ONLY ON AN OBSERVED DECISION (owner ruling 2026-11-12: an ended
+// THE LINE ENDS ONLY ON AN OBSERVED DECISION (an ended
 // played line is the ultimate failure, R = 0, measured — and it must rest on
 // the bridge's observed decision, never on a default). `ended` below is true
 // only when THREE readings agree that the engine finished the succession and

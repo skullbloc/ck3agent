@@ -1,4 +1,4 @@
-"""Handshake v2 contract tests for BridgeClient / AsyncBridgeClient (ck-6kvq.6).
+"""Handshake v2 contract tests for BridgeClient / AsyncBridgeClient.
 
 No game, no socket, no bridge. `FakeBridgeSocket` below is a line-for-line model
 of the server side in `bridge/src/ipc_server.cpp`:
@@ -61,7 +61,7 @@ class FakeBridgeSocket:
     def __init__(self, *, session_id: str = "sess-7f3a91",
                  echo_session_mode: bool = True,
                  silent: bool = False,
-                 # ck-6kvq.5. `state` is the shared registry a reconnecting
+                 # `state` is the shared registry a reconnecting
                  # client's second FakeBridgeSocket inherits — one bridge
                  # PROCESS outlives many sockets, which is the entire premise of
                  # detach-and-resume, so the model has to outlive the socket too.
@@ -162,12 +162,12 @@ class FakeBridgeSocket:
 
         self.minted_mode = mode
         self.minted_client_name = msg.get("client_name", "unknown")
-        # `minted_resume_token` keeps its ck-6kvq.6 meaning: the token the CLIENT
+        # `minted_resume_token` keeps its meaning: the token the CLIENT
         # PRESENTED. The token the SERVER MINTS goes back in the ack below.
         self.minted_resume_token = msg.get("resume_token")
         self.minted_world_identity = msg.get("world_identity")
 
-        # --- ck-6kvq.5: resume ------------------------------------------------
+        # --- Resume ------------------------------------------------
         # Mirrors handle_handshake_for_slot(): a presented token is looked up; a
         # session whose recorded world the presented identity REFUTES is erased
         # and the resume refused, and the client silently gets a FRESH session —
@@ -228,7 +228,7 @@ class FakeBridgeSocket:
 
     def _handle_action(self, msg: dict):
         """Only `declare_save_identity` — the one action the resume path needs
-        (ck-9fc3's entry point). Everything else is ignored, as an unmodelled
+        (entry point). Everything else is ignored, as an unmodelled
         action would be by a bridge that has no such handler."""
         for act in msg.get("actions", []):
             if act.get("action") != "declare_save_identity":

@@ -1,4 +1,4 @@
-// test_game_thread_reads.cpp — L13 D1/D2: the REAL ipc_server.cpp serves a
+// test_game_thread_reads.cpp —/D2: the REAL ipc_server.cpp serves a
 // game-state read through the game-thread drain, in either clock state, with
 // the reply bytes the inline path always built.
 //
@@ -13,7 +13,7 @@
 //   2  the handler ran on the drain thread, never on the reader;
 //   3  the reply is exactly what the inline path composes: {request_id, the
 //      envelope clock fragment, then the handler's body} (byte-identical
-//      success path for a read that succeeded before L13);
+//      success path for a read that succeeded before);
 //   4  with no drain running, the read answers a typed game_thread_timeout
 //      after kGameThreadReadWaitMs, carrying its request_id, and the abandoned
 //      job never runs once a drain starts;

@@ -4,9 +4,9 @@
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
 #include "action_dispatch_internal.h"
-#include "session.h"       // ck-6kvq.5: the claims half of declare_save_identity
+#include "session.h"       // The claims half of declare_save_identity
 #include "world_epoch.h"
-#include "pipeline.h"   // ck-8o5j: the episode-open clock release
+#include "pipeline.h"   // The episode-open clock release
 #include <cstring>
 #include <shared_mutex>
 #include <sys/mman.h>
@@ -21,7 +21,7 @@ namespace bridge {
 // are DEFINED in personality_world_reset.cpp (engine-free TU) so the world-reset
 // path is host-linkable. Declared in personality_locks.h.
 
-// THE DISK CARRIER MOVED (ck-9fc3). save_personality_locks_locked() and the
+// THE DISK CARRIER MOVED. save_personality_locks_locked and the
 // loader now live in personality_persist.cpp — an ENGINE-FREE translation unit,
 // so the identity gate that keeps the file inside one world is provable on a
 // host with no CK3 running. The old load_personality_locks() is gone with them:
@@ -31,7 +31,7 @@ namespace bridge {
 // world_identity_declare(). Declared in personality_locks.h.
 
 // =============================================================================
-// ck-6kvq.5 — the steering-purge hook
+// The steering-purge hook
 // =============================================================================
 // Fired by SessionRegistry when a session is discarded because the world its
 // claims were taken in has been refuted.  Its job is narrow and mechanical:
@@ -41,7 +41,7 @@ namespace bridge {
 // Why it must exist at all: g_personality_locks is keyed by CHARACTER ID and
 // apply_personality_locks() pokes the axes three times per on_tick.  Releasing a
 // claim without forgetting the lock would leave the bridge writing a vanished
-// world's personality onto whoever holds that id now — which is exactly ck-9fc3,
+// world's personality onto whoever holds that id now — which is exactly,
 // reached by the claims door instead of the reload door.
 void install_steering_purge_hook() {
     g_session_registry.set_steering_purge_hook(
@@ -68,10 +68,10 @@ void install_steering_purge_hook() {
 }
 
 // =============================================================================
-// declare_save_identity — the ck-9fc3 entry point
+// declare_save_identity — the entry point
 // =============================================================================
 // The harness tells the bridge WHICH SAVE is loaded, using the identity that
-// already exists in ck-6kvq.2's run_summary.json ("episode_id" + save.sha256).
+// already exists in run_summary.json ("episode_id" + save.sha256).
 // The bridge decides, once, whether quarantined agent steering may be restored,
 // and publishes the decision and its evidence (world_identity.cpp). Everything
 // hard is in that engine-free TU; this is the wire adapter.
@@ -89,21 +89,21 @@ bool do_declare_save_identity(const char* params_json, std::string* out) {
     RestoreRecord rec = world_identity_declare(id);
     ADLOG("declare_save_identity: %s — %s\n", rec.decision.c_str(), rec.why.c_str());
 
-    // ck-8o5j: THIS IS THE EPISODE-OPEN SIGNAL THE ARM PATH ALREADY SENDS.
-    // ck-zen6 holds the world paused until the episode begins and was keyed on
+    // THIS IS THE EPISODE-OPEN SIGNAL THE ARM PATH ALREADY SENDS.
+    // holds the world paused until the episode begins and was keyed on
     // the episode OBSERVER's declaration — which the arm driver never makes, so
-    // the node pilot ran 17 minutes at 0.0000 game-days/sec. The driver DOES
+    // a test pilot ran 17 minutes at 0.0000 game-days/sec. The driver DOES
     // declare which episode this is, right here, carrying the episode_id; the
     // clock simply was not listening to it. Releasing here needs no new
     // declarer and cannot race, because an episode opens once and releasing
     // confers nothing.
     pipeline_note_episode_open(id.episode_id.c_str());
 
-    // ck-6kvq.5: the CLAIMS half of the same decision.  ck-9fc3 decides what
+    // The CLAIMS half of the same decision. Decides what
     // happens to quarantined STEERING; a declaration that refutes the world a
     // session's claims were taken in must also erase that session, or a resume
     // that abstained (no identity had been declared yet) leaves a control
-    // session owning characters in a world it never saw — the ck-9fc3 symptom
+    // session owning characters in a world it never saw — the symptom
     // arriving by the other door.  Sessions that vouched for nothing are left
     // alone: a declaration can only ever say NO (world_identity.h).
     std::vector<std::string> erased = ipc_reconcile_declared_world(id, world_epoch());
@@ -187,7 +187,7 @@ bool do_get_ai_personality(const char* params_json, std::string* out) {
     if (has_lock) {
         r.key("locked"); r.value_bool(true);
     }
-    // L18-A: where the steering stands, never left to the absence of `locked`:
+    // Where the steering stands, never left to the absence of `locked`:
     // "live" (held, re-applied every tick), "quarantined" (written, then set aside
     // by a world reset — it is NOT being applied; a fresh set_ai_personality
     // writes it live again) or "none" (never written in this process). The
@@ -381,7 +381,7 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
     r.key("character_id"); r.value_uint(cid);
     r.key("axes_written"); r.value_int(written);
     r.key("axes_retained"); r.value_int(retained);  // prior-locked axes kept across this partial update (A11 merge)
-    // L18-A: the lock this write leaves, said rather than implied. The entry is in
+    // The lock this write leaves, said rather than implied. The entry is in
     // the live write set under the lock this function still holds, so "live" is
     // the state at reply time; `world_epoch` is the world it was written in. A
     // later get_ai_personality answers lock_state for the same character.
@@ -446,10 +446,10 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
 // apply_personality_locks — re-apply locked personality values after engine tick
 // =============================================================================
 
-// ck-1v1t: THE LOCK MUST NOT BE HELD ACROSS THE STORE, BECAUSE THE STORE CAN
+// THE LOCK MUST NOT BE HELD ACROSS THE STORE, BECAUSE THE STORE CAN
 // FAULT AND THE RECOVERY DOES NOT UNWIND.
 //
-// All three call sites wrap this in the ck-cg3b guard:
+// All three call sites wrap this in the guard:
 //     g_in_protected_region = true;
 //     if (sigsetjmp(g_recovery_point, 1) == 0) { try { apply_personality_locks(); } ... }
 //     else { blog("SIGSEGV in ... apply_personality_locks"); }
@@ -461,7 +461,7 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
 // on a mutex nothing would ever release: the game thread wedged permanently,
 // and every set_ai_personality on the reader thread with it.
 //
-// The fault is not hypothetical — it is the reason the guard exists. ck-cg3b's
+// The fault is not hypothetical — it is the reason the guard exists.
 // own comment at the call sites says is_mapped() is a time-of-check test and
 // the store is the time-of-use, so a page unmapped in between faults. That bead
 // converted a crash into a permanent deadlock, which is worse: a crash is
@@ -626,11 +626,11 @@ void install_personality_hooks() {
     ADLOG("Personality getter hooks: %d/9 installed\n", installed);
     ADLOG("Parametric getter hook DISABLED (using apply_personality_locks instead)\n");
 
-    // ck-9fc3 — THE DECISION, RECORDED. This used to call
+    // THE DECISION, RECORDED. This used to call
     // load_personality_locks() here: at hook-install time, with no idea which
     // save was loaded, straight into the live write set that
     // apply_personality_locks() pokes into characters 3x per tick. That is the
-    // ck-9fc3 hazard in its worst form, because it crosses PROCESSES: one run's
+    // hazard in its worst form, because it crosses PROCESSES: one run's
     // steering landing on the next run's world, keyed by reused character ids.
     //
     // It never actually fired — install_personality_hooks() has itself had zero

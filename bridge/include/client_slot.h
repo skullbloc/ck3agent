@@ -1,9 +1,9 @@
 #pragma once
 // client_slot.h — the IPC client-slot table's LIFECYCLE, extracted from
-// ipc_server.cpp (ck-xqol) so it can be exercised by a host-compiled unit test
+// ipc_server.cpp so it can be exercised by a host-compiled unit test
 // with no engine, no game, no socket and no reader thread.
 //
-// WHY THIS FILE EXISTS — the ck-xqol SIGSEGV, read out of the core:
+// WHY THIS FILE EXISTS — the SIGSEGV, read out of the core:
 //
 //   #0 bridge::release_slot_locked(int, char const*)   (+0x20b3e)
 //   #1 bridge::reader_loop()
@@ -56,7 +56,7 @@ class Session;  // session.h (the tag must match: the MSVC ABI mangles it)
 // be read under EITHER lock.  send_to_slot() validates `gen` under send_mtx so
 // a released-and-reused slot can never receive a stale write.
 struct ClientSlot {
-    // ck-xqol: FIRST member, and deliberately a bool whose zero value means
+    // FIRST member, and deliberately a bool whose zero value means
     // "free".  See the header comment — the crash was a liveness test that a
     // zero-initialised slot passed.
     bool in_use = false;
@@ -73,16 +73,16 @@ struct ClientSlot {
     // M1 multi-agent session bound to this slot.  Released when the slot is
     // released (disconnect / stale displacement).
     Session* session = nullptr;
-    // ck-6kvq.5: the token is SERVER-minted (bridge::Session::resume_token) and
+    // The token is SERVER-minted (bridge::Session::resume_token) and
     // this copy is only the slot's cached view of it for logging; the authority
     // is the registry.
     std::string resume_token;
-    // ck-6kvq.5: the session's id, COPIED BY VALUE.  `session` above is a raw
+    // The session's id, COPIED BY VALUE.  `session` above is a raw
     // pointer into the registry, and since the resume path a session can be
     // ERASED out from under a live slot (a declared save identity that refutes
     // the world its claims were taken in).  Matching a slot by id is then the
     // only way to find it WITHOUT dereferencing a pointer that may already be
-    // freed — the same lesson ck-xqol drew from `session_id` living inside the
+    // freed — the same lesson drew from `session_id` living inside the
     // object destroy() erases, applied one step earlier.
     std::string session_id;
     // NB: NDJSON line accumulation + keepalive counters are reader-thread-local
@@ -97,16 +97,16 @@ static constexpr int MAX_CLIENTS = 32;
 inline bool slot_is_open(const ClientSlot& s) {
     return s.in_use && s.fd >= 0;
 }
-// ── ck-n7n0: WHICH SLOT BELONGS TO THIS SESSION? ───────────────────────────
+// ── WHICH SLOT BELONGS TO THIS SESSION? ───────────────────────────
 //
 // Extracted so the acceptance can DRIVE it: send_to_session_id touches the
 // g_clients global and cannot be linked without the engine, but the matching
 // RULE is pure and is where the mistakes live.
 //
 // MATCHES BY ID, NEVER BY POINTER. A session can be erased out from under a
-// live slot (ck-6kvq.5), so the by-value session_id copy is the only key that
+// live slot, so the by-value session_id copy is the only key that
 // does not dereference storage that may already be freed — the same lesson
-// ck-xqol drew about session_id living inside the object destroy() erases.
+// drew about session_id living inside the object destroy erases.
 //
 // Returns -1 for "no live slot holds this session", which the caller MUST treat
 // as "fall back to broadcast" rather than "drop the reply": an unsolicited
@@ -156,7 +156,7 @@ uint32_t client_slot_open(ClientSlot& s, int fd, uint64_t connect_ts);
 // Bind a session to a slot, but ONLY if the slot still holds the exact
 // connection the caller handshaked with.
 //
-// ck-xqol (release-racing-handshake): a handshake is parsed WITHOUT the
+// A handshake is parsed WITHOUT the
 // membership mutex and only then takes it to attach.  If the socket dropped in
 // that window the slot has been released and possibly re-accepted, and an
 // unconditional `s.session = session` either orphans the session on a free

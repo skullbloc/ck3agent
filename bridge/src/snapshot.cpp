@@ -3,7 +3,7 @@
 // See snapshot.h for full architectural documentation.
 
 #include "bridge.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "snapshot.h"
 #include "ck3_offsets.h"
 
@@ -260,7 +260,7 @@ bool is_bridge_internal_query(const char* action_type) {
     // These queries read ONLY from bridge-internal state (atomics, mutex-protected
     // containers) and never touch game object pointers. Safe from any thread.
     //
-    // L13 D1 (witness W2/W6): the deferred-slot submitters, get_active_wars,
+    // The deferred-slot submitters, get_active_wars,
     // pre_validate_war, get_ai_personality, query_council_tasks and
     // query_debug_flags read game objects and moved to is_game_state_query;
     // set_ai_personality writes engine memory and moved to
@@ -299,7 +299,7 @@ bool is_bridge_internal_query(const char* action_type) {
     //   ipc-exception get_controlled_roster: scalar reads (ids and liveness) of the controlled characters
     static const char* safe[] = {
         "get_bridge_state",
-        // ck-ngoh1: who_holds_the_lock reads IPC-server static state (mutex-
+        // Who_holds_the_lock reads IPC-server static state (mutex-
         // protected fd + atomic-equivalent pid/uid/connect_ts) and probes
         // peer liveness via kill(pid, 0). Never touches game objects, must
         // serve in any state (DORMANT, paused, busy) so dispatchers can
@@ -307,7 +307,7 @@ bool is_bridge_internal_query(const char* action_type) {
         "who_holds_the_lock",
         "get_offset_validation",
         "get_tick_info",
-        // ck-6kvq.13 (R6): the decision-budget governor. Pure bridge state
+        // The decision-budget governor. Pure bridge state
         // (a mutex-protected ledger), never a game object — safe from any
         // thread, in any pause state, which is what ANY polarity means.
         "report_usage",
@@ -315,7 +315,7 @@ bool is_bridge_internal_query(const char* action_type) {
         "get_budget_state",
         "query_intents",
         "query_intent_results",
-        // lane v4act: the game's log files, read for a script action's marker
+        // The game's log files, read for a script action's marker
         "query_script_log",
         "cancel_intent",
         "clear_intents",
@@ -362,23 +362,23 @@ bool is_bridge_internal_query(const char* action_type) {
         "query_cb_catalog",
         // Scheme initiation reads from hook-populated ring buffer with read lock — no game objects
         "query_scheme_inits",
-        // ck-sd4d: ended-war ledger. Same class as query_scheme_inits — a
+        // Ended-war ledger. Same class as query_scheme_inits — a
         // mutex-protected bridge-local vector filled by the WAR_END_CORE hook
         // on the game thread. No game objects are touched on the read side, so
         // it must serve in EITHER pause state: the meter lane reads it from
         // inside an owned pause window, and an operator reads it unpaused.
         "query_war_history",
-        // Path B' (ck-8weg) override armer — writes only to a mutex-protected
+        // Path B' override armer — writes only to a mutex-protected
         // bridge-local slot, never touches game objects. The hook on the game
         // thread consumes the slot, gated by g_in_bridge_war_intent.
         "set_cb_selector_override",
-        // ck-li56t / ck-dq7ym.4: bridge-internal auto-observe for the
+        // Bridge-internal auto-observe for the
         // multiplayer-lobby character-select screen. Touches libX11/libXtst
         // via dlopen, /dev/uinput as a fallback, and an atomic read of
         // session_state — no game-memory access, so safe to dispatch inline
         // even while DORMANT (the state we need to escape from).
         "select_observe_default",
-        // ck-dq7ym.8: reads the captured LobbyView singleton (atomic load)
+        // Reads the captured LobbyView singleton (atomic load)
         // and invokes game_unpause. Same posture as select_observe_default —
         // no game-memory traversal, safe to dispatch inline from DORMANT.
         "enter_observe_mode",
@@ -404,15 +404,15 @@ bool is_bridge_internal_query(const char* action_type) {
         // XTest/uinput input injection under its own mutex, no game-memory
         // access — sibling select_observe_default above.
         "inject_mouse_click",
-        // ck-9fc3: records the declared save identity and decides the
+        // Records the declared save identity and decides the
         // personality-lock restore. Touches two std::strings, the lock tables
-        // (own shared_mutex) and ck-hxh7's last fingerprint — no game-object
+        // (own shared_mutex) and last fingerprint — no game-object
         // traversal, so it is safe from the IPC thread in any pause state.
         // A resume declares before the clock runs.
         "declare_save_identity",
         // Recorded-data monitor reads (pure vector/atomic/safe_read, own
         // mutexes — no game-object traversal), so bridge state. (audit B2,
-        // 20260612; L13 D1 moved them here from is_game_state_query, where
+        // 20260612; moved them here from is_game_state_query, where
         // they had been put only to be served while paused.)
         "query_war_declarations",
     };
@@ -424,13 +424,13 @@ bool is_bridge_internal_query(const char* action_type) {
 
 bool is_game_state_query(const char* action_type) {
     // These queries traverse the game object graph (CCharacter, realm data,
-    // title objects, war objects, etc.). L13 D1: they run on the GAME thread —
+    // title objects, war objects, etc.).: they run on the GAME thread —
     // the IPC thread hands each to the session-pass drain and waits
     // (ipc_server.cpp try_inline_safe_query, Tier 2) — in either clock state.
     // Read from the IPC thread they would race the engine's commands and the
     // daily tick's parallel AI workers. The per-entry notes below record why
     // each member was classified; "inline when paused" in them is the routing
-    // L13 replaced with this one.
+    // replaced with this one.
     static const char* queries[] = {
         "query_character",
         "query_realm",
@@ -484,12 +484,12 @@ bool is_game_state_query(const char* action_type) {
         "query_cb_options",
         "query_imprisonment_reasons",
         "search_characters",
-        "query_marriage_candidates",  // ck-leg: read-only DB scan
+        "query_marriage_candidates",  // Read-only DB scan
         "memory_probe",
         "query_character_memories",   // read-only: enumerate a character's memories
         "resolve_global",
         // Event query endpoints (read event queue from game memory)
-        // Audit ck-39gy: additional handlers with unsafe game-state reads
+        // Audit: additional handlers with unsafe game-state reads
         "query_province_adjacency",
         // Baked-topology windowed county graph + live overlay (map_graph.cpp). Pure
         // reads: mmap'd artifact (bounded to header counts) + safe_read game-object
@@ -513,7 +513,7 @@ bool is_game_state_query(const char* action_type) {
         "query_building_types",
         "query_diplomatic_range",
         "query_dynasty",
-        // ck-cjev: additional game-state query handlers missing from classification
+        // Additional game-state query handlers missing from classification
         "query_opinion_breakdown",
         "query_county_neighbors",
         "query_realm_laws",
@@ -525,7 +525,7 @@ bool is_game_state_query(const char* action_type) {
         "query_succession_simulation",
         // Meta-query dispatcher — routes to game-state query handlers
         "query",
-        // Phase-3 Wave-2 probes (ck-e58l.8) — game-state reads / deferred queries.
+        // Phase-3 Wave-2 probes — game-state reads / deferred queries.
         "list_pending_interactions",
         "tick_diff",
         // ── N1 batch (surface audit 2026-08-01): formerly UNCLASSIFIED reads ──
@@ -545,7 +545,7 @@ bool is_game_state_query(const char* action_type) {
         // query_cb_options.
         "query_trigger_slots",
     };
-    // L13 D1 (witness W2/W6): game-object readers that were served from the IPC
+    // Game-object readers that were served from the IPC
     // thread. The deferred-slot submitters service their own slot on the game
     // thread (service_slots_if_game_thread); get_active_wars and
     // get_ai_personality walk wars / characters; pre_validate_war reads the
@@ -554,7 +554,7 @@ bool is_game_state_query(const char* action_type) {
     static const char* l13_moved[] = {
         "get_ai_personality", "get_active_wars", "pre_validate_war",
         "query_council_tasks", "query_debug_flags",
-        // FF2 (witness R4): resolves the war in WAR_DB and reads the live war's
+        // Resolves the war in WAR_DB and reads the live war's
         // scores (resolve_war_by_id, IS_ENDED, compute_*_score).
         "query_war_score_breakdown",
         "query_interaction_acceptance", "query_interaction", "query_trigger_result",
@@ -565,7 +565,7 @@ bool is_game_state_query(const char* action_type) {
     for (const char* q : l13_moved) {
         if (strcmp(action_type, q) == 0) return true;
     }
-    // L13 D1: query_conquest_targets walks the graph AND takes the engine's
+    // Query_conquest_targets walks the graph AND takes the engine's
     // strict CB verdict per county. On the game thread the strict evaluation
     // runs DIRECTLY (cb_query_strict_full_sync services its slot inline there),
     // so there is no slot submit+poll on the thread that would service it.
@@ -580,20 +580,20 @@ bool is_game_thread_action(const char* action_type) {
     // Actions that call engine functions directly and must run on the game thread.
     // These are NOT safe for inline execution from the reader thread: the reader
     // queues them to g_msg_queue and the game-thread drain runs them on its next
-    // pass, paused or running (L13 D1).
+    // pass, paused or running.
     //
-    // L14: every name here is audited by section G of
+    // Every name here is audited by section G of
     // bridge/scripts/inline_safety_static.py (THE RULE in its docstring: the
     // drain's sigsetjmp is a crash net, never the handler's answer). The
     // DECLARED EXCEPTIONS, one row of one handler each, ONE declaration that row
     // G reads (`game-thread-ok <name>: <row>: <reason>`); a line whose row no
-    // longer reds is itself a FAIL. None stands since L16 (the one there was,
+    // longer reds is itself a FAIL. None stands since (the one there was,
     // respond_event's, went with the handler).
     static const char* actions[] = {
         // Calls LAW_LOOKUP_BY_NAME + ADD_REALM_LAW engine functions
         "change_realm_law",
         // Calls SET_FOCUS_APPLY (state mutation) — must run on the game thread.
-        // (ck-leg, 20260612)
+        // (20260612)
         "set_lifestyle_focus",
         // Calls CHANGE_COUNCIL_TASK (builds + dispatches CChangeCouncilTaskCommand);
         // game-thread mutation. (20260612)
@@ -617,7 +617,7 @@ bool is_game_thread_action(const char* action_type) {
         "maa_unstation",
         "hire_mercenary",
         "set_doctrine",
-        // lane v4act: runs a fixed-template script effect through the engine's
+        // Runs a fixed-template script effect through the engine's
         // own `effect` console handler (CMD_EFFECT) — a game-thread mutation.
         "script_action",
         // Calls SET_FAITH (SetFaithOnCharacter) — converts the actor's own faith;
@@ -643,7 +643,7 @@ bool is_game_thread_action(const char* action_type) {
         // create_title is the NSE crown-creation lever.
         "call_war_create_core",
         "create_title",
-        // L13 D1 (witness W6): the personality-byte store into engine memory
+        // The personality-byte store into engine memory
         // (personality.cpp) runs in the game-thread drain. Its reply reaches the
         // requester by request_id from the drain, as every queued action's does.
         "set_ai_personality",
@@ -661,13 +661,13 @@ bool is_game_thread_read(const char* action_type) {
     // tick_read and the drain stores no write verdict for them
     // (drain_records_write_verdict): a read in the completed ring would list as a
     // finished write in inspect(pending) and take a slot from the writes looked up
-    // there by poll_token (lane l6, witness #3).
+    // there by poll_token.
     static const char* reads[] = {
         // The construction validity and price (CAddConstructionCommand's), under
         // the fake random scope, which needs the engine's RandomScopeManager slot
         // stable: on the IPC thread while paused another thread's engine scope was
         // popped under the bridge's arm and the restore tripped the scope latch
-        // (lane l6, witness #2). One call checks a list of buildings (`buildings`).
+        // One call checks a list of buildings (`buildings`).
         "construction_check",
         // The council task's target triggers, under the fake random scope. Served
         // inline while paused it tripped the scope latch in live867
@@ -675,7 +675,7 @@ bool is_game_thread_read(const char* action_type) {
         // building enumeration).
         "query_fabricate_targets",
         // The create-title IsValid (its scripted triggers) and price, under the fake
-        // random scope, as the mint runs them (L14 S3, surface-eval finding 14).
+        // random scope, as the mint runs them (surface-eval finding 14).
         "query_create_title_cost",
     };
     if (!action_type) return false;

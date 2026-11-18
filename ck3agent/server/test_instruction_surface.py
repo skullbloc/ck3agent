@@ -1,4 +1,4 @@
-"""cleanup 2026.11 F14: every tool call the agent is TAUGHT exists on the surface.
+""" F14: every tool call the agent is TAUGHT exists on the surface.
 
 The instructions an agent reads are the shipped protocol (ck3agent/protocol/*.md,
 in this tree release/overlay/ck3agent/protocol/), the server's own instructions
@@ -218,7 +218,7 @@ def instruction_files() -> list[Path]:
         files += sorted(p for p in (agent / "knowledge").rglob("*") if p.suffix in (".md", ".json"))
         # BOOT's sources: gen_boot.py pastes them into every episode's first prompt.
         files += sorted((agent / "boot").glob("*.md")) if (agent / "boot").is_dir() else []
-    # v4instr: the experiment seats' play files and guide pages (research tree)
+    # The experiment seats' play files and guide pages (research tree)
     guide = ROOT / "scripts" / "prompts" / "v4-1066"
     files += sorted(guide.rglob("*.md")) if guide.is_dir() else []
     return files
@@ -228,7 +228,7 @@ def instruction_files() -> list[Path]:
 #: ruling, so this lane does not rewrite it). Each pair is reported nowhere else
 #: and is checked to be still there: when the operator fixes the line, the pin
 #: reds and is removed, so the list cannot outlive what it covers.
-HUMAN_OWNED_CALLS: set = set()   # L12: the operator-directives bridge() line was fixed
+HUMAN_OWNED_CALLS: set = set()   # The operator-directives bridge line was fixed
 
 
 def hook_outputs() -> dict[str, str]:

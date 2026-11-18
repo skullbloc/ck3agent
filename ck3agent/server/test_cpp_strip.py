@@ -1,5 +1,5 @@
-"""The one C++ tokenizer, and the census that keeps it the only one (L13 FF3,
-witness X4/X5).
+"""The one C++ tokenizer, and the census that keeps it the only one
+(/X5).
 
 bridge/scripts/cpp_strip.py decides what a comment and a literal are for every
 C++ checker in the repo. Seven hand-rolled copies each got one case wrong (a
@@ -128,7 +128,7 @@ def _units(tree: ast.Module) -> dict:
 
 
 def _folded(n: ast.AST):
-    """A string the AST can compute without running anything (witness r5): a str
+    """A string the AST can compute without running anything: a str
     constant, a bytes constant (latin-1), chr(<int>), and "+" of such strings,
     so "/" + "/", chr(47) and b"//" read as the "//" they spell. Not seen, and
     named here so nobody assumes otherwise: a re.X pattern whose marker is split
@@ -263,7 +263,7 @@ def test_the_line_split_exemptions_hold_no_string_with_a_comment_marker():
     ("regex-block", 'import re\ndef s(t):\n    return re.sub(r"/\\*.*?\\*/", "", t)\n'),
     ("line-split", 'def s(t):\n    return [l.split("//")[0] for l in t]\n'),
     ("regex-line", 'import re\ndef s(t):\n    return re.sub(r"//[^\\n]*", "", t)\n'),
-    # witness r5: spellings the AST can compute (_folded)
+    # Spellings the AST can compute (_folded)
     ("line-split by concatenation", 'def s(t):\n    return [l.split("/" + "/")[0] for l in t]\n'),
     ("line-split by chr", 'def s(t):\n    return [l.split(chr(47) + chr(47))[0] for l in t]\n'),
     ("regex-line in bytes", 'import re\ndef s(t):\n    return re.sub(rb"//[^\\n]*", b"", t)\n'),
@@ -273,7 +273,7 @@ def test_MUTANT_a_planted_parser_is_flagged(name, text):
     assert ("scripts/planted.py", "s") in found, (name, found)
 
 
-#: L13 FF4 (witness T3): the shapes the function-only census missed, each in
+#: The shapes the function-only census missed, each in
 #: the unit that holds it.
 @pytest.mark.parametrize("name, text, unit", [
     ("pattern in a module constant (the witness's run 2)",

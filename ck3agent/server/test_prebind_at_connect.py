@@ -1,4 +1,4 @@
-"""ck-mxlt / ck-hlpb: the agent must ARRIVE bound, and say who it is.
+"""The agent must ARRIVE bound, and say who it is.
 
 The registered prompt says "You ARE Harold Godwinson" — present tense — while
 the driver expects the agent to seize control of itself as an early act and the
@@ -27,7 +27,7 @@ class _Client:
     `ack=None` must mean A FAILED HANDSHAKE, not "use the default". The first
     version of this helper coalesced None to a successful ack, so the
     failed-handshake test could not express its own case and reported a defect
-    in the code that was really a defect in the fixture. Same shape as ck-iu11's
+    in the code that was really a defect in the fixture. Same shape as
     `character_id` helper: a double that cannot represent the condition under
     test agrees with whatever the code does.
     """
@@ -89,7 +89,7 @@ def test_a_declared_character_IS_claimed_before_the_first_turn(monkeypatch):
 
 
 def test_a_REFUSED_claim_is_RECORDED_not_assumed(monkeypatch):
-    """ck-tygb's lesson applied in the same file: a write whose reply is never
+    """ lesson applied in the same file: a write whose reply is never
     read leaves the client believing something that did not happen. The agent
     still runs — it can claim for itself, exactly as it does today."""
     c, st, sent = _bind(monkeypatch, "30853",
@@ -114,7 +114,7 @@ def test_a_MALFORMED_declaration_claims_nothing(monkeypatch):
 
 
 def test_the_handshake_is_v2_and_NAMED(monkeypatch):
-    """ck-hlpb. A bare handshake omits protocol_version, so the bridge assumes
+    """A bare handshake omits protocol_version, so the bridge assumes
     legacy v1 and logs the session as client='unknown'. v1 fails PERMISSIVE
     (a bare handshake yields session_mode 'control', measured), so this is not
     what blocked the claim — but an observe-only request at v1 silently yields
@@ -123,12 +123,12 @@ def test_the_handshake_is_v2_and_NAMED(monkeypatch):
     c, st, sent = _bind(monkeypatch, None)
     assert c.handshake_kwargs is not None
     assert c.handshake_kwargs.get("client_name"), "the session must be NAMED"
-    # THE MODE MUST BE control, AND THIS IS NOT COSMETIC. ck-zgh4 measured the
+    # THE MODE MUST BE control, AND THIS IS NOT COSMETIC. measured the
     # claim handler live: it refuses observe-mode sessions outright — "observe-
     # mode sessions cannot claim characters". Passing `observe` here would make
     # the pre-bind fail with a signature IDENTICAL to the bug it fixes: roster
-    # empty, agent idle, nothing obviously wrong. Two beads (ck-mxlt's claim and
-    # ck-hlpb's v2 keywords) land in one edit, and this is precisely the line
+    # empty, agent idle, nothing obviously wrong. Two beads (claim and
+    # v2 keywords) land in one edit, and this is precisely the line
     # where that swap would go unnoticed.
     assert c.handshake_kwargs.get("mode") == "control", (
         "an observe-mode session CANNOT claim a character; passing observe here "

@@ -1,4 +1,4 @@
-// budget_ledger.h — R6: the decision-budget governor's ENFORCING half (ck-6kvq.13).
+// budget_ledger.h — R6: the decision-budget governor's ENFORCING half.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §5 (decisions G6,
 // G7), as amended by the progenitor's 2026-09-12 correction restoring
@@ -23,7 +23,7 @@
 //
 // That split is what makes the year key unforgeable: a supervisor reports
 // tokens, never a date. The year comes from the engine's own calendar
-// (`ck3::game_date`, ck-05mg) via observe_clock().
+// (`ck3::game_date`) via observe_clock.
 //
 // WHAT A SPENT SESSION CAN STILL DO
 // ---------------------------------

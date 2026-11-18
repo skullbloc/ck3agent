@@ -1,4 +1,4 @@
-"""The inter-seat message channel (pre-registration v3 section 5.2; Study 0 lane s0-channel).
+"""The inter-seat message channel (pre-registration v3 section 5.2; Study 0).
 
 ONE DEFINITION. Everything the channel means lives here and nothing else spells
 it a second time: the conditions-block keys (section 9), their environment
@@ -42,7 +42,7 @@ mean rewriting an append-only file.
 
 THE FIXTURE CANNOT FORGE A DELIVERY. `deliver()` is the only writer of receipt
 records and the only reader that returns an inbox, and it has two callers: the
-server's `observe` (`via="observe"`) and, since lane v4sees, `ck3agent run` at
+server's `observe` (`via="observe"`) and, since then, `ck3agent run` at
 the start of a resumed turn (`via="resume_prompt"`, the text in the prompt). A
 test that claims a message was read has called one of the two.
 """
@@ -147,7 +147,7 @@ GATE_UNAVAILABLE = "channel_unavailable"
 #: The tool-call refusal (a `blocked.gate`, NOT a ledger verdict) when the
 #: cycle authority cannot say which cycle the send falls in (`send_cycle`):
 #: the cell's schedule is unreadable or the game date at the send is. Never a
-#: default: the v3reg2 block stamped every send before a resumed session's
+#: default: the block stamped every send before a resumed session's
 #: first wait "cycle 0" (the session-local counter's start), and 18 of its 19
 #: quota refusals were false (seat-review.md problem 3).
 R_CYCLE_UNKNOWN = "cycle_unknown"
@@ -476,7 +476,7 @@ def materialise(records: Iterable[Mapping[str, Any]]) -> list[dict]:
                 row["read_cycle"] = rec.get("read_cycle")
                 row["reader"] = rec.get("reader")
                 row["read_utc"] = rec.get("read_utc")
-                # a receipt from before lane v4sees has no `via`: only observe delivered then
+                # a receipt from before has no `via`: only observe delivered then
                 row["read_via"] = rec.get("via") or VIA_OBSERVE
                 if rec.get("turn") is not None:
                     row["read_turn"] = rec.get("turn")
@@ -528,7 +528,7 @@ def attempt(cfg: ChannelConfig, ledger: Ledger, *, to: str, text: str,
 
 
 #: How a message reached its reader (the receipt's `via`; materialised `read_via`).
-#: `observe`: inside the recipient's observe. `resume_prompt` (lane v4sees): at
+#: `observe`: inside the recipient's observe. `resume_prompt`: at
 #: the start of the recipient's resumed turn, in the prompt `ck3agent run` sends.
 VIA_OBSERVE = "observe"
 VIA_RESUME_PROMPT = "resume_prompt"
@@ -601,7 +601,7 @@ class SeatState:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. DELIVERY IN THE RESUME PROMPT (lane v4sees)
+# 6. DELIVERY IN THE RESUME PROMPT
 # ═══════════════════════════════════════════════════════════════════════════
 
 #: The heading of the block `ck3agent run` appends to a resumed turn's prompt.

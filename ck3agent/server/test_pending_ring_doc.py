@@ -1,4 +1,4 @@
-"""The completed-verdict ring as the player is told it (cleanup 2026.11, L12 item 7).
+"""The completed-verdict ring as the player is told it.
 
 The bridge keeps the verdicts of the last MAX_COMPLETED drained writes
 (bridge/include/intent_queue.h) and inspect(subject="pending") lists at most

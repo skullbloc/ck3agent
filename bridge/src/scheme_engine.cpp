@@ -263,7 +263,7 @@ namespace {
 // its users: re_schemes.md §2). It records which top-level blocks (allow, valid)
 // failed and the engine's own entries (steps 3/4); nothing else is read.
 //
-// L14 S4, 2026-10-30: what a refusal can say. The engine's entries carry the
+// 2026-10-30: what a refusal can say. The engine's entries carry the
 // game's words (scheme_fail_entry::TEXT). A failing trigger carries none the
 // bridge can read: with wants_text() answering true, the descriptions the game
 // handed this sink on one paused live867 launch (eval_d_words_court, abduct by
@@ -520,7 +520,7 @@ bool execute_scheme_check_intent(Intent* intent) {
     // budget is spent. There is no scan of the whole character database: one ran
     // live (l3m-c1, abduct, 5,308 characters) and one of those evaluations left the
     // engine's random-scope slot pointing into the game thread's stack, which trips
-    // the bridge's scope latch for the rest of the process (ck-zgh4). The latch is
+    // the bridge's scope latch for the rest of the process. The latch is
     // checked after every evaluation; the target that tripped it is named.
     if (candidates.empty()) return reject("candidates_required");
     const auto t0 = std::chrono::steady_clock::now();

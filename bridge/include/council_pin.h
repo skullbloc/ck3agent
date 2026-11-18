@@ -1,4 +1,4 @@
-// council_pin.h — the per-seat council-task pin (lane COUNCILRE, wave 12).
+// council_pin.h — the per-seat council-task pin (wave 12).
 //
 // WHAT THE NATIVE AI DOES (re/findings/re_council_ai.md, HIGH):
 //   CAIManager::PostExecute (image 0x04dedfd0) runs bucket 3 (FUN_04ded5f0) ->

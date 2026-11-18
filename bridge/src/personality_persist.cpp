@@ -1,12 +1,12 @@
 // personality_persist.cpp — the CROSS-PROCESS carrier for agent personality
-// steering, and the identity header that keeps it inside one world (ck-9fc3).
+// steering, and the identity header that keeps it inside one world.
 //
 // WHY THIS FILE EXISTS AT ALL. save_personality_locks_locked() and
 // load_personality_locks() used to live in personality.cpp, which is deeply
 // engine-coupled (character lookup, offset headers, /proc/self/mem writes) and
 // cannot be compiled without a CK3 binary. They do not need any of that: they
 // are stdio over two std::unordered_maps. Moving them here makes the whole
-// ck-9fc3 mechanism — including the negative control, "a DIFFERENT save must
+// mechanism — including the negative control, "a DIFFERENT save must
 // not restore" — provable on a host with no game running. A guard whose failure
 // case nobody has watched is a guard nobody has tested.
 //
@@ -20,7 +20,7 @@
 // takes (see world_identity.cpp), and a file with no header — every file
 // written before this change — names no save, so it can never match.
 //
-// This is what makes load_personality_locks WIRABLE. ck-9fc3 filed it as a
+// This is what makes load_personality_locks WIRABLE. filed it as a
 // hazard precisely because it was an identity-free payload with zero callers:
 // wire it anywhere and the previous run's steering lands on whatever world is
 // loaded next, permanently. It now has exactly one caller,
@@ -32,7 +32,7 @@
 // the OLD bridge must never be the one doing a resume).
 
 #include "personality_locks.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "world_identity.h"
 
 #include <cstdio>
@@ -50,7 +50,7 @@ extern FILE* g_logfile;
 const char* instance_state_dir() CK3_WEAK;
 FILE* instance_state_fopen(const char* name, const char* mode) CK3_WEAK;
 }  // namespace bridge
-#include "private_fopen.h"   // rc2 B1: explicit-path locks opened 0600, O_NOFOLLOW
+#include "private_fopen.h"   // Explicit-path locks opened 0600, O_NOFOLLOW
 namespace bridge {
 
 #define PLOG(fmt, ...) do { \
@@ -62,7 +62,7 @@ namespace {
 constexpr const char* kLegacyPath = "/tmp/ck3-personality-locks.json";
 std::string g_path CK3_EARLY_INIT;   // empty: default_path()
 
-// rc2 B1: the default lives in the instance state dir. Weak so host tests that
+// The default lives in the instance state dir. Weak so host tests that
 // do not link instance_paths.cpp keep the legacy literal.
 const std::string& default_path() {
     static const std::string p = instance_state_dir
@@ -72,12 +72,12 @@ const std::string& default_path() {
 }
 const char* cur_path() { return g_path.empty() ? default_path().c_str() : g_path.c_str(); }
 
-// rc2 B1: the default file is opened through the verified state-dir fd
+// The default file is opened through the verified state-dir fd
 // (O_NOFOLLOW), never by path. An explicit path (tests) is opened as given.
 FILE* open_locks(const char* mode) {
     if (g_path.empty() && instance_state_fopen)
         return instance_state_fopen("ck3-personality-locks.json", mode);
-    return private_fopen(cur_path(), mode);   // rc2 B1: 0600, O_NOFOLLOW
+    return private_fopen(cur_path(), mode);   // 0600, O_NOFOLLOW
 }
 
 // The identity the writer stamps. A LEAF lock: this mutex is taken while

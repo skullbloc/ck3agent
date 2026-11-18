@@ -1,4 +1,4 @@
-// ai_enabled_watch.h — ck-6xi6 diagnostic: WHO writes ai_ctrl+0x28?
+// ai_enabled_watch.h — diagnostic: WHO writes ai_ctrl+0x28?
 //
 // DIAGNOSTIC ONLY. Env-gated on CK3_AI_WATCH=1, never merged to main, rides its
 // own non-counting tag. Off, it costs one relaxed atomic load per tick.
@@ -7,7 +7,7 @@
 // needs both:
 //   sampler     WHEN. The real period. The agent's set_character_ai calls cannot
 //               give it — those are NOTICING times, so their gaps bound the true
-//               period from above only (ck-zgh4).
+//               period from above only.
 //   watchpoint  WHO.  The writer's RIP as a literal. A sampler sees that a value
 //               changed between two reads and nothing about who changed it —
 //               asking it to name the writer is a misplaced instrument.
@@ -62,11 +62,11 @@ struct AiWatchHit {          //: filled IN A SIGNAL HANDLER — POD only
 };
 
 //: SPSC ring: producer is the signal handler, consumer is the tick hook. Atomic
-//: indices from the start — a plain int here is the ck-yg1s defect, and this one
+//: indices from the start — a plain int here is the defect, and this one
 //: has a signal handler for a producer, which is worse than a second thread.
 struct AiWatchRing {
     static constexpr int kSlots = 64;
-    //: ck-zs2x: the USABLE capacity is kSlots - 1, not kSlots. push() refuses when
+    //: The USABLE capacity is kSlots - 1, not kSlots. push refuses when
     //: (tail+1)%kSlots == head, so one slot is permanently reserved to keep "empty"
     //: (head == tail) distinguishable from "full". 64 is the array; 63 is what the
     //: ring can ever hold. Named because the difference is exactly the case that
@@ -114,7 +114,7 @@ inline std::atomic<uint64_t>* g_ai_watch_tick = nullptr;   //: set at arm time
 //: ONE ORDER FOR EVERY RECORD, whoever emits it. fetch_add on a lock-free
 //: atomic is async-signal-safe, so the handler and the game thread can share it.
 //:
-//: seq IS A SORT KEY, NOT AN EMISSION ORDER. I first told the node seat that "seq
+//: seq IS A SORT KEY, NOT AN EMISSION ORDER. I first told a test seat that "seq
 //: must strictly increase down the log; if it does not, the log was reordered" —
 //: WRONG, and wrong in the dangerous direction: it rejects a correct artefact.
 //: Writes reach the log through the ring, so they are emitted when someone
@@ -126,7 +126,7 @@ inline std::atomic<uint64_t>* g_ai_watch_tick = nullptr;   //: set at arm time
 //: is strictly better than hoping emission order is already right.
 //:
 //: AND DISCARD THE CONTROL-FLIP PAIR AFTER EACH **SELFTEST**, NOT AFTER EACH
-//: ARMED. I told the node seat "after each ARMED" and that rule DESTROYS DATA:
+//: ARMED. I told a test seat "after each ARMED" and that rule DESTROYS DATA:
 //: ai_watch_rearm_if_moved re-arms without running a selftest, so a MOVED emits an
 //: ARMED with no flips behind it — and a reader discarding two lines after that
 //: ARMED would throw away the next two ORGANIC writes, which are the only thing
@@ -136,7 +136,7 @@ inline std::atomic<uint64_t>* g_ai_watch_tick = nullptr;   //: set at arm time
 //:
 //: perf_event_open(&pe, 0, ...) scopes the breakpoint to the CALLING THREAD. The
 //: comment below the arming block used to say "this is THE GAME THREAD" —
-//: singular, and wrong. ck-zgh4 measured the node's CK3 running the hook on at
+//: singular, and wrong. measured the test host's CK3 running the hook on at
 //: least two of five workers ("Primary Task 1".."Primary Task 5") within 36
 //: ticks: the two ARMED lines of one known-positive carry different tids.
 //:
@@ -217,7 +217,7 @@ inline void ai_watch_handler(int, siginfo_t*, void* uc) {
 //: ONE WATCHPOINT PER THREAD, AND ANY THREAD MAY ARM ANY OTHER.
 //:
 //: perf_event_open with pid=0 covers only the CALLING thread, and the tick hook is
-//: not one thread: ck-zgh4 measured the node's CK3 running it on two of five
+//: not one thread: measured the test host's CK3 running it on two of five
 //: "Primary Task" workers within 36 ticks — two ARMED lines, two different tids.
 //: A single arm therefore saw ONE WORKER'S SHARE of the writes, which is why run
 //: 1's watchpoint column cannot distinguish "nothing wrote" from "the writes were
@@ -320,7 +320,7 @@ inline int ai_watch_cover_all_threads(uintptr_t byte_addr, FILE* log) {
         }
         const int fd = ai_watch_open_for_tid(byte_addr, tid, log);
         if (fd < 0) continue;
-        //: comm, because "which of the five workers" is how the node seat reads the
+        //: comm, because "which of the five workers" is how a test seat reads the
         //: log and a bare tid does not say that.
         char comm[64] = {0};
         char path[64];
@@ -448,7 +448,7 @@ inline bool ai_watch_selftest(void (*toggle)(void*, unsigned char), void* ai_ctr
     if (!toggle || !ai_ctrl || !byte_addr) return false;
     const unsigned long long before = g_ai_watch_hits.load(std::memory_order_relaxed);
     const uint8_t orig = *reinterpret_cast<volatile uint8_t*>(byte_addr);
-    //: THE INSTRUMENT'S OWN WRITES MUST NOT LOOK LIKE THE SUBJECT'S. ck-zgh4
+    //: THE INSTRUMENT'S OWN WRITES MUST NOT LOOK LIKE THE SUBJECT'S.
     //: nearly reported these two as data on run 1: the flip and the restore land
     //: real WRITE hits, with a game-image rip because the selftest calls the
     //: ENGINE's toggle, so they are indistinguishable from an organic write
@@ -463,7 +463,7 @@ inline bool ai_watch_selftest(void (*toggle)(void*, unsigned char), void* ai_ctr
     const bool ok = after > before;
     //: DRAIN FIRST. The flips this selftest just caused are sitting in the ring;
     //: without this the SELFTEST line is fprintf'd immediately and prints BEFORE
-    //: the CONTROL-FLIP lines it is reporting on. ck-zgh4 saw exactly that live:
+    //: the CONTROL-FLIP lines it is reporting on. saw exactly that live:
     //: SELFTEST seq=3 above CONTROL-FLIP seq=1 and seq=2.
     ai_watch_drain(log);
     if (log) fprintf(log, "[CK3-Bridge][aiwatch] SELFTEST seq=%llu %s hits %llu -> %llu "
@@ -474,7 +474,7 @@ inline bool ai_watch_selftest(void (*toggle)(void*, unsigned char), void* ai_ctr
     return ok;
 }
 
-//: THE CONTROLLER CAN ALSO BE DESTROYED, WHICH IS WORSE AND LIKELIER (ck-zgh4).
+//: THE CONTROLLER CAN ALSO BE DESTROYED, WHICH IS WORSE AND LIKELIER.
 //:
 //: Relocation is not the only way the byte goes away. Unlanding, camp
 //: dissolution or death can DESTROY a landless adventurer's controller outright,
@@ -494,7 +494,7 @@ inline bool ai_watch_selftest(void (*toggle)(void*, unsigned char), void* ai_ctr
 //: accumulating in the same global counters, mixing two subjects in one column.
 //: The retired latch makes the disarm final; resuming is a second state and
 //: wants its own decision, not a side effect.
-//: DISARM IS NOT RETIREMENT ANY MORE (ck-6xi6 run-2 recut).
+//: DISARM IS NOT RETIREMENT ANY MORE (run-2 recut).
 //:
 //: It used to set g_ai_watch_retired unconditionally, which was right while the
 //: watch followed ONE character for the whole run: that character's controller
@@ -563,7 +563,7 @@ inline void ai_watch_rearm_if_moved(uintptr_t now_addr, uint32_t char_id,
     //: always take, which a future caller passing 0 would turn into a lie.
     //: seq HERE ABOVE ALL. The contract is "sort by seq, then read", and this is
     //: the line whose meaning is "everything above me is VOID". Without a seq it
-    //: has no defined position in the ordering a reader is told to use — ck-zgh4
+    //: has no defined position in the ordering a reader is told to use —
     //: sorted a live run, had to place it arbitrarily, and it landed next to an
     //: ARMED it long postdates, which would have condemned the first window. MOVED
     //: and SWITCH make OPPOSITE claims about the window above them, so an
@@ -632,7 +632,7 @@ inline void ai_watch_switch(uint32_t old_id, uint32_t new_id, uintptr_t now_addr
 //: middle, so a write that happened BEFORE a move was printed AFTER it — and
 //: "was there a MOVED between the disable and this value" is exactly the question
 //: the run exists to answer.
-//: ck-zs2x: the last `dropped` total this process has PUBLISHED. The ring's own
+//: The last `dropped` total this process has PUBLISHED. The ring's own
 //: counter is the producer's; this is the consumer's memory of what a reader has
 //: already been told, so each loss is announced once rather than re-announced on
 //: every drain.
@@ -644,8 +644,8 @@ inline void ai_watch_drain(FILE* log) {
     //: This ring DROPS on full; it does not overwrite. So a producer outrunning the
     //: consumer leaves no trace in the data at all — the hits that were lost were
     //: never written to a slot, and the surviving hits look like a complete batch.
-    //: `dropped` is the ONLY evidence a wrap happened, and until ck-zs2x nothing
-    //: published it: a formatter (ai_watch_counters, deleted by ck-arto) built an
+    //: `dropped` is the ONLY evidence a wrap happened, and until nothing
+    //: published it: a formatter (ai_watch_counters, deleted) built an
 //: aiwatch_dropped= string and was called
     //: from nowhere, so the literal was absent from the .so (strings = 0) and a
     //: wrap was invisible by construction.
@@ -676,9 +676,9 @@ inline void ai_watch_drain(FILE* log) {
         //: TWO WHOLE FORMAT STRINGS, NOT ONE WITH %s FOR THE ORIGIN. A runtime
         //: choice leaves "WRITE" and "CONTROL-FLIP" as bare words with no
         //: literal in .rodata, so `strings` finds neither and the build-witness
-        //: check ck-zgh4 runs before a deploy would report the binary wrong.
+        //: check runs before a deploy would report the binary wrong.
         //: The log output is identical either way — it is the WITNESS that
-        //: differs, which is the same defect as ck-7ndj's twelve runtime error
+        //: differs, which is the same defect as twelve runtime error
         //: values: a value assembled at runtime cannot be seen statically.
         //: h.char_id, NOT the live g_ai_watch_char: the subject can change now,
         //: and a hit must be reported under the character it was actually taken
@@ -747,17 +747,17 @@ inline void ai_watch_tick(uint64_t tick, FILE* log) {
     ai_watch_drain(log);
 }
 
-//: ck-arto: `ai_watch_counters` WAS HERE AND IS DELETED, because nothing read it.
+//: `ai_watch_counters` WAS HERE AND IS DELETED, because nothing read it.
 //:
 //: It formatted `aiwatch_hits= aiwatch_transitions= aiwatch_dropped=` into a caller's
 //: buffer and had ZERO callers, on every branch in the repository, for its whole life.
 //: So the literals never reached the .so and no log line ever carried them — which is
-//: exactly why a ring wrap was invisible until ck-zs2x published `dropped` from the
+//: exactly why a ring wrap was invisible until published `dropped` from the
 //: drain instead. Exists / is called / produces are three claims; only the first was
 //: ever true of it.
 //:
 //: DELETED RATHER THAN WIRED, ruled by bt-bbd, and the reason is worth keeping: a
-//: formatter that LOOKS like the publication path and is not is the same trap ck-zs2x
+//: formatter that LOOKS like the publication path and is not is the same trap
 //: closed. Leaving it would mean the next reader asking "so the counters are
 //: published?" and having to re-derive that they are not. The DROPPED line in
 //: ai_watch_drain is the publication path; there is now only one candidate for it.
@@ -766,10 +766,10 @@ inline void ai_watch_tick(uint64_t tick, FILE* log) {
 //: frozen pre-registration's AMENDMENT 2, COMPONENT A records it by name — that
 //: `ai_watch_counters()` formats `aiwatch_dropped=`, is called from nowhere, and has a
 //: strings count of 0 — and names its disposition: "Left open and named:
-//: ai_watch_counters() still has zero callers — bead ck-arto (delete unless read)". The
+//: ai_watch_counters still has zero callers — (delete unless read)". The
 //: deploy-31 annotation and the journal say the same, and no citation anywhere
 //: describes it as an available diagnostic or a planned instrument. Nothing read it, so
-//: ck-arto deleted it, which is the branch of that sentence the signed text anticipated.
+//: deleted it, which is the branch of that sentence the signed text anticipated.
 //: A reader who arrives from amendment 2 looking for the referent should find this note
 //: rather than an absence.
 //:

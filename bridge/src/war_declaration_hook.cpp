@@ -10,10 +10,10 @@
 // This is a pure observer — it does not modify any game state.
 
 #include "action_dispatch_internal.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "name_tables.h"
 #include "engine_text.h"               // war names are rendered text: one cleaner
-#include "world_epoch.h"   // ck-hxh7
+#include "world_epoch.h"
 #include "war_side.h"      // a war's participant ids: the one reader of that layout
 
 #include <shared_mutex>
@@ -58,7 +58,7 @@ static std::unordered_set<uint32_t> g_known_war_ids CK3_EARLY_INIT;
 static int32_t g_last_active_count = -1;
 static bool g_war_monitor_initialized = false;
 
-// ck-hxh7: this detection state is keyed by WAR ID (reused across saves) and was
+// This detection state is keyed by WAR ID (reused across saves) and was
 // never reset. Two failures followed a save load into a live process:
 //   (a) a reused war id was already in g_known_war_ids, so a genuinely NEW war
 //       declaration in the new world was silently dropped;

@@ -198,9 +198,8 @@ NVIDIA driver's `@cuda-uvmfd-...` abstract socket, present without the DLL
 too). The export list is generated from Wine's builtin `version.dll` (16
 names) plus `GetFileVersionInfoByHandle`, which Windows' own exports and Wine's
 lacks (`bridge/src/os/windows/version_exports_extra.h`); regenerate from a real
-System32 copy before the Windows run (P7). Evidence and timings:
-`re/findings/windows/re_p4_proxy_gate.md` in the research checkout. Do not
-chain over an existing proxy DLL.
+System32 copy before the Windows run (P7). Do not chain over an existing
+proxy DLL.
 
 The P3 load-check stub (`bridge/src/os/win/proxy_stub/`, forwards only, logs to
 `C:\ck3_proxy_stub.log`) is kept as a diagnostic for a proxy load that fails
@@ -209,8 +208,7 @@ silently.
 ## 5. Take an ELF core of the Wine process  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014, gdb 17.2]
 
 The Wine host process is an ordinary Linux process, so `gcore` gives an ELF core
-the existing core reader (`re/coredump/core_reader.py` in the research
-checkout) can open. Find the process by what it has mapped, not by name, and
+a core reader can open (the project's own reader is not published yet). Find the process by what it has mapped, not by name, and
 only once the game window is up: in its first seconds Proton's `steam.exe`
 maps `ck3.exe` too, and the first match was `steam.exe`. Wine starts each
 Windows process in its own session with parent pid 1, so it is not a child of
@@ -248,20 +246,11 @@ reader looks for (`<stem>.meta.json`):
 echo '{"base_addr": "0x<BASE>", "proc_maps_file": "<STEM>.maps"}' > "$STEM.meta.json"
 ```
 
-```python
-import sys; sys.path.insert(0, "re/coredump")
-from core_reader import CoreReader
-r = CoreReader(STEM + ".core")             # base_addr comes from the sidecar
-assert r.read_bytes(r.base_addr, 2) == b"MZ"
-r.read_u64(r.resolve(0x1234))              # resolve(rva) = base + RVA
-```
-
 Seen: `MZ` at the base, `PE\0\0` at `e_lfanew` 0x158, `ImageBase` and
 `SizeOfImage` in the in-memory header equal to the file's, and
 `resolve(0x1000)` (start of `.text`) returns the same 16 bytes as the file at
-`.text`'s raw offset. The reader's ELF-magic base search cannot find a PE,
-hence the sidecar. `CoreReader.validate_base` checks for ELF magic and will
-not apply. The reader lives in the research checkout and is not published yet.
+`.text`'s raw offset. A reader that finds the base by ELF magic cannot find a
+PE, hence the sidecar.
 
 ## 6. Load a save  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014: 1.18.3.1, the 867 observer save]
 
@@ -277,18 +266,15 @@ Remove both files afterwards.
   `dlcs={...}` line in its `meta_data`) fails with "Failed to Load Savegame", and
   `error.log` names each missing DLC. Removing that list from both copies of
   `meta_data` (the text block after the header and the top of the zipped
-  `gamestate`) lets it load. The research checkout's
-  `re/scripts/windows/strip_save_dlcs.py` does exactly that. Not tested with the
-  Steam client running.
+  `gamestate`) lets it load. Not tested with the Steam client running.
 - Seen: `debug.log` `End loading of history` at about +90 s. The logs then go
   quiet, and the lobby showed 1 January 867. The ELF core (§5) taken there was
   16.6 GB apparent and 8.6 GB on disk.
 - For a comparison with the Linux build, load **the same file** in a plain Linux
-  game, left paused. (A bridge that predates L13 unpaused a loaded game by
-  itself: one reached 869.07.12 while sitting in the lobby, and the Windows game
-  stayed at 867.01.01. Current bridges never unpause on their own.) Check the
-  date in both cores before comparing
-  anything.
+  game, left paused. (Older bridges unpaused a loaded game by themselves: one
+  reached 869.07.12 while sitting in the lobby, and the Windows game stayed at
+  867.01.01. Current bridges never unpause on their own.) Check the date in both
+  cores before comparing anything.
 
 ## 7. Talk to the bridge (observe only)  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014: 1.18.3.1, the 867 save, every query_* answered]
 
@@ -304,10 +290,9 @@ cat "$E"     # {"transport":"tcp_loopback","endpoint":"127.0.0.1:<port>","token"
 The client's first line must be `{"auth":"<token>"}`; the bridge answers
 `{"type":"auth_ok"}` (or `auth_refused` and closes). After that the protocol is
 the Linux one (NDJSON). `CK3_BRIDGE_PORT` fixes the port; otherwise the system
-picks a free one. The research checkout's `re/scripts/windows/parity_probe.py
---endpoint "$E" --plan plan.json --out windows.jsonl` does the handshake and
-records every reply; `node/p5-win-v1.sh` is the whole run (stage the save,
-start, wait, probe, kill the recorded pid, remove the DLL and the endpoint).
+picks a free one. A run is: stage the save, start the game, wait for the
+endpoint, send the plan and record every reply, stop the recorded pid, remove
+the DLL and the endpoint.
 
 Seen in `bridge.log` at the menu or in the lobby:
 
@@ -323,11 +308,10 @@ Seen in `bridge.log` at the menu or in the lobby:
   degraded reply logs `poison_index=<i>`, which names the constant in the
   build's `win_offsets/report.json`.
 - The game can exit on its own when the GPU is short of memory
-  (`vkAllocateMemory` failing in the Proton log); the node's headless compositor
-  has held 4.3 of 6 GiB with no game running. Check `nvidia-smi` first.
+  (`vkAllocateMemory` failing in the Proton log); a desktop compositor can hold
+  most of a small GPU with no game running. Check `nvidia-smi` first.
 
-Parity with the Linux bridge on the same save, the method and the results:
-`re/findings/windows/re_p5_observe_parity.md` in the research checkout.
+Parity with the Linux bridge on the same save: the ADR's P5 row.
 
 ## 8. Steer through the bridge (the AI-tick hook)  [verified 2026-10-19 on Fedora 44, Proton experimental-11.0-20261014: 1.18.3.1, the 867 save, PROTON_USE_WINED3D=1]
 
@@ -347,27 +331,24 @@ The bridge never unpauses a loaded game by itself, so the clock moves only when 
 plan step moves it, and it does not need the clock: it runs its game-thread work
 after every pass of the game's command thread (the session-pass hook, as on
 Linux), so it goes ACTIVE at tick 0 on a paused save and reads and writes answer
-while paused [verified 2026-10-30, l14-win-live2]. The AI-tick hook stays for
+while paused [verified 2026-10-30]. The AI-tick hook stays for
 the per-tick work (personality locks, the event pass). Not on Windows yet: the observers that
 Linux builds on inline hooks (war score, war and scheme creation, marriages,
 council tasks, the CB selector, the off-goal veto), CB and interaction validity
 (they refuse or report the engine call failed), and localized character names
 (`name_pending` stays true).
 
-**Renderer.** On the node the game died at the end of loading under DXVK, in
+**Renderer.** On the test machine (a 6 GiB GPU) the game died at the end of loading under DXVK, in
 `vkAllocateMemory` (the GPU short of memory; the bridge not involved, a run without
 the hook died the same way). `PROTON_USE_WINED3D=1` (OpenGL) loaded every time;
-`DXVK_CONFIG="dxgi.maxDeviceMemory = 1024"` did not help. `node/p6-win-v1.sh` in the
-research checkout runs the parity plan and a steering plan; P6 results:
-`re/findings/windows/re_p6_hooks_steering.md`.
+`DXVK_CONFIG="dxgi.maxDeviceMemory = 1024"` did not help. P6 results: the ADR's P6 row.
 
-**The display.** By 2026-10-30 the node's compositor held 5.6 of the GPU's 6 GiB and
+**The display.** When the desktop compositor held 5.6 of the GPU's 6 GiB,
 the game stalled at load on the shared display (`X Error ... BadAlloc` in the Proton
-log). A private X server avoids it: `Xvfb :91` from the build image, run with
-`--network=host` so its abstract socket is visible to the host, and the game started
+log). A private X server avoids it: `Xvfb :91` (in a container, run it with
+`--network=host` so its abstract socket is visible to the host), and the game started
 with `DISPLAY=:91`; WineD3D then renders through Mesa llvmpipe (slower to load,
 about 4 minutes to the end of history; the simulation is unaffected).
-`node/l14-win-live-v1.sh` takes it as `L14_DISPLAY`.
 
 ## What to report
 

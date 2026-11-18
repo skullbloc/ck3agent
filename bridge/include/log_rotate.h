@@ -1,11 +1,11 @@
-// ck-otj9 — one spelling of "the log got too big", drivable by a test.
+// One spelling of "the log got too big", drivable by a test.
 //
 // THE DEFECT. Rotation used to be freopen(path, "w") on the live FILE*: the same
 // inode, truncated in place, no copy retained. The only survivor was line 1 of
 // the new file.
 //
 // That was written for an untraced log where discarding the old window costs
-// nothing — and ck-zgh4 measured that it costs nothing because IT NEVER FIRES
+// nothing — and measured that it costs nothing because IT NEVER FIRES
 // THERE: across 11 sealed bundles an untraced bridge.log is 250KB-1.1MB and not
 // one had ever rotated. With CK3_BRIDGE_TRACE armed it is ~0.148 MB/tick, so one
 // episode blows a 64MB cap repeatedly. The rotation's only real-world effect was
@@ -34,7 +34,7 @@ struct RotateResult {
     bool rotated  = false;   // the size threshold was crossed and we acted
     bool archived = false;   // the previous window survives under <path>.1
     int  err      = 0;       // errno from the failed rename, when !archived
-    // ck-otj9 (ck-zgh4): the ring was already FULL, so the eldest archive was
+    // The ring was already FULL, so the eldest archive was
     // overwritten and the head of the run is gone. A bounded ring is still a
     // bound that discards, and a complete-looking set of archives whose oldest
     // does not begin at tick 1 reads exactly like full coverage. This is the
@@ -80,7 +80,7 @@ struct LogCoverage {
 // never a bare bool, because "rotated" and "rotated WITHOUT keeping the old
 // window" are different events and a caller must be able to say which.
 //
-// rc2 B1: the reopen is open(O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, mode)
+// The reopen is open(O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, mode)
 // dup2'd onto the live stream's fd, not freopen(path, "w"): freopen follows a
 // symlink planted at the path and takes its mode from the umask. The FILE*
 // itself never changes (other threads hold it). If the fresh file cannot be

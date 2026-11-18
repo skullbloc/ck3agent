@@ -1,10 +1,10 @@
-"""ck-u182 — the frame-split path, tested where the code RUNS.
+"""The frame-split path, tested where the code RUNS.
 
 `acceptance_1qj0_frame_split` owned the pre-fix CONTROL (it staged
 `bridge_client.py` from a pinned blob and proved the defect reproduced; it
 drove the 1066 episode driver's recovery seals and went with that driver,
-2026-11-12). That needed git, and the node's checkout is a `git archive`
-export — so on the node the lane exited 3 having graded NOTHING. Measured
+2026-11-12). That needed git, and the test host's checkout is a `git archive`
+export — so on the test host the lane exited 3 having graded NOTHING. Measured
 during deploy-45 verification.
 
 Meanwhile the split path runs in production on every seat

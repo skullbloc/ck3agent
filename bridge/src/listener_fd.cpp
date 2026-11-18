@@ -1,4 +1,4 @@
-// listener_fd.cpp — see include/listener_fd.h (L21, node smoke18).
+// listener_fd.cpp — see include/listener_fd.h (node).
 #include "listener_fd.h"
 
 #ifndef _WIN32
@@ -20,7 +20,7 @@ bool exe_is_game(const char* exe_path) {
 
 int listen_socket_cloexec() {
 #ifdef CK3_LISTENER_LEGACY
-    return socket(AF_UNIX, SOCK_STREAM, 0);          // the pre-L21 call (negative control)
+    return socket(AF_UNIX, SOCK_STREAM, 0);          // the earlier call (negative control)
 #else
     return socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
 #endif
@@ -38,7 +38,7 @@ int accept_cloexec(int fd, void* addr, unsigned* addr_len) {
 int close_listeners_bound_to(const char* path) {
 #ifdef CK3_LISTENER_LEGACY
     (void)path;
-    return 0;                                        // the pre-L21 behaviour: nothing closed
+    return 0;                                        // the earlier behaviour: nothing closed
 #else
     if (!path || !*path) return 0;
     DIR* d = opendir("/proc/self/fd");

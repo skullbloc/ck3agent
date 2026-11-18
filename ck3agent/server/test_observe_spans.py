@@ -1,4 +1,4 @@
-"""ck-p9vt — observe_v2's reads are issued together, and the acceptance test is unchanged.
+"""Observe_v2's reads are issued together, and the acceptance test is unchanged.
 
 HOST ONLY. A counting fake gateway; no bridge, no game.
 
@@ -8,8 +8,8 @@ set. It is the tool seats are told to call first and they route around it:
 
   * `_settled_dejure` issued one read then polled up to 6 more, so 1-7 bridge
     reads, and `observe_impl` called it TWICE IN SEQUENCE (k_ireland, then
-    e_britannia) -- up to FOURTEEN reads before the main batch began. (L13
-    deleted the poll: `_dejure_pair` is one batch.)
+    e_britannia) -- up to FOURTEEN reads before the main batch began.
+    (deleted the poll: `_dejure_pair` is one batch.)
   * `get_ai_personality` was a sixth span of its own, 160 lines below, on
     EVERY call. 93% of calls are depth="brief" (539 of 582 measured over
     d45-d50), so it was on the hot path every time.
@@ -22,7 +22,7 @@ about asyncio.
 
   P1  both goal meters are issued in ONE read_many, not two
   P2  the whole pair costs ONE span
-  P3  a 0/0 reply is reported as read, never re-polled (L13)
+  P3  a 0/0 reply is reported as read, never re-polled
   P6  get_ai_personality is in the batch, so `brief` issues no span for it
 """
 from __future__ import annotations
@@ -72,7 +72,7 @@ class ObserveSpans(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([g["total"] for g in out], [14, 93], "values in key order")
 
     async def test_P3_a_zero_tree_is_reported_not_re_polled(self):
-        """L13: a 0/0 reply is the bridge's answer, read on the game thread
+        """A 0/0 reply is the bridge's answer, read on the game thread
         between ticks and already settled by the bridge's own read; the client
         does not poll it again (the re-poll for re_observe_meter_0_0.md's
         IPC-thread race is deleted)."""
@@ -88,7 +88,7 @@ class ObserveSpans(unittest.IsolatedAsyncioTestCase):
             encoding="utf-8", errors="replace")
         i = src.index("async def observe_impl")
         body = src[i:i + 9000]
-        # lane v4sees names the literal batch (`_reads := [...]`) so its failed
+        # names the literal batch (`_reads := [...]`) so its failed
         # reads can be named (observe_read_failures); it is still one literal
         batch_start = body.index("read_many(_reads := [")
         batch_end = body.index("])", batch_start)

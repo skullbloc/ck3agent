@@ -2,7 +2,7 @@
 server left, instead of minting a fresh one that the old session's claims block.
 
 The defect (v3 pilot smoke, orders_hom, 2026-11-09; evidence
-docs/cleanup-2026.11/evidence/v3pilot/ README finding B): K's claude ended at
+ README finding B): K's claude ended at
 867.09.30 and `ck3agent run` resumed it. The resumed claude started a new
 server, which handshook a FRESH bridge session and pre-bound K's ruler 12015.
 In an experiment episode the bridge pins a dropped seat session's claims and
@@ -20,7 +20,7 @@ stand-in client whose handshake follows resume_by_token's three answers. The
 end-to-end rows (a real server under a fake claude and a fake bridge that pins
 claims) are in release/overlay/tests/test_cli.py and run on an exported tree.
 
-Red on 5718f403 (the pre-fix tree, measured on the node): row 1, row 2 (no
+Red on 5718f403 (the pre-fix tree, measured on the test host): row 1, row 2 (no
 token is presented), row 4 resumed=True (5 bound first). Row 3 and row 4
 resumed=False are NON-DISCRIMINATING controls, green before and after: a server
 with nothing to take over, or outside `ck3agent run`, handshakes and binds

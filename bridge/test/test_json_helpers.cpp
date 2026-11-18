@@ -1,4 +1,4 @@
-// Regression test for ck-8xzy: json_get_string must not clobber earlier
+// Regression test for: json_get_string must not clobber earlier
 // returned pointers when called multiple times for different string params.
 //
 // Build: handled by CMake target `test_json_helpers` (BUILD_BRIDGE_TESTS=ON).

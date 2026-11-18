@@ -1,4 +1,4 @@
-// test/test_client_slot.cpp — ck-xqol regression tests for the IPC client-slot
+// test/test_client_slot.cpp — regression tests for the IPC client-slot
 // LIFECYCLE.
 //
 // WHY THIS FILE EXISTS.  A production bridge SIGSEGV'd on the reader thread in
@@ -18,7 +18,7 @@
 //   * T5 reports a session orphaned on a released slot.
 // Build target: test_client_slot_negative_control.
 
-#include "bridge.h"       // ck-6kvq.5: MemRange, for the stub globals below
+#include "bridge.h"       // MemRange, for the stub globals below
 #include "client_slot.h"
 #include "session.h"
 
@@ -38,9 +38,9 @@
 #include <unistd.h>
 
 // Stub globals referenced by bridge.h / session.cpp when compiled standalone
-// (same set test_session_registry.cpp provides).  ck-6kvq.5 added the last
+// (same set test_session_registry.cpp provides). Added the last
 // three: session.cpp now links world_identity.cpp / world_epoch.cpp, because
-// the RESUME decision is taken with ck-9fc3's judge_same_save() rather than a
+// the RESUME decision is taken with judge_same_save rather than a
 // second copy of the rule, and world_epoch.cpp does guarded reads.
 namespace bridge {
 FILE* g_logfile = nullptr;
@@ -317,7 +317,7 @@ static void t5_release_races_handshake() {
 //     open a slot on one end of a socketpair with a session attached, close the
 //     peer, then run the reader's own shape — poll, read, see EOF, release.
 //     This is the sequence that produced "Releasing client slot=0 fd=0
-//     peer_pid=0 (reader EOF / error)" on the node.  It must close exactly the
+//     peer_pid=0 (reader EOF / error)" on the test host.  It must close exactly the
 //     socket it accepted, never fd 0, and must tear the session down cleanly.
 // ───────────────────────────────────────────────────────────────────────────
 static int t6_child() {

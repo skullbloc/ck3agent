@@ -11,8 +11,8 @@
 // This is a pure observer — it does not modify any game state.
 
 #include "action_dispatch_internal.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
-#include "name_tables.h"   // L14: recorded_or_cached_name
+#include "init_order.h"   // CK3_EARLY_INIT
+#include "name_tables.h"   // Recorded_or_cached_name
 
 #include <shared_mutex>
 #include <deque>

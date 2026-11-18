@@ -1,4 +1,4 @@
-// test_debug_verbs.cpp — rc2 B2: the debug verbs are compiled out and refused.
+// test_debug_verbs.cpp —: the debug verbs are compiled out and refused.
 //
 // Links the REAL dispatch_router.cpp (same scaffolding as test_release_handler).
 //

@@ -1,12 +1,12 @@
 #pragma once
 // os/game_logs.h — the game's own debug.log / error.log, found and read for the
-// script action layer's read-back (script_action, query_script_log). Lane WINRE.
+// script action layer's read-back (script_action, query_script_log).
 //
 // The files are found by what the GAME has open, never by a path rule the bridge
 // re-derives: the game writes them under its user directory, which a -userdir /
 // userdir.txt / a moved Documents folder can put anywhere.
 //   Linux    the /proc/self/fd walk (readlink of every descriptor), as the
-//            v4act code did it (src/os/linux/game_logs.cpp, moved byte for byte)
+//            code did it (src/os/linux/game_logs.cpp, moved byte for byte)
 //   Windows  the process's own handles: NtQuerySystemInformation(extended handle
 //            list) filtered to this process, each disk-file handle named by
 //            GetFinalPathNameByHandleW (src/os/windows/game_logs.cpp). Read

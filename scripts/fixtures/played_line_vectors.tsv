@@ -14,12 +14,12 @@
 #                 readable and holding no realm is a real zero; an ENDED line never reaches this read
 #                 (realm_growth scores it: R = 0, measured, flag line_ended).
 #   line_end      <cached primary>,<raw holder>,<successor found 0/1>,<dead's titles held now>  -> 1 ended / 0 not
-#                 THE END DECISION (owner ruling 2026-11-12): bridge/include/line_watch.h line_ended (ctest
+#                 THE END DECISION: bridge/include/line_watch.h line_ended (ctest
 #                 test_played_line) and its mirror scripts/study0_fixture_world.py line_ended
 #                 (scripts/test_played_line.py). raw holder as HOLDER_CHAR_ID carries it: 0xFFFFFFFF nobody,
 #                 0 the title did not look up; titles held -1 = unreadable.
 #   realm         <root>,<dead>,<target>,<root_now>,<target_top>  -> in_realm / heir_outside_realm / realm_unresolved
-#                 THE HANDOFF'S REALM GUARD (owner ruling 2026-11-12; v3reg2 s3 D1 moved onto Carloman):
+#                 THE HANDOFF'S REALM GUARD (moved onto Carloman):
 #                 bridge/include/played_line.h succession_realm_check (ctest test_played_line), called by
 #                 bridge_init.cpp check_controlled_handoff and do_set_controlled_character (dead ruler).
 # fn	args	expect	note
