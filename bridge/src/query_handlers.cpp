@@ -15416,7 +15416,7 @@ bool do_query_diplomatic_range(const char* params_json, std::string* out) {
                 // Still nothing — try liege via title_realm.
                 uintptr_t liege_ptr = safe_read<uintptr_t>(title_realm + ck3::title_realm::LIEGE_PTR);
                 if ((liege_ptr && is_mapped(liege_ptr))) {
-                    c = reinterpret_cast<uintptr_t>(liege_ptr);
+                    c = liege_ptr;
                     continue;
                 }
                 return false;

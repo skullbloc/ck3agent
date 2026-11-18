@@ -50,8 +50,13 @@ struct Writer {
 };
 static bool make_dir(const std::string& p) { return CreateDirectoryA(p.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS; }
 static std::string temp_root() {
-    char b[MAX_PATH]; DWORD n = GetTempPathA(MAX_PATH, b);
-    std::string t(b, n);
+    // GetTempPathA can name the directory by its 8.3 short form (GitHub's
+    // windows runners: C:\Users\RUNNER~1\...); the cell reports the file
+    // system's final, long name. Compare like with like: the long form.
+    char s[MAX_PATH]; const DWORD n = GetTempPathA(MAX_PATH, s);
+    std::string t(s, n < MAX_PATH ? n : 0);
+    char b[MAX_PATH]; const DWORD ln = t.empty() ? 0 : GetLongPathNameA(t.c_str(), b, MAX_PATH);
+    if (ln > 0 && ln < MAX_PATH) t.assign(b, ln);
     if (!t.empty() && (t.back() == '\\' || t.back() == '/')) t.pop_back();
     char name[64]; std::snprintf(name, sizeof name, "\\ck3_game_logs_%lu", (unsigned long)GetCurrentProcessId());
     return t + name;
@@ -133,6 +138,8 @@ int main() {
     CHECK(same_path(g.debug, dbg), "debug.log found by its open handle");
     CHECK(same_path(g.error, err), "error.log found by its open handle");
     std::printf("     debug=%s\n     error=%s\n", g.debug.c_str(), g.error.c_str());
+    if (!same_path(g.debug, dbg) || !same_path(g.error, err))
+        std::printf("     want debug=%s\n     want error=%s\n", dbg.c_str(), err.c_str());
 
     const long long s0 = os::game_log_size(g.debug);
     CHECK(s0 == (long long)std::strlen(first), "size while the writer holds it");

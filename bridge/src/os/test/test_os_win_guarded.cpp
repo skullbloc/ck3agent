@@ -32,7 +32,11 @@ static void check(bool cond, const char* what) {
 // here are fine, the test is single-threaded per case).
 static std::uint8_t* g_bad = nullptr;        // a reserved, unmapped page
 static volatile std::uint8_t g_sink = 0;     // defeats dead-read elimination
-static int g_ran = 0;
+// volatile: cl.exe /O2 drops the `g_ran = 1` store as dead (the `g_ran = 2`
+// after the read overwrites it, and nothing it knows of reads it between),
+// so on real MSVC the check read 0 although the body did run (public CI,
+// 2026.12.10 + the C2440 fix). clang-cl kept the store.
+static volatile int g_ran = 0;
 
 static void read_unmapped(void*) {
     g_ran = 1;
@@ -71,6 +75,7 @@ int main() {
     check(bad.address == reinterpret_cast<std::uintptr_t>(g_bad),
           "the fault address is the unmapped page the body read");
     check(bad.pc != 0, "the fault PC was captured");
+    if (g_ran != 1) std::printf("      g_ran=%d\n", int(g_ran));
     check(g_ran == 1, "the body ran up to the fault and no further");
     check(r.os_error == int(EXCEPTION_ACCESS_VIOLATION), "os_error carries the exception code");
 
