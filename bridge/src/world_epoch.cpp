@@ -1,6 +1,6 @@
 // world_epoch.cpp — detect a save/world reload inside a live CK3 process and
 // drop every world-scoped bridge cache. See include/world_epoch.h for the
-// failure this exists to prevent (ck-hxh7).
+// failure this exists to prevent.
 //
 // WHY A POLLED FINGERPRINT AND NOT A STATE-MACHINE EDGE
 // -----------------------------------------------------
@@ -95,7 +95,7 @@ bool world_fingerprint_indicates_reload(const WorldFingerprint& prev,
     // a load by definition. It is also the first-ever sample, which is harmless
     // to treat as a load ONLY because the first sample is taken before anything
     // world-scoped is written: world_epoch_sample() runs at the top of the drain,
-    // before its queued actions (L18-A; see world_epoch.h — when the first sample
+    // before its queued actions (see world_epoch.h — when the first sample
     // was the first TICK, a tick-0 personality write was quarantined by it).
     if (!prev.loaded) return say("game_state_appeared");
 
@@ -195,7 +195,7 @@ bool world_epoch_observe(const WorldFingerprint& fp, const char* site) {
     }
 
     if (reload) {
-        // rc2 B2: the game-state pointers go to the log line only; `why` is a
+        // The game-state pointers go to the log line only; `why` is a
         // reason string and carries no process address.
         wlog("[CK3-Bridge] WORLD-RELOAD fingerprint: gs=%p <- gs=%p (sampled at %s)\n",
              reinterpret_cast<void*>(fp.game_state_ptr),

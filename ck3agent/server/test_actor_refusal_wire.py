@@ -1,6 +1,6 @@
-"""Lane ACTOR: the bridge's typed no_actor refusal reaches the seat as the gate it means.
+"""The bridge's typed no_actor refusal reaches the seat as the gate it means.
 
-Since lane ACTOR (bridge/include/actor_resolve.h) a seat (episode_seat) that holds
+Since (bridge/include/actor_resolve.h) a seat (episode_seat) that holds
 no ruler and asks query_character with character_id=0 is no longer answered about
 the global primary (the first claimer's ruler); the dispatch refuses it and the
 reply is the exact string below (bridge/test/test_actor_resolve.cpp row b11 pins
@@ -30,7 +30,7 @@ def test_the_pre_fix_answer_was_another_rulers_profile():
     assert R.unbound_actor_block({"id": 7001, "alive": True}) is None
 
 
-# ---- lane ACTORKEY: a write naming its actor under a key its verb does not read ----
+# ---- A write naming its actor under a key its verb does not read ----
 #: bridge/test/test_actor_resolve.cpp b13, verbatim (the dispatch's reply to
 #: set_council_task {"character_id": <own ruler>} with no actor_id).
 ACTOR_KEY_REPLY = {

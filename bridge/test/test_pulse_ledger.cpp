@@ -1,4 +1,4 @@
-// test_pulse_ledger.cpp — R1c host unit tests (ck-6kvq.10).
+// test_pulse_ledger.cpp — R1c host unit tests.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.9.
 //
@@ -6,7 +6,7 @@
 // hazard the design describes — a `siglongjmp` out of the middle of a pulse —
 // is reproduced here with a REAL siglongjmp, not simulated with a flag.
 //
-// THE NEGATIVE CONTROL IS THE POINT (test 6). The ck-hxh7 lane proved its fix by
+// THE NEGATIVE CONTROL IS THE POINT (test 6). The lane proved its fix by
 // REMOVING it and watching the test reproduce the live symptom. Same discipline:
 // test 6 runs the identical crash scenario with the ledger DISABLED and asserts
 // the global is left CLOBBERED — proving the test reproduces the real failure
@@ -269,7 +269,7 @@ static void test_bookkeeping() {
 //
 //    The identical crash scenario as test 2, with the ledger DISABLED. If this
 //    test ever goes green-by-healing, the mechanism under test is not the
-//    ledger and every other assertion here is worthless. (ck-hxh7's lane proved
+//    ledger and every other assertion here is worthless. (lane proved
 //    its fix by removing it and watching the symptom come back; same here.)
 // ===========================================================================
 static void test_negative_control() {

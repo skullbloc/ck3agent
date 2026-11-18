@@ -1,4 +1,4 @@
-"""2026.12.4 (cell0 gaps 5+7; PLAN §P decisions 1 and 4): a CELL seat's wait.
+"""2026.12.4 (cell0 gaps 5+7): a CELL seat's wait.
 
 cell0 ran three seats taught `session(action="wait", seconds=60)`: a seconds
 wait is not held to CK3_CYCLE_GAME_DAYS, so the decision cadence was the clock
@@ -157,7 +157,7 @@ def test_without_the_start_the_published_wait_is_unchanged(monkeypatch):
 
 
 def test_the_registered_horizon_has_41_boundaries_and_the_last_cycle_is_50_days():
-    """L23 witness item 10: v3 §7.2 said "40 cycles (3,650 / 90) is exactly the
+    """V3 §7.2 said "40 cycles (3,650 / 90) is exactly the
     number of boundaries". It is 41: forty whole cycles, then the horizon end
     caps a 50-day last one. One count, the schedule's (the runner reads it)."""
     s, err = cc.cell_schedule({cc.HORIZON_START_ENV: "867.01.03", cc.HORIZON_END_ENV: "877.01.03",
@@ -168,7 +168,7 @@ def test_the_registered_horizon_has_41_boundaries_and_the_last_cycle_is_50_days(
 
 
 def test_an_unreadable_end_date_is_an_unknown_advance_not_zero_days(cell, monkeypatch):
-    """L23 witness item 6: the closing read of a cell wait that cannot be read
+    """The closing read of a cell wait that cannot be read
     gave game_days_advanced 0 and horizon_reached false. Both are unknown (null);
     a wait whose loop read the date at the horizon keeps horizon_reached true."""
     import asyncio as _a
@@ -202,7 +202,7 @@ def test_an_unreadable_end_date_is_an_unknown_advance_not_zero_days(cell, monkey
 
 
 def test_a_cell_seat_cannot_change_the_game_speed(cell, monkeypatch):
-    """L23 witness item 3: the registered speed (v3 §7.3) is written and read back
+    """The registered speed (v3 §7.3) is written and read back
     by the cell's runner; a seat's session(speed) on the shared clock would change
     it for every seat. Refused `speed_registered`, nothing written."""
     gw = AlarmClock(rate=1.0, start="867.02.01")

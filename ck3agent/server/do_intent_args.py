@@ -1,4 +1,4 @@
-"""The `do` tool's per-intent argument table, READ FROM THE CODE (ck-nq8d).
+"""The `do` tool's per-intent argument table, READ FROM THE CODE.
 
 `do.args` was described only as "intent-specific keys (see SPEC §2)", a document
 the seat cannot open, and seats learned the calling convention by refusal (396
@@ -8,7 +8,7 @@ parameters, so WHAT IT READS OFF `args` IS THE ARGUMENT LIST, by construction.
 This module extracts the table from that function's AST, and mcp_server.py
 appends `table_text()` to the registered `do` description at import time: the
 description an MCP client is sent cannot drift from the code because it is
-computed from it. (Until cleanup 2026.11 the block lived in a hand-kept schema
+computed from it. (Until the block lived in a hand-kept schema
 in tools.py that only the retired API loop read; MCP seats never received it.)
 
 READ RATHER THAN GUESSED: a key read as `a.get("k")` is listed; nothing here

@@ -1,4 +1,4 @@
-// test/test_action_args.cpp — regression tests for ck-6kvq.15.
+// test/test_action_args.cpp — regression tests for.
 //
 // THE BUG: pipeline `check` returned {"success":true,"results":[]} for every
 // ticket in every state, so the async API's documented retrieval path was
@@ -48,7 +48,7 @@ static rapidjson::Document parse(const char* json) {
     return d;
 }
 
-// The literal frame the probe sent when it reproduced ck-6kvq.15 live.
+// The literal frame the probe sent when it reproduced live.
 static const char* kFramedCheck =
     "{\"action\":\"check\",\"params\":{\"tickets\":[\"tk_00000005\"]},"
     "\"request_id\":\"3312f62dca3e469ca72cb0831d439598\"}";
@@ -158,7 +158,7 @@ static void test_mixed_and_degenerate_framings() {
     CHECK(!action_has(mixed, nullptr));
 }
 
-// L18-B: the list_valid_decisions frame the MCP server put on the socket in the
+// The list_valid_decisions frame the MCP server put on the socket in the
 // 2026.11 pilots (budget0 e1 bridge-full.log line 143872, Bhoja 11329), and the
 // pre-fix read (top-level "decisions" only) as the negative control: it found
 // nothing, so submit_decision_eval served the light list of every decision.
@@ -186,7 +186,7 @@ static void test_decision_request_framed_and_flat() {
     CHECK(!decision_request("{not json", &h3, &n3));
 }
 
-// L20-B (smoke17 B3): the requested decisions a list-mode walk did not match are
+// The requested decisions a list-mode walk did not match are
 // named, in request order, names before hashes; a matched one is not.
 static void test_decision_unmatched_names_the_unknown() {
     std::printf("decision_unmatched: a requested decision no DB entry matched is named\n");
@@ -199,7 +199,7 @@ static void test_decision_unmatched_names_the_unknown() {
     CHECK(all.size() == 1 && all[0] == "x");
 }
 
-// L20-B (smoke17 item 5): discover(what="scheme_targets") sends scheme_action
+// Discover(what="scheme_targets") sends scheme_action
 // with action "check"; the dispatch guard treats exactly that as a read.
 static void test_scheme_check_is_a_read() {
     std::printf("call_is_read_only: scheme_action check is a read, start/cancel are not\n");

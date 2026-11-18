@@ -1,4 +1,4 @@
-"""v3 §7.2 / §7.1 (lane s0-seats): the seat's cycle is measured in GAME-DAYS.
+"""v3 §7.2 / §7.1: the seat's cycle is measured in GAME-DAYS.
 
 `session(action="wait", game_days=N)` loops bounded waits until the date has
 advanced N days, planned from the measured clock rate; an ask over the
@@ -141,7 +141,7 @@ def test_a_bad_game_days_argument_is_invalid_and_a_stalled_clock_stops_the_loop(
     assert out["ok"] is False and out["blocked"]["gate"] == "cycle_not_reached"
     assert r["stopped"] == cc.STOP_NO_PROGRESS and r["game_days_advanced"] < 200
     assert len(gw.slept) <= cc.MAX_WAIT_CALLS
-    # v4 (lane v4integ): an ask beyond v3's 3,650 game-days is a wait, not an
+    # v4: an ask beyond v3's 3,650 game-days is a wait, not an
     # invalid argument (red at 2f021e4b: invalid_argument, 0..3650)
     out = _wait(Clock(rate=1.0, stall_after_s=20), monkeypatch, seconds=60, game_days=4000)
     assert out["blocked"]["gate"] == "cycle_not_reached"
@@ -209,7 +209,7 @@ def test_the_cycle_is_the_registered_cadence_in_game_days_across_waits_not_any_w
     assert f.note("wait", {"ok": False, "blocked": {"gate": "game_did_not_unpause"}, "result": {}}) == 2
 
 
-# ── L20-A: the bridge's pause alarm (bridge/include/pause_alarm.h) ───────────
+# ── The bridge's pause alarm (bridge/include/pause_alarm.h) ───────────
 
 class AlarmClock(Clock):
     """A Clock whose bridge serves the pause alarm. The reply keys are the
@@ -278,9 +278,9 @@ class AlarmClock(Clock):
 
 
 def test_smoke17_ten_days_is_ten_days_on_the_alarm(monkeypatch):
-    """smoke17 new item 1: wait(seconds=30, game_days=10) at ~1.67 d/s returned
+    """Wait(seconds=30, game_days=10) at ~1.67 d/s returned
     game_days_advanced 25, calls 1, stopped game_days_reached (the 15 s probe).
-    Red before L20-A: the server sent a plain unpause_game and slept the probe."""
+    Red before: the server sent a plain unpause_game and slept the probe."""
     monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
     gw = AlarmClock(rate=1.67, start="867.01.26")
     out = _wait(gw, monkeypatch, seconds=30, game_days=10)
@@ -352,7 +352,7 @@ def test_date_from_ordinal_inverts_ordinal_in_the_bridge_spelling():
         assert cc.ordinal(cc.date_from_ordinal(o)) == o
 
 
-# ── L20 r3, witness item 5: the alarm's labels and its disarm on every exit ───
+# ── The alarm's labels and its disarm on every exit ───
 # (a) a pause_at write answered {"status": "sent_no_confirmation"} (mcp_server
 #     Gateway._dispatch on a timeout) was labelled alarm.state "not_served";
 # (b) a wait that ended with the ENGINE holding the game paused wrote no

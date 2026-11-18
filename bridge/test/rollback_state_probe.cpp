@@ -1,8 +1,8 @@
-// rollback_state_probe.cpp — DOES AN UNDONE CLAIM DESTROY A REAL ONE? (ck-qv51)
+// rollback_state_probe.cpp — DOES AN UNDONE CLAIM DESTROY A REAL ONE?
 //
 // do_set_controlled_character CLAIMS a character, then checks the roster; if the
 // roster diverged it calls release_character to undo the claim. The seat never steered
-// that character. ck-3ru8's census of all ten release_character call sites found this
+// that character. census of all ten release_character call sites found this
 // path reaching the succession handoff with ReleaseSubjectState::Unknown — but the
 // worse half is that it also overwrote last_steered_character_id with the UNDONE id.
 //
@@ -11,14 +11,14 @@
 // blinded: the handoff looks for the seat's last subject and finds a character the
 // agent never steered, whose state is Unknown, and recovers nothing.
 //
-// SEVERITY IS BOUNDED AT "SEAT STAYS EMPTY" — measured by ck-zgh4, and worth stating
-// because it is what ck-qv51 and ck-cwal negotiate over. The id and the state are
+// SEVERITY IS BOUNDED AT "SEAT STAYS EMPTY" — measured, and worth stating
+// because it is what negotiate over. The id and the state are
 // written as a PAIR inside one session->mutex and one `primary == char_id` guard, so
 // they cannot be torn: there is no composite where a never-steered id is paired with
 // an older Corpse state, which would be a WRONG SEIZURE and strictly worse than the
-// bug ck-7yrp fixed. A blinded handoff returns 0. It never recovers the wrong subject.
+// bug fixed. A blinded handoff returns 0. It never recovers the wrong subject.
 //
-// AND ck-sozz'S LEGACY FLAG CANNOT SEPARATE THIS, which is the trap: commit_take does
+// AND'S LEGACY FLAG CANNOT SEPARATE THIS, which is the trap: commit_take does
 // move between the two builds, so reaching for that flag is the natural instinct. But
 // claim_character sets primary_character_id unconditionally on both its branches and
 // runs BEFORE the roster check in BOTH builds, so the recording guard fires either

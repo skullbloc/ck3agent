@@ -1,4 +1,4 @@
-// pause_alarm.h — the game-day pause alarm (L20-A, smoke17 new item 1).
+// pause_alarm.h — the game-day pause alarm.
 //
 // `session(action="wait", game_days=10)` returned `game_days_advanced 25` after
 // one 15 s call: the server could only read the date between its own sleeps, so

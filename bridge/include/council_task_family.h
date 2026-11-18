@@ -1,5 +1,5 @@
 // council_task_family.h — which task type a named council task is ON A GIVEN SEAT
-// (L20-A, smoke17 row B5).
+// (row B5).
 //
 // The engine defines a task once and lets other seats CLONE it: game/common/
 // council_tasks/01_ministry_tasks.txt declares

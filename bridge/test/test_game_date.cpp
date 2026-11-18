@@ -1,4 +1,4 @@
-// Regression test for ck-05mg: the bridge must render dates with CK3's real
+// Regression test for: the bridge must render dates with CK3's real
 // calendar (31/28/31/30/31/30/31/31/30/31/30/31, never leap), not twelve
 // 30-day months.
 //

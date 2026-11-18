@@ -1,4 +1,4 @@
-// test_release_handler.cpp — ck-sozz.
+// test_release_handler.cpp —.
 //
 // THE GAP THIS CLOSES
 // -------------------
@@ -10,11 +10,11 @@
 // return skipped the whole cleanup half — personality lock, council lock, and
 // re-enabling the engine's own per-character AI (ai_ctrl+0x28).
 //
-// The offline suite could not see it, for exactly the ck-xqol reason:
+// The offline suite could not see it, for exactly the reason:
 // test_session_registry drives SessionRegistry DIRECTLY, and the registry half
 // is correct — release_character() returns true and erases the entry. Only the
 // COMPOSITION was broken: the M1 ownership release had been inserted ABOVE
-// ck-60bz's roster guard, a guard whose own contract is "validate roster
+// roster guard, a guard whose own contract is "validate roster
 // membership BEFORE mutating anything". The guard was inspecting a state its
 // own predecessor created.
 //
@@ -80,7 +80,7 @@ std::atomic<uint64_t>    g_cb_query_busy_count{0};
 std::atomic<bool>        g_war_stance_record_walk_enabled{false};
 
 // g_personality_lock_mutex / g_personality_locks are NOT defined here: since
-// ck-hxh7 they live in personality_world_reset.cpp, which SESSION_HOST_SOURCES
+// they live in personality_world_reset.cpp, which SESSION_HOST_SOURCES
 // links. The real definitions are the ones the handler must clear.
 
 IntentQueue              g_intent_queue;
@@ -95,7 +95,7 @@ bool pipeline_owns_clock()       { return false; }
 bool is_clock_verb(const char*)  { return false; }
 // pipeline.cpp is engine-bound; the handlers under test never read a flush id.
 uint64_t pipeline_current_flush_id() { return 0; }
-// ck-1ek9: dispatch_router.cpp's observe-mode gate now asks the mode policy
+// Dispatch_router.cpp's observe-mode gate now asks the mode policy
 // whether a null-mode observer may issue a clock verb, and the ACCESSOR lives in
 // engine-bound pipeline.cpp (the pure POLICY is pipeline_mode.cpp, which this
 // target does link). Legacy is G11's default and the right stub: it is the mode
@@ -266,8 +266,8 @@ void check(bool cond, const std::string& what) {
     }
 }
 
-// ck-6kvq.10's claim pin. The gate moved from pipeline.cpp's
-// pipeline_gate_pins_claims() to episode_policy()'s experiment mode (ck-ijfa),
+// claim pin. The gate moved from pipeline.cpp's
+// pipeline_gate_pins_claims to episode_policy's experiment mode,
 // so ARM THE REAL ONE — a stub for a symbol the bridge no longer calls would
 // leave §2.7 untested while reading as tested.
 void arm_claim_pin(bool on) {
@@ -317,7 +317,7 @@ static void test_owned_character_releases(std::unordered_map<uint32_t, FakeChar>
     Session* s = g_session_registry.create("agent-a");
     Scoped scope(s);
 
-    // ck-cwal: A SECOND CLAIM, so the release under test is not the seat's LAST.
+    // A SECOND CLAIM, so the release under test is not the seat's LAST.
     //
     // This test is about the CLEANUP half of a release, and under the progenitor's
     // ruling a control session's last-character release is REFUSED — so with one
@@ -330,7 +330,7 @@ static void test_owned_character_releases(std::unordered_map<uint32_t, FakeChar>
     bool took = do_set_controlled_character(params(kId, ",\"disable_native_ai\":true").c_str(), &take);
     check(took && ok(take), "set_controlled_character succeeded: " + take);
     check(json_num(take, "roster_size") == 1, "roster holds the character");
-    // ck-cwal: the SECOND claim goes through the REGISTRY, not through
+    // The SECOND claim goes through the REGISTRY, not through
     // set_controlled_character — a second take on a seat that already holds one is
     // a SWITCH (swap_character, net zero under one lock), so it would leave the
     // seat with one claim and the release below would still be the last.
@@ -373,7 +373,7 @@ static void test_owned_character_releases(std::unordered_map<uint32_t, FakeChar>
         check(g_controlled_chars.size() == 1, "roster holds only the remaining claim");
     }
 
-    // ── ck-cwal: AND NOW IT IS THE LAST, SO IT IS REFUSED ────────────────────
+    // ── AND NOW IT IS THE LAST, SO IT IS REFUSED ────────────────────
     // Same seat, one claim left. The bead's required pair, on one world, so the
     // two answers cannot come from two different setups.
     const size_t councils_before = g_council_lock_removals.size();
@@ -414,12 +414,12 @@ static void test_unowned_character_refused_without_mutating(
     {
         Scoped sb(b);
         std::string j;
-        // ck-cwal: b holds a SECOND character, so its later release of kTheirs is
+        // B holds a SECOND character, so its later release of kTheirs is
         // not its last and is therefore permitted. Without this the "true owner can
         // still release afterwards" assertion tests the new refusal instead of the
         // cross-session rule it was written for.
         must(do_set_controlled_character(params(kTheirs, ",\"disable_native_ai\":true").c_str(), &j), "setup take");
-        //: ck-cwal: via the REGISTRY, so b holds two and its later release of
+        //: Via the REGISTRY, so b holds two and its later release of
         //: kTheirs is not its last. A second take would SWITCH, not add.
         std::string why;
         must(g_session_registry.claim_character(b, 303u, &why), "setup: b holds a second");
@@ -427,7 +427,7 @@ static void test_unowned_character_refused_without_mutating(
     lock_personality(kTheirs);
     check(ai_enabled(theirs) == 0, "b's character has native AI disabled");
 
-    // ck-cwal: the size BEFORE the refused call, so the row below asserts the
+    // The size BEFORE the refused call, so the row below asserts the
     // invariant ("the refusal mutated nothing") rather than a literal that became a
     // statement about the setup once a third claim was added.
     size_t roster_before = 0;
@@ -472,7 +472,7 @@ static void test_unowned_character_refused_without_mutating(
     check(ai_enabled(theirs) == 1, "native AI re-enabled on the real release");
 }
 
-// A character nobody has ever claimed: ck-60bz's original case. Must still be a
+// A character nobody has ever claimed: original case. Must still be a
 // typed refusal, and must not touch the one character that IS claimed.
 static void test_never_claimed_character_refused(std::unordered_map<uint32_t, FakeChar>& chars) {
     std::cout << "[3] a never-claimed character is refused; the claimed one is untouched\n";
@@ -500,7 +500,7 @@ static void test_never_claimed_character_refused(std::unordered_map<uint32_t, Fa
     check(g_controlled_primary.load() == kMine, "primary unchanged");
 }
 
-// The ck-60bz roster-less-primary tolerance: a character that is the global
+// The roster-less-primary tolerance: a character that is the global
 // primary but absent from the roster must still be releasable on the LEGACY
 // (no session) path. Keeps the fix from narrowing an existing contract.
 static void test_rosterless_primary_still_releasable(std::unordered_map<uint32_t, FakeChar>& chars) {
@@ -526,7 +526,7 @@ static void test_rosterless_primary_still_releasable(std::unordered_map<uint32_t
     check(g_controlled_primary.load() == 0, "primary cleared");
 }
 
-// ck-6kvq.10 §2.7 is DELIBERATE and must survive the reordering: under an armed
+// §2.7 is DELIBERATE and must survive the reordering: under an armed
 // checkpoint gate the claim is dropped but ai_ctrl+0x28 stays disabled.
 static void test_armed_gate_keeps_ai_disabled(std::unordered_map<uint32_t, FakeChar>& chars) {
     std::cout << "[5] ck-6kvq.10: an ARMED checkpoint gate keeps native AI off\n";
@@ -538,11 +538,11 @@ static void test_armed_gate_keeps_ai_disabled(std::unordered_map<uint32_t, FakeC
     Scoped scope(s);
     {
         std::string j;
-        // ck-cwal: a SECOND claim, so the release below is not the seat's last.
+        // A SECOND claim, so the release below is not the seat's last.
         // This test is about what an ARMED checkpoint gate does to the native-AI
         // re-enable on release; a refused release would never reach that code.
         must(do_set_controlled_character(params(kId, ",\"disable_native_ai\":true").c_str(), &j), "setup take");
-        //: ck-cwal: via the REGISTRY — a second take would SWITCH, not add.
+        //: Via the REGISTRY — a second take would SWITCH, not add.
         std::string why;
         must(g_session_registry.claim_character(s, 602u, &why), "setup: a second claim");
     }
@@ -558,7 +558,7 @@ static void test_armed_gate_keeps_ai_disabled(std::unordered_map<uint32_t, FakeC
 }
 
 // The sibling handler. A take that is going to be REFUSED must not have already
-// disabled the engine's AI for the character (ck-sozz, same defect class).
+// disabled the engine's AI for the character (same defect class).
 static void test_set_controlled_refusal_does_not_touch_ai(
         std::unordered_map<uint32_t, FakeChar>& chars) {
     std::cout << "[6] do_set_controlled_character: a refused take leaves the AI alone\n";
@@ -616,7 +616,7 @@ static void test_set_controlled_refusal_does_not_touch_ai(
           "the refused take did NOT rewrite the global primary");
 }
 
-// ck-cwal: AN OBSERVE SESSION IS UNCHANGED BY THE LAST-CLAIM REFUSAL.
+// AN OBSERVE SESSION IS UNCHANGED BY THE LAST-CLAIM REFUSAL.
 //
 // The bead names this case, and it is not redundant with the observe gate already
 // at INSPECT 1: the point is that the new refusal did not become the answer for
@@ -653,7 +653,7 @@ int main() {
     std::cout << "=== ck-sozz release_character handler ordering ===\n\n";
 #endif
 
-    // ck-cwal added 30745, 303 and 602: a control seat's LAST-character release is
+    // added 30745, 303 and 602: a control seat's LAST-character release is
     // now refused, so three tests that verify the CLEANUP half of a release need a
     // second claim to keep the release they are about from being the last one. The
     // fake world is built from this list, so a character not named here is

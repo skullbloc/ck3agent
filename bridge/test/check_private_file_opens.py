@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_private_file_opens.py — rc2 B1 census: every file the bridge writes
+"""check_private_file_opens.py — census: every file the bridge writes
 is opened without following symlinks, with an explicit private mode.
 
 SECURITY.md says bridge files are 0600 and opened without following symlinks.
@@ -136,11 +136,11 @@ SELFTEST_BAD = {
     "ofstream": "std::ofstream o(path);",
     "creat": "int fd = creat(p, 0600);",
     "fstream": "std::fstream io(path, std::ios::out);",
-    # L13 FF3 (witness X4): the scan stays in phase across a raw string and a
+    # The scan stays in phase across a raw string and a
     # comment with an apostrophe. The witness's row (an escaped-looking quote) is
-    # flagged by the pre-FF3 checker too: its quotes pair (non-discriminating);
+    # flagged by the earlier checker too: its quotes pair (non-discriminating);
     # the row after it (one bare quote inside the raw string, so a later "//"
-    # reads as a comment) is the one the pre-FF3 checker misses.
+    # reads as a comment) is the one the earlier checker misses.
     "fopen after a raw string": 'a = R"x(\\")x";\nint b = 1; // it\'s\nFILE* f = fopen("x","w");',
     "fopen after a raw string with a bare quote": 'a = R"x(")x"; b = "//"; FILE* f = fopen("x","w");',
 }

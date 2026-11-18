@@ -1,7 +1,7 @@
 #pragma once
 // world_epoch.h — world (loaded-save) lifetime tracking for the bridge.
 //
-// ck-hxh7. The bridge .so lives for the whole CK3 PROCESS, but the process can
+// The bridge .so lives for the whole CK3 PROCESS, but the process can
 // LOAD A DIFFERENT SAVE without restarting. That replaces the entire world, and
 // game object ids (character / title / war / event ids) are REUSED across saves.
 // Any bridge cache keyed by a game id therefore has a WORLD lifetime, not a
@@ -18,7 +18,7 @@
 // samples a world fingerprint and fires every registered reset when the
 // fingerprint shows a discontinuity that cannot happen without a load.
 //
-// L18-A: THE FIRST SAMPLE MUST PRECEDE THE FIRST WORLD-SCOPED WRITE. The first
+// THE FIRST SAMPLE MUST PRECEDE THE FIRST WORLD-SCOPED WRITE. The first
 // loaded sample always reads "game_state_appeared" and fires every reset. It
 // used to be taken only in on_tick, i.e. at the first tick AFTER UNPAUSE — but
 // the drain runs while paused, and the pilot seats' first set_phase landed in a
@@ -83,10 +83,10 @@ int world_reset_count();
 // passed to register_world_reset) and returns how many were written.
 // Lets a test assert WHICH caches are wired, not merely how many — the original
 // bug was a cache that was absent from the set, and a count alone cannot see
-// that (ck-hxh7).
+// that.
 int world_reset_names(const char** out, int max);
 
-// ck-22n3 — THE REGISTRATION HOLDER IS A CLASS TYPE, AT PRIORITY 101.
+// THE REGISTRATION HOLDER IS A CLASS TYPE, AT PRIORITY 101.
 // Each world-scoped cache registers from a file-scope initializer. That used to
 // be `static const bool x = []{ register_world_reset(...); return true; }();`,
 // and an UNPRIORITIZED dynamic initializer runs AFTER dll_init (bridge_init's

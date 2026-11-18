@@ -1,6 +1,6 @@
-// log_archive.h — ck-bwz1. Keep EVERY rotated window, not the last three.
+// log_archive.h —. Keep EVERY rotated window, not the last three.
 //
-// THE DEFECT. ck-otj9 made rotation preserve the retired window under
+// THE DEFECT. made rotation preserve the retired window under
 // <log>.1/.2/.3 instead of truncating it, and says out loud when the ring is
 // full so a reader cannot mistake three files for full coverage. That is
 // correct and it is still a BOUND. diag25 rotated TWELVE times: the counters
@@ -29,7 +29,7 @@
 // CONTIGUITY IS THE ACCEPTANCE, which is why the tick range is in the NAME.
 // A directory of archives is only evidence of complete coverage if the windows
 // TILE — [a,b) [b,c) [c,d) with no gap. Counting files proves nothing, and
-// that is the same mistake ck-otj9 refused to let the .1/.2/.3 count make.
+// that is the same mistake refused to let the .1/.2/.3 count make.
 #pragma once
 
 #include <cstdio>
@@ -94,7 +94,7 @@ inline int first_gap(const ArchiveWindow* w, size_t n) {
 // hook: no allocation, no lock, no path where a full queue blocks the
 // simulation. A full queue DROPS and COUNTS the drop — never silently, because
 // a dropped window is exactly the evidence this bead exists to keep.
-// ck-8hn3: THE INDICES ARE ATOMIC BECAUSE THE THREADS ARE DIFFERENT ONES.
+// THE INDICES ARE ATOMIC BECAUSE THE THREADS ARE DIFFERENT ONES.
 //
 // The first version of this ring had plain `int head, tail` and plain counters.
 // The producer is the GAME THREAD inside the tick hook; the consumer is the
@@ -103,7 +103,7 @@ inline int first_gap(const ArchiveWindow* w, size_t n) {
 // not been written yet — and two threads reading and writing a plain int is a
 // data race, which is undefined rather than merely unlikely.
 //
-// That is the SAME DEFECT CLASS AS ck-2gtk, which is a non-atomic
+// That is the SAME DEFECT CLASS AS, which is a non-atomic
 // read-modify-write on a slot the engine publishes with `xchg`, and I wrote
 // this one in the same session as that fix. Knowing the shape did not stop me
 // producing it; what caught it was re-reading this file after a reviewer asked
@@ -121,7 +121,7 @@ inline int first_gap(const ArchiveWindow* w, size_t n) {
 //
 // Still constant-initialisable: `std::atomic<int>`'s default constructor is
 // constexpr, so `constexpr ArchiveQueue{}` compiles and the global needs no
-// dynamic initializer — the property ck-t5bc verified, with the control that
+// dynamic initializer — the property verified, with the control that
 // `constexpr std::string{}` does NOT compile.
 struct ArchiveQueue {
     static constexpr int kSlots = 16;
@@ -169,9 +169,9 @@ struct ArchiveQueue {
     }
 };
 
-// ── ck-lockfree-assert: THE CONTROL, not the observation ─────────────────────
+// ── THE CONTROL, not the observation ─────────────────────
 //
-// ck-yg1s REPORTED that these atomics are lock-free and that the property was
+// REPORTED that these atomics are lock-free and that the property was
 // static_asserted. The measurement was real; the assert was not. It lived in a
 // throwaway probe under /tmp that nothing in this tree compiles, so the claim
 // could not have been contradicted by any build, any gate or any reviewer — a

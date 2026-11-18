@@ -29,7 +29,7 @@ read as "no reservations": every claim is refused `seat_reservations_unreadable`
 until it is fixed, because a reservation the server cannot establish is not one
 it may default away.
 
-THE SELF CHECK IS AGAINST THE SEAT'S ORIGINAL DECLARED ID (witness r1 F1 on
+THE SELF CHECK IS AGAINST THE SEAT'S ORIGINAL DECLARED ID (F1 on
 1eaab8ac), `CK3_SEAT_DECLARED_CHARACTER_ID`, which the cell plan sets once and
 nothing rewrites. NOT `CK3_AGENT_CHARACTER_ID`: `ck3agent run` rewrites that to
 the rulers the seat CARRIES into a continuation (cli.py, the carry after a

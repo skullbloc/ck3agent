@@ -2,7 +2,7 @@
 
 The faction verdicts (query_joinable_factions, faction_action) carry the reason
 the GAME gives. That text is rendered tooltip text with the engine's markup in
-it; the samples below are verbatim replies from run l10-scout1 on the node's 867
+it; the samples below are verbatim replies from run l10-scout1 on the test host's 867
 save (live867-runs/l10-scout1/results/l10_scout.json). The header is the one
 definition of the cleaning; this compiles it and checks what a player reads.
 """
@@ -17,7 +17,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-# L13 FF3 (witness X4): the one C++ tokenizer (bridge/scripts/cpp_strip.py).
+# The one C++ tokenizer (bridge/scripts/cpp_strip.py).
 import sys  # noqa: E402
 sys.path.insert(0, str(REPO / "bridge" / "scripts"))
 import cpp_strip  # noqa: E402
@@ -48,7 +48,7 @@ CASES = [
      "before you can press the demands of this faction again"),
     ("plain words", "plain words"),
     ("", ""),
-    # L12: a compound header with nothing under it says nothing. The imprison
+    # A compound header with nothing under it says nothing. The imprison
     # check's engine_reason read "All of these:" alone (w-l10-factions-6, every
     # refused target); imperial_policy_faction's create read "...; All of these:".
     ("\x15indent_newline:0 \x15!\x15indent_newline:6 \x16warning_icon! \x15X All of these:\x15!", ""),
@@ -61,7 +61,7 @@ CASES = [
     # THE CONTROL: a header with a deeper line under it is kept with that line
     ("\x15indent_newline:0 All of these:\x15indent_newline:2 \x16warning_icon! Is an adult\x15!",
      "All of these:; Is an adult"),
-    # L12: a repeated line is said once (restore_ceremonial_liege_faction's create,
+    # A repeated line is said once (restore_ceremonial_liege_faction's create,
     # w-l10-factions-6: FACTION_CAN_CREATE_AS_COMMAND runs two checks of the same
     # condition into one string)
     ("\x15indent_newline:0 \x15!\x15indent_newline:6 The Aghlabid Sultanate has a \x15E; "
@@ -71,7 +71,7 @@ CASES = [
      "The Aghlabid Sultanate has a Ceremonial Monarch"),
     # the control: two different lines both stay
     ("first\nsecond\nfirst", "first; second"),
-    # L12 witness: a war's name is rendered text too. observe's wars.active[].name
+    # witness: a war's name is rendered text too. observe's wars.active[].name
     # read these raw (w12-full r1/r2, get_active_wars on the 867 save at 868-870).
     ("\x15E; \x15TOOLTIP:GAME_CONCEPT,holy_war Holy War\x15!\x15! for the \x15ONCLICK:TITLE,1158 "
      "\x15TOOLTIP:LANDED_TITLE,1158 \x15L; Chiefdom of Dessau\x15!\x15!\x15!",
@@ -109,7 +109,7 @@ def test_the_game_text_reads_as_words():
 
 def test_the_server_cleaner_reads_the_same_lines():
     """redesign.engine_text cleans the texts the bridge passes raw (change_law,
-    construction, intent verdicts). It applies the bridge's line rules (L12: a
+    construction, intent verdicts). It applies the bridge's line rules (a
     header over nothing goes, a repeat is said once) and reads every case above
     as the bridge does. It adds two rules those texts carry (a concept icon's
     name, a trigger line's met/not met mark), pinned in test_succession_levers.py

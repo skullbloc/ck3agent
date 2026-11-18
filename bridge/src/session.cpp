@@ -1,7 +1,7 @@
 // session.cpp — M1 multi-agent identity + ownership layer implementation.
 
 #include "session.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "bridge.h"
 #include "action_dispatch_internal.h"
 
@@ -23,7 +23,7 @@ namespace bridge {
 // instance_paths.cpp; weak so host targets that do not link it still link.
 mode_t instance_dir_mode() CK3_WEAK;
 }  // namespace bridge
-#include "private_fopen.h"   // rc2 B1: detach stamp opened 0600, O_NOFOLLOW
+#include "private_fopen.h"   // Detach stamp opened 0600, O_NOFOLLOW
 namespace bridge {
 
 // Global state.
@@ -80,7 +80,7 @@ std::vector<uint32_t> Session::release_all() {
 }
 
 // Full JSON string escaping.  The old inline escape handled only '"' and '\\',
-// which was survivable while Session::to_json had no caller — ck-6kvq.11 gave it
+// which was survivable while Session::to_json had no caller — gave it
 // one (get_bridge_state publishes the session array), and client_name is taken
 // VERBATIM from the client's handshake frame.  A name containing a newline or a
 // control byte would then emit invalid JSON in a reply every client parses,
@@ -134,7 +134,7 @@ std::string Session::to_json() const {
     // claim_seq makes the global-primary choice auditable from get_bridge_state.
     json += ",\"claim_seq\":";
     json += std::to_string(claim_seq);
-    // ck-6kvq.5: a detached session is invisible from the socket layer (its slot
+    // A detached session is invisible from the socket layer (its slot
     // is gone) but very much alive here, so get_bridge_state is the only place an
     // operator can see one.  The resume TOKEN is deliberately NOT published: it
     // is an authorisation over a claim set, and get_bridge_state is broadcast.
@@ -152,12 +152,12 @@ std::string Session::to_json() const {
     json += std::to_string(heir_character_id);
     json += ",\"claimed_character_ids\":";
     append_char_id_array(json, claimed_character_ids);
-    // rc2 B6: "" unless the bridge itself unbound this seat.
+    // "" unless the bridge itself unbound this seat.
     json += ",\"unbound_reason\":";
     append_json_string(json, unbound_reason);
     json += ",\"unbound_heir_id\":";
     json += std::to_string(unbound_heir_id);
-    // owner ruling 2026-11-12: the registered realm root the handoff guards (0: none).
+    // The registered realm root the handoff guards (0: none).
     json += ",\"realm_root_id\":";
     json += std::to_string(realm_root_id);
     json += "}";
@@ -180,7 +180,7 @@ Session* SessionRegistry::create(const std::string& client_name, Session::Mode m
     std::lock_guard<std::mutex> lock(mutex_);
     auto up = std::make_unique<Session>(sid, std::move(name), mode, now);
     Session* ptr = up.get();
-    // ck-6kvq.5: the resume credential is minted HERE, by the server, and handed
+    // The resume credential is minted HERE, by the server, and handed
     // out in handshake_ack.  See session.h for why it is not the client's to
     // choose.
     ptr->resume_token    = token;
@@ -246,7 +246,7 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
         if (reason_out) *reason_out = "observe_mode";
         return false;
     }
-    // rc2 B6: never the human player's character, on ANY bind path.
+    // Never the human player's character, on ANY bind path.
     if (const uint32_t pid = player_character_id(); pid && (char_id & 0xFFFFFFu) == pid) {
         if (reason_out) *reason_out = "character_is_player";
         if (g_logfile)
@@ -275,14 +275,14 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
         return false;
     }
 
-    // ck-6kvq.11 / design §1.5: the legacy watchlist (g_controlled_chars) is
+    // / design §1.5: the legacy watchlist (g_controlled_chars) is
     // DERIVED from this table, so the cap must be enforced HERE.  The old code
     // let the claim succeed and then silently skipped the watchlist add in
     // dispatch_router.cpp, leaving the two structures disagreeing.  Refusing the
     // claim keeps them identical by construction.  Observe sessions hold no
     // claims and so never count against the cap.
     if (session->is_control()) {
-        // ck-bzcw: the shared counter, not a second copy of it.
+        // The shared counter, not a second copy of it.
         const size_t controlled = controlled_claim_count_locked();
         if (controlled >= MAX_CONTROLLED_WATCHLIST) {
             if (reason_out) *reason_out = "watchlist_full";
@@ -307,7 +307,7 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
     }
     note_session_claim_locked(session);
     rebuild_legacy_mirrors_locked();
-    // ck-jg2b: SAY THE CAP AND THE COUNT ON EVERY CLAIM.
+    // SAY THE CAP AND THE COUNT ON EVERY CLAIM.
     //
     // MAX_CONTROLLED_WATCHLIST is 10 and it is counted GLOBALLY, summed across
     // every control session, while the claims that consume it are per-session
@@ -320,11 +320,11 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
     // numbers on every claim makes the approach to the cap readable instead of
     // reconstructable.
     if (g_logfile) {
-        // ck-bzcw: the shared counter here too. ck-jg2b's census line added a
-        // THIRD copy of this loop, and ck-bzcw's own row caught it — which is
+        // The shared counter here too. census line added a
+        // THIRD copy of this loop, and own row caught it — which is
         // what a row that counts implementations is for.
         const size_t total = controlled_claim_count_locked();
-        // ck-zgh4's baseline caught two hazards in the first spelling of this
+        // baseline caught two hazards in the first spelling of this
         // line, and both are about the WITNESS rather than the log:
         //
         //   1. It read "watchlist %zu/%zu", ONE WORD from the shipped
@@ -349,7 +349,7 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
     return true;
 }
 
-// ck-swap: MOVE a claim from one character to another, ATOMICALLY.
+// MOVE a claim from one character to another, ATOMICALLY.
 //
 // WHY A PRIMITIVE AND NOT TWO CALLS. The `session(control)` tool promises to
 // "switch which ruler you control after a succession" and the handler only
@@ -361,7 +361,7 @@ bool SessionRegistry::claim_character(Session* session, uint32_t char_id,
 // the whole justification for this function:
 //
 //   claim-then-release   the CLAIM is refused at the cap, so the ordering is
-//                        unreachable exactly when it matters (ck-zgh4 recovered
+//                        unreachable exactly when it matters (recovered
 //                        the sequence: two watchlist_full refusals, then a
 //                        release, then the claim succeeding)
 //   release-then-claim   empties the set, note_session_release_locked zeroes
@@ -391,7 +391,7 @@ bool SessionRegistry::swap_character(Session* session, uint32_t from,
         if (reason_out) *reason_out = "observe_mode";
         return false;
     }
-    // rc2 B6: a swap onto the human player is refused like a claim of it. The
+    // A swap onto the human player is refused like a claim of it. The
     // succession handoff is a swap, so this is what keeps the bridge from
     // binding the player when the player inherits the seat's ruler.
     if (const uint32_t pid = player_character_id(); pid && (to & 0xFFFFFFu) == pid) {
@@ -433,9 +433,9 @@ bool SessionRegistry::swap_character(Session* session, uint32_t from,
                 session->unbound_heir_id = 0;
                 // DELIBERATELY NOT setting last_steered_character_id. That field
                 // exists so a session which released its own CORPSE can still be
-                // handed an heir (ck-7rk6); a swap is a deliberate switch away
+                // handed an heir; a swap is a deliberate switch away
                 // from a character the session chose to stop steering, and
-                // ck-7rk6's own comment says such a session must not be handed
+                // own comment says such a session must not be handed
                 // one. The handoff only consults it when primary is 0, which a
                 // swap never leaves behind.
             }
@@ -478,7 +478,7 @@ bool SessionRegistry::any_seat_declared() const {
     return false;
 }
 
-// rc2 B6: the dead ruler's heir is the human player. Release the corpse (state
+// The dead ruler's heir is the human player. Release the corpse (state
 // HeirIsPlayer, so the handoff never recovers it and never retries) and record
 // why, instead of binding the player.
 bool SessionRegistry::unbind_for_player_heir(Session* session, uint32_t dead,
@@ -507,7 +507,7 @@ bool SessionRegistry::unbind_for_player_heir(Session* session, uint32_t dead,
     return released;
 }
 
-// owner ruling 2026-11-12: the succession would move the seat outside its
+// The succession would move the seat outside its
 // registered realm. Refuse and record, as for the player heir.
 bool SessionRegistry::unbind_for_outside_realm(Session* session, uint32_t dead,
                                                uint32_t heir) {
@@ -546,10 +546,10 @@ bool SessionRegistry::release_character(Session* session, uint32_t char_id,
         std::lock_guard<std::mutex> slock(session->mutex);
         session->claimed_character_ids.erase(char_id);
         if (session->primary_character_id == char_id) {
-            // ck-7rk6: remember what we were steering BEFORE zeroing it, so a
+            // Remember what we were steering BEFORE zeroing it, so a
             // release cannot blind the succession handoff. Set only on the way
             // out of primary, never cleared here.
-            //: ck-qv51: AN UNDONE CLAIM IS NOT A RELEASE, so it records nothing.
+            //: AN UNDONE CLAIM IS NOT A RELEASE, so it records nothing.
             //:
             //: The roster-divergence rollback in do_set_controlled_character calls
             //: release_character to undo a claim the seat never steered. Recording it
@@ -561,11 +561,11 @@ bool SessionRegistry::release_character(Session* session, uint32_t char_id,
             //: occur.
             if (state_at_release != ReleaseSubjectState::UndoneClaim) {
                 session->last_steered_character_id = char_id;
-                //: ck-7yrp: and WHAT IT WAS at this moment, recorded beside it. The id
+                //: And WHAT IT WAS at this moment, recorded beside it. The id
                 //: alone made a deliberate drop of a living character
                 //: indistinguishable from a corpse release as soon as the character
                 //: later died. Written as a PAIR with the id above, under this one
-                //: mutex and this one guard, which is what bounds ck-qv51's severity
+                //: mutex and this one guard, which is what bounds severity
                 //: at "seat stays empty" rather than "seat seized wrongly".
                 session->last_release_state = state_at_release;
             }
@@ -580,7 +580,7 @@ bool SessionRegistry::release_character(Session* session, uint32_t char_id,
 }
 
 // ----------------------------------------------------------------------------
-// Deterministic global primary (ck-6kvq.11, design §1.4 defect 2 / §7 item 2)
+// Deterministic global primary (design §1.4 defect 2 / §7 item 2)
 // ----------------------------------------------------------------------------
 
 void SessionRegistry::note_session_claim_locked(Session* session) {
@@ -588,7 +588,7 @@ void SessionRegistry::note_session_claim_locked(Session* session) {
     // "holds nothing" to "holds something".  A session that keeps at least one
     // claim keeps its slot, so a succession handoff (claim heir, then release
     // the corpse) does not move the global primary.
-    //: ck-j6lk: FIRST, and unconditionally — before the claim_seq branch, because
+    //: FIRST, and unconditionally — before the claim_seq branch, because
     //: claim_seq only moves on the empty->held transition and this must count every
     //: claim including a swap, where the set is non-empty on both sides. This is
     //: the one write; nothing ever clears it.
@@ -670,7 +670,7 @@ bool SessionRegistry::ownership_divergence(std::string* detail) const {
     return !divergence_.empty();
 }
 
-// ck-bzcw: ONE COMPUTATION, THREE READERS.
+// ONE COMPUTATION, THREE READERS.
 //
 // This function and claim_character's cap check were the SAME loop written
 // TWICE — and this copy had ZERO CALLERS, so the live one was the inline
@@ -797,7 +797,7 @@ void SessionRegistry::rebuild_legacy_mirrors_locked() {
 }
 
 std::string SessionRegistry::sessions_json() const {
-    // ck-6kvq.11: ORDERED, not hash-ordered. get_bridge_state now publishes this
+    // ORDERED, not hash-ordered. get_bridge_state now publishes this
     // array, and emitting it in unordered_map order would re-export the exact
     // nondeterminism this bead removed from the global primary — a client
     // diffing two snapshots would see the roster "change" on every rehash.
@@ -843,17 +843,17 @@ std::vector<std::string> SessionRegistry::ids() const {
 }
 
 // ============================================================================
-// DETACH / RESUME (ck-6kvq.5, design §6.2 / §1.4 defect 1 / §7 item 1)
+// DETACH / RESUME (design §6.2 / §1.4 defect 1 / §7 item 1)
 // ============================================================================
 //
-// ck-6kvq.10 stopped the destroy-on-drop under `episode_pins_claims()`.  This is
+// stopped the destroy-on-drop under `episode_pins_claims`.  This is
 // the other half: the session it left alive gets a STATE, a way back in, and a
 // bound on how long it may be gone.
 //
 // Read `session.h` for the contracts.  The invariant that governs every line
 // below: nothing here re-enables `ai_ctrl+0x28`, and nothing here releases a
 // claim except on the one path where the claims no longer refer to the
-// characters they were taken for (a refuted world — ck-9fc3).
+// characters they were taken for (a refuted world —).
 
 void SessionRegistry::set_steering_purge_hook(SteeringPurgeHook hook) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -922,7 +922,7 @@ bool SessionRegistry::detach_from_slot(const std::string& session_id,
 // Deliberately a free function taking everything it needs: the whole rule is one
 // readable expression, and a test can drive it without a registry.
 //
-// ck-9fc3's judge_same_save() is THE rule for "is this the same save"; this adds
+// judge_same_save is THE rule for "is this the same save"; this adds
 // only the world-epoch shortcut (the world never changed, so no identity is
 // needed) and §6.2's discard-on-unvouched-change bias.
 namespace {
@@ -930,7 +930,7 @@ namespace {
 enum class ResumeVerdict { ALLOW, DISCARD };
 
 // CK3_RESUME_NO_IDENTITY_CHECK builds the NEGATIVE CONTROL: the clause always
-// allows, and the ck-9fc3 symptom comes straight back (a session keeps claims —
+// allows, and the symptom comes straight back (a session keeps claims —
 // and therefore steering — over characters in a world it never saw).  An
 // acceptance that cannot fail is not evidence.
 #ifdef CK3_RESUME_NO_IDENTITY_CHECK
@@ -952,7 +952,7 @@ ResumeVerdict resume_identity_verdict(const WorldIdentity& recorded,
         return ResumeVerdict::ALLOW;
     }
 
-    // (1) THE WORLD NEVER CHANGED.  ck-hxh7's epoch is monotonic and bumps only
+    // (1) THE WORLD NEVER CHANGED. Epoch is monotonic and bumps only
     // on a detected load, so equal epochs mean the very same world object the
     // claims were taken in.  There is nothing for an identity to disagree about,
     // and a socket drop is not a world event.  This is the common case: a
@@ -965,8 +965,8 @@ ResumeVerdict resume_identity_verdict(const WorldIdentity& recorded,
     // (2) THE EPOCH IS UNAVAILABLE.  0 is the seam's "the detector never spoke"
     // sentinel (world_epoch() starts at 1 and only ever increments, so a live
     // world never reads 0).  With no evidence of a change and no declaration to
-    // weigh, refusing would break resume on every host where ck-hxh7 is not
-    // wired — so abstain, and leave the steering question to ck-9fc3, which
+    // weigh, refusing would break resume on every host where is not
+    // wired — so abstain, and leave the steering question to, which
     // keeps the locks quarantined until someone declares.
     if (attach_epoch == 0 || current_epoch == 0) {
         if (!recorded.empty() && !presented.empty()) {
@@ -982,7 +982,7 @@ ResumeVerdict resume_identity_verdict(const WorldIdentity& recorded,
         return ResumeVerdict::ALLOW;
     }
 
-    // (3) THE WORLD CHANGED.  From here the bias inverts relative to ck-hxh7:
+    // (3) THE WORLD CHANGED.  From here the bias inverts relative to:
     // there a false positive costs one cache recompute, here a false negative
     // rewrites a stranger's personality 3x/tick for the rest of the episode.
     // Only a declaration can say YES.
@@ -1030,7 +1030,7 @@ void SessionRegistry::discard_session_locked(Session* session,
 
     // COPY the id before the erase: unordered_map::erase(key) takes the key by
     // reference, and session_id lives INSIDE the object the erase destroys
-    // (the ck-xqol lesson, applied here before it can bite).
+    // (the lesson, applied here before it can bite).
     const std::string dead_sid = session->session_id;
     if (manifest_primary_session_ == dead_sid) manifest_primary_session_.clear();
     resume_tokens_.erase(session->resume_token);
@@ -1075,7 +1075,7 @@ SessionRegistry::ResumeOutcome SessionRegistry::resume_by_token(
         // holding one session's claims is a split brain, and the second one is
         // far more likely to be a confused retry than a genuine takeover.  LOST
         // IS resumable: the agent came back late, its claims were never
-        // released, so there is something real to come back to — and ck-6kvq.1
+        // released, so there is something real to come back to — and
         // has already reported the expiry either way.
         if (s->state == Session::State::ATTACHED && s->bound_slot_idx >= 0) {
             out.session = s;
@@ -1108,7 +1108,7 @@ SessionRegistry::ResumeOutcome SessionRegistry::resume_by_token(
 
         // DISCARD.  The world this session was steering is gone, so its claims
         // no longer name the characters they were taken for.  This is the ONE
-        // place where releasing them is correct (ck-9fc3).
+        // place where releasing them is correct.
         purge_sid  = s->session_id;
         out.status = "world_changed";
         discard_session_locked(s, &out.discarded_claims);
@@ -1126,7 +1126,7 @@ SessionRegistry::ResumeOutcome SessionRegistry::resume_by_token(
     }
 
     // Outside mutex_ so the hook may call back in (it erases per-character
-    // steering state — g_personality_locks, ck-9fc3).
+    // steering state — g_personality_locks).
     if (hook) hook(purge_sid, out.discarded_claims);
     return out;
 }
@@ -1226,7 +1226,7 @@ std::vector<std::string> SessionRegistry::sweep_detached(uint64_t now_ms,
             held = s->claimed_character_ids.size();
         }
         if (g_logfile) {
-            // ck-bw1s: say WHICH it is.  An observe session reaching LOST is
+            // Say WHICH it is.  An observe session reaching LOST is
             // state-reporting only — session_publish_detach_state() counts
             // control sessions, so an observer never produces a session_lost
             // verdict, and a log line claiming it does would send the next
@@ -1260,16 +1260,16 @@ std::vector<std::string> SessionRegistry::lost_sessions() const {
 // The abort ladder's detach report.  Contract documented in session.h.
 // ----------------------------------------------------------------------------
 namespace {
-// ck-22n3: CK3_EARLY_INIT, like every other namespace-scope global in this TU.
+// CK3_EARLY_INIT, like every other namespace-scope global in this TU.
 // dll_init() runs at .init_array[1] and starts the reader, server and conductor
 // threads synchronously; an unprioritised initialiser here would construct AFTER
 // them, and `bridge/test/test_init_order` fails the build for exactly that.
 std::mutex  g_episode_dir_mu CK3_EARLY_INIT;
 std::string g_episode_dir_override CK3_EARLY_INIT;
 
-// ck-bw1s: THE NEGATIVE CONTROL.  Built with CK3_DETACH_REPORT_COUNTS_OBSERVERS
+// THE NEGATIVE CONTROL.  Built with CK3_DETACH_REPORT_COUNTS_OBSERVERS
 // the report counts EVERY non-attached session — exactly the pre-fix behaviour —
-// and bridge/test/acceptance_session_resume's observer lane MUST FAIL.  A
+// and bridge/test/acceptance_session_resume's observer FAIL.  A
 // predicate nobody has watched fail is a predicate nobody has tested.
 #ifdef CK3_DETACH_REPORT_COUNTS_OBSERVERS
 constexpr bool kDetachReportControlOnly = false;
@@ -1277,7 +1277,7 @@ constexpr bool kDetachReportControlOnly = false;
 constexpr bool kDetachReportControlOnly = true;
 #endif
 
-// ck-bw1s: the ONE rule for "does this session's absence belong in the abort
+// The ONE rule for "does this session's absence belong in the abort
 // ladder's session_lost verdict".  A free function so the predicate has exactly
 // one spelling: the release path may still DETACH an observer (get_bridge_state
 // stays honest about a socket that went away), but only a CONTROL session's
@@ -1324,7 +1324,7 @@ void session_publish_detach_state() {
     // Earliest outstanding detach, in MONOTONIC ms.  LOST counts: that session
     // has not come back, and the rung is meant to keep firing.
     //
-    // CONTROL SESSIONS ONLY (ck-bw1s).  An observe-mode session is not a
+    // CONTROL SESSIONS ONLY.  An observe-mode session is not a
     // participant in the arm: it holds no claims, it is absent from the
     // unavailability ledger (pipeline_note_session_open skips non-control
     // sessions), and its going away changes NOTHING about the experimental
@@ -1333,8 +1333,8 @@ void session_publish_detach_state() {
     // different door than the stale timestamp this contract already warns about.
     //
     // It is not hypothetical.  The meter lane is deliberately an observer
-    // (ck-6kvq.7: read-only, the only reader that cannot contaminate what it
-    // measures), and ck-zgh4's framing is the one worth keeping next to the
+    // (read-only, the only reader that cannot contaminate what it
+    // measures), and framing is the one worth keeping next to the
     // predicate: THE CAREFUL THING TO DO IS THE THING THAT BREAKS IT — a harness
     // author who opens a fresh observe session per probe, precisely so as not to
     // hold state, manufactures one detach event per probe.
@@ -1368,7 +1368,7 @@ void session_publish_detach_state() {
     const long long since_epoch_s =
         static_cast<long long>(time(nullptr)) - static_cast<long long>(held_ms / 1000ull);
 
-    // rc2 B1: 0700 (0777 legacy). Weak: host targets without instance_paths get 0700.
+    // 0700 (0777 legacy). Weak: host targets without instance_paths get 0700.
     ::mkdir(state_dir.c_str(), instance_dir_mode ? instance_dir_mode() : 0700);
     // Write-and-rename so the reader never sees a half-written integer: its parse
     // is unguarded bash arithmetic and a torn read would abort the run.
@@ -1466,7 +1466,7 @@ bool action_is_readonly(const char* action_type) {
         "list_valid_decisions",
         "list_decisions_annotated",
         "who_holds_the_lock",
-        // ck-6kvq.13 (R6): the budget ledger readback is a pure bridge-state
+        // The budget ledger readback is a pure bridge-state
         // read — an observe-mode session (the episode harness) must be able to
         // pull it for the bundle.
         "get_budget_state",
@@ -1496,7 +1496,7 @@ std::string episode_observer_winner(const std::string& current,
     return candidate;
 }
 
-// ck-m3n5. ONE DECISION, so the applier has no policy of its own. The order is
+// ONE DECISION, so the applier has no policy of its own. The order is
 // load-bearing: the MODE floor is asked FIRST, because a control session must be
 // refused whether or not anybody else has declared — asking first-wins first
 // would confer on an unclaimed privilege before the floor ever ran.

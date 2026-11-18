@@ -1,4 +1,4 @@
-// phase3_probes.cpp — Phase-3 Wave-2 probe handlers (ck-e58l.8)
+// phase3_probes.cpp — Phase-3 Wave-2 probe handlers
 //
 // Four read-only probes that convert silent failures in the interaction +
 // war-creation pipelines into loud diagnostics. See re/findings/re_interaction_trysend_cascade_v3.md,
@@ -19,7 +19,7 @@
 #endif
 
 #include "action_dispatch_internal.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "bridge.h"
 #include "ck3_offsets.h"
 
@@ -40,8 +40,8 @@ extern std::atomic<uint64_t> g_tick_id;
 // Singleton resolution — CPendingCharacterInteractionManager
 // ============================================================================
 //
-// The manager is a heap-allocated game-manager singleton. Empirically (ck-r56i
-// core-dump trace) it lives in a glibc mmap-arena 700+MB from the binary base,
+// The manager is a heap-allocated game-manager singleton. Empirically
+// (core-dump trace) it lives in a glibc mmap-arena 700+MB from the binary base,
 // in a ~128MB anonymous region — NOT in .data/.bss and NOT in the brk heap.
 //
 // Strategy: scan all writable anonymous mappings for the 16-byte signature
@@ -151,7 +151,7 @@ static uintptr_t resolve_pending_manager_singleton() {
                 // offset: chunks stride by CHUNK - (sizeof(sig) - 1) = 0xffff1
                 // which is not 8-byte aligned, so after chunk 1 the in-chunk
                 // offset of an aligned absolute match is nonzero mod 8 and
-                // would be incorrectly rejected (ck-1hl6).
+                // would be incorrectly rejected.
                 if ((candidate & 0x7) == 0) {
                     stats.sig_matches++;
                     uintptr_t sec = safe_read<uintptr_t>(candidate + 0x08);
@@ -233,7 +233,7 @@ struct WarSlotInfo {
     uint32_t attacker_id;
     uint32_t defender_id;
     uint32_t cb_type_ref;
-    std::string cb_type;          // rc2 B2: name of the CB type at war+0xA0
+    std::string cb_type;          // Name of the CB type at war+0xA0
     int32_t  start_date;
     bool     is_ended;
 };
@@ -261,10 +261,10 @@ static std::vector<WarSlotInfo> enumerate_war_db() {
         if ((stored_ref & 0xFFFFFF) != idx) continue;
 
         WarSlotInfo info{};
-        info.war_id = stored_ref;   // the full handle (L12), as query_wars emits it
+        info.war_id = stored_ref;   // the full handle, as query_wars emits it
         info.slot_index = idx;
         info.war_ptr = wp;
-        // Primary attacker/defender/CB refs per ck-e58l.5 §3
+        // Primary attacker/defender/CB refs §3
         info.attacker_id = safe_read<uint32_t>(wp + 0x228) & 0xFFFFFF;
         info.defender_id = safe_read<uint32_t>(wp + 0x22C) & 0xFFFFFF;
         info.cb_type_ref = safe_read<uint32_t>(wp + 0xA0);
@@ -280,14 +280,14 @@ static std::vector<WarSlotInfo> enumerate_war_db() {
 // Probe 3: list_pending_interactions
 // ============================================================================
 //
-// Walk CPendingCharacterInteractionManager per ck-1ps.5 + ck-e58l.1 layout:
+// Walk CPendingCharacterInteractionManager layout:
 //   mgr +0x20: Phase 1 ID array ptr
 //   mgr +0x2C: Phase 1 count
 //   mgr +0x38: Phase 2 ID array ptr
 //   mgr +0x44: Phase 2 count
 //   mgr +0x50: TPdxRefDatabase reference (table +0x20, capacity +0x2C)
 //
-// Entry layout (0x5C8 bytes, ck-1ps.5):
+// Entry layout (0x5C8 bytes):
 //   +0x000 primary vtable
 //   +0x008 secondary vtable
 //   +0x010 DB id (24-bit masked)
@@ -299,7 +299,7 @@ static std::vector<WarSlotInfo> enumerate_war_db() {
 //     +0x018+0x2E4 claimant
 //   +0x5C0 state (1=pending, 2=init-accepted, 3=fully-accepted)
 //
-// ck-e58l.1 §3.1 notes the deep copy moves these fields to entry+0x2F0..+0x2FC
+// §3.1 notes the deep copy moves these fields to entry+0x2F0..+0x2FC
 // relative to the raw DB slot. Because entry+0x18 is the ctx base, the context
 // offsets (0x2D8 etc.) are correct relative to that pointer — read through
 // entry+0x18 + 0x2D8.
@@ -331,7 +331,7 @@ static void emit_pending_entry(ResponseBuilder& r, uintptr_t entry_ptr) {
         }
     }
 
-#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // A process VA defeats ASLR; debug builds only
     char buf[32];
     snprintf(buf, sizeof(buf), "0x%lx", entry_ptr);
     r.key("entry_ptr"); r.value_string(buf);
@@ -416,7 +416,7 @@ bool do_list_pending_interactions(const char* /*params_json*/, std::string* resp
     r.end_array();
 
     r.key("count"); r.value_int(emitted);
-#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // A process VA defeats ASLR; debug builds only
     {
         char mgr_hex[32];
         snprintf(mgr_hex, sizeof(mgr_hex), "0x%lx", mgr);
@@ -531,7 +531,7 @@ bool do_tick_diff(const char* params_json, std::string* response_out) {
     TickSnapshot before;
     bool have_before = false;
 
-    // ck-4vg9s: snapshot pause state alongside tick counters so harness
+    // Snapshot pause state alongside tick counters so harness
     // preflight can distinguish "game paused, no tick advance possible" from
     // "game ticking but state happened not to move." With multiple polecats
     // sharing one bridge, a sibling's pause_game can no-op our unpause and
@@ -551,7 +551,7 @@ bool do_tick_diff(const char* params_json, std::string* response_out) {
         }
     }
 
-    // L13 (witness W3): no wait for a tick here. This handler is a game-thread
+    // No wait for a tick here. This handler is a game-thread
     // read: it runs inside the session-pass drain, holding the session's command
     // mutex, so no daily tick can run while it waits — the old "wait up to ~3 s
     // for g_tick_id to move" stalled every engine command for 3 s and then
@@ -608,7 +608,7 @@ struct CascadeQuery {
     int mode;                  // 0 = full cascade, 1 = gate-4 slots only
     // Opt-in: extract loc keys from the loud-failure evaluator on the first
     // failing Gate 4 slot. Adds one FUN_0763ddc0 call per failing slot; all
-    // calls are sigjmp-guarded. Off by default (ck-wtk7).
+    // calls are sigjmp-guarded. Off by default.
     bool extract_loc_keys;
 
     // --- Result ---
@@ -649,7 +649,7 @@ bool cascade_query_pending() {
 void process_cascade_query();
 
 bool do_probe_interaction_cascade(const char* params_json, std::string* response_out) {
-    // L13: a game-thread read now; its slot is serviced here, so a faulted read
+    // A game-thread read now; its slot is serviced here, so a faulted read
     // answers degraded, never a silent 0.
     FaultScope fault_scope("probe_interaction_cascade", response_out);
     const char* type = json_get_string(params_json, "interaction_name");
@@ -726,7 +726,7 @@ bool do_probe_interaction_cascade(const char* params_json, std::string* response
         if (!g_cascade_query.approved) {
             r.key("rejected_at"); r.value_string(g_cascade_query.rejection_summary);
         }
-        // rejection_key is always emitted (schema contract per ck-f4r2):
+        // rejection_key is always emitted (schema contract):
         //  approved → "NONE__APPROVED" sentinel
         //  rejected → specific key if bridge resolved one, else empty string
         if (g_cascade_query.approved) {
@@ -818,7 +818,7 @@ void process_cascade_query() {
         return;
     }
 
-    // GATE 1 — actor/target liveness (ck-iyug).
+    // GATE 1 — actor/target liveness.
     // The native cascade's first gate (FUN_06b3def0) rejects a dead actor or
     // target before any gate-4 trigger evaluation. The trigger-query path below
     // does not consult liveness, so without this preflight a dead-actor call
@@ -848,7 +848,7 @@ void process_cascade_query() {
         }
     }
 
-    // GATE 2 — initial scope filter preflight (ck-9f32).
+    // GATE 2 — initial scope filter preflight.
     //
     // The native cascade's Gate 2 (FUN_06b41e70) runs seven sub-gates before
     // gate-4 trigger evaluation. The bridge passes no native error collector
@@ -958,7 +958,7 @@ void process_cascade_query() {
     g_cascade_query.slot_count = copy_n;
     g_cascade_query.approved = all_pass;
     if (!all_pass && first_fail_name) {
-        // Emit canonical letter-suffix format (ck-f4r2 schema contract):
+        // Emit canonical letter-suffix format (schema contract):
         //   slot_idx 1 (is_shown)                       → GATE_4_SLOT_A
         //   slot_idx 2 (is_valid_showing_failures_only) → GATE_4_SLOT_B
         //   slot_idx 3 (can_be_sent_despite_rejection)  → GATE_4_SLOT_C
@@ -980,7 +980,7 @@ void process_cascade_query() {
 
         // Prefer the loc key from the loud-failure evaluator when the
         // caller opted in via extract_loc_keys and the populator yielded
-        // a SCREAMING_SNAKE_CASE identifier (ck-wtk7 Strategy C). Fall
+        // a SCREAMING_SNAKE_CASE identifier (Strategy C). Fall
         // back to the slot-name derived key otherwise.
         if (first_fail_loc_key && first_fail_loc_key[0]) {
             snprintf(g_cascade_query.rejection_key,

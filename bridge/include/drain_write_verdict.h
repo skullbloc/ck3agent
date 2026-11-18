@@ -9,7 +9,7 @@
 // every deferred write. A game-thread READ (is_game_thread_read:
 // construction_check, query_fabricate_targets) stores nothing: it is no write
 // verdict, and a ring slot it took would push a real write's verdict out of
-// reach of its poll_token (lane l6, witness #3).
+// reach of its poll_token.
 //
 // Header-only and engine-free: the decision comes in as `records` (the drain
 // passes drain_records_write_verdict(action), snapshot.cpp) and the record goes
@@ -26,7 +26,7 @@
 
 namespace bridge {
 
-// The actor a drained call names, for its record (L14, surface-eval finding 3:
+// The actor a drained call names, for its record (surface-eval finding 3:
 // every steer row read actor_id 0). The client sends
 // {"action", "params": {...}, "request_id"}, so the actor is under params; the
 // drain read only the TOP level and so recorded 0 for every Mechanism-B write.

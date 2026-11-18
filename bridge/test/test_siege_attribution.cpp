@@ -1,5 +1,5 @@
 // test_siege_attribution.cpp — a siege is listed under the war it belongs to
-// (lane l5, F8; bridge/include/siege_attribution.h).
+// (F8; bridge/include/siege_attribution.h).
 //
 // THE DEFECT (live867 l5fx5-live-1). query_wars listed every siege whose
 // besieger was among a war's attackers, so 14859's sieges 6 and 7 appeared

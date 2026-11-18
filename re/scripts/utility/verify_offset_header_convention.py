@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify ck3_offsets.h address convention (ck-e58l.20 audit harness).
+"""Verify ck3_offsets.h address convention (audit harness).
 
 For every `constexpr <uint type> NAME = 0xVAL;` entry in the header, ask the
 resident Ghidra query server (re/scripts/ghidra/ghserver.py, `func_at`) whether

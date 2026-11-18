@@ -1,4 +1,4 @@
-// actor_resolve.h — THE one place an unnamed actor is resolved (lane ACTOR, wave 12).
+// actor_resolve.h — THE one place an unnamed actor is resolved (wave 12).
 //
 // WHY. v4 seats one king and several dukes in one game, each its own bridge
 // session. A request that names no actor used to be resolved by whatever chain
@@ -21,12 +21,12 @@
 //      handshook: the historical N=1 raw-socket layout, whose own claim IS the
 //      mirror) it keeps its chain, unless some session has declared a seat, in
 //      which case the mirror is a seat's ruler and it is refused too.
-//   3. A READ by a session that DECLARED A SEAT (`episode_seat`, ck-j6lk)
+//   3. A READ by a session that DECLARED A SEAT (`episode_seat`)
 //      resolves to that session's own primary, or is REFUSED `no_actor`.
 //   4. Every other read — no seat declared on this session — and every call
 //      outside a dispatched action keeps its handler's historical chain BYTE FOR
 //      BYTE (LegacyChain names it). That is the single-player layout's promise.
-//   0. (lane ACTORKEY, wave 15; asked before 2-4) A WRITE that names no actor
+//   0. (wave 15; asked before 2-4) A WRITE that names no actor
 //      under the key its handler reads, while the request names one under the
 //      OTHER actor key (`character_id` where the handler reads `actor_id`, or
 //      the reverse), is REFUSED `actor_key_not_read`, in every layout. Live
@@ -84,7 +84,7 @@ struct ActorFacts {
     bool     seats_in_play   = false;  // ANY live session declared a seat
     uint32_t global_mirror   = 0;      // g_controlled_primary
     uint32_t player_raw      = 0;      // PLAYER_CHAR_ID as read (0xFFFFFFFF in observer)
-    // Rule 0 (lane ACTORKEY): the actor key the handler reads, and the OTHER
+    // Rule 0: the actor key the handler reads, and the OTHER
     // actor key when the request names an actor (> 0) under it; nullptr = none.
     const char* key_read     = nullptr;
     const char* key_unread   = nullptr;
@@ -157,7 +157,7 @@ inline ActorPick pick_actor(const ActorFacts& f, ActorUse use, LegacyChain chain
     auto own = [&]() {
         ActorPick r; r.id = f.session_primary; r.source = ActorSource::SessionPrimary; return r;
     };
-    if (use == ActorUse::Write && f.key_unread) {          // rule 0 (lane ACTORKEY)
+    if (use == ActorUse::Write && f.key_unread) {          // rule 0
         ActorPick r = refuse(kRuleActorUnderUnreadKey);
         r.reason = kActorKeyNotRead; r.key_read = f.key_read; r.key_got = f.key_unread;
         return r;

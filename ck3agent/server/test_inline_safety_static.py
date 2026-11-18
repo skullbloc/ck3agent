@@ -9,7 +9,7 @@ read) in it or its callees, checks the safe_read fault flag by name before it
 answers (safe_read_clear() + safe_read_had_fault(), or a FaultScope: a fault is
 memory_access_fault or degraded, never a silent 0), returns early on a
 character that did not resolve, and every inline dispatch in ipc_server.cpp is
-inside a sigsetjmp guard whose recovery answers memory_access_fault. Since L14
+inside a sigsetjmp guard whose recovery answers memory_access_fault. Since
 the game-thread actions (Tier 3, is_game_thread_action, section G) are graded by
 THE RULE in the harness docstring: no raw read, a fault bracket, a decision
 before the first engine contact, every engine call under a watchdog, no sleep or
@@ -70,8 +70,8 @@ def test_every_classified_handler_is_audited(classifier):
     names = b.classifier_names(classifier)
     # The fail-OPEN floor is the population pinned in the harness
     # (CLASSIFIER_FLOOR): 43 bridge-internal handlers, 87 game-state reads and
-    # 22 game-thread actions since cleanup 2026.11 L17 deleted the board's three
-    # bridge-internal verbs (46/87/22 after L16 R3; 47/90/23 before). A parse
+    # 22 game-thread actions since then deleted the board's three
+    # bridge-internal verbs (46/87/22 after; 47/90/23 before). A parse
     # that found fewer would audit fewer and pass.
     assert len(names) >= S.CLASSIFIER_FLOOR[classifier], (len(names), names)
     rows = [n for _, n, _ in S.run_static(BRIDGE, echo=False).rows]
@@ -121,9 +121,9 @@ def test_MUTANT_a_tier1_handler_safe_read_made_raw_reds(tree):
             "in it and its callees") in msgs, msgs
 
 
-# L13 FF1-B retargeted the next four mutants from set_ai_personality, which is a
+#-B retargeted the next four mutants from set_ai_personality, which is a
 # game-thread ACTION now (is_game_thread_action: section A's rows do not name
-# it; section G grades it since L14, test_MUTANT_G_* below), to handlers
+# it; section G grades it since, test_MUTANT_G_* below), to handlers
 # section A covers: get_ai_personality (a game-state read) and
 # set_controlled_character (bridge-internal). On set_ai_personality they would
 # pass silently (no section-A row names it), which is what the gate caught.
@@ -156,7 +156,7 @@ def test_cast_dereference_writes_and_local_buffers_are_not_reads():
     assert S.deref_reads("{ alignas(8) uint8_t cmd[0x30] = {}; f(*reinterpret_cast<uintptr_t*>(cmd + 0x18)); }") == 0
 
 
-# ── ff3 N2: the five forms witness #9 found hidden or unstated, each a read ──
+# ── ff3 N2: the five forms found hidden or unstated, each a read ──
 # (each was GREEN under the fix-8 detector, blob dbf4a91d's successor at 720e5757)
 
 def test_N2_an_array_of_game_pointers_is_not_a_local_buffer():
@@ -261,7 +261,7 @@ def test_MUTANT_N1_a_second_spelling_of_the_fault_reply_reds(tree):
             "second copy") in msgs, msgs
 
 
-# ── witness #10 R5: the fault row checked presence only. Placement (the bracket
+# ── R5: the fault row checked presence only. Placement (the bracket
 #    opens before the first read) and use (a check decides) are rows of their
 #    own; the witness's mutants M1, M1b and M3a were green before them. ──
 
@@ -342,7 +342,7 @@ def test_the_decides_row_reads_the_three_shapes_the_tree_uses():
     assert S.undecided_fault_checks("{ if (!safe_read_had_fault()) *p = 1; }") != []
 
 
-# ── witness #10 minors 6 and 7: a write before the fault check. generate_rng
+# ── minors 6 and 7: a write before the fault check. generate_rng
 #    advances the game's AI RNG seed (a store), so in a handler that brackets its
 #    reads the fault check sits between the last read and each generate_rng();
 #    game_pause / game_unpause / game_set_speed store nothing before their fault
@@ -362,7 +362,7 @@ def _reads(b, file, body):
 
 def rng_before_its_check(bridge_dir):
     """(sites, unchecked): every generate_rng() call in a bracketed body (by name,
-    or a FaultScope: witness #11 minor 3), and the ones with a read since the
+    or a FaultScope: minor 3), and the ones with a read since the
     last safe_read_had_fault() check (or no check). A FaultScope checks only on
     the way out, after the draw, so its body needs its own check before it."""
     b = S.Bridge(bridge_dir)
@@ -391,7 +391,7 @@ def test_the_ai_rng_seed_is_advanced_only_after_the_fault_check():
 def test_the_interaction_check_is_a_counted_rng_site():
     """The FaultScope body do_query_interaction_check draws the seed after
     lookup_interaction's reads; the census must see it (fail OPEN otherwise).
-    Scope (witness #12): the census orders draws in BRACKETED bodies. Since L14
+    Scope: the census orders draws in BRACKETED bodies. Since
     every game-thread action brackets too (section G), do_create_title among
     them; test_MUTANT_G_create_titles_seed_drawn_before_its_fault_check_reds
     shows the census sees it."""
@@ -409,7 +409,7 @@ def test_MUTANT_the_interaction_checks_seed_drawn_before_its_fault_check_reds(tr
     assert any(x.endswith(":do_query_interaction_check") for x in bad), bad
 
 
-_CLOCK = ("pause_primitive", "unpause_primitive", "speed_primitive")  # clock_write's (L13 D4)
+_CLOCK = ("pause_primitive", "unpause_primitive", "speed_primitive")  # clock_write's
 _STORE_RE = re.compile(r"\.store\s*\(|\*\s*reinterpret_cast\s*<[^>]*\*\s*>\s*\([^;]*?\)\s*=(?!=)")
 
 
@@ -452,7 +452,7 @@ def test_MUTANT_the_pause_primitive_storing_before_its_check_reds(tree):
     assert "pause_primitive" in clock_writes_before_the_check(tree)
 
 
-# ── L13 D4: section C, the one clock write ─────────────────────────────────
+# ── Section C, the one clock write ─────────────────────────────────
 
 _C_ROW = "no pause-flag / PAUSE_SET / speed write outside clock_write"
 
@@ -592,7 +592,7 @@ def test_the_registry_reading_agrees_with_the_census():
     assert S.Bridge(BRIDGE).registry() == {r["name"]: r["handler"] for r in rows}
 
 
-# ── L13 FF1-B (witness W10): section C sees every writer shape ──────────────
+# ──-B: section C sees every writer shape ──────────────
 # Each mutant plants one clock write in a shape the first section C missed;
 # every one must red the row, and the copied tree without it is green (the
 # control below the others).
@@ -630,7 +630,7 @@ _C_W10_MUTANTS = {
 }
 
 
-# L13 FF2 (witness m-6): four more shapes, one mutant each.
+# Four more shapes, one mutant each.
 _C_W10_MUTANTS.update({
     "c_style_cast_store": ("src/dispatch_router.cpp", _CASE_SET_PAUSE,
         "    { uintptr_t i = 0; *(uint8_t*)(i + ck3::idler::PAUSE_FLAG) = 1; }\n"),
@@ -682,8 +682,8 @@ def test_CONTROL_W10_the_copied_tree_with_os_and_headers_is_green(tree):
     assert _fails(tree) == []
 
 
-# ── L13 FF1-B (witness W2/W6): row A0, no undeclared game-object handler on the
-# IPC thread. On the tree before FF1-B (6edf11f4) the row reds naming
+# ──-B (/W6): row A0, no undeclared game-object handler on the
+# IPC thread. On the tree before-B (6edf11f4) the row reds naming
 # set_ai_personality, get_ai_personality, the CB submitters, get_active_wars,
 # pre_validate_war and query_council_tasks.
 
@@ -712,7 +712,7 @@ def test_A0_the_declared_exceptions_are_all_ipc_thread_handlers():
     assert all(r for r in declared.values()), declared
 
 
-# ── L13 FF2 (witness R4/R5): A0 checks the property, from ONE list ─────────
+# ── A0 checks the property, from ONE list ─────────
 # On 81255a4c the row was green with query_war_score_breakdown (a WAR_DB walk)
 # on the IPC thread: its touch regex could not see a g_base_addr + globals walk
 # or resolve_war_by_id, and the harness kept its own copy of the exception list,
@@ -750,8 +750,8 @@ def test_MUTANT_A0_a_stale_exception_reds(tree):
     assert _A0_STALE in fails and "query_intents" in fails[_A0_STALE], fails
 
 
-# ── L13 FF1-B (witness W3): row A2, no game-thread read sleeps. On the tree
-# before FF1-B (6edf11f4) the row reds naming tick_diff (its 3 s wait for a
+# ──-B: row A2, no game-thread read sleeps. On the tree
+# before-B (6edf11f4) the row reds naming tick_diff (its 3 s wait for a
 # tick) and query_conquest_targets (the strict CB poll's 50 ms sleeps).
 
 _A2_ROW = "no game-state handler reaches a sleep (the drain holds the session mutex)"
@@ -780,8 +780,8 @@ def test_MUTANT_A2_a_slot_poll_that_sleeps_on_the_game_thread_reds(tree):
     assert _A2_ROW in fails, fails
 
 
-# ── L13 FF1-B (witness W9): row F2, no reply advises running the clock. On the
-# tree before FF1-B (6edf11f4) it reds on the nine sites the witness listed
+# ──-B: row F2, no reply advises running the clock. On the
+# tree before-B (6edf11f4) it reds on the nine sites the witness listed
 # ("Game must be unpaused for … one tick", pause_state_required).
 
 _F2_ROW = "no string literal in bridge/src tells the caller to unpause or wait for a tick"
@@ -801,8 +801,8 @@ def test_MUTANT_F2_clock_advice_in_a_reply_reds(tree, literal):
     assert _F2_ROW in [n for _, n, _ in _fails(tree, "F2")]
 
 
-# ── L13 FF2 (witness R6): row A3, every long game-thread evaluation checks the
-# time budget inside its loop. Before FF2 (81255a4c) none of the four did (the
+# ── Row A3, every long game-thread evaluation checks the
+# time budget inside its loop. Before (81255a4c) none of the four did (the
 # decision eval had its own 4 s budget, not the game-thread one).
 
 @pytest.mark.parametrize("fn,rel,old,new", [
@@ -842,8 +842,8 @@ def test_declare_war_fits_the_clients_8_s_deadline():
     assert "poll < kDeclareWarIntentWaitMs / 50" in body
 
 
-# ── L13 FF3 (witness X5): an odd digit separator keeps the audit in phase ────
-# strip_code is cpp_strip.strip. Before FF3 its own scan paired the `'` of
+# ── An odd digit separator keeps the audit in phase ────
+# strip_code is cpp_strip.strip. Before that its own scan paired the `'` of
 # `1'0` with the next `'` in the file and read code as a char literal; the
 # tree's separators come two per literal and paired by luck.
 
@@ -859,9 +859,9 @@ def test_an_odd_digit_separator_changes_no_row(tree):
     assert "kOdd = 1'0;" in S.strip_code(p.read_text())
 
 
-# ── L14: section G, the game-thread actions (Tier 3) ─────────────────────────
+# ── Section G, the game-thread actions (Tier 3) ─────────────────────────
 # On the phase-3 base (2308181b) section G reds 58 rows (18 G-raw, 19 fault
-# bracket, 18 G-commit, 3 G-char): the L13 count of 39 plus G-commit, which is
+# bracket, 18 G-commit, 3 G-char): the count of 39 plus G-commit, which is
 # new, plus construction_check's raw read, which the definition parser could
 # not see (evaluate_build sits in an indented `namespace {`). Each mutant below
 # plants one defect class back into a game-thread action on the tip, in a body
@@ -907,7 +907,7 @@ def test_MUTANT_G_raw_a_cast_dereference_in_a_handler_body_reds(tree):
 
 
 def test_MUTANT_G_raw_in_a_helper_defined_inside_an_indented_namespace_reds(tree):
-    """evaluate_build is defined inside `namespace {`, indented; before L14 the
+    """evaluate_build is defined inside `namespace {`, indented; before that the
     parser found no such definition, so a raw read there was in no closure."""
     assert "evaluate_build" in S.Bridge(tree).functions       # not discriminating: the parse
     _in_body(tree, _AH, "    BuildEval evaluate_build(",
@@ -961,7 +961,7 @@ def test_MUTANT_G_commit_an_intent_enqueued_before_the_decision_reds(tree):
 
 
 def test_MUTANT_G_create_titles_seed_drawn_before_its_fault_check_reds(tree):
-    """The RNG-order census (witness #12 minor 4) sees create_title now that it
+    """The RNG-order census (minor 4) sees create_title now that it
     brackets: the check moved past the draw reds there too."""
     _in_body(tree, _AH, "bool do_create_title(",
              '    if (safe_read_had_fault()) return answer_memory_access_fault("create_title", response_out);\n', "")
@@ -1017,7 +1017,7 @@ def test_MUTANT_G_sleep_a_poll_loop_that_runs_on_the_game_thread_reds(tree):
     condition: declare_war's force_player_path forwards to it from the IPC
     thread); the condition dropped, the drain would sleep 5 s holding the
     session mutex. (create_title's poll, the earlier subject here, is deleted:
-    L14 FB m-5, nothing reaches that handler off the game thread.)"""
+    Nothing reaches that handler off the game thread.)"""
     _in_body(tree, _AH, "bool do_call_war_create_core(",
              "for (int poll = 0; poll < 100 && !bridge::on_game_thread(); poll++) {",
              "for (int poll = 0; poll < 100; poll++) {")
@@ -1046,14 +1046,14 @@ def test_MUTANT_G_forwarder_that_reads_before_forwarding_is_graded_by_its_own_bo
 
 
 _SNAP = "src/snapshot.cpp"
-#: L16: the declarations' place in is_game_thread_action. None stands since
+#: The declarations' place in is_game_thread_action. None stands since
 #: respond_event's went with the handler (ruling R3); the mutants plant theirs
 #: after this line.
 _DECL_ANCHOR = "    // respond_event's, went with the handler).\n"
 
 
 def test_no_declared_exception_stands():
-    """L16: is_game_thread_action carries no game-thread-ok declaration, and the
+    """Is_game_thread_action carries no game-thread-ok declaration, and the
     harness parses that as none (not as a parse that found nothing to read)."""
     decl, bad = S.game_thread_ok(S.Bridge(BRIDGE))
     assert decl == {} and bad == [], (decl, bad)
@@ -1101,7 +1101,7 @@ def test_MUTANT_G_a_classifier_parse_that_finds_fewer_names_reds(tree):
     assert "is_game_thread_action() parsed" in _g_fails(tree)
 
 
-# ── L14 S4: G-scope (audit 3(ii)) and G-nest (audit 3(iii)) ──────────────────
+# ── G-scope (audit 3(ii)) and G-nest (audit 3(iii)) ──────────────────
 # On a0a2fff3 G-scope reds appoint_councillor, maa_recruit, maa_origin_dispatch
 # and hire_mercenary (armed after their own sigsetjmp), and G-nest reds
 # declare_war and query (a callee's safe_read_clear() wiped the handler's record)
@@ -1166,7 +1166,7 @@ def test_MUTANT_G_nest_a_FaultScope_that_does_not_restore_reds(tree):
     assert any(n.startswith("FaultScope nests") for _, n, _ in _fails(tree, "F"))
 
 
-# ── L14 FB: the witness's section-G gaps (M-6, M-7, M-8, m-1, m-12..m-14) ──────
+# ── The witness's section-G gaps (M-6, M-7, M-8, m-1, m-12..m-14) ──────
 # Each mutant below was GREEN against the a1fb8c6b harness (the witness ran them
 # in memory); each must red here.
 
@@ -1216,7 +1216,7 @@ _GIT_BASE = "2308181b"
 
 
 def test_CONTROL_pinned_base_the_uint64_spelling_was_seen(tmp_path):
-    """The pinned base control (L14 FB M-6): on 2308181b (the phase's base)
+    """The pinned base control: on 2308181b (the phase's base)
     dispatch_costed_law_command bound can_exec through `uint64_t (*)(..)`, and
     the census saw it; the phase respelled it EngineBoolFn and the old census
     lost it. Read by `git archive` of that sha; skips where the history is not
@@ -1377,7 +1377,7 @@ def test_MUTANT_m14_a_raw_read_in_a_header_helper_reds(tree):
     assert row in fails and "log_degraded_read" in fails[row], fails
 
 
-# ── L14 FB2: the witness's round-2 section-G holes (N-5, N-5b, N-5c, N-12) ─────
+# ── FB2: the witness's round-2 section-G holes (N-5, N-5b, N-5c, N-12) ─────
 # Each mutant below is GREEN against the b84e3634 harness (the gap; the witness
 # ran P1, P2, P4 in memory, and this lane re-ran all of them with that harness
 # over the same mutated trees) and must red here.

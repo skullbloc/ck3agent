@@ -1,10 +1,10 @@
 // unavailability.cpp — see unavailability.h.
 //
-// ck-6kvq.10 (R3 as reversed) built the accounting; ck-ijfa replaced the GATE
+// (R3 as reversed) built the accounting; replaced the GATE
 // with the progenitor's 2026-09-13 ruling: anomalous is a WALL-CLOCK judgement,
 // the covariate stays in GAME-DAYS, and the retired game-day `min_span` is not
 // re-derived because no game-day number can express "the agent was late" while
-// the clock rate is free. ck-2ngg then made X itself a RULE over the episode's
+// the clock rate is free. then made X itself a RULE over the episode's
 // DECLARED horizon rather than the constant 365, which is that rule's answer at
 // the registered 20-game-year horizon and at no other.
 
@@ -16,7 +16,7 @@ void UnavailabilityLedger::configure(int64_t anomaly_wall_s, int64_t exclusion_d
                                      bool exclusion_armed) {
     std::lock_guard<std::mutex> lk(mu_);
     if (anomaly_wall_s >= 0) anomaly_wall_s_ = anomaly_wall_s;
-    // ck-2ngg: the armed bit is applied UNCONDITIONALLY, and the threshold only
+    // The armed bit is applied UNCONDITIONALLY, and the threshold only
     // when it is armed. A caller that disarms must not be able to leave a stale
     // X standing behind the disarm, and an unarmed episode's X is 0 — not a
     // threshold of zero, which `exclusion_armed_` is there to say.
@@ -41,7 +41,7 @@ bool UnavailabilityLedger::exclusion_armed() const {
 
 // THE GATE, in one place. UNKNOWN IS NOT "LONG": a gap with no wall stamp is
 // never anomalous, because the only way to call it long would be to convert its
-// game-days at an assumed rate, and an assumed rate is the defect ck-ijfa was
+// game-days at an assumed rate, and an assumed rate is the defect was
 // filed for.
 bool UnavailabilityLedger::is_anomalous_locked(bool wall_measured,
                                                double wall_seconds) const {
@@ -131,7 +131,7 @@ void UnavailabilityLedger::note_session_ended(const std::string& session_id) {
     it->second.attached = false;
 }
 
-// ck-j6lk: ERASE, not mark. The record is removed from recs_, so the session cannot
+// ERASE, not mark. The record is removed from recs_, so the session cannot
 // appear in snapshot(), cannot carry an open span, and cannot be over threshold —
 // because it was never a participant and has no silence to account for.
 //
@@ -199,7 +199,7 @@ void UnavailabilityLedger::note_activity(const std::string& session_id, int64_t 
         if (wall_ok) r.silent_wall_closed += gap_wall_s;
         ++r.gap_count_closed;
         if (!wall_ok) ++r.unjudged_closed;
-        // ck-48lf: the extrema, here where EVERY gap passes, and before
+        // The extrema, here where EVERY gap passes, and before
         // push_span_locked can decline to retain this one.
         if (gap > r.max_gap_days_closed) r.max_gap_days_closed = gap;
         if (wall_ok && gap_wall_s > r.max_gap_wall_closed)
@@ -267,7 +267,7 @@ UnavailSession UnavailabilityLedger::render_locked(const std::string& id, const 
 
     u.spans                 = r.spans;
     u.spans_truncated       = r.spans_truncated;
-    // ck-48lf: the closed extrema; the OPEN gap joins below, on the same path
+    // The closed extrema; the OPEN gap joins below, on the same path
     // the open totals take, so the maximum cannot miss a session that never
     // came back -- the case the covariate most needs.
     u.max_span_wall_seconds = r.max_gap_wall_closed;
@@ -305,7 +305,7 @@ UnavailSession UnavailabilityLedger::render_locked(const std::string& id, const 
             u.unavailable_wall_seconds += open_wall_s;
             ++u.span_count;
         }
-        // ck-48lf: the open gap is a gap. MAX, not +=, and outside the
+        // The open gap is a gap. MAX, not +=, and outside the
         // anomalous branch because the extremum is over EVERY gap.
         if (open_gap > u.max_span_game_days) u.max_span_game_days = open_gap;
         if (open_wall_ok && open_wall_s > u.max_span_wall_seconds)
@@ -329,7 +329,7 @@ UnavailSession UnavailabilityLedger::render_locked(const std::string& id, const 
         }
     }
 
-    // NO X, NO VERDICT (ck-2ngg). An unarmed episode declared no horizon, so
+    // NO X, NO VERDICT. An unarmed episode declared no horizon, so
     // there is nothing to be over. Reporting `false` here is correct and is NOT
     // "this session passed" — `exclusion_armed()` is the field that says which
     // of the two a false means, and the seal marks the criterion NOT EVALUABLE.

@@ -1,5 +1,5 @@
 #pragma once
-// ck-duv5: WHICH THREAD FAULTED.
+// WHICH THREAD FAULTED.
 //
 // The crash instrument reports the faulting instruction, its offset, the Ghidra
 // VA and the register file — and, without this, not which thread was running.
@@ -7,7 +7,7 @@
 // parallel workers, the bridge runs five threads of its own, and the engine's
 // own tick is unguarded by design. If a fault is on an engine worker, every
 // bridge-step hypothesis dies in one line. If it is on the game thread, the
-// unguarded per-tick steps (ck-cg3b) are in scope. Nothing else in the capture
+// unguarded per-tick steps are in scope. Nothing else in the capture
 // separates those.
 //
 // WHY A REGISTRY AND NOT AN INFERENCE. A role guessed at fault time from
@@ -38,7 +38,7 @@ namespace bridge {
 
 enum class ThreadRole {
     Unregistered = 0,   // never a default that gets PRINTED as a role
-    GameThread,         // runs drain_game_thread_work (L13: the session thread; without the hook, the AI-tick worker)
+    GameThread,         // runs drain_game_thread_work (the session thread; without the hook, the AI-tick worker)
     IpcServer,
     IpcReader,
     PipelineConductor,

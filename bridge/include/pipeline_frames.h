@@ -1,4 +1,4 @@
-// pipeline_frames.h — assembling a pipeline egress frame (ck-6kvq.18).
+// pipeline_frames.h — assembling a pipeline egress frame.
 //
 // WHY THIS EXISTS.
 //
@@ -13,7 +13,7 @@
 // no request_id — and ~20 shipped clients send none — such a frame carried
 // neither a type nor a key: literally unroutable, and impossible to skip-list
 // the way tick_start / observation / notification are skip-listed. That is the
-// aggravating half of ck-6kvq.18; the primary half is that those clients then
+// aggravating half of; the primary half is that those clients then
 // read the ACCEPTANCE ACK as their answer instead.
 //
 // So the frame is now TYPED. Getting that right needed one correction that the
@@ -39,9 +39,9 @@
 // pipeline reply; a malformed frame here breaks the whole mode at once, and
 // pipeline.cpp itself is NOT pulled in by this header, which is the point of
 // splitting the splice out — but it CAN be linked on a host, and the sentence
-// that used to stand here said it could not. ck-1var measured it: 21 ordinary
+// that used to stand here said it could not. measured it: 21 ordinary
 // host TUs, the generated dispatch-handler stubs, and a small engine boundary
-// (bridge/test/clock_release_probe.cpp). That false belief is why ck-8o5j's
+// (bridge/test/clock_release_probe.cpp). That false belief is why
 // clock release went unwitnessed through two beads — nobody tried.
 #pragma once
 
@@ -99,7 +99,7 @@ inline void rename_top_level_type_key(std::string& body) {
     }
 }
 
-// ck-9vdk: DOES THE SPLICED BODY ALREADY CARRY THIS KEY AT DEPTH 0?
+// DOES THE SPLICED BODY ALREADY CARRY THIS KEY AT DEPTH 0?
 //
 // WHY A SCAN AND NOT A SUBSTRING TEST. `body.find("\"action\":")` is a PROXY:
 // it is satisfied by a key inside a nested object, by an `"action"` appearing
@@ -160,10 +160,10 @@ inline bool has_top_level_key(const std::string& body, const char* quoted_key) {
     return false;
 }
 
-// THE ATTRIBUTION SPINE (§2.8) — ONE DECLARATION, THREE READERS (ck-0lph).
+// THE ATTRIBUTION SPINE (§2.8) — ONE DECLARATION, THREE READERS.
 //
 // The bridge mints this; the agent never reports it. It was written out inline
-// in emit_keyed_result and NOWHERE ELSE, which is the whole of ck-0lph: every
+// in emit_keyed_result and NOWHERE ELSE, which is the whole of: every
 // game-thread verb (set_council_task and the rest of is_game_thread_action)
 // replies from the drain in bridge_init.cpp, whose frame injects request_id and
 // the clock fragment ONLY. pipeline_note_drain_result deliberately emits no
@@ -187,7 +187,7 @@ inline bool has_top_level_key(const std::string& body, const char* quoted_key) {
 // emitted in that case — empty strings and zeroes. Callers for whom that
 // would read as attribution nobody checked must say so themselves rather than
 // attach this; see the drain in bridge_init.cpp.
-// ck-324r: a minimal JSON string escaper, HERE because this header already
+// A minimal JSON string escaper, HERE because this header already
 // owns frame assembly and because bridge/src has THREE private json_escape
 // copies already (pipeline.cpp, event_handler.cpp, budget_ledger.cpp).
 // Adding a fourth to ipc_server.cpp to serve one new caller
@@ -222,10 +222,10 @@ inline std::string json_escape_min(const std::string& v) {
     return o;
 }
 
-// ck-324r: the FIELD-BASED core. A third reader arrived — the inline
+// The FIELD-BASED core. A third reader arrived — the inline
 // management path, which has no Ticket because its verbs are never ticketed —
 // and the choice was a third spelling of the spine or one core with three
-// callers. ck-0lph's rule says core.
+// callers. rule says core.
 template <class Esc>
 inline void frame_append_attribution_fields(std::string& frame,
                                             const char* ticket_str,
@@ -288,7 +288,7 @@ inline void frame_append_attribution(std::string& frame, uint64_t ticket_id,
 // `escaped_action`      already-escaped action name. Emitted whenever the
 //                       handler's own reply does not carry a top-level
 //                       `action` key, so the frame always names the verb it is
-//                       a record of (ck-9vdk). It used to be emitted ONLY when
+//                       a record of. It used to be emitted ONLY when
 //                       the reply was unusable, which left every reply that
 //                       was a valid object but did not name itself anonymous.
 // `type`                the frame type, e.g. "result".
@@ -308,7 +308,7 @@ inline void frame_append_result_body(std::string& frame,
         const bool spliceable =
             body.find_first_not_of(" \t\r\n") != std::string::npos;
 
-        // ── ck-9vdk: A ROW THAT CANNOT SAY WHAT WAS EXECUTED ──────────────
+        // ── A ROW THAT CANNOT SAY WHAT WAS EXECUTED ──────────────
         //
         // `escaped_action` used to be used ONLY in the else branch below —
         // "used when the handler gave back nothing usable" — so a handler that
@@ -316,7 +316,7 @@ inline void frame_append_result_body(std::string& frame,
         // itself produced a frame with no `action` key at all. The driver's
         // relay copies `action` off the frame, `split_bridge_rows` calls a row
         // with no name "unnameable", and `decision_capture` declines it
-        // outright. ck-9vgu measured the result in a d39 episode: 2,302 of
+        // outright. measured the result in a d39 episode: 2,302 of
         // 3,009 ticketed rows carried ticket, request_id, character_id,
         // flush_id, game_date_executed and tick_executed — everything except
         // the verb.

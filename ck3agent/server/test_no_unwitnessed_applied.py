@@ -1,7 +1,7 @@
-"""ck-9rto — no branch of session_impl may say "applied" over a reply that
+"""No branch of session_impl may say "applied" over a reply that
 does not support it. The CLASS, asserted once, for every verb.
 
-Three of us fixed instances of one pattern and stopped. ck-zgh4 found `control`;
+Three of us fixed instances of one pattern and stopped. found `control`;
 I found `release`; four more were in the same 218 lines the whole time — `speed`
 and `auto_events` carrying `raw: res` into a result whose verdict contradicts
 it, `unpause` re-reading gw.game() so only its verdict was wrong, and `pause`
@@ -41,7 +41,7 @@ WRITE_ACTIONS = {
     "pause":       {},
     "unpause":     {},
 }
-# (auto_events was the sixth write verb; its door was deleted in L14, finding 7.)
+# (auto_events was the sixth write verb; its door was deleted in, finding 7.)
 
 
 class _RefusingGw:
@@ -51,10 +51,10 @@ class _RefusingGw:
     def __init__(self, reply):
         self._reply = reply
         self.health = "ok"
-        # The clock pause/unpause read back (L14 FF1 M-5): a write the bridge did
+        # The clock pause/unpause read back: a write the bridge did
         # not refuse moves it, as the bridge's PAUSE_SET does.
         self._paused = None
-        # ... and the speed (L14 FF2 M-5): set_speed is read back as game_speed.
+        # .. and the speed: set_speed is read back as game_speed.
         self._speed = None
 
     async def write(self, action, params=None):
@@ -94,7 +94,7 @@ def test_a_REFUSED_write_never_reports_applied(action):
 
 
 #: The replies the bridge and the gateway really send for a write that did not
-#: run, none of which carries `success` (L14 FF2 N-MAJ-1; the witness's runs 2/3):
+#: run, none of which carries `success` (the witness's runs 2/3):
 #:   memory_access_fault  MEMORY_ACCESS_FAULT_REPLY, bridge/include/bridge.h, sent
 #:                        by every answer_memory_access_fault (case_set_speed,
 #:                        case_pause_game, case_unpause_game in dispatch_router.cpp)
@@ -126,7 +126,7 @@ def test_a_FAULTED_write_never_reports_applied(action, shape):
     assert out["blocked"]["raw_reason"] == shape, (action, shape, out["blocked"])
 
 
-#: The gate each fault shape resolves to (L14 int5): the bridge's own fault and
+#: The gate each fault shape resolves to (int5): the bridge's own fault and
 #: timeout are bridge_fault (one typed gate, not retryable: the effect may have
 #: landed); the gateway's disconnect keeps its own gate.
 FAULT_GATES = {"memory_access_fault": "bridge_fault",
@@ -155,7 +155,7 @@ def test_the_resolver_names_each_fault_shape(shape):
     assert redesign.GATE_WHY[FAULT_GATES[shape]]
 
 
-#: L14 FF3 N3-3: the listener's answer to a call in flight when the connection
+#: The listener's answer to a call in flight when the connection
 #: dropped, mcp_server.py _listen `except ConnectionError` (every pending future):
 #: {"error":"bridge_disconnected"}. The write was SENT, so it may have landed.
 IN_FLIGHT_DROP = {"error": "bridge_disconnected"}
@@ -296,7 +296,7 @@ def test_the_guard_is_applied_ONCE_and_not_per_branch():
 
 
 def test_EVERY_write_is_considered_not_only_the_last():
-    """ck-zgh4's structural note, closed rather than documented.
+    """ structural note, closed rather than documented.
 
     Every branch performs exactly one write today, so a last-write-wins slot
     would be CORRECT — and "one guard, one recorded reply" would be a

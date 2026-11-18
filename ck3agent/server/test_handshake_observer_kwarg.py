@@ -1,7 +1,7 @@
-"""ck-43u3 — the episode-observer declaration must COMPOSE, not merely exist.
+"""The episode-observer declaration must COMPOSE, not merely exist.
 
 WHAT BROKE. `ck3agent/server/harness_client.py` has built `hs_kwargs["episode_observer"]`
-since ck-zi99 and handed it to `BridgeClient.handshake`, which did not accept
+since then and handed it to `BridgeClient.handshake`, which did not accept
 it. Every attempt died with:
 
     TypeError: BridgeClient.handshake() got an unexpected keyword argument

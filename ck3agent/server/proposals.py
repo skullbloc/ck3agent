@@ -1,4 +1,4 @@
-"""Incoming proposals, the server side (lane QSRV; design: docs/design/incoming-proposals.md).
+"""Incoming proposals, the server side (design: docs/design/incoming-proposals.md).
 
 An AI ruler's offer to a seated character (a marriage, an alliance, a call to
 war, a peace offer, vassalization) is held in the game by the
@@ -66,7 +66,7 @@ FAMILY_JOIN_WAR = "join_war"
 FAMILY_PEACE = "peace"
 
 #: THE CLASSES. One named constant each; `call_to_war` and `peace` depend on
-#: live rows L7/L8 (the hold may not work for them): if those rows show it
+#: live rows (the hold may not work for them): if those rows show it
 #: cannot, delete the constant and its CLASS_SPECS row, nothing else.
 CLASS_MARRIAGE = "marriage"
 CLASS_ALLIANCE = "alliance"
@@ -260,7 +260,7 @@ class SeatState:
     #: proposal id -> {actor_id, class}: every offer this server saw addressed to one
     #: of its actors (HELD, shown, listed, answered). Never dropped on an answer, so
     #: the RESOLVED / VOID line that follows the answer is still known as this
-    #: seat's (lane QTRIAGE, live qf2 L5/L6).
+    #: seat's (live qf2).
     offer_to: dict = field(default_factory=dict)
     offset: int = 0
     write_error: Optional[str] = None

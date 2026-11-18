@@ -1,11 +1,11 @@
-"""Doors deleted in cleanup 2026.11 L14 (lane S2) answer as unknown and send nothing.
+"""Doors deleted in (lane S2) answer as unknown and send nothing.
 
-Finding 7 (docs/cleanup-2026.11/evidence/l13/surface-eval.md): no read yielded an
+Finding 7: no read yielded an
 event id, so `do(intent="respond_event")` had no input, and
 `session(action="auto_events")` acts only while no client is connected, so never
 for a caller of this server. Both are deleted with
 `query(domain="event_probabilities")` (in test_query_tool.py's DELETED_DOMAINS).
-L16 (ruling R3) deleted the bridge handlers behind them too (respond_event,
+ (ruling R3) deleted the bridge handlers behind them too (respond_event,
 query_event_probabilities / event_probabilities, set_auto_respond_events:
 scripts/test_bridge_action_census.py); the no-agent fallback stays.
 """
@@ -140,7 +140,7 @@ def test_the_scan_sees_a_deleted_spelling():
                                    'query("partition_preview")'],
         "inspect(succession_preview)": 'inspect(subject="succession_preview")',
         "a moved discover enumeration": ['discover(what="hireable_mercenaries")',
-                                         # L14 FF1 M-4: the positional spelling SOUL.md taught
+                                         # The positional spelling SOUL.md taught
                                          'from `discover(fabricate_targets)`',
                                          'discover("joinable_factions")'],
         "an event door": 'do(intent="respond_event")',
@@ -151,7 +151,7 @@ def test_the_scan_sees_a_deleted_spelling():
             assert rx.search(sample), (what, sample)
 
 
-# ── L14 FF2 N-3: a doctrine line keyed on passes_intact false alone ──────────
+# ── A doctrine line keyed on passes_intact false alone ──────────
 #
 # The verdict has three states (succession_verdict.OUTCOMES): passes_intact is
 # true, false, or null (undetermined). A taught line that acts only on
@@ -163,10 +163,10 @@ def test_the_scan_sees_a_deleted_spelling():
 FALSE_KEYED = re.compile(r"passes_intact`?\s*(?:==|=|:|\bis\b)?\s*`?\s*false\b", re.I)
 NAMES_THE_THIRD_STATE = re.compile(r"undetermined|not true", re.I)
 
-#: Human-owned boot text. The owner ruled FA2's wording in L15 (lane E): the
+#: Human-owned boot text.d FA2's wording in: the
 #: four lines that acted on `passes_intact` false alone now name the third
 #: state, so no taught line is licensed to stay false-keyed. Each entry is the
-#: line as the owner's ruling wrote it; it must still be in its file.
+#: line as wrote it; it must still be in its file.
 OWNER_RULED_LINES = {
     ("ck3agent/boot/operator-directives.md",
      "a `passes_intact` that is not true (false or undetermined) → you MUST have the next war declared within TWO"),
@@ -212,7 +212,7 @@ def test_the_false_keyed_scan_sees_the_spellings():
                 "- trigger: `observe().succession.passes_intact == false` OR the",
                 "on passes_intact false act on the named splits_away cadets",
                 "If `passes_intact==false`, enumerate every",
-                # the four boot lines as they read before the owner's L15 ruling
+                # the four boot lines as they read before
                 "a `passes_intact:false` → you MUST have the next war declared within TWO",
                 "1 (`succession_plan()`). If `passes_intact==false`, enumerate every",
                 "If `passes_intact==false`, enumerate every `splits_away` title, read the"):

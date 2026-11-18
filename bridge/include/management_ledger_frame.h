@@ -1,5 +1,5 @@
 #pragma once
-//: ck-h4pn / ck-324r: ONE composition, TWO readers.
+//: ONE composition, TWO readers.
 //:
 //: The bytes the management ledger record puts on the wire used to be assembled
 //: inline in emit_management_ledger_record, and the only thing that tested them
@@ -10,7 +10,7 @@
 //: dict shaped to what records_in wanted.
 //:
 //: A fixture written to the CONSUMER's shape cannot falsify the PRODUCER's shape.
-//: That is not hypothetical here: ck-324r's relay row was green while ep-02's
+//: That is not hypothetical here: relay row was green while ep-02's
 //: sealed bundle contained zero ledger rows, because both halves agreed with each
 //: other and neither was ever compared to the emitter.
 //:

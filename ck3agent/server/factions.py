@@ -1,4 +1,4 @@
-"""Faction management from both seats (cleanup 2026.11, F16).
+"""Faction management from both seats (F16).
 
 The vassal's seat:
   do(action_class="factions_to_join")   every faction type the vassal may create
@@ -396,7 +396,7 @@ async def do_faction(gw, args: dict, character_id: int, actor: dict) -> dict:
         if reason == "experimental_write_disabled":
             return rejected(R.experimental_gate_blocked(raw, "faction_action"))
         if reason in ("intent_timeout_no_result", "") and not res:
-            # The handler's own wait for the drain ran out (L13 amendment 3, stage
+            # The handler's own wait for the drain ran out (amendment 3, stage
             # 1): settle_write reads the verdict back. A refusal is the game's. A
             # faction write is an "on_execute" lever (redesign.LEVERS ("faction",
             # "*")): a write that ran is read back in the same call, and here it
@@ -414,7 +414,7 @@ async def do_faction(gw, args: dict, character_id: int, actor: dict) -> dict:
                                         "drain": drain["row"]})
             if conf["sent"] and lever["shows"] == "on_execute":
                 # it ran, and the reply naming the faction to read back never came:
-                # pending readback, ok:true, never rejected (FF5 ruling)
+                # pending readback, ok:true, never rejected (ruling)
                 return R.envelope("do", verdict="pending", actor=actor, game=gw.game(),
                                   pending=R.write_pending(
                                       "readback", game_date_at_submit=submitted_on,
@@ -458,8 +458,8 @@ async def do_faction(gw, args: dict, character_id: int, actor: dict) -> dict:
                           bridge_health=gw.health)
     if verdict == "unconfirmed":
         # The bridge reported it done and the second read could not be made: the
-        # write ran, so it is pending readback, ok:true, never rejected (FF5
-        # ruling: no write the drain ran is rejected for a reading the server
+        # write ran, so it is pending readback, ok:true, never rejected
+        # (ruling: no write the drain ran is rejected for a reading the server
         # could not make).
         return R.envelope("do", verdict="pending", actor=actor, game=gw.game(),
                           result=dict(result, sent=True),

@@ -8,6 +8,12 @@ per-system findings (wars, councils and so on), Ghidra projects or decompiler
 dumps. See ADR 0001: the 34 Linux signatures are the list of what to re-derive,
 not bytes to reuse.
 
+The export drops the research tree's internal tracking labels from the
+comments of these files (and of all shipped code); code and line numbers are
+unchanged. The input shas in the generated Windows headers are those of the
+research files before that pass. Comments cite per-system findings by name
+(`re_<system>.md`); those are in the private research tree, not here.
+
 | Path | What |
 |------|------|
 | `offsets/ck3_offsets.h` | struct offsets and function addresses, each with confidence and evidence |

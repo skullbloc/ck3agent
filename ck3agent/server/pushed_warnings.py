@@ -1,4 +1,4 @@
-"""Pushed warnings: what a seat is told without having to think to look (v4 draft section 6; lane v4instr).
+"""Pushed warnings: what a seat is told without having to think to look (v4 draft section 6).
 
 `observe`'s `result.warnings` is a list of one-line items, each
 `{"trigger", "topic", "line"}`: the trigger is an id of TRIGGERS (the

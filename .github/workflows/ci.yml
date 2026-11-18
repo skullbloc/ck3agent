@@ -145,13 +145,14 @@ jobs:
   # build ONLY bridge/src/os/ (CK3_PLATFORM=windows|macos stops the CMake file
   # before the Linux bridge) with no game, no hooks. windows-latest builds the
   # Win32 cells, the ck3_bridge_win DLL and every os test and runs them (the
-  # ADR "P2 cell status" table names the same test_os_win_<cell> tests);
-  # macos-15 builds the typed-refusal stubs and their test. ADR 0001 P2:
-  # "engine-free tests pass on 3 OSes".
+  # ADR "P2 cell status" table names the same test_os_win_<cell> tests); it
+  # gates. macos-15 builds the typed-refusal stubs and their test. The Python
+  # side runs on Linux only (the MCP server and the CLI use fcntl, signals and
+  # Unix sockets), so these legs run only the portable tools/inspect_binary.py
+  # tests, not the server suite.
   platform-windows:
     name: platform layer (windows-latest)
     runs-on: windows-latest
-    continue-on-error: true   # P2: keep until the cells are green on real MSVC twice, then drop
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -187,12 +188,6 @@ jobs:
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$null, [ref]$errs)
             if ($errs) { $errs | ForEach-Object { Write-Error "${f}: $_" }; exit 1 }
           }
-      # The server suite has never run on Windows. It reports here and does not
-      # gate (release.yml needs this workflow) until it is green on this OS;
-      # then drop continue-on-error. ADR 0001 P2: "engine-free tests pass on 3 OSes".
-      - name: Python unit tests (reporting, not gating)
-        continue-on-error: true
-        run: python -m pytest
 
   platform-macos:
     name: platform layer (macos-15)
@@ -213,10 +208,6 @@ jobs:
       - run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
       - name: tools/inspect_binary.py tests
         run: python -m pytest tests/test_inspect_binary.py
-      # As on Windows: never run on macOS before; reports, does not gate.
-      - name: Python unit tests (reporting, not gating)
-        continue-on-error: true
-        run: python -m pytest
 
   dco:
     # Dependabot's commits carry no sign-off; its PRs are reviewed by a human instead.

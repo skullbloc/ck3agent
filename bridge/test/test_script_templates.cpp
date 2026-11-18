@@ -1,4 +1,4 @@
-// test_script_templates.cpp — lane v4act: the script action layer's templates
+// test_script_templates.cpp —: the script action layer's templates
 // (script_templates.h). NO GAME.
 //
 // THE CLAIMS:
@@ -211,7 +211,7 @@ int main() {
         CHECK(sizeof(kTemplates) / sizeof(kTemplates[0]) == 11, "the enumerated set is eleven templates");
     }
 
-    // ── 4. the incoming-proposal queue (lane QMOD) ─────────────────────────
+    // ── 4. the incoming-proposal queue ─────────────────────────
     {
         Slots s = base();
         s.proposal_on = true;
@@ -287,7 +287,7 @@ int main() {
         CHECK(compose(Template::kProposalAnswer, b).why == "bad_by", "proposal_answer: by=rule refused");
     }
     {
-        // lane QFIX: proposal_stage is deleted (live i11p6: run_interaction ...
+        // Proposal_stage is deleted (live i11p6: run_interaction ...
         // send_threshold = decline runs no on_send, so a staged offer is never held);
         // its name is unknown in every build, debug verbs or not.
         CHECK(template_by_name("proposal_stage") == Template::kNone, "proposal_stage: deleted, not nameable");

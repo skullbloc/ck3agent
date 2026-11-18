@@ -520,7 +520,7 @@ def test_the_boot_refusal_is_typed_on_stderr_and_exits_3(tmp_path):
     assert json.loads(r.stderr.strip().splitlines()[-1])["reason"] == C.R_TOPOLOGY_UNDECLARED
 
 
-# ── v4fix B1: the cycle comes from the episode's authority, not the process ──
+# ── B1: the cycle comes from the episode's authority, not the process ──
 
 CELL = {"CK3_EPISODE_HORIZON_START": "867.1.1", "CK3_EPISODE_HORIZON_END": "877.1.1",
         "CK3_CYCLE_GAME_DAYS": "90"}
@@ -535,7 +535,7 @@ def _cell(monkeypatch, **over):
 
 
 def test_a_send_before_the_first_wait_of_a_resumed_session_lands_in_the_episodes_cycle(seat, monkeypatch):
-    """seat-review.md problem 3 (v3reg2 block): a resumed session is a NEW server
+    """seat-review.md problem 3 (block): a resumed session is a NEW server
     process, whose counter starts at 0 and moves only at its first wait, so every
     send before that wait was stamped cycle 0 and shared cycle 0's bucket for the
     whole episode (s3 D2/D4 at 874.xx refused quota_exceeded in "cycle 0").

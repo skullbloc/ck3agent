@@ -1,9 +1,9 @@
-// meter_lane_latency_probe.cpp — ck-fvms.1.
+// meter_lane_latency_probe.cpp —.
 //
 // WHAT DOES THE OBSERVER'S READ ACTUALLY WAIT FOR, and why does the same read
 // cost 0.10 s on E0 and 10.13 s on an arm?
 //
-// ck-zgh4 measured the arm's blocked meter reads: 90 events, median 10.02 s, 54
+// measured the arm's blocked meter reads: 90 events, median 10.02 s, 54
 // of them within 0.13 s of exactly 10.00 s, against pipeline.flush_period_ms =
 // 10000. That match names the flush period as the cost. It does NOT explain two
 // things the same measurement set contains:
@@ -12,7 +12,7 @@
 //      inside a 10 s cadence should wait uniformly 0-10 s and average 5. The
 //      observed distribution is a SPIKE at the full period.
 //   2. WHY E0 DOES NOT PAY IT. E0's max poll step is ~4 game-days; the arm's is
-//      173-347. ck-zgh4 excluded _record_ownership_sample's extra reads by
+//      173-347. excluded _record_ownership_sample's extra reads by
 //      measurement, so the difference is not the observer doing more work.
 //
 // THE HYPOTHESIS THIS PROBE DISCRIMINATES. Early-flush condition (b) —
@@ -171,8 +171,8 @@ int main() {
           "timeout that would have stayed at 10 s");
 
     std::printf("\nE  THE COST IS PER-READ AND THE SAMPLE ISSUES MANY\n");
-    // ck-fvms measured a SAMPLE at 6-28 bridge calls and a non-sample poll at
-    // exactly one. ck-zgh4 measured 90 blocked calls totalling 710 s. If each
+    // measured a SAMPLE at 6-28 bridge calls and a non-sample poll at
+    // exactly one. measured 90 blocked calls totalling 710 s. If each
     // read pays a full period SERIALLY, a sample's cost is (reads x period) and
     // not (period) — which is the arithmetic that turns a 10 s cadence into the
     // 100-200 s stalls actually observed, and thence into 173-347 game-day poll
@@ -220,7 +220,7 @@ int main() {
               "the change is the CLIENT's issue order, not the pipeline's");
 
         // AND THE BOUND, because "one flush however deep" is FALSE and I had
-        // written it (ck-760i's correction). A flush serves at most
+        // written it (correction). A flush serves at most
         // max_paused_calls_per_flush and DEFERS the remainder; one socket may
         // not even buffer more than per_session_capacity. 41 counties gave 44
         // ids and fit; e_britannia's de-jure tree is 93 counties, which does

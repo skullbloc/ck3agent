@@ -1,15 +1,15 @@
-// ck-zs2x — the ring's LOSS must be measurable, and a wrap must be visible.
+// The ring's LOSS must be measurable, and a wrap must be visible.
 //
 // This ring DROPS on full; it does not overwrite. That matters for what can be
 // measured: the hits lost were never written to a slot, so the surviving batch
 // looks complete and the data carries no trace of the loss. `dropped` is the only
-// evidence, and before ck-zs2x nothing published it — a formatter built an
+// evidence, and before that nothing published it — a formatter built an
 // aiwatch_dropped= string and was called from nowhere, so the literal was absent
 // from the
 // .so (strings = 0). Exists, is called, produces: three different claims, and only
 // the first was true.
 //
-// The rows below measure the three things ck-zs2x asks for: the real CAPACITY, the
+// The rows below measure the three things asks for: the real CAPACITY, the
 // threshold at which loss BEGINS (the wrap point), and whether a wrap is VISIBLE.
 #include "ai_enabled_watch.h"
 
@@ -134,7 +134,7 @@ int main() {
             "the reserved slot moves with head/tail; it is not a slot that wears out");
     }
 
-    // ck-arto: THE ROW THAT CALLED ai_watch_counters IS GONE WITH THE FUNCTION. It
+    // THE ROW THAT CALLED ai_watch_counters IS GONE WITH THE FUNCTION. It
     // asserted the dead formatter still mentioned `aiwatch_dropped=` — a property of a
     // string nothing ever emitted, and the only caller that function ever had was this
     // row. A test that is the sole consumer of the code it tests measures nothing about

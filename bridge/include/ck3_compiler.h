@@ -2,16 +2,16 @@
 // shared bridge source needs, one definition per compiler family.
 //
 // bridge/src/*.cpp is compiled by GCC into libck3_bridge.so and by cl.exe (the
-// public CI's windows-latest leg) or clang-cl (the node's cross build) into
+// public CI's windows-latest leg) or clang-cl (the test host's cross build) into
 // ck3_bridge_core_win. cl.exe has no __attribute__ and no __atomic builtins;
-// clang-cl accepts both, so a GNU spelling in shared code built on the node and
+// clang-cl accepts both, so a GNU spelling in shared code built on the test host and
 // failed only on real MSVC (1491 cl.exe errors on 2026.12.9). Every such
 // spelling goes through a macro or helper here. bridge/test/check_msvc_portable.py
 // (ctest check_msvc_portable) fails on any GNU-only construct elsewhere in a file
 // the Windows build compiles; this is the one file it exempts.
 //
 // The split is on _MSC_VER, which clang-cl defines too, so clang-cl compiles the
-// same tokens cl.exe does and the node's cross build stands in for it. The
+// same tokens cl.exe does and the test host's cross build stands in for it. The
 // non-MSVC side is the exact spelling the sources used before: the Linux build
 // is unchanged.
 //

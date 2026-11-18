@@ -1,8 +1,8 @@
-// flush_apply.h — R1b: applying a FlushPlan against real effects (ck-6kvq.9).
+// flush_apply.h — R1b: applying a FlushPlan against real effects.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.3, §2.4, §2.8.
 //
-// ck-6kvq.8 split the flush in two on purpose: FlushScheduler emits a PLAN and
+// split the flush in two on purpose: FlushScheduler emits a PLAN and
 // performs no effect. This file is the other half — it walks the plan's ordered
 // script and calls an EFFECTS interface for each step, driving the ticket table
 // as it goes. The effects interface is abstract for exactly the reason the
@@ -40,7 +40,7 @@ struct ExecutionStamp {
     uint32_t    character_id = 0;
     uint64_t    tick_executed = 0;
     std::string game_date;
-    //: ck-jg2b: empty when character_id is real; otherwise names why it is 0.
+    //: Empty when character_id is real; otherwise names why it is 0.
     std::string attribution_reason;
 };
 

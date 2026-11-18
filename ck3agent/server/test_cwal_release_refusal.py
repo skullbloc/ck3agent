@@ -1,13 +1,13 @@
-"""ck-cwal — a control seat's LAST-character release is refused, and surfaced.
+"""A control seat's LAST-character release is refused, and surfaced.
 
 Progenitor ruling 2026-09-24: the bridge refuses it and the session tool
 surfaces the refusal with its explanation. This is the TOOL half. The bridge
-half (ck-760i) is not written yet; the tool half landing first is agreed, and
+half is not written yet; the tool half landing first is agreed, and
 until the bridge enforces it the gate degrades to `refusal_reason_unknown` with
 the raw reason verbatim, which is the safe direction.
 
 THE CARVE-OUT CONTRACT IS NOW STATED, because it was answered from the handler
-rather than inferred. ck-760i read bridge_init.cpp:1575 (2026-09-25): the direct
+rather than inferred. read bridge_init.cpp:1575 (2026-09-25): the direct
 assignment there only refreshes the session's cached primary, while the CLAIM is
 made in `swap_character`, which the handoff always goes through and which moves
 the id between `claimed_character_ids` under one lock. A succession-seated
@@ -37,7 +37,7 @@ LITERAL = "last_claim_of_control_session"
 class TheLiteralIsTheAGREEDONE(unittest.TestCase):
 
     def test_the_code_is_in_the_closed_set(self):
-        """The two halves meet at exactly this string. ck-760i emits it; this
+        """The two halves meet at exactly this string. emits it; this
         recognises it. A mismatch routes a real refusal into
         `refusal_reason_unknown` — safe, and not the explanation the ruling
         asks for."""
@@ -68,7 +68,7 @@ class TheLiteralIsTheAGREEDONE(unittest.TestCase):
 class TheRefusalSaysWhatToDoInstead(unittest.TestCase):
 
     def test_the_reply_fix_names_the_switch_and_the_end_of_session(self):
-        """smoke16/17: release of the only held ruler answered
+        """/17: release of the only held ruler answered
         `last_claim_of_control_session` and nothing about the two ways out. The
         reply's `fix` now carries both: switch with session(control), or end the
         session, which frees the ruler."""
@@ -114,7 +114,7 @@ class AnUnknownCodeStillDegradesSafely(unittest.TestCase):
 
 class TheCarveOutContractIsStatedNow(unittest.TestCase):
     """This class REPLACES the row that kept the contract unstated. That row's
-    job was to fail if anyone wrote the contract before ck-760i answered from
+    job was to fail if anyone wrote the contract before that answered from
     the handler; the answer arrived 2026-09-25, so the row is discharged rather
     than deleted — these assert what was learned, in its place."""
 

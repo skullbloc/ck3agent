@@ -1,4 +1,4 @@
-// test_char_is_alive.cpp — cleanup final fix (witness #8 minor 8). NO GAME.
+// test_char_is_alive.cpp — cleanup final fix (minor 8). NO GAME.
 //
 // THE CLAIM: a character whose death date cannot be read is not reported as
 // alive. safe_read answers 0 on a fault and 0 is the "alive" value, so before

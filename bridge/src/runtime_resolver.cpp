@@ -6,7 +6,7 @@
 #include "signatures.h"
 #include "ck3_offsets.h"
 #include "offset_version.h"
-#include "build_id_witness.h"   // ck-nkyc leg (e): retain what we OBSERVED
+#include "build_id_witness.h"   // leg (e): retain what we OBSERVED
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -1108,7 +1108,7 @@ static BuildIdResult check_build_id(uintptr_t base_addr) {
     for (size_t i = 0; i < data.found_len && i < 20; i++)
         snprintf(hex + i * 2, 3, "%02x", data.found_id[i]);
     RLOG("ELF BuildID: %s", hex);
-    // RETAINED, not merely logged (ck-nkyc leg (e)). This is the only value in
+    // RETAINED, not merely logged (leg (e)). This is the only value in
     // the whole handshake that is UNIQUE TO WHAT RAN rather than to a tree.
     w.observed_hex = hex;
 
@@ -1187,7 +1187,7 @@ bool run_resolver(uintptr_t base_addr, ResolvedOffsets* out) {
         // Enabled by compile-time flag CK3_STRICT_BUILD_ID, or at runtime via
         // CK3_STRICT_BUILD_ID=1 environment variable. Runtime env var overrides
         // the compile-time default in both directions (0 to relax, 1 to enforce).
-        // ck-nkyc: resolved ONCE, in check_build_id(), so the same value the
+        // Resolved ONCE, in check_build_id, so the same value the
         // handshake publishes is the value that decides here. Two derivations
         // of one rule is how a bundle ends up asserting a strictness the
         // resolver did not act on.

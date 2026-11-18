@@ -1,4 +1,4 @@
-"""Does the next succession pass intact? ONE definition (cleanup 2026.11 L14, finding 8).
+"""Does the next succession pass intact? ONE definition (finding 8).
 
 The player was answered by five reads in three vocabularies: `scatters` (the
 per-title map's summary, in observe and inspect(succession_preview)),
@@ -34,7 +34,7 @@ succession_plan, observe's succession block and the live-state hook
 NO DEFAULT ON EITHER SIDE. "intact" needs a heir read who takes every title,
 and "splits" needs a breaker named. With no heir read at all (the simulation
 empty and the map unavailable or naming no projected heir) the answer is
-"undetermined", never "intact" (L14 FF2 N-MAJ-2: two failed reads answered
+"undetermined", never "intact" (two failed reads answered
 intact, with nobody named, and no warning), exactly as a "does not pass intact"
 with nobody named is "undetermined", never "splits". Every reader that states
 the verdict carries `warning(v)` when it is undetermined.
@@ -45,7 +45,7 @@ query_succession's (kept for the callers' signature; no field of it decides), an
 fallback for the heirs when the simulation names none, and then its split is the
 verdict. Pure: no reads, no bridge, so a host test drives the same code.
 
-EVERY CROWN TITLE IS CHECKED (v4fix B2, set v3-registered-2 s3). Charles held
+EVERY CROWN TITLE IS CHECKED (B2, set v3-registered-2 s3). Charles held
 k_france AND k_aquitaine (observe's de_jure block, read off the same held-title
 array, named both on all 13 of his observes). All 25 of the king's observes said
 "intact" with one eligible heir; at his death k_aquitaine went to Carloman and the
@@ -75,8 +75,8 @@ from __future__ import annotations
 from typing import Any
 
 #: The verdict's three states. "splits" always carries a breaker: a "does not
-#: pass intact" with nobody named is not a reading, it is undetermined (L14 FF1
-#: M-3: the map fallback said false with breaker None and one heir).
+#: pass intact" with nobody named is not a reading, it is undetermined
+#: (M-3: the map fallback said false with breaker None and one heir).
 OUTCOMES = ("intact", "splits", "undetermined")
 
 #: The tier from which a title is a crown of its own, checked title by title:
@@ -101,7 +101,7 @@ def sim_heirs(sim: dict) -> list[dict]:
     (do_query_succession_simulation): `heirs`, the player heir first, each
     {character_id, name, is_player_heir, title_count, titles[]}. Each becomes
     {id, name, titles}, the player heir first; the others carry `takes` (the titles
-    they would take away). Until L14 the server read `eligible_heirs`, a key the
+    they would take away). Until the server read `eligible_heirs`, a key the
     bridge never emits, so every simulation read as "no heirs" and the verdict
     fell back to the per-title map (or to none)."""
     rows = sim.get("heirs") if isinstance(sim, dict) else None
@@ -237,7 +237,7 @@ def verdict(sim: dict, succ: dict, msum: dict) -> dict[str, Any]:
     # The simulation's per-heir titles, never is_partition (B2).
     heirs = sim_heirs(sim)
     eligible_heir_count = len(heirs) if heirs else None
-    # Lane l4, measured on the 867 save (live867 l4-live-a-t1, ruler 10465): the
+    # Measured on the 867 save (live867 l4-live-a-t1, ruler 10465): the
     # simulation named no heir while the per-title map projected Karlmann on two titles
     # and Ludwig on k_bavaria. When the simulation is empty and the map is available,
     # the map's projected heirs are the heirs and its split is the verdict.

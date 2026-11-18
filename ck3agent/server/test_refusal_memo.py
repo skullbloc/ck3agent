@@ -163,7 +163,7 @@ def test_a_refused_offer_through_do_is_not_sent_again(world, monkeypatch):
 
 
 def test_a_repeat_says_nothing_was_sent_by_it(world, monkeypatch):
-    """Lane QTRIAGE, live qf1 (Q3s, 2026-11-15): the third answer to a void offer
+    """Live qf1 (Q3s, 2026-11-15): the third answer to a void offer
     came back from the memo as the SECOND call's envelope, `result.sent: true`
     and its token SACT_45, in 0.001 s, beside a warning saying "not sent". A
     reply that disagrees with itself: the replay must say that THIS call sent

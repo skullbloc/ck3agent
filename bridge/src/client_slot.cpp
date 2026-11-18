@@ -1,4 +1,4 @@
-// client_slot.cpp — IPC client-slot lifecycle (ck-xqol).  See client_slot.h
+// client_slot.cpp — IPC client-slot lifecycle.  See client_slot.h
 // for the crash this exists to make impossible.
 //
 // This TU is deliberately engine-free: <unistd.h> and the standard library,
@@ -14,7 +14,7 @@ SlotReleaseResult client_slot_release(ClientSlot& s, SlotCloseFn closer) {
     SlotReleaseResult r;
 
 #ifdef CK3_SLOT_LEGACY_FD_GUARD
-    // ─── ck-xqol NEGATIVE CONTROL ────────────────────────────────────────
+    // ─── NEGATIVE CONTROL ────────────────────────────────────────
     // The pre-fix code, reproduced exactly: the liveness test is the -1
     // sentinel on `fd`, and it is made INSIDE the send_mtx scope, i.e. after
     // the slot has already been touched.  Build with
@@ -38,7 +38,7 @@ SlotReleaseResult client_slot_release(ClientSlot& s, SlotCloseFn closer) {
     // The liveness test happens BEFORE anything in `s` is locked, closed or
     // dereferenced, and it is a predicate that raw zero storage fails.  A slot
     // that is not open is left bit-for-bit untouched, which is simultaneously:
-    //   * the never-constructed case (the ck-xqol crash),
+    //   * the never-constructed case (the crash),
     //   * the double-release case (second caller is a no-op),
     //   * the release-after-displacement case.
     if (!slot_is_open(s)) return r;
@@ -96,7 +96,7 @@ uint32_t client_slot_open(ClientSlot& s, int fd, uint64_t connect_ts) {
 bool client_slot_attach_session(ClientSlot& s, uint32_t expected_gen,
                                 Session* session, const char* resume_token) {
 #ifndef CK3_SLOT_LEGACY_FD_GUARD
-    // ck-xqol: refuse to bind to a connection that is already gone or already
+    // Refuse to bind to a connection that is already gone or already
     // replaced.  Without this the session is orphaned on a free slot (and its
     // claims are never released) or handed to the next client to land here.
     if (!slot_is_open(s) || s.gen != expected_gen) return false;

@@ -1,4 +1,4 @@
-// test_war_scope.cpp — L20-A, smoke17 row A3: query_war_stance's row rule on a
+// test_war_scope.cpp — row A3: query_war_stance's row rule on a
 // fixture read from the 867 core dump, through the REAL json_get_int.
 //
 // Fixture: the core dump ck3_20260625_152901_ivar867 (CLAUDE.md, "Runtime probing") (867.01.01,
@@ -56,7 +56,7 @@ int main() {
     expect("war_id 5: not 14859's war", rows("{\"character_id\":14859,\"war_id\":5}", 14859), {});
     expect("defender only (13903): no row", rows("{\"character_id\":13903}", 13903), {});
     expect("absent war_id, other attacker 12618", rows("{\"character_id\":12618}", 12618), {0});
-    // query_war_score_breakdown's documented `{}`: every cached war (witness r1 item 8)
+    // query_war_score_breakdown's documented `{}`: every cached war
     auto breakdown_all = [](const char* params) {
         return bridge::war_scope::all_wars(
             bridge::war_scope::from_param(bridge::json_get_int(params, "war_id")));

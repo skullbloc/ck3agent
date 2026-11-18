@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_raw_pointer_inputs.py — rc2 B2 census: no ungated verb takes a raw
+"""check_raw_pointer_inputs.py — census: no ungated verb takes a raw
 pointer from the client.
 
 set_cb_selector_override shipped ungated and took three client-supplied
@@ -198,11 +198,11 @@ SELFTEST_BAD = {
     "two hop": 'bool do_x(const char* p, std::string* o) { const char* s = json_get_string(p, "n"); uint64_t a = strtoull(s, nullptr, 16); uintptr_t b = a + 8; return is_mapped(b); }',
     "c cast": 'bool do_x(const char* p, std::string* o) { uint64_t a = json_get_int(p, "n"); void* q = (void*)a; return q; }',
     "address key": 'bool do_x(const char* p, std::string* o) { int a = json_get_int(p, "address"); return a; }',
-    # L13 FF3 (witness X4): the scan stays in phase across a raw string and a
+    # The scan stays in phase across a raw string and a
     # comment with an apostrophe. The escaped-looking-quote row is flagged by the
-    # pre-FF3 checker too (its quotes pair; non-discriminating); the bare-quote
+    # earlier checker too (its quotes pair; non-discriminating); the bare-quote
     # row (a later "/*" then reads as a comment that swallows the handler) is
-    # the one the pre-FF3 checker misses.
+    # the one the earlier checker misses.
     "pointer key after a raw string": ('static const char* k = R"x(\\")x";\nint b = 1; // it\'s\n'
         'bool do_x(const char* p, std::string* o) { const char* s = json_get_string(p, "cb_ref"); return s; }'),
     "pointer key after a raw string with a bare quote": ('static const char* k = R"x(")x"; const char* u = "/*";\n'

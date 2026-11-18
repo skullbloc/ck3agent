@@ -4,7 +4,7 @@
 // We install an inline hook that calls the original function first (trampoline),
 // then computes the per-component score breakdown and caches it keyed by war_id.
 // Four components (imprisonment, battle, occupation, landless armies lost) call
-// the game's sub-functions; TickingScore is derived from raw memory (ck-nr51.3).
+// the game's sub-functions; TickingScore is derived from raw memory.
 // The IPC handler reads the cache under a shared_mutex read lock.
 //
 // The sub-functions are only safe to call from within the war update tick context,
@@ -18,8 +18,8 @@
 // that should never fire during normal gameplay.
 
 #include "action_dispatch_internal.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
-#include "world_epoch.h"   // ck-hxh7
+#include "init_order.h"   // CK3_EARLY_INIT
+#include "world_epoch.h"
 
 #include <shared_mutex>
 #include <unordered_map>
@@ -43,7 +43,7 @@ static fn_war_score_sided g_fn_imprisonment = nullptr;  // 3-param: per-side
 static fn_war_score_net   g_fn_battle       = nullptr;  // 2-param: net score
 static fn_war_score_sided g_fn_occupation   = nullptr;  // 3-param: per-side
 static fn_war_score_net   g_fn_landless     = nullptr;  // 2-param: net score (attacker only)
-// g_fn_ticking removed (ck-nr51.3): TickingScore is now derived from raw memory
+// g_fn_ticking removed: TickingScore is now derived from raw memory
 // reads — see compute_ticking_score_breakdown() below.
 
 // =============================================================================
@@ -53,14 +53,14 @@ static fn_war_score_net   g_fn_landless     = nullptr;  // 2-param: net score (a
 static std::shared_mutex g_war_score_cache_mutex;
 static std::unordered_map<uint32_t, WarScoreBreakdown> g_war_score_cache CK3_EARLY_INIT;
 
-// Why the hook last declined to refresh a war's breakdown (ck-xwlg). A stale
+// Why the hook last declined to refresh a war's breakdown. A stale
 // cache entry with a recorded reject reason is the tell that pre-validation —
 // not the game — is starving the cache; surfacing the reason from the query
 // side turns "war_score stuck at 0" from a mystery into a pointer at the
 // failing validator.
 static std::unordered_map<uint32_t, WarScoreRejectReason> g_war_score_reject CK3_EARLY_INIT;
 
-// ck-hxh7: both maps are keyed by WAR ID, and war ids are reused across saves.
+// Both maps are keyed by WAR ID, and war ids are reused across saves.
 // Their lifetime is the loaded WORLD, not the process — nothing ever erased from
 // g_war_score_cache (not even on war end), so a reused war id in a newly loaded
 // save served the previous world's score until it happened to be re-scored.
@@ -115,7 +115,7 @@ static void* g_orig_war_score_update = nullptr;
 //   OccupationScore    — same FUN_066b4f40 iteration, plus walks the
 //                        CharacterDB → realm → held-titles → LandedTitleDB
 //                        chain for each participant. Defended by
-//                        occupation_chain_valid() (ck-nr51.1): validates the
+//                        occupation_chain_valid: validates the
 //                        DB singletons + shadow-resolves each participant's
 //                        char_id to confirm the chain won't crash mid-walk.
 //                        The function has no inline occupied-counties
@@ -123,7 +123,7 @@ static void* g_orig_war_score_update = nullptr;
 //   BattleScore        — iterates BATTLE_LIST_PTR (war+0x238) for BATTLE_COUNT
 //                        (war+0x244) entries. Sentinel/garbage ptr ⇒ SIGSEGV.
 //                        Defended by battle_list_valid().
-//   TickingScore       — direct memory read (ck-nr51.3). reads war+0x40/0x48
+//   TickingScore       — direct memory read. reads war+0x40/0x48
 //                        (atk score + enabled) and war+0x70/0x78 (def score +
 //                        enabled). No function call; computed inline by
 //                        compute_ticking_score_breakdown(). Per-side floor
@@ -135,7 +135,7 @@ static void* g_orig_war_score_update = nullptr;
 //                        (char+0x1B8), and iterates the MAA_REGIMENT_REFS
 //                        CPdxArray at title_realm+0x278, looking up each
 //                        regiment id in OWNER_LINK_DB. Defended by
-//                        landless_realm_valid() (ck-nr51.2): validates the
+//                        landless_realm_valid: validates the
 //                        OWNER_LINK_DB singleton, the resolved attacker's
 //                        title_realm_data, and the MAA refs array. Same
 //                        shadow-resolve pattern as occupation_chain_valid.
@@ -191,7 +191,7 @@ static bool battle_list_valid(uintptr_t wp) {
     return true;
 }
 
-// Validate the dependency chain OccupationScore walks (ck-nr51.1).
+// Validate the dependency chain OccupationScore walks.
 //
 // OccupationScore (FUN_066d95a0) decomp shows it has NO inline occupied-counties
 // container on CWar. Instead, for each participant it:
@@ -294,7 +294,7 @@ static bool occupation_chain_valid(uintptr_t wp) {
     return true;
 }
 
-// Validate the dependency chain LandlessScore walks (ck-nr51.2).
+// Validate the dependency chain LandlessScore walks.
 //
 // LandlessScore (FUN_066d9080, called via thunk FUN_066d9440) decompilation:
 //   1. Early-return 0 for side==1 (function only applies to attacker).
@@ -320,7 +320,7 @@ static bool occupation_chain_valid(uintptr_t wp) {
 //     cb_subobj_valid().
 //   - CharacterDB structural sanity (slot table, slot count) — already
 //     covered by occupation_chain_valid()'s db_valid().
-//   - GAPS this validator closes (left exposed by ck-nr51.1):
+//   - GAPS this validator closes (left exposed):
 //       (a) OWNER_LINK_DB structural sanity (independent global singleton —
 //           not validated by occupation_chain_valid).
 //       (b) The CB primary-attacker char's CharacterDB slot may not be in
@@ -440,7 +440,7 @@ static bool landless_realm_valid(uintptr_t wp) {
 }
 
 // =============================================================================
-// TickingScore: direct memory read (ck-nr51.3)
+// TickingScore: direct memory read
 // =============================================================================
 //
 // Replaces the FUN_066da7b0 function call — drops one of the five sub-functions
@@ -560,7 +560,7 @@ static void on_war_score_update(void* war_ptr) {
         record_reject(war_id, WarScoreRejectReason::DefParticipants); return;
     }
 
-    // OccupationScore-specific deep chain validation (ck-nr51.1): CharacterDB
+    // OccupationScore-specific deep chain validation: CharacterDB
     // and LandedTitleDB globals must be mapped+sane, and each participant
     // must resolve through CharacterDB to either a NullSentinel-safe fallback
     // path or a CCharacter with a mapped vtable. See occupation_chain_valid()
@@ -569,7 +569,7 @@ static void on_war_score_update(void* war_ptr) {
         record_reject(war_id, WarScoreRejectReason::OccupationChain); return;
     }
 
-    // LandlessScore-specific deep chain validation (ck-nr51.2): OWNER_LINK_DB
+    // LandlessScore-specific deep chain validation: OWNER_LINK_DB
     // global must be mapped+sane; the CB primary-attacker char must resolve
     // safely through CharacterDB; the resolved attacker's title_realm_data
     // chain (used for is_landless predicate + MAA-refs iteration) must be
@@ -582,7 +582,7 @@ static void on_war_score_update(void* war_ptr) {
 
     WarScoreBreakdown bd{};
 
-    // TickingScore: direct memory read (ck-nr51.3). Lives OUTSIDE the sigsetjmp
+    // TickingScore: direct memory read. Lives OUTSIDE the sigsetjmp
     // region — safe_read uses process_vm_readv and cannot SIGSEGV.
     bd.ticking_atk      = compute_ticking_score_breakdown(wp);
     bd.ticking_def      = 0;  // net score already in ticking_atk
@@ -652,7 +652,7 @@ void init_war_score_hook() {
         bridge::game_fn(ck3::funcs::WAR_SCORE_BATTLE));
     g_fn_occupation = reinterpret_cast<fn_war_score_sided>(
         bridge::game_fn(ck3::funcs::WAR_SCORE_OCCUPATION));
-    // ck-nr51.3: TickingScore is direct-read — no function pointer to resolve.
+    // TickingScore is direct-read — no function pointer to resolve.
     g_fn_landless = reinterpret_cast<fn_war_score_net>(
         bridge::game_fn(ck3::funcs::WAR_SCORE_LANDLESS_THUNK));
 
@@ -680,7 +680,7 @@ bool query_war_score_breakdown(uint32_t war_id, WarScoreBreakdown* out) {
     return true;
 }
 
-// Freshness-aware variant (ck-xwlg). One bridge tick ≈ one game day;
+// Freshness-aware variant. One bridge tick ≈ one game day;
 // WAR_SCORE_UPDATE fires per war-update cycle, so a healthy war's breakdown
 // is at most ~a month old. An entry aging past WAR_SCORE_FRESH_TICKS means
 // pre-validation has been rejecting every refresh since — the entry is a

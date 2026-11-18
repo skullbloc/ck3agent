@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""rc2 B2: the default-build libck3_bridge.so carries no debug-verb handler.
+"""The default-build libck3_bridge.so carries no debug-verb handler.
 
 Usage: check_debug_verbs_not_linked.py <libck3_bridge.so>
 

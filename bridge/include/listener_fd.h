@@ -1,6 +1,6 @@
-// listener_fd.h — the bridge's socket must live only in the game process (L21).
+// listener_fd.h — the bridge's socket must live only in the game process.
 //
-// node smoke18 (2026.12.1): CK3 crashed, its crash handler started CrashReporter
+// node (2026.12.1): CK3 crashed, its crash handler started CrashReporter
 // (fork + exec, LD_PRELOAD and all), and the reporter inherited the listening
 // socket's descriptor: the socket kept accepting connections with no bridge
 // behind it, and the next `ck3agent launch` refused ("a bridge is already

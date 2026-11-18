@@ -1,4 +1,4 @@
-// windows/game_logs.cpp — os/game_logs.h on Windows (lane WINRE).
+// windows/game_logs.cpp — os/game_logs.h on Windows.
 //
 // The Windows counterpart of the Linux /proc/self/fd walk: the process's own open
 // handles. NtQuerySystemInformation(SystemExtendedHandleInformation) lists every

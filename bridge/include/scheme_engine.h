@@ -30,7 +30,7 @@ const char* scheme_bridge_refusal(uintptr_t type_ptr, const std::string& key);
 // nullptr. The bridge starts and checks character-target schemes only; the start
 // (execute_scheme_intent) and the check (execute_scheme_check_intent) refuse
 // through this one reader, so do(scheme start) and discover(scheme_targets) name
-// the same door (L18 round 2: generate_claim's start was refused
+// the same door (generate_claim's start was refused
 // engine_refused_can_start_scheme, its check scheme_type_targets_a_title).
 const char* scheme_target_refusal(uintptr_t type_ptr);
 

@@ -1,4 +1,4 @@
-"""The seats' notepads (pre-registration v4 draft sections 3 and 7; lane v4note).
+"""The seats' notepads (pre-registration v4 draft sections 3 and 7).
 
 ONE DEFINITION. Everything the notepad means lives here: the two tools' names,
 the pads, the conditions-block keys and their environment transcription, the
@@ -52,7 +52,7 @@ ever overwrites text it did not see. The rule is the same for both pads.
 THE CYCLE COMES FROM THE CYCLE AUTHORITY. The cell's one schedule
 (`cycle_cadence.cell_schedule`, start + k x cadence on the game calendar) at
 the bridge's game date read at the call, never a per-process counter that a
-resume restarts at zero (the v3reg2 msg_send quota defect: a resumed seat's
+resume restarts at zero (the msg_send quota defect: a resumed seat's
 sends were stamped cycle 0). When there is no schedule or the date cannot be
 read, the operation is refused `notepad_cycle_unknown` and logged with
 `cycle: null`, never stamped with a guess.
@@ -116,7 +116,7 @@ KEY_WRITE_MAX = "notepad.max_write_bytes"
 KEY_BOUNDS = (KEY_PRIVATE_MAX, KEY_COUNCIL_MAX, KEY_WRITE_MAX)
 KEY_ARMS_ADD = "tool_surface.notepad_arms_add"
 
-#: The bounds this lane proposes for the v4 registration (the owner rules them;
+#: The bounds this lane proposes for the v4 registration (them;
 #: nothing reads these as a default — a seat boots only with declared bounds).
 #: private 4096 bytes: about 1k tokens a read, seven of v3's 600-byte messages;
 #: council 8192: twice that for up to six writers; a write 1024: a pad takes

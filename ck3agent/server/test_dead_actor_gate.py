@@ -1,4 +1,4 @@
-"""A dead actor is a dead actor (witness #8 minor 6).
+"""A dead actor is a dead actor (minor 6).
 
 Until the final fix a call from a dead character's seat answered
 `actor_dead_or_stale` (class bridge, transient, retry "now", "re-pin control via
@@ -117,7 +117,7 @@ def test_no_gate_tells_a_dead_actor_to_retry():
     assert "actor_dead_or_stale" not in set(R.RAW_REASON_TO_GATE.values())
 
 
-# ── witness #9 minor 5: a war read that failed is not a war that is gone, and
+# ── minor 5: a war read that failed is not a war that is gone, and
 #    war 0 is a war ──
 
 class FailedWarsGw(Gw):
@@ -165,11 +165,11 @@ def test_a_war_id_that_is_not_a_number_is_no_war():
     assert "query_wars" not in [a for a, _ in gw.reads]
 
 
-# ── witness #9 minor 7: the bridge's actor refusals, one reason per cause ──
+# ── minor 7: the bridge's actor refusals, one reason per cause ──
 
 REPO = HERE.parents[1]
 BRIDGE = REPO / "bridge"
-# L13 FF3 (witness X4): the one C++ tokenizer (bridge/scripts/cpp_strip.py).
+# The one C++ tokenizer (bridge/scripts/cpp_strip.py).
 sys.path.insert(0, str(BRIDGE / "scripts"))
 import cpp_strip  # noqa: E402
 
@@ -191,9 +191,9 @@ def test_the_bridge_answers_a_missing_actor_and_a_dead_one_apart():
     import pytest
     if not (BRIDGE / "include" / "action_dispatch_internal.h").is_file():
         pytest.skip("no bridge sources in this layout")
-    # lane ACTOR: "no_actor" first — a null actor whose resolve was REFUSED (a
+    # "no_actor" first — a null actor whose resolve was REFUSED (a
     # write, or a seat's read, naming no actor of its own: actor_resolve.h).
-    # lane ACTORKEY: "actor_key_not_read" first, a refused resolve whose actor was
+    # "actor_key_not_read" first, a refused resolve whose actor was
     # named under the key the verb does not read (actor_resolve.h rule 0).
     assert _actor_refusal_reasons() == ["actor_key_not_read", "no_actor", "actor_not_found",
                                         "actor_not_alive"]
@@ -230,7 +230,7 @@ def test_every_actor_refusal_site_asks_the_one_helper():
 
 
 def test_every_actor_reason_the_map_holds_has_an_emitter():
-    """Census (witness #10 minor 10): every `actor_*` raw reason in
+    """Census (minor 10): every `actor_*` raw reason in
     RAW_REASON_TO_GATE is a string the bridge answers somewhere (code, strings
     kept, comments stripped). A key with no emitter is dead vocabulary, and a
     map that keeps one reads as a promise the bridge never makes. Fail OPEN: the

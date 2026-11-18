@@ -1,8 +1,8 @@
 // test_unavailability.cpp — host unit tests for per-session unavailability
 // accounting and the episode policy.
 //
-// ck-6kvq.10 built the accounting (R3 as reversed: the clock runs and a capped
-// agent's cost is MEASURED, not prevented). ck-ijfa replaced the GATE, on the
+// built the accounting (R3 as reversed: the clock runs and a capped
+// agent's cost is MEASURED, not prevented). replaced the GATE, on the
 // progenitor's ruling of 2026-09-13:
 //
 //   ANOMALOUS IS A WALL-CLOCK JUDGEMENT. A gap between a control session's
@@ -10,7 +10,7 @@
 //   intervals = 360 WALL-SECONDS. `unavailable_game_days` is then the GAME-DAYS
 //   those anomalous gaps SPANNED, and more than X of them invalidates.
 //
-// ck-2ngg then made X ITSELF A RULE: "5% of the episode's DECLARED horizon,
+// then made X ITSELF A RULE: "5% of the episode's DECLARED horizon,
 // unsteered". 365 is that rule evaluated at the registered 20-game-year horizon
 // (7300 game-days) and is wrong at every other one — on the smoke horizon
 // (1568 game-days) the rule says 78 and the constant said 365, 4.7x too
@@ -18,7 +18,7 @@
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.7, §2.10, §6.1.
 // Pre-registration §7.1 (the covariate) and §7.3 (X = 5% of the declared
-// horizon; 365 at the registered 20-game-year one — ck-2ngg).
+// horizon; 365 at the registered 20-game-year one —).
 //
 // No CK3 binary, no game, no engine: the ledger takes GAME DAY NUMBERS and
 // MONOTONIC WALL MILLISECONDS, both passed in. Two units on purpose — the gate
@@ -102,7 +102,7 @@ static const uint64_t W0 = 1'000'000;
 // Every wall-clock number below is stated WITH its rate and condition, because
 // a threshold quoted without them is the defect this bead was filed for.
 //
-// FAST: the E0 NULL free-running rate measured on the node and corroborated by
+// FAST: the E0 NULL free-running rate measured on the test host and corroborated by
 //   Appendix A.19 — ~1.73 game-days per wall-second. One R3 heartbeat interval
 //   (120 wall-seconds) spans 208 game-days here.
 static const int64_t kFastDaysPerBeat = 208;      // 208 days / 120 s = 1.733 gd/s
@@ -374,7 +374,7 @@ static void test_time_hygiene() {
 // 8. A session that connects and never speaks is unavailable from connect
 // ===========================================================================
 // PRESERVED THROUGH THE GATE CHANGE, because the semantics carry even though
-// the numbers do not: this is ck-zgh4's SILENT arm, and a session that connects
+// the numbers do not: this is SILENT arm, and a session that connects
 // and says nothing must be anomalous from the moment it connected.
 static void test_silent_from_connect() {
     section("a session that handshakes and never speaks");
@@ -398,7 +398,7 @@ static void test_silent_from_connect() {
 // ===========================================================================
 // 9. THE NEGATIVE CONTROL — the SUPERSEDED mechanism, on the same input
 // ===========================================================================
-// e0 specified this one, and it is the discriminating case: the pre-ck-ijfa
+// e0 specified this one, and it is the discriminating case: the earlier
 // rule was "every gap of at least min_span_days (30) GAME-DAYS counts IN FULL".
 // Run it over the SAME healthy heartbeat history test 1 accrues ZERO on.
 //
@@ -579,7 +579,7 @@ static void test_episode_policy() {
           "byte for byte, including orphan-to-native");
     CHECK_EQ(p.unavail_anomaly_wall_s, 360,
              "the RULED anomaly gate: 3 x the 120-second R3 heartbeat");
-    // ck-2ngg: WITH NO DECLARED HORIZON THERE IS NO X. Not 365 — the bridge
+    // WITH NO DECLARED HORIZON THERE IS NO X. Not 365 — the bridge
     // refuses to judge rather than borrowing another horizon's answer.
     CHECK(!p.unavail_exclusion_armed,
           "no declared horizon => the exclusion is UNARMED");
@@ -654,7 +654,7 @@ static void test_episode_policy() {
           "and what they actually declared is carried verbatim, so the typo is "
           "visible in the bundle");
 
-    // ── THE SECOND RETIRED KNOB (ck-2ngg) ─────────────────────────────────
+    // ── THE SECOND RETIRED KNOB ─────────────────────────────────
     // CK3_UNAVAIL_X_DAYS was the door back to the coded constant: set to 365 on
     // a smoke horizon it restores the exact defect, silently and permissively.
     // It must reconfigure NOTHING — and must be PUBLISHED as ignored, because a
@@ -772,7 +772,7 @@ static void test_synthetic_episode_seal() {
     // So at that rate the FIRST anomalous gap invalidates the episode, and X
     // cannot discriminate a brief lapse from a dead agent. It is not a defect in
     // this code — both numbers behave exactly as ruled — and the numbers are the
-    // pre-registration's to change after ck-zgh4 measures the ARM rate. It is
+    // pre-registration's to change after measures the ARM rate. It is
     // asserted here so the tension is visible in a test run rather than only in
     // a comment.
     CHECK(mercia->unavailable_game_days > 365,
@@ -857,11 +857,11 @@ static void test_both_units() {
 }
 
 // ===========================================================================
-// 15. X IS A RULE, NOT A CONSTANT (ck-2ngg)
+// 15. X IS A RULE, NOT A CONSTANT
 // ===========================================================================
 // THE DEFECT: `exclusion_days_ = 365` stored the rule's answer at ONE horizon
 // and applied it to all of them. The two are indistinguishable at the
-// registered horizon and nowhere else — ck-uq5i's shape exactly, and permissive
+// registered horizon and nowhere else — shape exactly, and permissive
 // everywhere it is wrong, which is why no episode ever showed a symptom.
 static void test_exclusion_is_a_rule() {
     section("X = round(0.05 x declared horizon), in GAME-DAYS");
@@ -895,11 +895,11 @@ static void test_exclusion_is_a_rule() {
           "judged at 365 could not be excluded at all");
 
     // ── THE CALENDAR IS THE ENGINE'S, AND IT MATTERS BY EXACTLY 3 DAYS ─────
-    // ck-2ngg's own spec quoted 1571 game-days and X = 79 for this horizon.
+    // own spec quoted 1571 game-days and X = 79 for this horizon.
     // That is the UNIFORM 30-DAY-MONTH arithmetic of scripts/meter_lane.py's
     // `_ordinal()`, which that module documents as CADENCE ARITHMETIC ONLY and
     // never writes to a row. The ledger's day numbers come from the engine's
-    // REAL month lengths (ck-05mg), so the span is 1568 and X is 78. Asserted
+    // REAL month lengths, so the span is 1568 and X is 78. Asserted
     // side by side so the discrepancy is a fact on the record rather than an
     // argument, and so re-introducing the uniform calendar fails here.
     const int64_t uniform_span = 1571;          // what 12x30-day months give
@@ -985,7 +985,7 @@ static void test_exclusion_is_a_rule() {
 // ===========================================================================
 // 16. AN UNARMED LEDGER JUDGES NOTHING — and says so
 // ===========================================================================
-// THE NEGATIVE-CONTROL SHAPE ck-2ngg ASKED FOR, run inline against the SAME
+// THE NEGATIVE-CONTROL SHAPE ASKED FOR, run inline against the SAME
 // session history: the pre-fix constant passes an episode the rule excludes.
 static void test_unarmed_ledger_and_the_prefix_control() {
     section("no declared horizon => UNARMED: nothing is judged, and that is "
@@ -1015,7 +1015,7 @@ static void test_unarmed_ledger_and_the_prefix_control() {
           "exclusion_armed() is a required companion question");
 
     // ── DECLARED IS NOT OBSERVED, AND THE BUNDLE SAYS BOTH ────────────────
-    // Raised by ck-7pw9/ck-zgh4 while this bead was in flight. X is 5% of the
+    // Raised while this bead was in flight. X is 5% of the
     // DECLARED horizon, as ruled — so an episode that declares twenty
     // game-years and stops after 5000 days has a tolerance proportional to an
     // observation it did not make. The ruling stands; what must not stand is
@@ -1036,7 +1036,7 @@ static void test_unarmed_ledger_and_the_prefix_control() {
     // 120 game-days. The RULE's X there is 78: excluded. The pre-fix CONSTANT
     // was 365: passed. Same history, same gate, opposite verdicts — that single
     // case discriminates the two mechanisms completely, which is what test 9
-    // did for ck-ijfa's gate change.
+    // did for gate change.
     const int64_t rule_x     = resolve_exclusion_rule("1066.09.15",
                                                       "1071.01.01").exclusion_days;
     const int64_t prefix_x   = kExclusionDaysAtRegisteredHorizon;   // the old 365
@@ -1065,7 +1065,7 @@ static void test_unarmed_ledger_and_the_prefix_control() {
 }
 
 // ===========================================================================
-// ck-48lf — THE EXACT EXTREMA, AND THE OPEN GAP IS ONE OF THEM
+// THE EXACT EXTREMA, AND THE OPEN GAP IS ONE OF THEM
 // ===========================================================================
 // `spans` is capped at kMaxRetainedSpans, so a reader cannot take a maximum
 // from it. The scalars exist for that, and the case this row exists for is the

@@ -1,4 +1,4 @@
-// test/test_pipeline_frames.cpp — regression tests for ck-6kvq.18 (bridge half).
+// test/test_pipeline_frames.cpp — regression tests for (bridge half).
 //
 // THE BUG. A pipeline result frame is the bridge's envelope with the HANDLER's
 // JSON spliced in. It carried NO `type` key. For a client that also sent no
@@ -284,18 +284,18 @@ static void test_frame_without_request_id_is_still_nameable() {
     rapidjson::Document d = must_parse(f);
     if (d.HasParseError()) return;
     CHECK(!d.HasMember("request_id"));
-    // Before ck-6kvq.18 this frame had neither a key nor a type: unroutable.
+    // Before that this frame had neither a key nor a type: unroutable.
     CHECK(std::strcmp(str_or(d, "type"), "result") == 0);
     CHECK(d.HasMember("ticket"));
 }
 
 
-// ══ ck-9vdk ═══════════════════════════════════════════════════════════════
+// ══ ═══════════════════════════════════════════════════════════════
 // A ROW THAT CANNOT SAY WHAT WAS EXECUTED.
 //
 // `escaped_action` used to be emitted ONLY when the handler's reply was
 // unusable, so a reply that was a perfectly good JSON object and simply did not
-// name itself produced a frame with no `action` key. ck-9vgu measured it in a
+// name itself produced a frame with no `action` key. measured it in a
 // d39 episode: 2,302 of 3,009 ticketed rows carried ticket, request_id,
 // character_id, flush_id, tick_executed and game_date_executed — everything
 // except the verb. The driver's relay copies `action` off the frame,

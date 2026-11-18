@@ -1,4 +1,4 @@
-"""L18-B defects 3 (the 186K decisions reply) and 6 (decisions_annotated /
+""" defects 3 (the 186K decisions reply) and 6 (decisions_annotated /
 valid_decisions answering the plain list): one root cause, two doors.
 
 THE TRANSCRIPTS. scale0 n8/s2 (Charles 12015, 0867.05.28):

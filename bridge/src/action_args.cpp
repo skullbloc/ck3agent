@@ -1,4 +1,4 @@
-// action_args.cpp — see action_args.h for why this exists (ck-6kvq.15).
+// action_args.cpp — see action_args.h for why this exists.
 #include "action_args.h"
 
 namespace bridge {

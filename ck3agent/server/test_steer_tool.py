@@ -1,8 +1,8 @@
-"""steer() and pass_turn(): behaviour against a fake bridge (cleanup 2026.11 F15).
+"""steer and pass_turn: behaviour against a fake bridge (F15).
 
 steer rows:
   * read mode (no personality): one read, with character_id; no verdict;
-  * write mode answers the write envelope (L14 finding 5): exactly the axes
+  * write mode answers the write envelope (finding 5): exactly the axes
     passed are written, applied when they read back as written, rejected
     write_unconfirmed when they do not, pending next_pass when the bridge did not
     confirm it and a read does not show it, rejected with the gate its reason
@@ -119,7 +119,7 @@ def test_a_read_that_failed_is_a_named_refusal(bridge, reply, gate):
     assert "personality" not in env["result"], "a refusal is not shown as the reading"
 
 
-# ── write mode: the write envelope (L14 finding 5) ────────────────────────────
+# ── write mode: the write envelope (finding 5) ────────────────────────────
 
 def _back(**axes):
     return {"success": True, "action": "set_ai_personality", "character_id": 30853,

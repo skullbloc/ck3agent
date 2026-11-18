@@ -1,4 +1,4 @@
-// A faction's war as the game reads it (faction_war.h; cleanup 2026.11 F16,
+// A faction's war as the game reads it (faction_war.h; F16,
 // witness w-l10-factions-5).
 //
 // Build: CMake target `test_faction_war` (BUILD_BRIDGE_TESTS=ON).

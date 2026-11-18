@@ -38,7 +38,7 @@ namespace bridge {
 // ASLR base address of the CK3 binary, resolved at init time.
 // All addresses in ck3_offsets.h are added to this base.
 extern uintptr_t g_base_addr;
-// ck-65lv: one past the CK3 image's last PT_LOAD byte (0 = unknown; the fault
+// One past the CK3 image's last PT_LOAD byte (0 = unknown; the fault
 // formatters then assume base + 512 MB and SAY so).
 extern uintptr_t g_image_end;
 
@@ -117,7 +117,7 @@ inline bool is_mapped_range(uintptr_t addr, size_t len) {
 }
 
 // =============================================================================
-// safe_read fault flag (ck-udrre, Option 3 from ck-bv2ge)
+// safe_read fault flag (Option 3 from)
 //
 // safe_read<T> returns T{} on failure with no error channel. Callers that
 // need to distinguish "value is 0" from "memory was unreadable" can opt in
@@ -147,7 +147,7 @@ inline uintptr_t safe_read_last_fault() {
     return g_safe_read_last_fault_addr;
 }
 // The fault record a nested bracket found on entry, added back on its exit
-// (FaultScope; L14 S4, audit 3(iii)): a handler reached from another handler
+// (FaultScope; audit 3(iii)): a handler reached from another handler
 // clears the flag for its own reads, and without this its exit left the
 // caller's record wiped. Added, not replaced: the caller (and the dispatch
 // wrapper, which says degraded for a handler that left no reply) still sees the
@@ -604,7 +604,7 @@ inline int compute_ticking_score(uintptr_t war_ptr) {
 extern FILE* g_logfile;
 
 // Process-lifetime trace gate (CK3_BRIDGE_TRACE=1). Default OFF. Gates the
-// high-frequency per-query BT_TRACE diagnostics from the ck-xm08 investigation.
+// high-frequency per-query BT_TRACE diagnostics from the investigation.
 extern bool g_trace;
 
 // Install an inline hook at the given address.
@@ -664,7 +664,7 @@ void watchdog_disarm();
 // =============================================================================
 
 // Start the Unix domain socket server on a background thread.
-// ck-qn03: nullptr (the default) means "this instance's socket" —
+// Nullptr (the default) means "this instance's socket" —
 // bridge::instance_socket_path(), which is the legacy /tmp/ck3-agent.sock on
 // the default instance. Never hardcode the literal at a call site again.
 bool start_ipc_server(const char* socket_path = nullptr);
@@ -680,7 +680,7 @@ void stop_ipc_server();
 void abandon_ipc_threads();
 #endif
 
-// ck-6kvq.5: a declared save identity can REFUTE a session's recorded world, in
+// A declared save identity can REFUTE a session's recorded world, in
 // which case SessionRegistry::reconcile_declared_world erases that session and
 // releases its claims.  The IPC layer holds a RAW pointer to every session from
 // its ClientSlot, so the erase has to be paired with an eviction of any slot
@@ -698,7 +698,7 @@ bool agent_connected();
 // Snapshot of the single-client IPC slot — populated from per-accept state and
 // SO_PEERCRED. `peer_alive` is a live kill(pid, 0) probe (ESRCH → dead).
 // Used by the `who_holds_the_lock` query and by the accept-loop's dead-peer
-// release path (ck-ngoh1).
+// release path.
 struct ClientLockInfo {
     bool connected;                  // true iff >=1 client slot is live
     int  fd;                         // representative (first) live slot's fd, -1 when none
@@ -715,7 +715,7 @@ bool get_client_lock_info(ClientLockInfo* out);
 // Returns true if sent successfully
 bool send_observation(const char* json_data, size_t len);
 
-//: ck-h4pn: AN OBSERVATION FOR WHOEVER IS LISTENING, never a reply to whoever asked.
+//: AN OBSERVATION FOR WHOEVER IS LISTENING, never a reply to whoever asked.
 //:
 //: send_observation routes by a reader-thread thread-local, so a frame emitted from
 //: inside the inline-query window unicasts to the CALLING client — correct for a
@@ -728,7 +728,7 @@ bool send_observation(const char* json_data, size_t len);
 //: send_observation so the intent is visible at the CALL SITE, which is where the
 //: old bug was invisible.
 bool broadcast_observation(const char* json_data, size_t len);
-// ck-n7n0: route a drained reply to the session that asked for it. Returns
+// Route a drained reply to the session that asked for it. Returns
 // false when that session has no live slot, so the caller falls back to the
 // broadcast rather than dropping the reply.
 bool send_to_session_id(const char* session_id, const char* json_data, size_t len);
@@ -738,7 +738,7 @@ bool send_to_session_id(const char* session_id, const char* json_data, size_t le
 // Returns allocated buffer (caller frees) or nullptr if empty/timeout.
 char* dequeue_action(int timeout_ms = 0);
 
-// L13 D1: a game-state read runs on the GAME thread (the session-pass drain),
+// A game-state read runs on the GAME thread (the session-pass drain),
 // never on the IPC thread: the IPC thread hands it over with run_on_game_thread
 // and blocks on a condition variable (no spin) until the drain has run it, at
 // most kGameThreadReadWaitMs. The bound: an idle drain pass comes every ~5 ms
@@ -749,7 +749,7 @@ char* dequeue_action(int timeout_ms = 0);
 // answers with a typed refusal instead of a socket timeout. On false nothing is
 // written to `out`, and a job still queued is abandoned (never run).
 inline constexpr int kGameThreadReadWaitMs = 5000;
-// L13 FF2 (witness R6): a game-thread job holds the session's command mutex for
+// A game-thread job holds the session's command mutex for
 // its whole duration, so every engine command (the player's UI, the daily tick)
 // waits behind it. A long engine evaluation checks this budget BETWEEN engine
 // calls and, past it, stops and returns what it did plus what it did not reach
@@ -763,7 +763,7 @@ inline bool game_thread_budget_spent(std::chrono::steady_clock::time_point start
 }
 
 // The one hint a slot query answers when the drain did not evaluate it in time.
-// It never tells the caller to run the clock (L13 W9): the drain runs paused.
+// It never tells the caller to run the clock: the drain runs paused.
 inline constexpr const char kDrainTimeoutHint[] =
     "The game-thread drain did not evaluate the query in time (a load in progress, "
     "or no session-pass hook and the clock stopped). Retry.";
@@ -773,7 +773,7 @@ bool run_on_game_thread(GameThreadWork work, int wait_ms, std::string* out);
 int run_game_thread_jobs(int max_jobs, const std::function<bool()>& budget_left);
 size_t game_thread_jobs_pending();
 
-// ck-6kvq.9: push a pre-built {"session_id":..,"actions":[..]} envelope onto the
+// Push a pre-built {"session_id":..,"actions":[..]} envelope onto the
 // SAME game-thread queue the reader thread uses, so the pipeline conductor's
 // DrainTick step hands its batch to the EXISTING drain
 // (bridge_init.cpp on_tick) rather than opening a second execution path.
@@ -795,7 +795,7 @@ void init_event_handler();
 // Shutdown the event handler
 void shutdown_event_handler();
 
-// L13 D4: THE ONE CLOCK WRITE (event_handler.cpp). Every bridge write to the
+// THE ONE CLOCK WRITE (event_handler.cpp). Every bridge write to the
 // pause flag, PAUSE_SET or the game speed goes through clock_write, which names
 // who asked; nothing else in the bridge reaches those primitives
 // (bridge/scripts/inline_safety_static.py fails a row on any other site).
@@ -816,7 +816,7 @@ ClockWriteCounts clock_write_counts();
 // The deferred PAUSE_SET(0) repeat an unpause queued (part of that one write);
 // called from the game-thread drain every pass.
 void check_delayed_unpause();
-// L20-A: the game-day pause alarm's drain step (event_handler.cpp; pause_alarm.h).
+// The game-day pause alarm's drain step (event_handler.cpp; pause_alarm.h).
 // Game thread only: reads the date and, when an armed target is reached, pauses
 // through clock_write (origin session: the session armed it).
 void pause_alarm_drain_check();
@@ -826,7 +826,7 @@ bool is_paused();
 
 // Auto-respond to pending player events (clears the event pause; unpauses only
 // when that pause was holding the game). Called from the game-thread drain once
-// per daily tick when no agent is connected (L16: always on; its switch,
+// per daily tick when no agent is connected (always on; its switch,
 // set_auto_respond_events, is deleted). Returns the number of events seen.
 int auto_respond_pending_events();
 
@@ -847,7 +847,7 @@ int game_get_speed();
 //
 // A DEFERRED call (CB validity, acceptance, trigger eval, decision eval, faction
 // verdicts, interaction cascade) submits a game-thread query slot and polls for
-// the verdict. L13 D1: the handler runs on the game thread and services its own
+// the verdict.: the handler runs on the game thread and services its own
 // slot there; query_interaction_check polls from the IPC thread while the drain
 // services its check intent. run_deferred_single_flight() runs the
 // call's submit+poll closure under ONE single-flight lock so two callers cannot
@@ -855,7 +855,7 @@ int game_get_speed();
 enum class DeferredDrainStatus {
     Ok = 0,            // service() ran — `out` is service()'s result
     // 1 was DrainUnavailable (the pause pulse found no tick), retired with the
-    // pulse in L13; the value of BusyDeferred is kept so the pinned pre-fix
+    // pulse in; the value of BusyDeferred is kept so the pinned pre-fix
     // control in scripts/acceptance_deferred_refusal.py compares equal.
     BusyDeferred = 2,  // the single-flight lock was held past the lock budget
 };
@@ -870,7 +870,7 @@ DeferredDrainStatus run_deferred_single_flight(
     const std::function<void(std::string*)>& service,
     std::string* out);
 
-// ck-p2sb. HOW MANY TIMES THE TYPED REFUSAL FIRED, so that its ABSENCE can be
+// HOW MANY TIMES THE TYPED REFUSAL FIRED, so that its ABSENCE can be
 // read as evidence. Before this, `busy_deferred` existed ONLY in the reply frame
 // it was written into — and on this socket every queued response is broadcast
 // with request_id as the only discriminator (ipc_server.cpp:1507), so a wedged
@@ -934,7 +934,7 @@ void bridge_shutdown();
 // drain_game_thread_work().
 void on_tick(void* ai_manager);
 
-// L13 D1: the bridge's serial game-thread work (bridge_init.cpp): the queued
+// The bridge's serial game-thread work (bridge_init.cpp): the queued
 // IPC actions, the game-thread reads, the intent/slot drain, the delayed
 // PAUSE_SET repeat, name resolution, intent maintenance and the pulse-ledger
 // sweep. Called from the session-pass hook after every CSession_ThreadLoop
@@ -981,7 +981,7 @@ inline int war_score_occupation_net(const WarScoreBreakdown& b)   { return b.occ
 inline int war_score_ticking_net(const WarScoreBreakdown& b)      { return b.ticking_atk + b.ticking_def; }
 inline int war_score_landless_net(const WarScoreBreakdown& b)     { return b.landless_atk + b.landless_def; }
 
-// Why on_war_score_update last declined to refresh a war's breakdown (ck-xwlg).
+// Why on_war_score_update last declined to refresh a war's breakdown.
 enum class WarScoreRejectReason : uint8_t {
     None = 0,
     FnUnresolved,
@@ -1000,7 +1000,7 @@ constexpr uint64_t WAR_SCORE_FRESH_TICKS = 100;
 // Initialize war score post-hook (called during first-tick deferred init)
 void init_war_score_hook();
 
-// ck-sd4d: hooks WAR_END_CORE so an ENDED war (outcome + end date) is
+// Hooks WAR_END_CORE so an ENDED war (outcome + end date) is
 // observable at all — the engine destroys the CWar in the same call.
 void init_war_history_hook();
 
@@ -1069,7 +1069,7 @@ bool dispatch_action_with_response(const char* action_type, const char* params_j
 // classifier; see snapshot.h for those.
 bool is_registered_action(const char* action_type);
 
-// rc2 B2: true iff `verb` is a debug verb this build compiled out (always false
+// True iff `verb` is a debug verb this build compiled out (always false
 // with CK3_BRIDGE_DEBUG_VERBS). Such a verb is not registered; the IPC reader
 // answers it with error=unavailable_in_release rather than unknown_action.
 bool debug_verb_compiled_out(const char* verb);
@@ -1165,7 +1165,7 @@ std::string build_envelope_clock_fragment();
 // resilience for normal play. When true: the catch path calls
 // bridge_strict_check_abort(site), which logs and abort()s — turning every
 // previously-silent pointer-validation miss into a crash signal during test
-// runs. See ck-nr51.4 / ADR-0001.
+// runs. See / ADR-0001.
 extern std::atomic<bool> g_strict_mode;
 
 // Called from each sigsetjmp catch path. No-op unless g_strict_mode is set, in

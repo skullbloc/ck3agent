@@ -1,4 +1,4 @@
-"""L18-B defect 1 (and the plan_war halves of defect 4): a plan_war row is
+""" defect 1 (and the plan_war halves of defect 4): a plan_war row is
 declarable by the same gate declare_war applies.
 
 THE DEFECT, from the pilot transcripts (ck3agent 2026.11.0, budget0 e1/s2 and
@@ -231,7 +231,7 @@ def test_C5_a_county_inside_the_actors_own_realm_is_no_target():
     assert er["fix"] == {"retry_with": {"goal_scoped": False}}, er
 
 
-# ── L18 round 2 (witness 1b): the claim gate holds with no cbs options read ────
+# ── The claim gate holds with no cbs options read ────
 
 def test_C6_a_claim_row_with_no_cbs_options_and_no_pressed_claim_is_excluded():
     """query_cbs_for_target answered no rows (emit_cbs_target_body with an empty

@@ -1,4 +1,4 @@
-"""The scheme routes a player uses (cleanup 2026.11 F5, lane l3-schemes):
+"""The scheme routes a player uses (F5):
 discover(what="scheme_types"), discover(what="scheme_targets") and
 do(intent="scheme") start/cancel, against a fake gateway that records every bridge
 call. What the bridge does with them is proven live (scripts/live867/scenarios/
@@ -14,8 +14,8 @@ import do_intent_args
 
 
 def _cpp_code(text: str) -> str:
-    """Comments blanked, literals kept: the one C++ tokenizer (L13 FF3,
-    bridge/scripts/cpp_strip.py). A `//` inside a string is not a comment."""
+    """Comments blanked, literals kept: the one C++ tokenizer
+    (bridge/scripts/cpp_strip.py). A `//` inside a string is not a comment."""
     import sys as _sys
     from pathlib import Path as _Path
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "bridge" / "scripts"))
@@ -113,7 +113,7 @@ def test_the_readback_is_a_different_read_than_the_write():
 
 
 def test_the_engine_refusal_carries_the_engine_reasons():
-    # The bridge's row shape since L14 S4 (scheme_engine.cpp emit_reasons).
+    # The bridge's row shape since then S4 (scheme_engine.cpp emit_reasons).
     reasons = [{"check": "allow", "text": ""}]
     gw = _Gateway({"success": False, "reason": "engine_refused_can_start_scheme",
                    "result": {"created": False, "engine_reasons": reasons}})
@@ -123,18 +123,18 @@ def test_the_engine_refusal_carries_the_engine_reasons():
     assert b["measured"]["engine_reasons"] == [
         {"check": "allow", "summary": redesign.NO_BRIDGE_WORDS}]
     assert b["retry"] == "never"
-    # One shape per reply (L14 FF1 m-22): the bridge's {check, text} copy is not
+    # One shape per reply: the bridge's {check, text} copy is not
     # carried beside measured's {check, summary}.
     assert "engine_reasons" not in env["result"]["raw"].get("result", {}), env["result"]
     assert env["result"]["raw"]["result"] == {"created": False}
 
 
 def test_an_allow_trigger_says_the_bridge_reads_no_words_not_that_the_game_has_none():
-    """L14 FF1 M-11: the bridge never asks the game for an allow/valid trigger's
+    """The bridge never asks the game for an allow/valid trigger's
     words (scheme_engine.cpp wants_text 0), so "the game gives no detail" would
     claim a reading nobody made. Two distinct constants. An engine entry is sent
     only with text (emit_reasons skips an empty one); text that is markup with no
-    words keeps the game's-no-detail wording (L14 FF2 N-7: the reachable case)."""
+    words keeps the game's-no-detail wording (the reachable case)."""
     assert redesign.NO_BRIDGE_WORDS != redesign.NO_GAME_DETAIL
     out = redesign.scheme_reasons([{"check": "valid", "text": ""},
                                    {"check": "engine_entry", "text": "All of these:"},
@@ -145,7 +145,7 @@ def test_an_allow_trigger_says_the_bridge_reads_no_words_not_that_the_game_has_n
 
 
 def test_every_wordless_row_the_bridge_sends_says_what_it_is():
-    """L14 FF2 N-7. The rows scheme_engine.cpp sends with text "" (emit_reasons:
+    """The rows scheme_engine.cpp sends with text "" (emit_reasons:
     allow / valid / trigger and sink_method_not_modelled; scheme_can_start:
     owner_invalid / target_invalid) never read "the game gives no detail": the
     game was not asked. RED on b84e3634 (trigger, sink_method_not_modelled,
@@ -404,10 +404,10 @@ def test_every_scheme_success_chance_comes_from_one_reader():
         assert "100000" not in window, name
 
 
-# ── L14 (surface-eval minor 12; S4): a scheme refusal is words, and nothing else ──
+# ── A scheme refusal is words, and nothing else ──
 
 def _bridge_refused_row(debug=False):
-    """A refused row in the bridge's shape (scheme_engine.cpp emit_reasons, L14 S4).
+    """A refused row in the bridge's shape (scheme_engine.cpp emit_reasons).
     debug=True is the a0a2fff3 shape (the script place under debug)."""
     trig = {"check": "allow", "text": ""}
     entry = {"check": "engine_entry", "text": "You already have a Scheme against them"}
@@ -472,7 +472,7 @@ def test_the_bridge_reports_no_script_place():
 
 
 def test_the_discover_description_promises_no_debug_on_a_scheme_row():
-    """L14 int round 3: S4 deleted the scheme row's `debug` end to end, and the
+    """ int round 3: S4 deleted the scheme row's `debug` end to end, and the
     discover description S2 wrote still sent the player to it. The taught words
     for a refused scheme row name only {check, summary}."""
     import os
@@ -483,7 +483,7 @@ def test_the_discover_description_promises_no_debug_on_a_scheme_row():
         assert word not in body, word
 
 
-# --- L18 round 2 (witness item 7): the do path names the title-claim door ------
+# --- The do path names the title-claim door ------
 
 def test_a_title_scheme_start_is_refused_with_the_fabricate_door():
     """do(intent="scheme", scheme="generate_claim") was refused

@@ -1,5 +1,5 @@
 #pragma once
-//: ck-j6lk: WAS THIS SESSION EVER A PARTICIPANT IN THE EPISODE — one body, two
+//: WAS THIS SESSION EVER A PARTICIPANT IN THE EPISODE — one body, two
 //: readers.
 //:
 //: The detach path in ipc_server.cpp keys R3's claim pin on this, and
@@ -22,7 +22,7 @@
 //:       and close. Pinning them cost 364 silent game-days each against an X of 18 and
 //:       would have invalidated every registered episode.
 //:   (b) DECLARED, claimed or not -> a participant, today's behaviour exactly. This is
-//:       ck-3ru8's window: the world loads ~17s after the first connection, so a real
+//:       window: the world loads ~17s after the first connection, so a real
 //:       agent has a stretch where claims_ever is still 0, and a seat that dies there
 //:       must remain a MEASURED HOLE. Making a genuine agent failure invisible is the
 //:       same defect this bead fixes, pointed the other way.

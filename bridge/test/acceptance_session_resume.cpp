@@ -1,4 +1,4 @@
-// test/acceptance_session_resume.cpp — ck-6kvq.5 ACCEPTANCE (R7c / R2a).
+// test/acceptance_session_resume.cpp — ACCEPTANCE (R7c / R2a).
 //
 // THE CLAIM UNDER TEST, in one sentence: a control session SURVIVES a dropped
 // socket with its claims intact, comes back on a resume token, gets its agent
@@ -11,25 +11,25 @@
 // In an experiment episode that is an uncontrolled change to the FROZEN ARM,
 // produced by a network event — a subscription-cap disconnect silently hands a
 // claimed English earl back to the native AI, and the episode goes on looking
-// clean. ck-6kvq.10 stopped the destroy under `episode_pins_claims()`; this is
+// clean. stopped the destroy under `episode_pins_claims`; this is
 // the other half, and without it a dropped socket leaves a session nobody can
 // ever reach again.
 //
 // NO GAME. This is a host binary. It links the REAL session.cpp, the REAL
-// world_identity.cpp (ck-9fc3 — ONE identity rule, not a second copy), the REAL
-// world_epoch.cpp (ck-hxh7) and the REAL unavailability.cpp / episode_policy.cpp
-// (ck-6kvq.10), and drives world reloads through the documented
+// world_identity.cpp (— ONE identity rule, not a second copy), the REAL
+// world_epoch.cpp and the REAL unavailability.cpp / episode_policy.cpp
+// And drives world reloads through the documented
 // world_epoch_observe() seam. Every decision under test is the shipped one.
 //
 // THE NEGATIVE CONTROLS ARE THE POINT — there are two, and each fails on its own
 // lanes. An acceptance that cannot fail is not evidence.
 //
 //   -DCK3_RESUME_NO_IDENTITY_CHECK   the resume identity clause always allows,
-//     and the ck-9fc3 symptom comes straight back: a session keeps its claims,
+//     and the symptom comes straight back: a session keeps its claims,
 //     and therefore its personality steering, over characters in a world it
 //     never saw. Fails the same-save / different-save lanes.
 //
-//   -DCK3_DETACH_REPORT_COUNTS_OBSERVERS   (ck-bw1s) the detach report counts
+//   -DCK3_DETACH_REPORT_COUNTS_OBSERVERS   the detach report counts
 //     EVERY non-attached session, which is what it did before this bead. Fails
 //     lane 11: a dropped OBSERVE session publishes state/detached-since, the
 //     abort ladder reads it as reason=session_lost, and a healthy arm episode is
@@ -122,7 +122,7 @@ static WorldIdentity ident(const char* episode, const char* sha, uint32_t year =
     return id;
 }
 
-// Dates go through the ONE renderer's own inverse (ck-05mg), so a fixture can
+// Dates go through the ONE renderer's own inverse, so a fixture can
 // never drift from what the bridge will print.
 static int32_t raw_for(int y, int m, int d) { return ck3::game_date::ymd_to_raw(y, m, d); }
 
@@ -457,7 +457,7 @@ static void lane_different_save() {
 }
 
 // ===========================================================================
-// 6. AN UNVOUCHED WORLD CHANGE — §6.2's bias, inverted from ck-hxh7's.
+// 6. AN UNVOUCHED WORLD CHANGE — §6.2's bias, inverted from.
 // ===========================================================================
 static void lane_unvouched() {
     printf("\n6. UNVOUCHED WORLD CHANGE — no declaration means DISCARD, not benefit of the doubt\n");
@@ -523,7 +523,7 @@ static void lane_reconcile() {
     check(LANE, g_session_registry.owner_of(kEarlA) == b.s, "and the claim stands");
 
     // A declaration naming a DIFFERENT save refutes it. This is the path a
-    // client takes when it declares through the standalone ck-9fc3 action
+    // client takes when it declares through the standalone action
     // instead of on the handshake frame.
     std::vector<uint32_t> purged;
     auto erased = g_session_registry.reconcile_declared_world(ident(kEpisodeA, kSaveB),
@@ -555,21 +555,21 @@ static void lane_unavailability() {
     const char* LANE = "unavail";
     clean_slate();
 
-    // ck-ijfa: the gate is in WALL-CLOCK (360 s = 3 R3 heartbeats) and X is in
+    // The gate is in WALL-CLOCK (360 s = 3 R3 heartbeats) and X is in
     // GAME-DAYS. A drop lasting minutes is unavailability; ordinary turn-taking
     // is not, however many game-days a fast clock runs through meanwhile.
     unavailability().configure(/*anomaly_wall_s*/360,
                                /*exclusion_days*/kExclusionDaysAtRegisteredHorizon,
-                               /*exclusion_armed*/true);   // ck-2ngg: the
+                               /*exclusion_armed*/true);   // The
     // RULE's answer at the registered 20-game-year horizon, stated as such.
-    // Armed explicitly, because ck-2ngg made that a required question: an
+    // Armed explicitly, because made that a required question: an
     // unarmed ledger judges nothing, and a resume lane that inherited a
     // silent default would be asserting against a threshold it never set.
 
     // The wall clock this lane models: monotonic ms, at the slow condition
     // (~0.076 game-days/wall-second) so a gap can sit under X and still be
     // anomalous. Stated because a threshold quoted without its rate is the
-    // defect ck-ijfa was filed for.
+    // defect was filed for.
     const uint64_t W0 = 5'000'000;
 
     const std::string sid = "sess-english-1";
@@ -594,7 +594,7 @@ static void lane_unavailability() {
     }
 
     // THE RESUME. This is the exact call the bridge makes on a rebind
-    // (pipeline_note_session_open -> note_session), and ck-6kvq.10 wrote it to
+    // (pipeline_note_session_open -> note_session), and wrote it to
     // be an ATTACH, never a reset.
     unavailability().note_session(sid, 260, W0 + 2'100'000);
     {
@@ -704,7 +704,7 @@ static void lane_max_detach() {
 }
 
 // ===========================================================================
-// 10. THE DETACH REPORT — the producer ck-6kvq.1's session_lost rung never had.
+// 10. THE DETACH REPORT — the producer session_lost rung never had.
 // ===========================================================================
 static void lane_detach_report() {
     printf("\n10. THE DETACH REPORT — state/detached-since, in the shape episode_abort.sh parses\n");
@@ -796,10 +796,10 @@ static void lane_detach_report() {
 }
 
 // ===========================================================================
-// 11. THE OBSERVER (ck-bw1s) — a dropped OBSERVE session is NOT a verdict.
+// 11. THE OBSERVER — a dropped OBSERVE session is NOT a verdict.
 // ===========================================================================
 // WHY THIS LANE EXISTS. Lane 10 proves the report's SHAPE with control sessions
-// only, because ck-6kvq.5's subject is claims and observers have none. That left
+// only, because subject is claims and observers have none. That left
 // the report counting every non-attached session, so an observe-mode drop wrote
 // state/detached-since — and episode_abort.sh reads that file as evidence of a
 // dying session. A diagnostic tool that connects in observe mode and disconnects
@@ -827,7 +827,7 @@ static void lane_observer_report() {
     const uint64_t now_mono_ms =
         (uint64_t)mono.tv_sec * 1000ull + mono.tv_nsec / 1000000ull;
 
-    // The meter lane's shape (ck-6kvq.7): OBSERVE mode, no claims, read-only.
+    // The meter lane's shape: OBSERVE mode, no claims, read-only.
     Bound obs = bind_session("meter-lane", /*slot*/2, /*gen*/1, {},
                              ident(kEpisodeA, kSaveA), /*epoch*/1, /*now*/1000,
                              Session::Mode::OBSERVE);
@@ -906,7 +906,7 @@ int main(int argc, char** argv) {
     control_name = "NEGATIVE CONTROL: resume identity check DISABLED";
 #endif
 #ifdef CK3_DETACH_REPORT_COUNTS_OBSERVERS
-    // ck-bw1s: the pre-fix report, which counted every non-attached session.
+    // The pre-fix report, which counted every non-attached session.
     control_name = "NEGATIVE CONTROL: the detach report COUNTS OBSERVERS (pre-ck-bw1s)";
 #endif
     for (int i = 1; i < argc; i++)

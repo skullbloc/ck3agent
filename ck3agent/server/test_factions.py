@@ -14,8 +14,8 @@ import redesign as R  # noqa: E402
 
 
 def _cpp_code(text: str) -> str:
-    """Comments blanked, literals kept: the one C++ tokenizer (L13 FF3,
-    bridge/scripts/cpp_strip.py). A `//` inside a string is not a comment."""
+    """Comments blanked, literals kept: the one C++ tokenizer
+    (bridge/scripts/cpp_strip.py). A `//` inside a string is not a comment."""
     import sys as _sys
     from pathlib import Path as _Path
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "bridge" / "scripts"))
@@ -132,7 +132,7 @@ def _leave(reads, result):
 
 
 def _unread(env):
-    """A write that ran whose second read could not be made (FF5 ruling)."""
+    """A write that ran whose second read could not be made (ruling)."""
     assert env["ok"] is True and env["verdict"] == "pending", env
     assert env["pending"]["drains_when"] == "readback", env["pending"]
     assert env["pending"]["raw_reason"] == "write_unconfirmed"
@@ -143,7 +143,7 @@ def test_a_leave_the_second_read_cannot_see_is_never_applied():
     """w-l10-factions-1 review: the leave read the actor's own liege when the reply
     named no target, and a missing faction or a failed read passed as left."""
     # no target named: the actor's liege is not read in its place
-    # FF5 ruling: the bridge reported the leave done, so a second read that
+    # ruling: the bridge reported the leave done, so a second read that
     # could not be made is pending readback (ok:true, sent), never rejected.
     gw, env = _leave({"query_factions": {"factions": []}}, {"faction_disbanded": True})
     _unread(env)
@@ -436,8 +436,8 @@ def test_grounds_without_the_games_send_check_are_not_offered():
     send goes and the recipient may accept; an unread check, a refusal and a "no"
     are blocked with the game's words."""
     grounds = {"has_imprisonment_reason": True, "reasons": [{"type": "imprisonment_reason", "modifier": "x"}]}
-    # The gates are the ones a direct send of the same refusal gets (lane l5's
-    # interaction_invalid / recipient_refuses; RAW_REASON_TO_GATE), one mapping.
+    # The gates are the ones a direct send of the same refusal gets
+    # (interaction_invalid / recipient_refuses; RAW_REASON_TO_GATE), one mapping.
     cases = [
         ({}, "read_timeout", "send_check_unread"),
         (_check({"target_id": A, "sendable": False, "refused_by": "interaction_not_valid_for_target",
@@ -445,7 +445,7 @@ def test_grounds_without_the_games_send_check_are_not_offered():
          "interaction_not_valid_for_target"),
         # the game's tooltip header alone is no reason: the bridge drops it
         # (engine_text.h), so engine_reason is absent and the reply says the game
-        # gives no detail (L12)
+        # gives no detail
         (_check({"target_id": A, "sendable": False, "refused_by": "send_conditions_not_met"}),
          "interaction_invalid", "send_conditions_not_met"),
         (_check({"target_id": A, "sendable": False, "refused_by": "target_would_reject",
@@ -484,7 +484,7 @@ def test_imprison_targets_offers_the_likeliest_first():
 
 
 def test_a_yes_is_the_games_answer_not_a_certainty():
-    """MAJOR 3 (witness #5): "yes" was shipped as chance_pct 100 while targets read
+    """MAJOR 3: "yes" was shipped as chance_pct 100 while targets read
     "yes" stayed free in 2 of 3 runs (13327: yes, score 239, sent, never imprisoned).
     A row carries the game's answer and the raw score; a chance only where the game
     defines one: a "maybe" in the maybe band (above 0, below 100), the score being
@@ -554,7 +554,7 @@ def test_every_faction_refusal_code_has_a_gate():
     assert factions.FACTION_ACTIONS == ("create", "join", "leave", "press_demand", "respond_demand")
 
 
-#: Every way factions.cpp puts a code into a reply (witness #5: the
+#: Every way factions.cpp puts a code into a reply (the
 #: `r.key("error"); r.value_string(code)` form was not collected).
 _CODE_FORMS = (
     r'(?:reject\(intent,|short_error\(|fail\()\s*"([a-z_]+)"',            # the refusal helpers
@@ -607,7 +607,7 @@ def test_the_code_collector_catches_every_emission_form():
         got = _faction_codes_in(src + "\n" + f + "\n", 'scope_latched_reason() { return "rng_scope_latched"; }')
         assert got - base == {"zz_fake_code"}, f
         assert R.map_raw_reason("zz_fake_code")["gate"] == "unmapped_refusal"
-    # the forms the source holds today are collected (the ones witness #5 named)
+    # the forms the source holds today are collected (the ones named)
     assert {"actor_not_found", "faction_query_exception", "engine_call_faulted"} <= base
 
 
@@ -639,7 +639,7 @@ def test_every_refusal_the_bridge_code_can_emit_is_said_in_words():
 
 
 def test_at_war_and_war_id_are_the_bridges_one_reading():
-    """MAJOR 2/5 (witness #5): the bridge read faction+0xC1 (not the war) and Python
+    """MAJOR 2/5: the bridge read faction+0xC1 (not the war) and Python
     patched it (at_war or a war id not marked ended). The bridge now reads the war
     itself (faction_war.h), so Python relays at_war as given, and the war id is the
     full id the war reads give (33554451 = generation 2, slot 19), never masked."""
@@ -678,7 +678,7 @@ def test_the_bridge_reads_a_factions_war_in_one_function():
     assert "ultimatum_delay_days" not in qh
 
 
-# ── L13 FF4 (witness r4 m3): the drain-timeout path follows the lever table ────
+# ── The drain-timeout path follows the lever table ────
 
 TIMED_OUT = {"success": False, "reason": "intent_timeout_no_result",
              "intent_request_id": "fa_1_2_3", "dispatch_id": "fa_1_2_3"}
@@ -688,8 +688,8 @@ def test_a_faction_write_the_drain_ran_with_no_reply_is_PENDING_READBACK_not_rej
     """A faction write is an "on_execute" lever (LEVERS ("faction", "*")): a write
     that ran is read back in the call. When the handler's reply never came, the
     drain's verdict is read (success) and the read-back cannot be made, so the
-    reply is pending readback with result.sent, ok:true (FF5 ruling). FF2/FF3
-    answered pending clock_advances (a days-wait), FF4 rejected write_unconfirmed."""
+    reply is pending readback with result.sent, ok:true (ruling).
+    answered pending clock_advances (a days-wait), rejected write_unconfirmed."""
     gw = Gw({"query_dispatch_result": {"status": "success", "dispatch_id": "fa_1_2_3"}},
             write_reply=TIMED_OUT)
     env = run(R.do_impl(gw, intent="faction", character_id=A,

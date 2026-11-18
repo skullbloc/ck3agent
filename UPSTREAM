@@ -1,6 +1,6 @@
 # Provenance of this public tree (written by release/export.py; do not edit)
-upstream_commit=b82c90d35d1d82f2b8e2f76fe08fb75d7dc11e09
-upstream_branch=lane/winmsvc
+upstream_commit=87e2a3228927b2df38150c4bf8f4470878cf4cd8
+upstream_branch=lane/agenttight
 upstream_dirty=no
-manifest_blob=60ffb276784ea7c3f255821cb3c7e8d0bea39b39
-exported_at=2026-11-18T00:08:53Z
+manifest_blob=86b4d50b075c876b59fb4e9f33b7b646c8d9367e
+exported_at=2026-11-18T04:52:16Z

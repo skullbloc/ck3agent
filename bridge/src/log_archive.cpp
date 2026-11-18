@@ -1,4 +1,4 @@
-// log_archive.cpp — ck-bwz1. The mechanism; the policy is in log_archive.h.
+// log_archive.cpp —. The mechanism; the policy is in log_archive.h.
 //
 // Runs on the ACCEPT THREAD, never the game thread. See the header for why.
 #include "log_archive.h"
@@ -55,7 +55,7 @@ bool archive_window_begin(const ArchiveWindow& w, const char* dir) {
     // archive under a name that claims a complete tick range. Renamed on exit.
     char part[832];
     snprintf(part, sizeof part, "%s.part", g_gzip_dst);
-    // rc2 B1: a fresh file (unlink + O_EXCL, never through a symlink), 0600
+    // A fresh file (unlink + O_EXCL, never through a symlink), 0600
     // (0644 legacy) like every bridge file.
     ::unlink(part);
     posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, part,

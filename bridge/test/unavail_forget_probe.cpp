@@ -1,4 +1,4 @@
-// ck-j6lk, second pass — GRADE THE LEDGER'S REPORT, not the registry.
+// Second pass — GRADE THE LEDGER'S REPORT, not the registry.
 //
 // The first pass destroyed the non-participants and I proved it: the registry forgot
 // them, twelve rows said so, and the acceptance passed. Shakedown 3 on deploy-32 then

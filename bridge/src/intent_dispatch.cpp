@@ -10,14 +10,14 @@
 
 #include <atomic>
 #include <thread>
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "ck3_compiler.h" // slot_load_acquire / slot_cas_acq_rel (cl.exe has no __atomic_*)
 #include "intent_queue.h"
 #include "ck3_offsets.h"
 #include "action_dispatch_internal.h"  // resolve_title_realm()
-#include "pipeline.h"                 // ck-6kvq.10: the pulse ledger (§2.9)
+#include "pipeline.h"                 // The pulse ledger (§2.9)
 #include "scheme_engine.h"           // l3-schemes: scheme_type_by_name, scheme_can_start
-#include "engine_bool.h"             // L14 S3: bool returns read by AL
+#include "engine_bool.h"             // Bool returns read by AL
 
 #include <cstdio>
 #include <cstring>
@@ -71,14 +71,14 @@ static void*    g_fake_rng_vtable[1] = { reinterpret_cast<void*>(&fake_rng_advan
 static FakeRng  g_fake_rng = { g_fake_rng_vtable, 0, 0, 0 };
 static void*    g_fake_scope[1] = { &g_fake_rng };  // scope[0] = &Y
 
-// Reusable ALLOW_RANDOM_IN_SCOPE guard (ck-leg, 20260612). Any engine call that
+// Reusable ALLOW_RANDOM_IN_SCOPE guard (20260612). Any engine call that
 // advances the RNG scope on a thread where RandomScopeManager+0x20 is null
 // (the steered-war crash; also SET_FOCUS_APPLY, council-task effects) null-derefs
 // in FUN_0774a4b0. Arm a per-thread fake scope around the call, restore after.
 //   uint64_t saved; bool armed = arm_fake_random_scope(&saved);
 //   <engine call>;  if (armed) restore_fake_random_scope(saved);
 //
-// R1c (ck-6kvq.10, design §2.9): these two helpers are the ledger's single
+// R1c (design §2.9): these two helpers are the ledger's single
 // biggest win. ~21 call sites go through them, and SEVEN of those
 // (action_handlers.cpp do_construction_check /
 // do_construct_building / do_appoint_councillor x2 / maa_recruit /
@@ -96,7 +96,7 @@ static void*    g_fake_scope[1] = { &g_fake_rng };  // scope[0] = &Y
 // leaked pulse there is no live slot left and a late restore is a counted stale
 // exit, not a slot stolen from someone else.
 bool arm_fake_random_scope(uint64_t* out_saved) {
-    // ck-2gtk: the engine publishes this slot with `xchg` (a lock-free linked
+    // The engine publishes this slot with `xchg` (a lock-free linked
     // stack; see scope_slot_policy.h for the disassembly). A plain load/store
     // pair from another thread is an ABA against it, so both halves now use
     // compare-exchange and neither writes a value the engine cannot be holding.
@@ -105,7 +105,7 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
     // with `xchg`. The GCC builtins operate on the memory without pretending
     // otherwise, and lower to `lock cmpxchg`, which is what has to interlock
     // with the engine's exchange.
-    // ck-zgh4 THE LATCH, before anything else. Once a restore has been
+    // THE LATCH, before anything else. Once a restore has been
     // refused, this process has seen a slot it cannot reason about, so we do
     // not read it and we do not write it — not even the load below, because a
     // load is what captures the `saved` that the restore would resurrect.
@@ -157,7 +157,7 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
         return false;              // NOT armed: the caller must not restore
     }
 
-    // ck-zgh4 MEASUREMENT, after the publish so it records an arm that really
+    // MEASUREMENT, after the publish so it records an arm that really
     // happened. The wedge check dereferences `saved` ONE level — the node's
     // first qword, which should point at the RNG object Y — and asks only
     // whether that is mapped. In the d50 fault it was 0xa. This is the check
@@ -171,7 +171,7 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
             if (!is_mapped(static_cast<uintptr_t>(saved))) {
                 node_mapped = false;
             } else {
-                // L14 (G-raw): through safe_read. This read runs with the fake
+                // Through safe_read. This read runs with the fake
                 // scope already PUBLISHED and no sigsetjmp of its own: a raw
                 // fault here jumped to the caller's or the drain's guard, past
                 // every restore, and left the bridge's scope in the engine's
@@ -193,7 +193,7 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
     return true;
 }
 void restore_fake_random_scope(uint64_t saved) {
-    // ck-zgh4: latched means we never armed, so there is nothing of ours in
+    // Latched means we never armed, so there is nothing of ours in
     // the slot and no restore to make. A no-op, not a refusal — the refusal
     // already happened at the arm.
     if (bridge::scope_latched()) return;
@@ -202,7 +202,7 @@ void restore_fake_random_scope(uint64_t saved) {
         g_base_addr + RANDOM_SCOPE_MANAGER + RANDOM_SCOPE_FIELD);
     if (!is_mapped(reinterpret_cast<uintptr_t>(slot))) return;
 
-    // ck-2gtk: put `saved` back ONLY while the slot still holds our own fake
+    // Put `saved` back ONLY while the slot still holds our own fake
     // scope. That is the one state in which we know the engine has not moved
     // on; in any other, `saved` may name a node the engine has already popped,
     // and writing it back resurrects a dead scope for the next reader to
@@ -212,7 +212,7 @@ void restore_fake_random_scope(uint64_t saved) {
     // perfectly good pointer when captured. What went stale is the OBJECT, on
     // another thread, and no inspection of the pointer can see that.
     //
-    // ck-zgh4: and note what this guard does NOT cover. It compares the SLOT,
+    // And note what this guard does NOT cover. It compares the SLOT,
     // so it sees only changes since our own arm; it cannot see that `saved`
     // was already dead when we captured it. That is the deploy-50 wedge, and
     // it is why the latch below exists rather than a cleverer value here.
@@ -233,7 +233,7 @@ void restore_fake_random_scope(uint64_t saved) {
             ++bridge::g_restore_noop;
         } else {
             ++bridge::g_restore_refused;
-            // ck-zgh4 TRIP THE LATCH, and say so UNCONDITIONALLY — not behind
+            // TRIP THE LATCH, and say so UNCONDITIONALLY — not behind
             // g_trace. d50 ran with the trace off, so the one line that would
             // have named the value in the slot was never written, and the
             // whole diagnosis had to be rebuilt from a register dump. A latch
@@ -318,7 +318,7 @@ bool execute_war_intent(Intent* intent) {
     extern thread_local bool g_in_bridge_war_intent;
     // CB selector observation — captured while the gate is set, surfaced into
     // IQLOG after war_post_decl so the chosen CB rides alongside the rest of
-    // the intent trace (ck-l8ge).
+    // the intent trace.
     extern void capture_cb_verdict_reset();
     extern bool capture_cb_verdict_get(uint64_t* cb_ref, uint64_t* cb_titles,
                                        uint64_t* target_ref, int32_t* score,
@@ -424,7 +424,7 @@ bool execute_war_intent(Intent* intent) {
 
     // Resolve target character pointer. Used informationally for the AI war
     // pipeline (AI picks its own target) AND as the source for Path C
-    // pre-seeding (ck-7dop) which writes the target's canonical handle into
+    // pre-seeding which writes the target's canonical handle into
     // the AI's front-buffer entry[0]. Volatile silences -Wclobbered: this
     // value is set before the second sigsetjmp and read inside the protected
     // try block.
@@ -450,7 +450,7 @@ bool execute_war_intent(Intent* intent) {
         g_base_addr + ck3::globals::AI_WAR_SUPPRESS);
     volatile uint8_t old_suppress = 0;
     volatile bool suppress_mapped = is_mapped(reinterpret_cast<uintptr_t>(war_suppress_ptr));
-    // R1c (ck-6kvq.10, design §2.9): THE pulse the design names. `volatile` for
+    // R1c (design §2.9): THE pulse the design names. `volatile` for
     // the same reason old_suppress is — it is written before the sigsetjmp below
     // and read in the recovery branch.
     //
@@ -541,7 +541,7 @@ bool execute_war_intent(Intent* intent) {
             IQLOG("War intent: candidate target count = %d\n", candidates);
         }
 
-        // Path C pre-seed (ck-7dop): the AI's target list (wd+0x98) may not
+        // Path C pre-seed: the AI's target list (wd+0x98) may not
         // include our bridge-vouched target, producing NO_VIABLE_PAIR in
         // AI_CB_SELECTOR even though we pre-validated (target, CB, title).
         // Overwrite entry[0] with the target's canonical character handle
@@ -568,7 +568,7 @@ bool execute_war_intent(Intent* intent) {
             }
         }
 
-        // Path B' override arming (ck-tcxr / ck-6h1v / re_path_b_prime_titles_array_20260610):
+        // Path B' override arming (/ re_path_b_prime_titles_array_20260610):
         // when the intent carries an explicit (target, cb_index, title_id), arm the
         // CB-selector override so the gated AI_CB_SELECTOR inside war_post_decl
         // returns our bridge-vouched (cb_ref, target_ref, titles) instead of
@@ -578,7 +578,7 @@ bool execute_war_intent(Intent* intent) {
         //
         // Triple resolution (all game-thread-available here):
         //   cb_ref     = *(CASUS_BELLI_DB.array + cb_index*8)   raw CCasusBelliType*
-        //   +0x08      = target CCharacter*  (gate vtable[2] probe only — ck-6h1v)
+        //   +0x08      = target CCharacter*  (gate vtable[2] probe only —)
         //   target_ref = target CCharacter*  (consumer reads +0x18 = defender id)
         //   titles     = {title_id} u32[1]   (live wars store plain u32 title IDs)
         // ov_title_buf lives on this stack frame; war_post_decl consumes the
@@ -636,7 +636,7 @@ bool execute_war_intent(Intent* intent) {
         // Step 3: Execute with force=1 — selects best CB, builds command, dispatches
         // force=1 bypasses pacing/probability but NOT eligibility, candidates, or CB selection.
         // Gate the AI_CB_SELECTOR observer hook to capture the S1 verdict of the
-        // selection performed inside war_post_decl (ck-2x2z, replaces ck-2x8w replay).
+        // selection performed inside war_post_decl (replaces replay).
         IQLOG("  [STEP 3] calling war_post_decl(ai_ctrl=%p, rng_seed=%u, force=1) armed_override=%d @ 0x%lx\n",
               ai_ctrl, rng_seed, armed_override ? 1 : 0,
               (unsigned long)ck3::funcs::AI_WAR_POST_DECL);
@@ -652,7 +652,7 @@ bool execute_war_intent(Intent* intent) {
         }
         IQLOG("  [STEP 3] war_post_decl completed\n");
 
-        // Surface the engine's CB-selector verdict (ck-l8ge). The
+        // Surface the engine's CB-selector verdict. The
         // ai_cb_selector_hook captures the last result-struct it observed
         // while g_in_bridge_war_intent was set — that struct is what
         // war_post_decl actually consumed. Without this, the [CB_PROBE]
@@ -922,7 +922,7 @@ bool execute_decision_intent(Intent* intent) {
 }
 
 // =============================================================================
-// WAR_CREATE_CORE direct invocation (ck-eyfb)
+// WAR_CREATE_CORE direct invocation
 // =============================================================================
 // Mirrors WAR_DECLARE_SPECIAL_HANDLER (FUN_065db970) — 22-line setup that calls
 // WAR_CREATE_CORE directly with pre-resolved char IDs, CB type ptr, and a
@@ -950,7 +950,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     extern thread_local sigjmp_buf g_recovery_point;
     extern thread_local bool g_in_protected_region;
 
-    // ck-zgh4: set if the scope latch makes us skip the CB-validity pre-check
+    // Set if the scope latch makes us skip the CB-validity pre-check
     // (progenitor ruling: skip the check, make the war). Declared at FUNCTION
     // scope because the reply that has to disclose it is built ~450 lines
     // below, in a different block from the gate that sets it.
@@ -976,7 +976,7 @@ bool execute_war_create_core_intent(Intent* intent) {
         return false;
     };
 
-    // ck-2rxyz: per-step IQLOG checkpoints + watchdog protection on every step.
+    // Per-step IQLOG checkpoints + watchdog protection on every step.
     // Prior code only guarded steps 4/6/7 (gs_resolve, lock_acquire, war_create_core)
     // with watchdog+sigsetjmp. Steps 1/2/5 ran bare — if any engine memory read
     // raced with a parallel worker still holding allocator state, or a CB-DB
@@ -1159,7 +1159,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     }
     IQLOG("WAR_CREATE_CORE_DIRECT step=2b target_mode=%d title_id=%d OK\n", cb_target_mode, title_id);
 
-    // 2c) Pre-creation claim validation (L11 — claim_cb fix).
+    // 2c) Pre-creation claim validation (— claim_cb fix).
     //
     // ROOT CAUSE this guards: WAR_CREATE_CORE was called with ZERO claim/court
     // validation. The agent could press any title with any claimant; the engine
@@ -1282,7 +1282,7 @@ bool execute_war_create_core_intent(Intent* intent) {
             g_in_protected_region = false; watchdog_disarm();
         }
 
-        // lane integ11 (claim_rule.h): the claimant's own unpressed claim is his to press
+        // The claimant's own unpressed claim is his to press
         if (!claim_rule::claim_usable(has_claim, pressed_claim, eff_claimant == atk_id))
             return reject("claim_not_pressed");
         // Court membership: pass if claimant is the attacker, or the claimant's
@@ -1292,7 +1292,7 @@ bool execute_war_create_core_intent(Intent* intent) {
 
         IQLOG("WAR_CREATE_CORE_DIRECT step=2c claim OK: pressed=1 liege=%u==atk\n", claimant_liege_id);
 
-        // 2c.1) Independent-target pre-check (L19 a.1).
+        // 2c.1) Independent-target pre-check (a.1).
         //
         // ROOT CAUSE this guards: WAR_CREATE_CORE never validated that the
         // DEFENDER is a legal claim_cb target. claim_cb (offensive title CB)
@@ -1326,7 +1326,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                     return reject(reason_buf);
                 }
                 try {
-                    // FIX (L22): use the AUTHORITATIVE get_liege_id_from_addr (the same read
+                    // FIX: use the AUTHORITATIVE get_liege_id_from_addr (the same read
                     // query_character uses) instead of the raw title_realm+0x448 LIEGE_PTR.
                     // For an INDEPENDENT ruler the 0x448 pointer is non-null but points to a
                     // sentinel whose char-id reads 0xFFFFFFFF, so get_liege_id_from_addr returns
@@ -1353,15 +1353,15 @@ bool execute_war_create_core_intent(Intent* intent) {
             IQLOG("WAR_CREATE_CORE_DIRECT step=2c.1 target_independent OK: def=%u has no liege\n", def_id);
         }
 
-        // 2c.2) Alliance / truce pre-check (L19 a.2).
+        // 2c.2) Alliance / truce pre-check (a.2).
         //
         // ROOT CAUSE this guards: the engine culls a war against an allied or
         // truced target (in_alliance / in_truce). Reuse the validated bilateral
-        // probe from the CB-query path (ai_eval_hook.cpp ck-it6e, ≈lines 3042-3098):
+        // probe from the CB-query path (ai_eval_hook.cpp, ≈lines 3042-3098):
         // GetAllianceList(actor) / GetTruceList(actor) → CDynArray of 8-byte
         // char-ptrs, SIMD_FIND_LONG(begin,end,defender). PURE READS plus those
         // three engine LIST-getters (no mutation, no CB evaluator — the hung
-        // allowed_for_character path stays out of scope per L14).
+        // allowed_for_character path stays out of scope).
         //
         // SCOPING: applied for title-targeted CBs (title_id > 0, this block) to
         // mirror the engine's title-relation alliance/truce gate; non-title CBs
@@ -1451,7 +1451,7 @@ bool execute_war_create_core_intent(Intent* intent) {
         }
     }
 
-    // 2d) AUTHORITATIVE engine CB-validity gate (L19 — safe re-do of the L14
+    // 2d) AUTHORITATIVE engine CB-validity gate (— safe re-do of the
     // revert). The cheap 2c / 2c.1 / 2c.2 pre-checks above stay as a fast-path
     // for the obvious cases; this is the comprehensive backstop that runs the
     // engine's full CB_VALIDITY_CHECK (Gates 0-6, incl. Gate 2's
@@ -1467,8 +1467,8 @@ bool execute_war_create_core_intent(Intent* intent) {
     // stack entries mirrors ai_eval_hook.cpp:3500-3512 exactly so the engine's
     // append path never reallocs. No new offset is introduced.
     //
-    // WHY THIS IS SAFE WHERE L14 WAS NOT — three layers:
-    //   1. arm_fake_random_scope(): THE fix L14 lacked. The CB_QUERY loop runs on
+    // WHY THIS IS SAFE WHERE WAS NOT — three layers:
+    //   1. arm_fake_random_scope: THE fix lacked. The CB_QUERY loop runs on
     //      the IPC service thread; here we are on the GAME THREAD in on_tick where
     //      RandomScopeManager+0x20 is null, so Gate-2's allowed_for_character
     //      trigger would advance RNG into a null scope and spin forever. We arm
@@ -1544,7 +1544,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                 // Fail open: validity fn unmapped → proceed to create the war.
                 IQLOG("WAR_CREATE_CORE_DIRECT step=2d CB_VALIDITY_CHECK unmapped — failing open\n");
             } else if (bridge::scope_latched()) {
-                // ck-zgh4, PROGENITOR RULING 2026-10-06 ("Skip the check, make
+                // PROGENITOR RULING 2026-10-06 ("Skip the check, make
                 // the war"): this is the ONE latched site that does not refuse.
                 // The check it guards is an OPTIONAL pre-check whose own
                 // fallback, three lines above, is already to fail open — and
@@ -1564,7 +1564,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                 IQLOG("WAR_CREATE_CORE_DIRECT step=2d SKIPPED: scope latched — "
                       "failing open per ruling (war proceeds, validity unchecked)\n");
             } else {
-                // Arm the per-thread fake RNG scope (THE L14 fix). Restored on
+                // Arm the per-thread fake RNG scope (THE fix). Restored on
                 // every exit path below, success or fault.
                 // volatile so they survive the sigsetjmp/longjmp restore path
                 // (mirrors the WCC call's volatile saved_rng_scope/rng_scope_set).
@@ -1684,7 +1684,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     //   date_ptr    = root_slot + 8                                  (passes addr; engine derefs)
     IQLOG("WAR_CREATE_CORE_DIRECT step=4 gs_resolve: reading GAME_STATE_ROOT\n");
     uintptr_t root_slot = safe_read<uintptr_t>(g_base_addr + ck3::globals::GAME_STATE_ROOT);
-    // ck-4ot67: emit immediately after the bare safe_read+is_mapped pair so a
+    // Emit immediately after the bare safe_read+is_mapped pair so a
     // wedge on the engine call is distinguishable from a wedge on the bare
     // reads (which use process_vm_readv and shouldn't hang, but proving it).
     IQLOG("WAR_CREATE_CORE_DIRECT step=4 root_slot read: root_slot=0x%lx\n",
@@ -1705,7 +1705,7 @@ bool execute_war_create_core_intent(Intent* intent) {
             snprintf(reason_buf, sizeof(reason_buf), "game_state_resolve_%s", sig_name);
             return reject(reason_buf);
         }
-        // ck-4ot67: emit AFTER setjmp returns 0 — proves the protected region
+        // Emit AFTER setjmp returns 0 — proves the protected region
         // was entered and the recovery point is armed. A wedge between this
         // checkpoint and the next ("gs_resolve done") localizes the hang to
         // the engine call itself (and the watchdog timeout should follow).
@@ -1726,7 +1726,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     IQLOG("WAR_CREATE_CORE_DIRECT step=5 wars_before_snapshot: starting\n");
     int32_t wars_before = -1;
     uintptr_t war_db = safe_read<uintptr_t>(g_base_addr + ck3::globals::WAR_DB);
-    // ck-4ot67: emit immediately after the bare safe_read so a wedge here is
+    // Emit immediately after the bare safe_read so a wedge here is
     // distinguishable from a wedge inside the hash-map walk below.
     IQLOG("WAR_CREATE_CORE_DIRECT step=5 war_db read: war_db=0x%lx\n",
           (unsigned long)war_db);
@@ -1823,7 +1823,7 @@ bool execute_war_create_core_intent(Intent* intent) {
               (void*)rng_scope_slot, (unsigned long)saved_rng_scope, (void*)g_fake_scope);
     }
 
-    // ck-2rxyz: tighten watchdog from 8s → 4s so the engine call surfaces
+    // Tighten watchdog from 8s → 4s so the engine call surfaces
     // its result within the IPC handler's 5s poll window (do_call_war_create_core
     // polls completed_snapshot for 5s before returning timeout). Engine
     // WAR_CREATE_CORE is documented as a synchronous in-memory call with no
@@ -1839,7 +1839,7 @@ bool execute_war_create_core_intent(Intent* intent) {
             IQLOG("WAR_CREATE_CORE_DIRECT step=7 recovered: sig=%s\n",
                   (sig == 1) ? "sigsegv" : (sig == 2) ? "timeout" : "unknown");
         } else {
-            // ck-4ot67: PRE_WCC_CALL checkpoint — emit IMMEDIATELY before the
+            // PRE_WCC_CALL checkpoint — emit IMMEDIATELY before the
             // engine call returns. A wedge between this line and step=7 returned
             // means the engine call itself is the wedge point, and the watchdog
             // must convert it into a timeout reject within 4s.
@@ -1919,7 +1919,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     }
 
     // Re-count WAR_DB to detect orphan creation (SF3 leaves an entry behind).
-    // ck-2rxyz: watchdog-wrapped like step 5 — the hash-map walk reads engine
+    // Watchdog-wrapped like step 5 — the hash-map walk reads engine
     // memory that may be in flux right after WAR_CREATE_CORE mutates WAR_DB.
     int32_t wars_after = -1;
     if (war_db && is_mapped(war_db)) {
@@ -1966,7 +1966,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     intent->consumed = true;
 
     {
-        // ck-zgh4: when the latch made us skip the CB-validity pre-check, the
+        // When the latch made us skip the CB-validity pre-check, the
         // reply SAYS SO. A war the seat cannot tell apart from a validated one
         // is the outcome the ruling's accepted risk would otherwise hide.
         char buf[512];
@@ -1974,7 +1974,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                  "{\"war_created\":%s,\"war_id\":%u,\"is_null_sentinel\":%s,"
                  "\"wars_before\":%d,\"wars_after\":%d,\"resolved_cb\":\"%.64s\"%s}",
                  war_created ? "true" : "false",
-                 (war_created ? war_id : 0xFFFFFFFFu),   // the full handle (L12), as query_wars
+                 (war_created ? war_id : 0xFFFFFFFFu),   // the full handle, as query_wars
                  is_null_war ? "true" : "false",
                  wars_before, wars_after, resolved_cb_name,
                  validity_skipped_latched
@@ -2130,7 +2130,7 @@ bool execute_scheme_cancel_intent(Intent* intent) {
         bridge::game_fn(ck3::funcs::REMOVE_ACTIVE_SCHEME));
 
     uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this process,
+    // scope latch: a restore was refused earlier in this process,
     // so the slot cannot be reasoned about. REFUSE rather than proceed
     // unarmed — proceeding is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -2290,7 +2290,7 @@ bool execute_scheme_intent(Intent* intent) {
         bridge::game_fn(ck3::funcs::CREATE_ACTIVE_SCHEME));
 
     uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this process,
+    // scope latch: a restore was refused earlier in this process,
     // so the slot cannot be reasoned about. REFUSE rather than proceed
     // unarmed — proceeding is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -2454,7 +2454,7 @@ bool char_in_realm_of(uint32_t cid, uint32_t ruler) {
     return false;
 }
 
-// THE de-jure share (L14 FB m-2): the counties under `title_id` (de jure) and
+// THE de-jure share: the counties under `title_id` (de jure) and
 // how many of them a character in `ruler`'s realm holds (char_in_realm_of).
 // The #131 create_title gate (dejure_control_fraction) and the meter
 // (do_query_dejure_progress) both count through it; `rows`, when given, gets
@@ -2493,7 +2493,7 @@ static int title_tier(uintptr_t title_obj) {
 }
 
 // Realm-inclusive de-jure-control fraction of `title_id` for `ruler`, through
-// dejure_share (the one counting function the meter also uses, L14 FB m-2).
+// dejure_share (the one counting function the meter also uses).
 // Returns held_counties / total_counties; total==0 => returns -1 (cannot assess).
 static double dejure_control_fraction(uint32_t title_id, uint32_t ruler,
                                       int* out_held, int* out_total) {
@@ -2507,13 +2507,13 @@ static double dejure_control_fraction(uint32_t title_id, uint32_t ruler,
 } // anonymous namespace
 
 // =============================================================================
-// L14 S3 — the price of a title (re/findings/re_create_title_action.md "L14 S3")
+// The price of a title (re/findings/re_create_title_action.md "")
 // =============================================================================
 // CanCreateTitle (FUN_0621a500) and CreateTitle_Apply (FUN_0621b800) choose the
 // currency the same way and price it with the same functions; this asks those
 // functions, never a table typed here. The gate compares have >= cost; the apply
 // charges the cost (Halfdan's d_lancaster: 214.86 -> -30.48; Murchad's k_ireland:
-// 17.85 -> -302.21, both through the pre-L14 bridge, which read the gate's bool
+// 17.85 -> -302.21, both through the earlier bridge, which read the gate's bool
 // refusal as a pass — engine_bool.h).
 CreateTitlePrice create_title_price(void* ruler, uintptr_t title_obj) {
     CreateTitlePrice p;
@@ -2579,7 +2579,7 @@ void fill_create_title_cmd(uint8_t* cmd, uint32_t ruler_handle, uint32_t title_i
 // under a PLAYER_CHAR_ID swap (#115: the deferred player-command queue is never
 // drained in observer mode). Execute applies the cost and creates the title.
 //
-// L14 S3 (surface-eval finding 14): until this lane IsValid's bool was read as a
+// Until this lane IsValid's bool was read as a
 // 64-bit integer, so a refused create passed (engine_bool.h) and rulers minted titles
 // they could not pay for. A ruler short of the price is now refused
 // "create_title_cannot_afford", the price in console_output.
@@ -2648,7 +2648,7 @@ bool execute_create_title_intent(Intent* intent) {
     bool eligible = true;
 
     uint64_t saved_rng = 0;
-    // ck-zgh4 scope latch: a restore was refused earlier in this process,
+    // scope latch: a restore was refused earlier in this process,
     // so the slot cannot be reasoned about. REFUSE rather than proceed
     // unarmed — proceeding is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -2675,7 +2675,7 @@ bool execute_create_title_intent(Intent* intent) {
         fill_create_title_cmd(cmd, ruler_handle, title_id);
 
         // ── SAFETY PRE-GATE: IsValid(cmd, NULL), as the UI handler FUN_04de1ac0 calls it ──
-        // A C++ bool: AL only (engine_bool.h). Until L14 S3 the whole of RAX was
+        // A C++ bool: AL only (engine_bool.h). Until the whole of RAX was
         // tested here, and the garbage above AL turned every refusal that reached the
         // end of CanCreateTitle (gold, de-jure, piety level) into a pass.
         auto is_valid = reinterpret_cast<bridge::EngineBoolFn<void*, void*>>(
@@ -2810,7 +2810,7 @@ bool execute_create_title_intent(Intent* intent) {
         // ineligible ruler is
         // refused by the gate above before Execute is ever reached. The swap is
         // restored immediately after the call (and on every fault/exception path).
-        // R1c (ck-6kvq.10, §2.9): PLAYER_CHAR_ID is the most consequential pulsed
+        // R1c (§2.9): PLAYER_CHAR_ID is the most consequential pulsed
         // global in the bridge — leaking the swap turns an OBSERVER world into a
         // PLAYER game for the rest of the process. Every local path here already
         // restores; the ledger covers the one path none of them can, a siglongjmp

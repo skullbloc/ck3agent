@@ -1,6 +1,6 @@
 // build_id_witness.cpp — storage for what the bridge OBSERVED, and under what
-// rule it was observing. See build_id_witness.h for why this exists (ck-nkyc,
-// leg (e)).
+// rule it was observing. See build_id_witness.h for why this exists
+// (leg (e)).
 //
 // Its own translation unit, and not a corner of runtime_resolver.cpp, for one
 // reason: ipc_server.cpp has to READ it to build the handshake ack, and
@@ -8,7 +8,7 @@
 // witness's vocabulary should not have to drag Zydis in behind it.
 
 #include "build_id_witness.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 
 #include <cstdlib>
 
@@ -20,7 +20,7 @@ namespace {
 // matters is establishment-before-publication, and the socket is the
 // publication point.
 //
-// CK3_EARLY_INIT IS NOT DECORATION (ck-22n3). This object holds two
+// CK3_EARLY_INIT IS NOT DECORATION. This object holds two
 // std::strings, so it needs dynamic initialization, and dll_init's constructor
 // attribute carries NO priority — an unprioritized _GLOBAL__sub_I for this TU
 // would be placed AFTER dll_init. dll_init calls bridge_init(), which is where

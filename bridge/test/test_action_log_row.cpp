@@ -1,7 +1,7 @@
-// test/test_action_log_row.cpp — L18-A: the action log says what happened to
+// test/test_action_log_row.cpp —: the action log says what happened to
 // the action, and the poll's absence is not the action's failure.
 //
-// THE EVIDENCE (pilots-2026.11, docs/cleanup-2026.11/evidence/pilots-2026.11/raw):
+// THE EVIDENCE (pilots-2026.11):
 // every call_war_create_core row in every seat's actions.jsonl (42 rows, deduped
 // by ts+request_id) reads {"success":false,"status":"queued","reason":
 // "no_poll_on_game_thread"}, while the bridge logs show 39 executor runs, every
@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
     check(std::string(v.verdict) == "pending" && std::string(v.poll) == "timed_out",
           "a poll that timed out: pending (the drain may still run it), timed_out",
           std::string(v.verdict) + "/" + v.poll);
-    // L18 round 2: the faction handler's reply when its wait ran out (factions.cpp:
+    // The faction handler's reply when its wait ran out (factions.cpp:
     // success false, reason intent_timeout_no_result, no retire): the drain may
     // still run it, so the receipt is pending, not rejected.
     v = action_log_verdict_of(R"({"success":false,"action":"faction_action","faction_action":"join","actor_id":13191,"intent_request_id":"fac_1","dispatch_id":"fac_1","reason":"intent_timeout_no_result"})");

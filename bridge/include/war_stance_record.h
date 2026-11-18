@@ -1,7 +1,7 @@
 // war_stance_record.h — which AI coordinator record answers query_war_stance's
 // row for a character: the one definition.
 //
-// L22 (smoke19 A3): at 0868.01.09 Charles 12015, war 13's primary_attacker with
+// At 0868.01.09 Charles 12015, war 13's primary_attacker with
 // occupation 8 and a won siege, read `is_attacker false, stance
 // defender_defensive`. The handler kept ONE record per war,
 //

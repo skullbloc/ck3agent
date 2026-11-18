@@ -3,7 +3,7 @@
 // This is a standalone test: it compiles session.cpp in isolation and provides
 // the few global symbols that session.cpp's rebuild_legacy_mirrors references.
 
-#include "bridge.h"     // ck-6kvq.5: MemRange, for the stub globals below
+#include "bridge.h"     // MemRange, for the stub globals below
 #include "session.h"
 #include <algorithm>
 #include <cassert>
@@ -14,7 +14,7 @@
 
 // Stub globals referenced by bridge.h / session.cpp when compiled standalone.
 namespace bridge {
-// ck-6kvq.5: session.cpp now links world_identity.cpp (ck-9fc3's judge_same_save
+// Session.cpp now links world_identity.cpp (judge_same_save
 // — one identity rule, not a second copy), which reaches world_epoch.cpp's
 // guarded reads. These are the globals those engine-free TUs reference when the
 // game is not there.
@@ -149,7 +149,7 @@ int main() {
     }
 
     // ========================================================================
-    // ck-6kvq.11 — the global primary must be DETERMINISTIC at N>1.
+    // The global primary must be DETERMINISTIC at N>1.
     //
     // Defect (design §1.4 defect 2): rebuild_legacy_mirrors() used to take "the
     // first control session with a nonzero primary" while walking sessions_, an
@@ -326,7 +326,7 @@ int main() {
         }
 
         // ====================================================================
-        // ck-6kvq.11 — watchlist/ownership divergence is an ERROR.
+        // Watchlist/ownership divergence is an ERROR.
         //
         // Defect (design §1.5): MAX_WATCHLIST bounded g_controlled_chars and,
         // when full, SKIPPED the add while the registry claim SUCCEEDED, so the
@@ -399,7 +399,7 @@ int main() {
     }
 
     // ========================================================================
-    // ck-6kvq.5 — DETACH / RESUME.  The bead's acceptance criteria, in the file
+    // DETACH / RESUME.  The bead's acceptance criteria, in the file
     // it names.  The FULL treatment (the identity rule, the unavailability
     // covariate, the abort ladder's detach report, and a negative control that
     // must fail) is bridge/test/acceptance_session_resume.cpp; this is the

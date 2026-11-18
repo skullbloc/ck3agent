@@ -1,4 +1,4 @@
-"""L18-B's designed-not-made items, made in the L18 integration.
+""" designed-not-made items, made in the integration.
 
   F  fabricate_targets empty: the reply names the council seat it used and what
      the bridge said (Cui 13191, an administrative ruler, got an empty list and

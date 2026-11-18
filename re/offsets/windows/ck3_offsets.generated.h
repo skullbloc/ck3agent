@@ -32,7 +32,7 @@
 // These WILL change with game patches. See CLAUDE.md Phase 4 for re-mapping strategy.
 //
 // ═══════════════════════════════════════════════════════════════════════════
-// ADDRESS CONVENTION (canonical — audited ck-e58l.20, 2026-04-21)
+// ADDRESS CONVENTION (canonical — audited, 2026-04-21)
 // ═══════════════════════════════════════════════════════════════════════════
 // All uintptr_t values in this header are RAW (ASLR-base-relative /
 // file-offset-relative), NOT Ghidra virtual addresses. Ghidra's image base
@@ -44,7 +44,7 @@
 // assume raw: CoreReader.resolve(val) = base_addr + val. When adding a new
 // entry, always convert from the Ghidra VA via `val - 0x00100000`.
 //
-// ck-e58l.20 swept the entire header and converted 189 Ghidra-VA-as-raw
+// swept the entire header and converted 189 Ghidra-VA-as-raw
 // leaks to their raw form; entries carrying that audit tag were corrected
 // in this pass. See re/findings/re_offset_header_convention_sweep.md.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -124,16 +124,16 @@
 //                       (FindQualifyingDeJureLiege, PrunePartitionCandidate, AddCandidateToList,
 //                       IsInDomain, CheckDynastyPartitionPermission), fair share algorithm traced,
 //                       BuildSuccessionForRuler title grouping logic, CLandedTitle flag semantics
-// Contract negotiation scoring (ck-x91l): 15 function addresses for AI acceptance scoring,
+// Contract negotiation scoring: 15 function addresses for AI acceptance scoring,
 //                         contract_scoring_globals namespace (10 configuration addresses),
 //                         contract_manager struct (15 fields), contract_entry struct (12 fields),
 //                         hook leverage mechanics (4 hook types), 8-category obligation scoring
-// Effect executor RE (ck-n18o, corrected ck-e58l.15): CJominiEffect base vtable is 25 slots
+// Effect executor RE (corrected): CJominiEffect base vtable is 25 slots
 //                     (not 16). Execute is slot [23] at +0xB8 (not slot [7]); slot [7] is
 //                     GetScopeMask. CStartWarEffect::CreateWar at slot [23] is the actual
-//                     executor — ck-n18o's slot-[7] claim and ck-1ps.5's slot-[9] claim were
-//                     both wrong. Stale slot-[7]-as-Execute constants removed ck-e58l.30.
-// Pending interaction consumer RE (ck-1ps.5): CPendingCharacterInteractionManager tick function,
+//                     executor — slot-[7] claim and slot-[9] claim were
+//                     both wrong. Stale slot-[7]-as-Execute constants removed.
+// Pending interaction consumer RE: CPendingCharacterInteractionManager tick function,
 //                     consumer re-validates with CanSend before processing — silent discard on failure
 #pragma once
 #include <cstddef>
@@ -169,19 +169,19 @@ namespace globals {
     constexpr uintptr_t BUILDING_TYPE_DB    = 0x5568608;  // MEDIUM: building type database  /* win:win_rva globals::BUILDING_TYPE_DB (same name) */
     constexpr uintptr_t CULTURE_DB          = 0x56185e0;  // CONFIRMED: culture database  /* win:win_rva globals::CULTURE_DB (same name) */
     constexpr uintptr_t FAITH_DB            = 0x5568c38;  // HIGH: faith database (ID-indexed array)  /* win:win_rva refdb::REFDB_FAITH (comment) */
-    constexpr uintptr_t NULL_FAITH_SENTINEL = 0x4e688c8;  // HIGH: default null faith (ck-pj01)  /* win:win_rva globals::NULL_FAITH_SENTINEL (same name) */
-    constexpr uintptr_t RELIGION_TEMPLATE_DB = 0x5568c70; // HIGH: religion template lookup DB (ck-pj01)  /* win:win_rva refdb::REFDB_RELIGION (comment) */
-    constexpr uintptr_t NULL_RELIGION_SENTINEL = 0x4e688a0; // HIGH: default null religion template (ck-pj01)  /* win:win_rva globals::NULL_RELIGION_SENTINEL (same name) */
-    constexpr uintptr_t NULL_CULTURE_SENTINEL  = 0x4e68918; // HIGH: default null culture (ck-pj01)  /* win:win_rva globals::NULL_CULTURE_SENTINEL (same name) */
+    constexpr uintptr_t NULL_FAITH_SENTINEL = 0x4e688c8;  // HIGH: default null faith  /* win:win_rva globals::NULL_FAITH_SENTINEL (same name) */
+    constexpr uintptr_t RELIGION_TEMPLATE_DB = 0x5568c70; // HIGH: religion template lookup DB  /* win:win_rva refdb::REFDB_RELIGION (comment) */
+    constexpr uintptr_t NULL_RELIGION_SENTINEL = 0x4e688a0; // HIGH: default null religion template  /* win:win_rva globals::NULL_RELIGION_SENTINEL (same name) */
+    constexpr uintptr_t NULL_CULTURE_SENTINEL  = 0x4e68918; // HIGH: default null culture  /* win:win_rva globals::NULL_CULTURE_SENTINEL (same name) */
     constexpr uintptr_t REALM_LAW_DB        = 0x55682d8;  // HIGH: realm law DB (+0x88=array, +0x94=count)  /* win:win_rva globals::REALM_LAW_DB (same name) */
     constexpr uintptr_t FACTION_TYPE_DB_V2  = 0x5568310;  // HIGH: faction type DB (+0x88=array, +0x94=count)  /* win:win_rva globals::FACTION_TYPE_DB_V2 (same name) */
 
-    // Siege system (ck-mol-6uaq: RTTI + coredump + Ghidra decompilation)
+    // Siege system (RTTI + coredump + Ghidra decompilation)
     constexpr uintptr_t SIEGE_DB             = 0x5618100;  // HIGH: TPdxRefDatabase<CSiege, 8> singleton  /* win:win_rva refdb::REFDB_SIEGE (comment) */
     constexpr uintptr_t SIEGE_NULL           = 0x4e68af8;  // HIGH: TPdxNullObject<CSiege> sentinel  /* win:win_rva globals::SIEGE_NULL (same name) */
 
     // Modifier system (Round 9-4)
-    constexpr uintptr_t MODIFIER_DEF_DB    = 0x5618ad8;  // HIGH: CModifierDefinitionDatabase singleton (~1944 definitions) (ck-e58l.20)  /* win:win_rva globals::MODIFIER_DEF_DB (same name) */
+    constexpr uintptr_t MODIFIER_DEF_DB    = 0x5618ad8;  // HIGH: CModifierDefinitionDatabase singleton (~1944 definitions)  /* win:win_rva globals::MODIFIER_DEF_DB (same name) */
     constexpr uintptr_t FAITH_DOCTRINE_DB_BAD = CK3_WIN_UNMAPPED_N(3);  // WRONG: Ghidra VA not debiased (+0x100000 off) — live read = 0/unmapped  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t FAITH_DOCTRINE_DB  = 0x55685f8;  // HIGH (CORRECTED 2026-06-18, live PID 898009): CFaithDoctrineDatabase singleton (game_db layout: entries@0x88, count@0x90, name@db_object::NAME_KEY); 243 entries live  /* win:win_rva globals::FAITH_DOCTRINE_DB (same name) */
     constexpr uintptr_t FAITH_DOCTRINE_GROUP_DB = 0x55685f8; // MEDIUM: CFaithDoctrineGroupDatabase (corrected with FAITH_DOCTRINE_DB)  /* win:win_rva globals::FAITH_DOCTRINE_DB (same name) */
@@ -189,9 +189,9 @@ namespace globals {
     constexpr uintptr_t INNOVATION_TYPE_DB   = 0x5568340;  // HIGH: CCultureInnovationTypeDatabase hash-table DB  /* win:win_rva globals::INNOVATION_TYPE_DB (same name) */
     constexpr uintptr_t NULL_INNOVATION_TYPE = CK3_WIN_UNMAPPED_N(5);  // MEDIUM: TPdxNullObject<CCultureInnovationType> (null sentinel)  /* win:poisoned (no Windows counterpart) */
     // Round 14: Research speed globals (BSS — populated at runtime, not in static binary)
-    constexpr uintptr_t SPREAD_SPEED_MULT     = CK3_WIN_UNMAPPED_N(6);  // MEDIUM: int64, spread speed multiplier (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t FASCINATION_SPEED_MULT = CK3_WIN_UNMAPPED_N(7); // MEDIUM: int64, fascination speed multiplier (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ERA_TYPE_DB          = 0x5568340;  // HIGH: CCultureEraTypeDatabase hash-table DB (ck-e58l.20)  /* win:win_rva globals::INNOVATION_TYPE_DB (same name) */
+    constexpr uintptr_t SPREAD_SPEED_MULT     = CK3_WIN_UNMAPPED_N(6);  // MEDIUM: int64, spread speed multiplier  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t FASCINATION_SPEED_MULT = CK3_WIN_UNMAPPED_N(7); // MEDIUM: int64, fascination speed multiplier  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ERA_TYPE_DB          = 0x5568340;  // HIGH: CCultureEraTypeDatabase hash-table DB  /* win:win_rva globals::INNOVATION_TYPE_DB (same name) */
     constexpr uintptr_t NULL_ERA_TYPE        = CK3_WIN_UNMAPPED_N(8);  // MEDIUM: TPdxNullObject<CCultureEraType> (null sentinel)  /* win:poisoned (no Windows counterpart) */
 
     // Pause system — CJominiIdler singleton (HIGH, 6-way cross-validated)
@@ -315,12 +315,12 @@ namespace globals {
     // Casus belli database (Round 5, R11-25 confirmed: CGameDatabase<CCasusBelliTypeDatabase, CCasusBelliType>)
     constexpr uintptr_t CASUS_BELLI_DB       = 0x5568368;  // HIGH: CCasusBelliTypeDatabase singleton (+0x88=array, +0x94=count)  /* win:win_rva globals::FACTION_TYPE_DB (same name) */
 
-    // Casus belli GROUP database (ck-e58l.3: CCasusBelliGroupDatabase, distinct from CASUS_BELLI_DB)
+    // Casus belli GROUP database (CCasusBelliGroupDatabase, distinct from CASUS_BELLI_DB)
     // Layout: +0x88=group array, +0x94=group count. 19 groups in save.
     // Each group: +0x30 CBType** array, +0x3C count, +0x48 is_valid trigger (inline),
     //             +0x208 disabled flag, +0x209 ai_allowed flag.
     // Iterated by has_any_display_cb_on (FUN_066d6b20). CB's +0x30 field points back to its group.
-    constexpr uintptr_t CB_GROUP_DB          = 0x561a850;  // HIGH: CCasusBelliGroupDatabase singleton (core-verified, 19 groups, ck-e58l.3)  /* win:win_rva globals::CB_GROUP_DB (same name) */
+    constexpr uintptr_t CB_GROUP_DB          = 0x561a850;  // HIGH: CCasusBelliGroupDatabase singleton (core-verified, 19 groups)  /* win:win_rva globals::CB_GROUP_DB (same name) */
 
     // Council position database (Round 5)
     constexpr uintptr_t COUNCIL_POSITION_DB       = 0x5568c88;  // HIGH: council position DB (also used as POSITION_ASSIGN_DB, R10-1)  /* win:win_rva refdb::REFDB_ACTIVE_COUNCIL_TASK (comment) */
@@ -336,7 +336,7 @@ namespace globals {
     constexpr uintptr_t COUNCIL_TASK_TYPE_DB      = 0x5568350;  // HIGH: CCouncilTaskTypeDatabase singleton ptr  /* win:win_rva globals::COUNCIL_TASK_TYPE_DB (same name) */
     constexpr uintptr_t NO_TARGET_SCOPE           = 0x4e68d28;  // HIGH: DAT_0bffa4a0 — global "no target" scope singleton (BUILD_TARGET_SCOPE default)  /* win:win_rva globals::NO_TARGET_SCOPE (same name) */
 
-    // The native council-task AI's two numbers (lane COUNCILRE, re/findings/re_council_ai.md).
+    // The native council-task AI's two numbers (re/findings/re_council_ai.md).
     // Read from ck3_20260625_152901_ivar867 on 2026-11-14 with re/coredump/core_reader.py.
     // SWITCH FACTOR: int64 fixed-point /100000. FUN_04dc9fc0 takes the current task's
     // score (clamped at 0) x this / 100000 (the 0x29f16b11c6d1e109 >>14 multiply) and
@@ -402,7 +402,7 @@ namespace globals {
     // Command dispatch manager (Round 6)
     constexpr uintptr_t COMMAND_DISPATCH_MGR = 0x55bbfc0;  // HIGH: command dispatch singleton (R26: DAT_0c69dd68 - 0x100000)  /* win:win_rva globals::COMMAND_DISPATCH_MGR (same name) */
     constexpr uintptr_t COMMAND_DISPATCH_GATE = 0x55bc250; // Dispatch gate flags (DAT_0c69dfb8 - 0x100000). Check (gate & 0xfd)==0 before dispatch.  /* win:win_rva globals::COMMAND_DISPATCH_GATE (same name) */
-    // L13 (re/findings/re_frame_update_hook.md): COMMAND_DISPATCH_MGR is jomini's CSession
+    // COMMAND_DISPATCH_MGR is jomini's CSession
     // (session.cpp); COMMAND_DISPATCH_GATE above is its +0x250 session-mode byte.
     constexpr uintptr_t SESSION_THREAD_FN_SLOT = 0x55bc078; // HIGH: COMMAND_DISPATCH_MGR+0x78, RW .bss fn ptr re-read by pdx_thread_run_loop every pass (`call [rbx]`); holds funcs::SESSION_THREAD_LOOP (dump: img 0x0765ffb0). THE step-2 hook slot.  /* win:win_rva globals::SESSION_THREAD_FN_SLOT (same name) */
     constexpr uintptr_t SESSION_EXEC_MUTEX     = 0x55bc260; // HIGH: COMMAND_DISPATCH_MGR+0x260 pthread mutex held around ProcessCommandQueue (session thread trylock; main thread OnActivate/load/hot-join lock) — decompile x4 + dump (free while paused)  /* win:win_rva globals::SESSION_EXEC_MUTEX (same name) */
@@ -410,7 +410,7 @@ namespace globals {
     constexpr uintptr_t APP_SINGLETON          = CK3_WIN_UNMAPPED_N(24); // HIGH: DAT_0c6cc1d8 CInterfaceApplication* (FUN_07829420 returns it); == *(IDLER_SINGLETON)+0x18 in the dump  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t SECONDS_PER_DAY_TABLE  = CK3_WIN_UNMAPPED_N(25); // HIGH: DAT_0c3a8210 float* indexed by game_state::GAME_SPEED; the clock's day interval (dump {2.0,1.0,0.5,0.2,0.0})  /* win:poisoned (no Windows counterpart) */
 
-    // lane l4 (re/findings/re_interactions.md §2): the process-wide scope-name registry
+    // The process-wide scope-name registry
     // (DAT_0c863558, returned by FUN_081f0dd0; a thread may override it through a TLS slot,
     // the game thread uses this default). Every `scope:<name>` / send_option `flag = <name>`
     // is interned here as a small id; layout in namespace scope_name_registry. HIGH:
@@ -425,7 +425,7 @@ namespace globals {
     constexpr uintptr_t CULTURE_NULL_SENTINEL = 0x4e68918;  // HIGH: null culture sentinel  /* win:win_rva globals::NULL_CULTURE_SENTINEL (same name) */
     constexpr uintptr_t FAITH_INDEXED_DB     = 0x5568370;  // LOW: NOT a usable hash map — table 0, capacity 0 in the ivar867 dump  /* win:win_rva globals::FAITH_INDEXED_DB (same name) */
                                                             //   (and live, #faith 2026-06-19). Faiths resolve through FAITH_DB (0x0bedad78),
-                                                            //   keyed at faith::FAITH_ID (+0x08): faith_lookup (dispatch_router.cpp). L14 FB M-1.
+                                                            //   keyed at faith::FAITH_ID (+0x08): faith_lookup (dispatch_router.cpp).
 
     // Law system (Round 6, corrected by law-change investigation)
     constexpr uintptr_t LAW_DB_NULL          = 0x4e6a1d8;  // HIGH: null law sentinel  /* win:win_rva globals::LAW_DB_NULL (same name) */
@@ -506,7 +506,7 @@ namespace globals {
     constexpr uintptr_t TASK_CONTRACT_NULL   = 0x4e68000;  // HIGH: TPdxNullObject<CTaskContract>* (id @+0x8 == -1)  /* win:win_rva globals::TASK_CONTRACT_NULL (same name) */
     constexpr uintptr_t ARTIFACT_DB          = 0x5568c48;  // HIGH: TPdxRefDatabase<CArtifact,8> (FUN_05f73f00; re_siege_mechanics.md)  /* win:win_rva refdb::REFDB_ARTIFACT (comment) */
     constexpr uintptr_t ARTIFACT_NULL        = 0x4e68cb0;  // HIGH: TPdxNullObject<CArtifact>* (id @+0x10 == -1)  /* win:win_rva globals::ARTIFACT_NULL (same name) */
-    // lane l3-schemes 2026-10-20 (re/findings/re_schemes.md §2): the engine's script
+    // 2026-10-20 (re/findings/re_schemes.md §2): the engine's script
     // token table (a name<->id map; trigger entries carry the id of their script key at
     // trigger+0x8). Guard-initialised static at image 0x0c866670; the pointer slot below
     // holds its address (core dump ivar867: *(slot) == the static). Reverse array:
@@ -521,7 +521,7 @@ namespace globals {
     constexpr uintptr_t WAR_DB               = 0x5568c50;  /* win:win_rva refdb::REFDB_WAR (comment) */
     constexpr uintptr_t WAR_DB_SENTINEL      = 0x4e68ad0;  /* win:win_rva globals::WAR_DB_SENTINEL (same name) */
 
-    // CCasusBelli / CCasusBelliType vtables (ck-s0qu: validated via 867 + 1097 dumps).
+    // CCasusBelli / CCasusBelliType vtables (validated via 867 + 1097 dumps).
     // CCASUSBELLI is the embedded vtable at war+0x98; CCASUSBELLITYPE is the type
     // vtable shared by every entry of CASUS_BELLI_DB (pointed to by war+0xA0).
     constexpr uintptr_t CCASUSBELLI_VTABLE     = CK3_WIN_UNMAPPED_N(29);  // HIGH: CCasusBelli embedded vtable (file-rel; Ghidra = 0x0bba7158)  /* win:poisoned (no Windows counterpart) */
@@ -545,7 +545,7 @@ namespace globals {
     constexpr uintptr_t REGIMENT_DB          = 0x5569770;  // HIGH: TPdxRefDatabase<CRegiment, 8> — recruitment/MaA regiments (chunk-summed)  /* win:win_rva refdb::REFDB_REGIMENT (comment) */
     constexpr uintptr_t REGIMENT_DB_SENTINEL = 0x4e68738;  // HIGH: null CRegiment sentinel  /* win:win_rva globals::REGIMENT_DB_SENTINEL (same name) */
 
-    // CArmyRegiment database (ck-warstrength) — the DEPLOYED sub-units listed in CArmy+0x18.
+    // CArmyRegiment database — the DEPLOYED sub-units listed in CArmy+0x18.
     // DISTINCT from REGIMENT_DB: that is CRegiment (a ruler's standing MaA), this is
     // CArmyRegiment (a regiment mobilized into a marching army). RTTI: TPdxRefDatabase<CArmyRegiment,8>.
     // Resolves Army+0x18 regiment IDs; the per-regiment current/max soldier ints live at +0x38/+0x3c.
@@ -628,10 +628,10 @@ namespace globals {
 // =============================================================================
 namespace game_state {
     constexpr size_t GAME_DATE              = 0x08;   // CONFIRMED: int32, sub-day ticks (24 per day) since epoch
-    // ── THE TWO DATE STRUCTS (ck-hwbb, 2026-09-13) ─────────────────────────
+    // ── THE TWO DATE STRUCTS (2026-09-13) ─────────────────────────
     // 0x0E and 0xCE were SWAPPED. Both sit in a {int32 raw; …; uint16 year}
     // struct and the two structs are 0xC0 apart. 0x0E was graded CONFIRMED as
-    // START_DATE_YEAR; ck-hxh7's world-epoch fingerprint therefore read the
+    // START_DATE_YEAR; world-epoch fingerprint therefore read the
     // CURRENT clock as a campaign identity and declared a world reload on
     // every 1 January — quarantining the agents' personality locks mid-episode
     // and refusing session resume across a New Year.
@@ -663,7 +663,7 @@ namespace game_state {
     // be falsified by reading the field, which nobody had done.
     //
     // EVIDENCE (offline, archived core dumps, no game running). Decoded with
-    // this header's own ck-05mg calendar below — DATE_EPOCH, 24 ticks/day, a
+    // this header's own calendar below — DATE_EPOCH, 24 ticks/day, a
     // fixed 365-day year and the REAL month table, never twelve 30-day months:
     //   ck3_20260421_195552.core  gs+0x08 = 53418504 -> 1098.01.02  (current)
     //                             gs+0xC8 = 53144328 -> 1066.09.15  (start)
@@ -705,7 +705,7 @@ namespace game_state {
     // Epoch = 5000 * 365 * 24 = 43,800,000
     constexpr int32_t DATE_EPOCH            = 43800000;
 
-    // ── THE CALENDAR (ck-05mg, 2026-09-12) ─────────────────────────────────
+    // ── THE CALENDAR (2026-09-12) ─────────────────────────────────
     // CK3 uses a FIXED 365-day year with REAL month lengths and NO leap years:
     //     31 28 31 30 31 30 31 31 30 31 30 31   (= 365)
     // Rendering with twelve 30-day months (360) was wrong by up to 4 days and
@@ -738,7 +738,7 @@ namespace game_state {
     constexpr uintptr_t MONTH_CUM_DAYS_I32   = CK3_WIN_UNMAPPED_N(61);  // HIGH: i32[12] 0,31,59,...,334 == MONTH_CUM_DAYS  /* win:poisoned (no Windows counterpart) */
 
     // WAR_DB root: WAR_CREATE_CORE reads *(game_state+0x20)+8 as the argument to
-    // WAR_DB_ALLOCATE (ck-e58l.5).
+    // WAR_DB_ALLOCATE.
     constexpr size_t WAR_DB_ALLOC_ROOT      = 0x20;   // HIGH: ptr; *(gs+0x20)+8 → WAR_DB allocator arg
 }
 
@@ -749,7 +749,7 @@ namespace idler {
     constexpr size_t PAUSE_FLAG             = 0x20;   // CONFIRMED: byte, 0=unpaused 1=paused
     constexpr size_t PLAYER_ID              = 0x24;   // CONFIRMED: uint32
     constexpr size_t TIMESTAMP              = 0x28;   // CONFIRMED: int64
-    // L13 (re_frame_update_hook.md): CJominiIdler members; decompile of CJominiIdler_Update /
+    // CJominiIdler members; decompile of CJominiIdler_Update /
     // _Activate / dtor (FUN_076fcfd0 / 076fd5a0 / 076fcc20) + core dump (idler 0x561b8b675a20).
     constexpr size_t LOGIC_PTR              = 0x08;   // HIGH: CIngameInterfaceIdlerLogic* (vt[5] Update per frame, vt[6] OnActivate)
     constexpr size_t GFX_PTR                = 0x10;   // HIGH: CIngameInterfaceIdlerGfx*
@@ -757,7 +757,7 @@ namespace idler {
 }
 
 // =============================================================================
-// CIngameInterfaceIdlerLogic (idler::LOGIC_PTR) — L13, re_frame_update_hook.md
+// CIngameInterfaceIdlerLogic (idler::LOGIC_PTR) —, re_frame_update_hook.md
 // =============================================================================
 namespace ingame_idler_logic {
     constexpr size_t VT_UPDATE_SLOT         = 5;      // HIGH: per-frame Update (main thread), funcs::INGAME_LOGIC_UPDATE
@@ -769,7 +769,7 @@ namespace ingame_idler_logic {
 }
 
 // =============================================================================
-// CInterfaceApplication (globals::APP_SINGLETON) — L13, re_frame_update_hook.md
+// CInterfaceApplication (globals::APP_SINGLETON) —, re_frame_update_hook.md
 // =============================================================================
 namespace application {
     constexpr size_t CURRENT_IDLER          = 0x28;   // HIGH: CJominiIdler* (dump == *IDLER_SINGLETON)
@@ -778,7 +778,7 @@ namespace application {
 }
 
 // =============================================================================
-// Generic Hash-Map Header (CK3 shared container layout, ck-e58l.24 FIX-2)
+// Generic Hash-Map Header (CK3 shared container layout, FIX-2)
 // =============================================================================
 // Every CK3 "DB" singleton (WAR_DB, CHARACTER_DB, SCHEME_REFDB, TITLE_DB, ...)
 // points to an object whose first 0x40 bytes are a generic hash-table header.
@@ -827,7 +827,7 @@ namespace funcs {
     // Per-character AI control
     constexpr uintptr_t AI_CHAR_TOGGLE             = CK3_WIN_RECIPE(18);  // 5 bytes! *(p+0x28) = v  /* win:recipe recipes.inc #18 */
     constexpr uintptr_t AI_CHAR_EVAL               = CK3_WIN_UNMAPPED_N(64);  // per-char tick category update  /* win:poisoned (no Windows counterpart) */
-    // ck-2u2a: THIS COMMENT IS WRONG AND THE VALUE IS UNVERIFIED. 0x04d22cb0 is
+    // THIS COMMENT IS WRONG AND THE VALUE IS UNVERIFIED. 0x04d22cb0 is
     // is_entry=false — it lands inside FUN_04d22c80 (291 bytes) — and it is NOT
     // the ai_ctrl per-tick setup, which is FUN_04e22cb0 -> FUN_04e52690 (see the
     // ai_ctrl namespace). The VALUE is left alone deliberately: changing an offset
@@ -871,7 +871,7 @@ namespace funcs {
     // small displacement that many structures read, and nobody counted how
     // often this dispatch runs WITHOUT faulting before believing the match.
     // The fault address alone could not name the instruction — which is the
-    // gap ck-duv5 exists to close.
+    // gap exists to close.
     //
     // See re/findings/re_ai_interactions_dispatch_null_target.md (retraction
     // stamped above the original).
@@ -938,34 +938,34 @@ namespace funcs {
     constexpr uintptr_t AI_CB_EVALUATE_ALL         = 0x1792600;  // HIGH: scores all valid CBs for target — called by AI_CB_SELECTOR  /* win:win_rva funcs::AI_CB_EVALUATE_ALL (same name) */
 
     // AI_CB_SELECTOR result-struct offsets (stack-allocated by caller; ~0xC0 bytes).
-    // These are the fields the S1 compound-if in AI_WAR_POST_DECL (ck-a7gr) reads
+    // These are the fields the S1 compound-if in AI_WAR_POST_DECL reads
     // to decide whether to dispatch WAR_CREATE_CORE. When AI_CB_EVALUATE_ALL
     // returns 0 viable pairs, AI_CB_SELECTOR zeroes offsets 0x00/0x08/0x10 and
     // sets +0x18 = 0xFFFFFFFF; otherwise it copies the weighted-random winner.
     // See re/findings/re_ai_war_post_decl_early_exits.md.
     //
-    // ⚠️  AI_CB_SELECTOR is NOT side-effect-free for replay. The ck-a7gr claim
-    // that it "writes only to its output buffer" was refuted on ck-10f5: a
+    // ⚠️  AI_CB_SELECTOR is NOT side-effect-free for replay. The claim
+    // that it "writes only to its output buffer" was refuted on: a
     // replay inside execute_war_intent (b32de6c) reliably crashed CK3 via heap
     // corruption on the first call. Read these offsets only from a FIRST-CALL
     // capture (entry/exit hook), never from a synthetic second invocation. See
-    // re/findings/re_ai_cb_selector_probe.md post-mortem and ck-2x2z.
-    constexpr uint64_t CB_RESULT_CB_REF       = 0x00;  // HIGH: CB type/data ref (0 if no CB) — ck-a7gr
-    constexpr uint64_t CB_RESULT_CB_TITLES    = 0x08;  // HIGH: misnamed — gate-probes a CHARACTER-like obj (vtable[2]); NOT a titles list. Target CCharacter* satisfies it. — ck-tcxr/ck-6h1v
-    constexpr uint64_t CB_RESULT_TARGET_REF   = 0x10;  // HIGH: target character ref — ck-a7gr
+    // re/findings/re_ai_cb_selector_probe.md post-mortem and.
+    constexpr uint64_t CB_RESULT_CB_REF       = 0x00;  // HIGH: CB type/data ref (0 if no CB) —
+    constexpr uint64_t CB_RESULT_CB_TITLES    = 0x08;  // HIGH: misnamed — gate-probes a CHARACTER-like obj (vtable[2]); NOT a titles list. Target CCharacter* satisfies it. —
+    constexpr uint64_t CB_RESULT_TARGET_REF   = 0x10;  // HIGH: target character ref —
     constexpr uint64_t CB_RESULT_SENTINEL_U32 = 0x18;  // HIGH: MISNAMED — this is the CLAIMANT char handle (u32; 0xFFFFFFFF=none), NOT a sentinel. WarCmd_SetTitleList copies it to war-goal+0x28 → WAR_CREATE_CORE claimant arg. NOT read by the G1 gate. — re_claimant_is_cb_result_0x18_20260611
-    constexpr uint64_t CB_RESULT_SCORE        = 0xb0;  // HIGH: int32 score (score > 0 required to dispatch) — ck-a7gr
-    constexpr uint64_t CB_RESULT_EXTRA_ROLL   = 0xb4;  // HIGH: u8 "requires additional roll" flag — ck-a7gr
+    constexpr uint64_t CB_RESULT_SCORE        = 0xb0;  // HIGH: int32 score (score > 0 required to dispatch) —
+    constexpr uint64_t CB_RESULT_EXTRA_ROLL   = 0xb4;  // HIGH: u8 "requires additional roll" flag —
 
     // CB result struct sub-CDynArray header at +0x20 (titles list payload).
     // AI_WAR_POST_DECL → WarCmd_SetTitleList (0x066dbcc0) reads data ptr at +0x20
     // and count at +0x2c, copies into cmd+0x10 — this is the actual title-list
     // material that flows into the dispatched war command. Path B' override
-    // (ck-8weg) does NOT touch these fields; engine NO_VIABLE_PAIR init zeroes
+    // does NOT touch these fields; engine NO_VIABLE_PAIR init zeroes
     // them at LAB_04e98358 (XORPS [R13+0x20]). See re_ai_cb_selector_consumer.md.
-    constexpr uint64_t CB_RESULT_TITLES_DATA  = 0x20;  // HIGH: u32* — title-handle array data ptr (ck-6h1v)
-    constexpr uint64_t CB_RESULT_TITLES_CAP   = 0x28;  // HIGH: int32 capacity (ck-6h1v)
-    constexpr uint64_t CB_RESULT_TITLES_COUNT = 0x2c;  // HIGH: int32 count — WarCmd_SetTitleList reads param_2[5] (ck-6h1v)
+    constexpr uint64_t CB_RESULT_TITLES_DATA  = 0x20;  // HIGH: u32* — title-handle array data ptr
+    constexpr uint64_t CB_RESULT_TITLES_CAP   = 0x28;  // HIGH: int32 capacity
+    constexpr uint64_t CB_RESULT_TITLES_COUNT = 0x2c;  // HIGH: int32 count — WarCmd_SetTitleList reads param_2[5]
     // Allocator-holder for the +0x20 titles CDynArray. AI_WAR_POST_DECL's epilog
     // (raw 0x4d567f1) frees the +0x20 data via (*(result+0x30))->vtable[0x18]
     // (holder, data, 4) — but ONLY when +0x20 data != null. A Path B' override
@@ -975,8 +975,8 @@ namespace funcs {
     constexpr uint64_t CB_RESULT_TITLES_ALLOC = 0x30;  // HIGH: allocator-holder ptr (epilog free site)
 
     // War cmd builders (called by AI_WAR_POST_DECL inside the S1 dispatch block)
-    constexpr uintptr_t WAR_CMD_SET_CB             = CK3_WIN_UNMAPPED_N(94);  // HIGH: WarCmd_SetCB(cmd, cb_ref) → *(cmd+8) = cb_ref (ck-6h1v)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WAR_CMD_SET_TITLE_LIST     = CK3_WIN_UNMAPPED_N(95);  // HIGH: WarCmd_SetTitleList(cmd, &titles_arr_hdr) — copies CDynArray(uint32) into cmd+0x10 (ck-6h1v)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WAR_CMD_SET_CB             = CK3_WIN_UNMAPPED_N(94);  // HIGH: WarCmd_SetCB(cmd, cb_ref) → *(cmd+8) = cb_ref  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WAR_CMD_SET_TITLE_LIST     = CK3_WIN_UNMAPPED_N(95);  // HIGH: WarCmd_SetTitleList(cmd, &titles_arr_hdr) — copies CDynArray(uint32) into cmd+0x10  /* win:poisoned (no Windows counterpart) */
 
     constexpr uintptr_t AI_WAR_PRESEED_TARGETS     = CK3_WIN_UNMAPPED_N(96);  // MEDIUM: builds neighbor list for war evaluation (vtable handler only)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t AI_VTABLE_WAR_HANDLER      = CK3_WIN_UNMAPPED_N(97);  // MEDIUM: scripted effect war dispatch (complex, not for bridge use)  /* win:poisoned (no Windows counterpart) */
@@ -1000,8 +1000,8 @@ namespace funcs {
     // 0x4d980d0): header = ghidra_va − 0x100000, uniformly. Corrected 0x04e6→0x04d6 below.
     constexpr uintptr_t STANCE_PERWAR_SELECT       = CK3_WIN_UNMAPPED_N(98);  // HIGH: ghidra FUN_04e66550(coord_war_record, char/realm)  [was 0x04e66550 — +0x100000 bug]  /* win:poisoned (no Windows counterpart) */
     // COORD_STANCE_TICK (FUN_04e66220) and COORD_OBJ_BOOTSTRAP (FUN_04e69c70) were deleted
-    // with force_offensive_stance, their only reader (cleanup 2026.11;
-    // re_steered_war_offensive_root.md §7, §9 keep the decompile record).
+    // with force_offensive_stance, their only reader
+    // (re_steered_war_offensive_root.md §7, §9 keep the decompile record).
     // In-tick objective MAINTAINER — FUN_04e669e0(rec). Reached inside FUN_04e66220
     // at the rec+0x98<2 branch; refines/extends the EXISTING rec+0x50 sublist (gated on
     // rec+0x5c!=0). Cannot bootstrap. Listed for completeness; not called directly.
@@ -1031,7 +1031,7 @@ namespace funcs {
     //   - high 8 bits: generation/type tag (must match char struct +0x18)
     // Mismatched high byte → goto LAB_04e99310 → silent skip (NO crash).
     //
-    // ck-7dop Path C pre-seed: overwrite entry[0] at FRONT_BUF_BEGIN with
+    // Path C pre-seed: overwrite entry[0] at FRONT_BUF_BEGIN with
     // bridge-vouched target's canonical handle (read from char struct +0x18)
     // before calling AI_WAR_POST_DECL.
     constexpr uint64_t AI_CTRL_WAR_DATA_PTR     = 0x20;  // HIGH: ai_ctrl→war_data ptr
@@ -1067,12 +1067,12 @@ namespace funcs {
     // Strategy/goal processing
     constexpr uintptr_t STRATEGY_GOAL_PROCESS      = CK3_WIN_UNMAPPED_N(119);  // 1126B, computes geographic bounds  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t STRATEGY_EXECUTE           = CK3_WIN_UNMAPPED_N(120);  // 683B, timer mgmt + goal dispatch  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SELECT_GOALS               = CK3_WIN_UNMAPPED_N(121);  // HIGH: goal pool selection (financial state) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SELECT_BEST_GOAL           = CK3_WIN_UNMAPPED_N(122);  // HIGH: core priority scoring loop (ck-rk3r) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CHECK_GOAL_ELIGIBILITY     = CK3_WIN_UNMAPPED_N(123);  // HIGH: eval "potential" trigger (ck-rk3r) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCORE_GOAL_PRIORITY        = CK3_WIN_UNMAPPED_N(124);  // HIGH: eval "weight" script (ck-rk3r) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_GOAL_CANDIDATE_LIST    = CK3_WIN_UNMAPPED_N(125);  // HIGH: goal list by mode+tier (ck-rk3r) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CREATE_NEW_GOALS           = CK3_WIN_UNMAPPED_N(126);  // MEDIUM: goal creation on timer B expiry (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SELECT_GOALS               = CK3_WIN_UNMAPPED_N(121);  // HIGH: goal pool selection (financial state)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SELECT_BEST_GOAL           = CK3_WIN_UNMAPPED_N(122);  // HIGH: core priority scoring loop  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHECK_GOAL_ELIGIBILITY     = CK3_WIN_UNMAPPED_N(123);  // HIGH: eval "potential" trigger  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCORE_GOAL_PRIORITY        = CK3_WIN_UNMAPPED_N(124);  // HIGH: eval "weight" script  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_GOAL_CANDIDATE_LIST    = CK3_WIN_UNMAPPED_N(125);  // HIGH: goal list by mode+tier  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CREATE_NEW_GOALS           = CK3_WIN_UNMAPPED_N(126);  // MEDIUM: goal creation on timer B expiry  /* win:poisoned (no Windows counterpart) */
 
     // UpdatePostExecute dispatch functions (aliases for the AI dispatch functions above)
     constexpr uintptr_t DISPATCH_MARRIAGES         = AI_MARRIAGES_DISPATCH;     // R14: 9 flags
@@ -1143,7 +1143,7 @@ namespace funcs {
     constexpr uintptr_t PAUSE_TOGGLE               = 0x332ebe0;  // CONFIRMED: debounced toggle  /* win:win_rva funcs::PAUSE_TOGGLE (same name) */
     constexpr uintptr_t IS_MANUALLY_PAUSED         = CK3_WIN_UNMAPPED_N(145);  // CONFIRMED: reads *(DAT_0c6b53e8 + 0x20)  /* win:poisoned (no Windows counterpart) */
 
-    // --- L13: frame / session-thread / daily-tick chain (re/findings/re_frame_update_hook.md) ---
+    // --- Frame / session-thread / daily-tick chain (re/findings/re_frame_update_hook.md) ---
     // Session thread (jomini CSession, session.cpp): runs EVERY engine command, paused or not.
     constexpr uintptr_t SESSION_THREAD_LOOP        = 0x32e63c0;  // HIGH: FUN_0765ffb0 CSession_ThreadLoop(session): 12Hz net update; trylock(+0x260) → PROCESS_COMMAND_QUEUE(session,1) → unlock; 5ms nanosleep when 0 processed; returns 1. Live in dump (LWP 3271228). Value of globals::SESSION_THREAD_FN_SLOT.  /* win:win_rva funcs::SESSION_THREAD_LOOP (same name) */
     constexpr uintptr_t SESSION_INIT               = 0x32e0650;  // HIGH: FUN_0765f9c0 CSession_Init ("Init session"): starts the thread once (+0x408 latch)  /* win:win_rva funcs::SESSION_INIT (same name) */
@@ -1181,11 +1181,11 @@ namespace funcs {
     constexpr uintptr_t TRAIT_REMOVE               = CK3_WIN_UNMAPPED_N(170);  // HIGH: sorted remove + side effects  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t TRAIT_BSEARCH              = CK3_WIN_UNMAPPED_N(171);  // HIGH: binary search on sorted trait array  /* win:poisoned (no Windows counterpart) */
     // Trait pipeline functions (from trait gain/loss investigation)
-    constexpr uintptr_t TRAIT_ADD_GATE             = CK3_WIN_UNMAPPED_N(172);  // HIGH: validate + add trait (exclusion check, notify) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t TRAIT_ADD_INNER            = CK3_WIN_UNMAPPED_N(173);  // HIGH: permission check + call core insert (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t TRAIT_INSERT_CORE          = CK3_WIN_UNMAPPED_N(174);  // HIGH: bitmask exclusion + vfunc dispatch (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ADD_TRAIT_EFFECT_F         = CK3_WIN_UNMAPPED_N(175);  // HIGH: CAddTraitEffect<false>::Execute (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ADD_TRAIT_EFFECT_T         = CK3_WIN_UNMAPPED_N(176);  // HIGH: CAddTraitEffect<true>::Execute (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRAIT_ADD_GATE             = CK3_WIN_UNMAPPED_N(172);  // HIGH: validate + add trait (exclusion check, notify)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRAIT_ADD_INNER            = CK3_WIN_UNMAPPED_N(173);  // HIGH: permission check + call core insert  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRAIT_INSERT_CORE          = CK3_WIN_UNMAPPED_N(174);  // HIGH: bitmask exclusion + vfunc dispatch  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ADD_TRAIT_EFFECT_F         = CK3_WIN_UNMAPPED_N(175);  // HIGH: CAddTraitEffect<false>::Execute  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ADD_TRAIT_EFFECT_T         = CK3_WIN_UNMAPPED_N(176);  // HIGH: CAddTraitEffect<true>::Execute  /* win:poisoned (no Windows counterpart) */
 
     // --- Round 3: Claim & succession functions ---
     constexpr uintptr_t CLAIM_GET_STATE            = CK3_WIN_UNMAPPED_N(177);  // HIGH: GetClaimStateFor (1027B)  /* win:poisoned (no Windows counterpart) */
@@ -1230,13 +1230,13 @@ namespace funcs {
     constexpr uintptr_t TRAIT_INDEX_TO_PTR          = CK3_WIN_UNMAPPED_N(196);  // CTrait*(trait_db, index)  /* win:poisoned (no Windows counterpart) */
 
     // Trait effects system (Round 9-4)
-    constexpr uintptr_t TRAIT_PARSE_FIELD           = CK3_WIN_UNMAPPED_N(197);  // HIGH: CTrait::ParseField (3816B, main switch) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MOD_COLLECTION_PARSE        = CK3_WIN_UNMAPPED_N(198);  // HIGH: CModifierCollection::ParseModifier (860B) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MOD_COLLECTION_GET_SLOT     = CK3_WIN_UNMAPPED_N(199);  // HIGH: CModifierCollection::GetSlot(collection, def_idx) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MOD_DEF_LOOKUP_BY_TOKEN     = CK3_WIN_UNMAPPED_N(200);  // HIGH: look up modifier def by token ID (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MOD_DEF_GET_BY_INDEX        = CK3_WIN_UNMAPPED_N(201);  // HIGH: CModifierDefinition* by index (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t RECALCULATE_MODIFIERS       = CK3_WIN_UNMAPPED_N(202);  // HIGH: recalc all char stat modifiers (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t APPLY_TRAIT_RULER_EFFECTS   = CK3_WIN_UNMAPPED_N(203);  // HIGH: ruler-specific trait effects (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRAIT_PARSE_FIELD           = CK3_WIN_UNMAPPED_N(197);  // HIGH: CTrait::ParseField (3816B, main switch)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MOD_COLLECTION_PARSE        = CK3_WIN_UNMAPPED_N(198);  // HIGH: CModifierCollection::ParseModifier (860B)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MOD_COLLECTION_GET_SLOT     = CK3_WIN_UNMAPPED_N(199);  // HIGH: CModifierCollection::GetSlot(collection, def_idx)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MOD_DEF_LOOKUP_BY_TOKEN     = CK3_WIN_UNMAPPED_N(200);  // HIGH: look up modifier def by token ID  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MOD_DEF_GET_BY_INDEX        = CK3_WIN_UNMAPPED_N(201);  // HIGH: CModifierDefinition* by index  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t RECALCULATE_MODIFIERS       = CK3_WIN_UNMAPPED_N(202);  // HIGH: recalc all char stat modifiers  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t APPLY_TRAIT_RULER_EFFECTS   = CK3_WIN_UNMAPPED_N(203);  // HIGH: ruler-specific trait effects  /* win:poisoned (no Windows counterpart) */
 
     // Title chain (Round 4)
     constexpr uintptr_t TITLE_GET_COUNTY            = CK3_WIN_UNMAPPED_N(204);  // county*(barony_title)  /* win:poisoned (no Windows counterpart) */
@@ -1250,7 +1250,7 @@ namespace funcs {
     // Name resolution (Round 5)
     constexpr uintptr_t HOUSE_GET_NAME             = CK3_WIN_UNMAPPED_N(209);  // HIGH: house_obj → name: `return param_1 + 0x248` (Ghidra House_GetName,  /* win:poisoned (no Windows counterpart) */
                                                                   //   image 0x05eba4d0) = dynasty_house_obj::NAME. Was "+0x10" here: +0x10 is the
-                                                                  //   house's masked id (hash_map::ENTRY_KEY_REF), never a string. L14 FB M-1.
+                                                                  //   house's masked id (hash_map::ENTRY_KEY_REF), never a string.
     constexpr uintptr_t DYNASTY_GET_FROM_HOUSE     = CK3_WIN_UNMAPPED_N(210);  // HIGH: house_obj → dynasty_id (*(obj+0x24))  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t DYNASTY_GET_NAME           = CK3_WIN_UNMAPPED_N(211);  // HIGH: dynasty_obj → name (returns obj+0x80)  /* win:poisoned (no Windows counterpart) */
 
@@ -1275,7 +1275,7 @@ namespace funcs {
     constexpr uintptr_t WAR_SET_NAME               = CK3_WIN_UNMAPPED_N(225);  // HIGH: set war name string, 220B  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t WAR_COPY_SCORES            = CK3_WIN_UNMAPPED_N(226);  // HIGH: copy current→cached scores, 48B  /* win:poisoned (no Windows counterpart) */
 
-    // --- War TERMINATION (ck-sd4d) -------------------------------------------
+    // --- War TERMINATION -------------------------------------------
     // WAR_END_CORE(war_manager, CWar* war, int outcome, bool notify) — Ghidra
     // FUN_066c8480 (image VA 0x066c8480 - 0x100000), 2367B. THE single
     // termination path: every war in the game ends through this function.
@@ -1295,7 +1295,7 @@ namespace funcs {
     // the deferred-removal case only (war_db+0x48 set while the DB is being
     // iterated), not a way to observe an ended war. Outcome and end date are
     // observable ONLY by hooking here — bridge/src/war_history_hook.cpp.
-    constexpr uintptr_t WAR_END_CORE               = 0x26a6770;  // HIGH: ends AND destroys a war (decompile-verified, ck-sd4d)  /* win:win_rva funcs::WAR_END_CORE (same name) */
+    constexpr uintptr_t WAR_END_CORE               = 0x26a6770;  // HIGH: ends AND destroys a war (decompile-verified)  /* win:win_rva funcs::WAR_END_CORE (same name) */
 
     // Console handlers (Round 5c-f)
     constexpr uintptr_t CMD_SET_CULTURE            = CK3_WIN_UNMAPPED_N(227);  // HIGH: set_culture console handler, 1086B  /* win:poisoned (no Windows counterpart) */
@@ -1304,14 +1304,14 @@ namespace funcs {
 
     // Realm law management (Round 5e, extended by law-change investigation)
     constexpr uintptr_t ADD_REALM_LAW              = CK3_WIN_UNMAPPED_N(230);  // HIGH: AddLawToCharacter(char, law, mode:u8, extra), 201B.  /* win:poisoned (no Windows counterpart) */
-    // CORRECTION (re_write_action_legitimacy_audit.md §4, ck-84): AddLawToCharacter
+    // CORRECTION (re_write_action_legitimacy_audit.md §4): AddLawToCharacter
     // is the RAW law-vector mutator — it does NOT deduct prestige/piety, does NOT
     // set the ~10yr cooldown, and does NOT run the powerful-vassals vote regardless
     // of mode. mode=7 fires the on_pass SCRIPT + notify; mode=4 skips pass effects.
     // The earlier "mode=7 = cost+cooldown+event" claim (re_ck-iglm_add_law_modes.md)
     // was REFUTED. For the COSTED player path use ADD_LAW_COMMAND_CTOR below.
 
-    // ── Costed player Change-Realm-Law command (CAddLawCommand) — ck-84 ──────────
+    // ── Costed player Change-Realm-Law command (CAddLawCommand) — ──────────
     // The LEGITIMATE path. A CJominiCommandBase-derived typed command (same family
     // as construction/hire-merc). Dispatched via GAME_COMMAND_DISPATCH(mgr,&cmd,0xe,0)
     // → CommandQueuePush → engine runs CanExecute (cost/cooldown/vote/eligibility)
@@ -1320,7 +1320,7 @@ namespace funcs {
     // applied by the engine's command pipeline (CanExecute gate + on_accept), NOT by
     // AddLawToCharacter. Replicate the command-dispatch template (ctor, vtable[9], mode 0xe) with an
     // EXPLICIT actor (ctor sets char id @+0x20=0xffffffff, then we overwrite).
-    // ── ck-84 CORRECTION (2026-06-21): ALL FIVE offsets below were recorded
+    // ── CORRECTION (2026-06-21): ALL FIVE offsets below were recorded
     //    0x100000 TOO HIGH. The prior agent stored IMAGE VAs as header offsets, so
     //    the bridge call site `g_base_addr + 0x067cd2f0` resolved to image 0x067cd2f0
     //    — which is FUN_068cd200, a generic hashmap-INSERT routine, NOT the command
@@ -1343,7 +1343,7 @@ namespace funcs {
     // mode=7 (full effects: cost+cooldown+event) is what `add_realm_law`
     // console + all script-effect / RTTI wrappers pass; mode=4 skips pass
     // effects (only `*_skip_effects` callers). No other values observed.
-    // See re/findings/re_ck-iglm_add_law_modes.md (ck-iglm).
+    // See re/findings/re_ck-iglm_add_law_modes.md.
     constexpr uintptr_t FIND_REPLACE_LAW           = CK3_WIN_UNMAPPED_N(237);  // HIGH: finds existing law in same group, replaces it, 305B  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t REPLACE_IN_CONTAINER       = CK3_WIN_UNMAPPED_N(238);  // HIGH: array swap old→new + succession rule check, 782B  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t FINALIZE_LAW_CHANGE        = CK3_WIN_UNMAPPED_N(239);  // HIGH: sort array, fire event 0x328A, recalculate, 402B  /* win:poisoned (no Windows counterpart) */
@@ -1372,7 +1372,7 @@ namespace funcs {
     // 2nd-vtable@+0x18, u32 ruler_id@+0x20 (FULL engine id), u32 title_id@+0x24. Type-id 0x2cc0.
     constexpr uintptr_t CREATE_TITLE_CMD_VTABLE    = 0x3f422c8;  // HIGH: primary vtable @cmd[0] (image 0xbd98588 − 0x100000). vt[7]=IsValid(FUN_067cacf0), vt[9]=clone/prepare(FUN_067da3f0).  /* win:win_rva funcs::CREATE_TITLE_CMD_VTABLE (same name) */
     constexpr uintptr_t CREATE_TITLE_CMD_VTABLE2   = 0x3f42360;  // HIGH: secondary vtable @cmd+0x18 (image 0xbd98640 − 0x100000).  /* win:win_rva funcs::CREATE_TITLE_CMD_VTABLE2 (same name) */
-    constexpr uintptr_t CREATE_TITLE_CMD_VALIDATE  = 0x2876be0;  // HIGH: vt[7] IsValid(cmd, std::string* why) FUN_067cacf0 — resolves ruler@+0x20 + title@+0x24, cheat-bypass check, then calls CREATE_TITLE_GATE(ruler,title,1,reasons) and appends each reason to *why (std::string::_M_append, as CAddLawCommand's). Returns a C++ `bool`: ONLY AL is the verdict (call it through bridge::EngineBoolFn). L14 S3 (2026-10-30): bits 8..63 of RAX are left over from CanCreateTitle's last callee, so a refused create read as valid when the bridge tested all of RAX — the UI handler FUN_04de1ac0 tests `al` (objdump 0x4ce1ae2).  /* win:win_rva funcs::CREATE_TITLE_CMD_VALIDATE (same name) */
+    constexpr uintptr_t CREATE_TITLE_CMD_VALIDATE  = 0x2876be0;  // HIGH: vt[7] IsValid(cmd, std::string* why) FUN_067cacf0 — resolves ruler@+0x20 + title@+0x24, cheat-bypass check, then calls CREATE_TITLE_GATE(ruler,title,1,reasons) and appends each reason to *why (std::string::_M_append, as CAddLawCommand's). Returns a C++ `bool`: ONLY AL is the verdict (call it through bridge::EngineBoolFn). (2026-10-30): bits 8..63 of RAX are left over from CanCreateTitle's last callee, so a refused create read as valid when the bridge tested all of RAX — the UI handler FUN_04de1ac0 tests `al` (objdump 0x4ce1ae2).  /* win:win_rva funcs::CREATE_TITLE_CMD_VALIDATE (same name) */
     constexpr uintptr_t CREATE_TITLE_CMD_EXECUTE   = CK3_WIN_UNMAPPED_N(243);  // HIGH: Execute(cmd) FUN_067cabf0 — reached by the command pipeline; resolves ruler+title, calls CREATE_TITLE_APPLY_CORE. (We never call directly; the engine runs it on the command-queue tick.)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CREATE_TITLE_GATE          = CK3_WIN_UNMAPPED_N(244);  // HIGH: CanCreateTitle(ruler,title,flag=1,reasons_out) FUN_0621a500 (image 0x621a500 − 0x100000) — THE gate (de-jure control + not-extant + cost); shared by 5 AI scorers. Legitimate verdict. (Documentation-only; not called directly — reached via the vt[7] IsValid wrapper above.)  /* win:poisoned (no Windows counterpart) */
     // #131 (2026-06-24, re_create_title_dejure_integrity_131.md): the engine gate above
@@ -1390,7 +1390,7 @@ namespace funcs {
     constexpr uintptr_t TITLE_CREATION_BYPASS_OBJ  = CK3_WIN_UNMAPPED_N(249);  // HIGH: g_title_creation_bypass singleton (DAT_0bfd75d0, header = image−0x100000). +0x10 byte = bypass flag (0=off). +0x2c float 0x3f666666 confirms this is the real singleton.  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CREATE_TITLE_APPLY_CORE    = CK3_WIN_UNMAPPED_N(250);  // HIGH: create-title application core FUN_0621b800(ruler,title) (image 0x621b800 − 0x100000) — allocates realm-queue item + grant primitive. Do NOT call directly (bypasses the gate).  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CREATE_TITLE_CMD_CTOR      = CK3_WIN_UNMAPPED_N(251);  // HIGH: real CCreateTitleCommand ctor FUN_067cabb0(cmd,ruler_id,title_id) (image 0x67cabb0 − 0x100000) — CJominiCommandBase_ctor(cmd,0)+stamp both vtables+ruler@+0x20+title@+0x24. Bridge builds the POD inline (byte-identical), but this is the canonical ctor. The canonical dispatcher is FUN_04de1ac0 (the UI "Create Title" handler): ctor → vt[7] IsValid(cmd,NULL) → vt[9] prepare → GAME_COMMAND_DISPATCH(mgr,&out,7,0).  /* win:poisoned (no Windows counterpart) */
-    // L14 S3 (2026-10-30, re_create_title_action.md "L14 S3"): the price of creating a
+    // The price of creating a
     // title, as CanCreateTitle checks it and CreateTitle_Apply charges it. Both functions
     // pick the currency the same way: Character_GetHeirTitleData (GET_HEIR_TITLE_FOR_CHAR)
     // flag GOV_FLAG_TITLE_COST_IN_PIETY set → piety (CREATE_TITLE_PIETY_COST, the gate
@@ -1445,19 +1445,19 @@ namespace funcs {
     // FUN_06b42310 = full CanSend validation (whitelist→precond→can_interact→triggers→custom)
     // Ghidra: InteractionTrySend_Cascade — canonical entry for the 7-slot trigger pipeline;
     // also used by pending_interaction consumer for CanSend re-validation (former
-    // event_weight::CONSUMER_CANSEND; deduped in ck-audit-B).
-    constexpr uintptr_t INTERACTION_TRY_SEND_CASCADE = CK3_WIN_UNMAPPED_N(266);  // HIGH: FUN_06b42310 - 0x100000: full 7-slot trigger pipeline (ck-vqth) (ck-audit-B: renamed from VALIDATE_CAN_SEND_FULL, deduped with CONSUMER_CANSEND)  /* win:poisoned (no Windows counterpart) */
+    // event_weight::CONSUMER_CANSEND; deduped in).
+    constexpr uintptr_t INTERACTION_TRY_SEND_CASCADE = CK3_WIN_UNMAPPED_N(266);  // HIGH: FUN_06b42310 - 0x100000: full 7-slot trigger pipeline (renamed from VALIDATE_CAN_SEND_FULL, deduped with CONSUMER_CANSEND)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t VALIDATE_BASIC_ALIVE       = CK3_WIN_UNMAPPED_N(267);  // FUN_06b41640 - 0x100000: actor+target alive check (char+0x1c8==0) — HIGH  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t VALIDATE_RELATIONSHIP_BLOCK = CK3_WIN_UNMAPPED_N(268); // FUN_067f0e40 - 0x100000: blocking relationship check — HIGH  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t VALIDATE_HOSTILE_GUARD     = CK3_WIN_UNMAPPED_N(269);  // FUN_06b417b0 - 0x100000: hostile interaction permission — MEDIUM  /* win:poisoned (no Windows counterpart) */
-    // ck-jvyj/ck-go1m: NOT a game-state validator (no game-paused / save-in-progress checks).
+    // NOT a game-state validator (no game-paused / save-in-progress checks).
     // Duplicate-interaction guard. Returns 1=proceed, 0=block when an equivalent interaction
     // is already in the active interaction registry (matched by FUN_06b444d0 — 5-field equality
     // on actor/target/type/context). Bypassed entirely when interaction_def+0x2A39 is nonzero.
     // See re/findings/re_game_state_validation_062e5450.md.
     constexpr uintptr_t INTERACTION_HAS_NO_DUPLICATE = CK3_WIN_UNMAPPED_N(270); // HIGH: FUN_062e5450 - 0x100000: duplicate interaction guard  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t INTERACTION_CTX_VALIDATE_SCOPES = CK3_WIN_UNMAPPED_N(271); // FUN_06b3dd60 - 0x100000: rebuild scope paths after manual ctx edits  /* win:poisoned (no Windows counterpart) */
-    // lane l5 (F8, re/findings/re_war.md §2): the two calls INTERACTION_CTX_SET_TARGET makes
+    // The two calls INTERACTION_CTX_SET_TARGET makes
     // after it writes the recipient (decompile of FUN_06b3f140). SCOPE_SETUP(ctx, 1) saves
     // actor/recipient/secondaries and, when the target scope ctx+0x2F0 is non-empty, the
     // `target` scope; then INTERACTION_POPULATE_OPTIONS(ctx) (defined below, same function
@@ -1465,24 +1465,24 @@ namespace funcs {
     // writes a war into the target scope (call_ally / join_war).
     constexpr uintptr_t INTERACTION_CTX_SCOPE_SETUP = 0x2985210;  // HIGH: FUN_06b3f5a0 (INTERACTION_FLAG_RESET_AND_SCOPE_SETUP) - 0x100000; decompile + its 3 callers (SET_TARGET, CTX_RESET, VALIDATE_SCOPES)  /* win:win_rva funcs::INTERACTION_FLAG_RESET_AND_SCOPE_SETUP (comment) */
     constexpr uintptr_t INTERACTION_FINALIZE        = CK3_WIN_UNMAPPED_N(272);  // R23 confirmed: FUN_04dc5ea0 - 0x100000 finalize before wrap  /* win:poisoned (no Windows counterpart) */
-    // ck-ml3y: Ghidra rename maybe_cb_pre_send_dispatch (MEDIUM). NOT a destructor — it's a
+    // Ghidra rename maybe_cb_pre_send_dispatch (MEDIUM). NOT a destructor — it's a
     // pre-send dispatcher reading flags at *(ctx)+0x253c, +0x2a32, +0x2a36 to pick one of three
     // readiness routines (FUN_06b43e70 / FUN_04dc5990 / FUN_04dc5a90). 6 callers.
     constexpr uintptr_t INTERACTION_TRY_SEND        = 0x29887c0;  // R23 confirmed: FUN_06b43eb0 - 0x100000 attempt send  /* win:win_rva funcs::INTERACTION_TRY_SEND (same name) */
     constexpr uintptr_t INTERACTION_TLS_CONSTRUCT   = 0x2983cd0;  // FUN_06b3e970 - 0x100000: construct TLS interaction context  /* win:win_rva funcs::INTERACTION_TLS_CONSTRUCT (same name) */
     constexpr uintptr_t INTERACTION_TLS_DESTRUCTOR  = 0x2983d50;  // FUN_06b3ec30 - 0x100000: TLS context destructor (for __cxa_thread_atexit)  /* win:win_rva funcs::INTERACTION_TLS_DESTRUCTOR (same name) */
-    // ck-ml3y: Ghidra rename InteractionCmd_Destroy. 158 callers — generic CInteractionEvalContext
+    // Ghidra rename InteractionCmd_Destroy. 158 callers — generic CInteractionEvalContext
     // destructor. Tears down: smart-ptr +0x330, dyn-buffer +0x300/+0x308/+0x30c (allocator
     // +0x310), and FUN_038df310 sub-dtors at +0x170 and +0x8. Idempotent in the empty case
     // (null-checks +0x300 and +0x330 before freeing) — safe to call on a freshly-built ctx
     // that hasn't yet been populated by CB_SCOPE_BUILDER.
     constexpr uintptr_t GET_AI_WILL_DO_SCORE       = 0x2988cd0;  // Ghidra-verified FUN_06b441c0 - 0x100000: GetAiWillDoScore(tls_ctx)->int64, 96B. Bytes: 41 56 53 48 81 ec...  /* win:win_rva funcs::GET_AI_WILL_DO_SCORE (same name) */
-    // Marriage/Alliance scoring functions (ck-zaal investigation)
+    // Marriage/Alliance scoring functions (investigation)
     constexpr uintptr_t GET_AI_ACCEPT_SCORE        = 0x2988ae0;  // HIGH: FUN_06b43be0, evaluates ai_accept CModValue at itype+0x1B30; int64 fixed point /100000. It scopes ctx+0x2E8 (the SECONDARY recipient), 10000000 (100.0) when that is -1 or the actor (decompile 2026-10-27; live l10fx5-live-1: 100.0 for every imprison target, several declined) - so it is not the recipient's answer  /* win:win_rva funcs::SEND_CMD_VALUE_TERTIARY (comment) */
     constexpr uintptr_t GET_AI_ACCEPT_NEGOT_SCORE  = 0x2988be0;  // HIGH: FUN_06b43c70, evaluates the CModValue at itype+0x1B90 in the scope of the RECIPIENT (ctx+0x2DC; 10000000 when the recipient is the actor): the recipient's ai_accept, fixed point /100000, the score ACCEPTANCE_DECISION mode 1 decides on (InteractionTrySend_V2's recipient path). Decompile 2026-10-27 (re_imprisonment.md); read by query_interaction_check  /* win:win_rva funcs::SEND_CMD_VALUE_TARGET (comment) */
     constexpr uintptr_t ACCEPTANCE_DECISION        = CK3_WIN_UNMAPPED_N(273);  // HIGH: FUN_06b43820, score->accept/decline decision (ctx, mode, std::string* text). Mode 1 (the recipient, GET_AI_ACCEPT_NEGOT_SCORE): score in [1, 0x98967f] (above 0, below 100.0) with flag itype+0x2a40 -> 1 "maybe", the score being the chance in percent; else flag +0x2a3d set -> 1 "maybe" whatever the score; else the same thresholds (below 1 -> 2 "no", else 0 "yes"). imprison_interaction has +0x2a40 set and +0x2a3d clear: live l10fx5-live-2/3 answered "yes" at 237.61 and 153.5, "maybe" at 71.0 and 50.0 (a "no" is a score at or below 0, by the decompile). Mode 0 (secondary recipient, GET_AI_ACCEPT_SCORE): score in [1, 0x98967f] with the type's flag at itype+0x2a3f (MEDIUM: ai_maybe) -> 1 "maybe" (pre_answer_maybe_key, itype+0x2210); score < 1 -> 2 "no" (+0x21f0); else 0 "yes" (+0x21d0). The text is the pre-answer sentence (decompile 2026-10-27, re_imprisonment.md); read by query_interaction_check  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INTERACTION_TRY_SEND_V2    = CK3_WIN_UNMAPPED_N(274);  // HIGH: FUN_06b43d00, full acceptance pipeline — Ghidra: InteractionTrySend_V2 (ck-audit-B: renamed from ACCEPTANCE_EVALUATION)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CMODVALUE_EVALUATE         = CK3_WIN_UNMAPPED_N(275);  // HIGH: FUN_075713b0, evaluate CModValue (base + modifier chain) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INTERACTION_TRY_SEND_V2    = CK3_WIN_UNMAPPED_N(274);  // HIGH: FUN_06b43d00, full acceptance pipeline — Ghidra: InteractionTrySend_V2 (renamed from ACCEPTANCE_EVALUATION)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CMODVALUE_EVALUATE         = CK3_WIN_UNMAPPED_N(275);  // HIGH: FUN_075713b0, evaluate CModValue (base + modifier chain)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CMODVALUE_EVAL_INNER       = CK3_WIN_UNMAPPED_N(276);  // HIGH: FUN_07571640, inner CModValue loop (accumulator + modifiers)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CSCRIPTEDVALUE_EVALUATE    = CK3_WIN_UNMAPPED_N(277);  // HIGH: FUN_03912c80, evaluate CScriptedValue (factor/add sub-values)  /* win:poisoned (no Windows counterpart) */
     // Modifier type virtual Modify functions (vtable+0x40 dispatches):
@@ -1493,7 +1493,7 @@ namespace funcs {
     // Round 6: Interaction option system (CB options for war, send_options for other interactions)
     // ALL interactions share the same option array at interaction_def+0x2530 (stride 0x7D0).
     // Option entry: +0x000=is_valid, +0x0E0=is_shown, +0x1C0=starts_enabled, +0x3A8=flag name id
-    // (an index into globals::SCOPE_NAME_REGISTRY, not a hash: lane l4, re_interactions.md)
+    // (an index into globals::SCOPE_NAME_REGISTRY, not a hash:, re_interactions.md)
     // Selection state: cmd+0x300=byte_array_ptr, cmd+0x30C=count (1 byte per option, 0/1)
     // interaction_def+0x2A36: 0=multi-select (send_options), non-0=single-select (CB options)
     constexpr uintptr_t INTERACTION_SELECT_OPTION   = CK3_WIN_UNMAPPED_N(282);  // FUN_06b40160 - 0x100000: sets option_data[index]=1, calls ValidateScopes  /* win:poisoned (no Windows counterpart) */
@@ -1503,15 +1503,15 @@ namespace funcs {
     constexpr uintptr_t INTERACTION_TRY_SELECT      = CK3_WIN_UNMAPPED_N(286);  // FUN_06b400d0 - 0x100000: evaluates option trigger at +0xE0, returns bool  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t INTERACTION_POPULATE_OPTIONS = 0x29853e0; // HIGH: FUN_06b3e070 - 0x100000: evaluates the interaction (auto-populates options via trigger evaluation); INTERACTION_CTX_SET_TARGET's tail call (decompile of FUN_06b3f140, re_war.md §2); Windows INTERACTION_EVALUATE  /* win:win_rva funcs::INTERACTION_EVALUATE (comment) */
     constexpr uintptr_t INTERACTION_CHECK_POPULATE  = CK3_WIN_UNMAPPED_N(287);  // FUN_06b3def0 - 0x100000: validates war_target/claimant before populate  /* win:poisoned (no Windows counterpart) */
-    // lane l4 (re/findings/re_interactions.md §3): SetTargetObject(ctx, const SScopeValue* v, char eval)
+    // SetTargetObject(ctx, const SScopeValue* v, char eval)
     // copies the 16-byte scope value into ctx+0x2F0 (interaction_ctx::TARGET_OBJECT) and, when
     // eval != 0, re-runs INTERACTION_FLAG_RESET_AND_SCOPE_SETUP + INTERACTION_EVALUATE, which
     // publish it as scope:target. The title-picking windows (FUN_0484ac80) call it with a
     // title scope value (type 5). HIGH: decompile of FUN_06b3b720 + its caller + the scope
     // setup that reads ctx+0x2F0 into scope key 4 ("target", registry-verified in the dump).
     constexpr uintptr_t INTERACTION_CTX_SET_TARGET_OBJECT = CK3_WIN_UNMAPPED_N(288); // HIGH: FUN_06b3b720 - 0x100000, 39 B  /* win:poisoned (no Windows counterpart) */
-    // ck-e58l.6 — InteractionTrySend_Cost: cost-gate invoked during cascade
-    constexpr uintptr_t INTERACTION_TRY_SEND_COST  = CK3_WIN_UNMAPPED_N(289);  // HIGH: FUN_06b8f740 - 0x100000: CanSend cost gate (gold/prestige/piety/etc.) (ck-e58l.6) (ck-audit-B)  /* win:poisoned (no Windows counterpart) */
+    // InteractionTrySend_Cost: cost-gate invoked during cascade
+    constexpr uintptr_t INTERACTION_TRY_SEND_COST  = CK3_WIN_UNMAPPED_N(289);  // HIGH: FUN_06b8f740 - 0x100000: CanSend cost gate (gold/prestige/piety/etc.)  /* win:poisoned (no Windows counterpart) */
 
     // Round 6: War pipeline details
     constexpr uintptr_t WAR_BUILD_STATE            = 0x1791f50;  // HIGH: build war state (CB + titles), 3351B  /* win:win_rva funcs::AI_CB_SELECTOR (same name) */
@@ -1522,7 +1522,7 @@ namespace funcs {
 
     // Phase 8: CB option + AI war candidate functions
     constexpr uintptr_t INTERACTION_SELECT_CB_OPTION = CK3_WIN_UNMAPPED_N(294); // FUN_06b3f0f0 - 0x100000: writes CB option index to cmd+0x2DC, then PopulateOptions  /* win:poisoned (no Windows counterpart) */
-    // ck-ml3y: Ghidra rename Interaction_SetCBTypeAndEvaluate(ctx, cb_type, do_eval).
+    // Ghidra rename Interaction_SetCBTypeAndEvaluate(ctx, cb_type, do_eval).
     // The inline scope_ctx in AI_CB_EVALUATE_ALL (auStack_12490, ~0x338 bytes) is
     // structurally a stack-allocated CInteractionEvalContext (same destructor).
     // Per-CB ScriptTriggerEvaluator gating uses this fn to point ctx at next CB.
@@ -1613,33 +1613,33 @@ namespace funcs {
     constexpr uintptr_t CULTURE_GET_ID             = CK3_WIN_UNMAPPED_N(329);  // HIGH: fn(game_state, culture_obj) -> culture_id, 58B  /* win:poisoned (no Windows counterpart) */
 
     // Round 13: Culture innovation accessors
-    constexpr uintptr_t CULTURE_GET_KNOWN_INNOVATIONS = CK3_WIN_UNMAPPED_N(330); // HIGH: fn(culture_obj) -> CPdxArray<CCultureInnovation*>*, 8B trivial (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CULTURE_ADD_KNOWN_INNOVATION  = CK3_WIN_UNMAPPED_N(331); // HIGH: fn(culture_obj, innovation_type_ptr), adds to known list (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CULTURE_GET_DISPLAY_NAME      = CK3_WIN_UNMAPPED_N(332); // HIGH: fn(culture_obj) -> std::string* (display name) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INNOVATION_CAN_GAIN_PROGRESS  = CK3_WIN_UNMAPPED_N(333); // HIGH: fn(innovation_type, culture, 0) -> bool (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INNOVATION_LINEAR_SEARCH      = CK3_WIN_UNMAPPED_N(334); // HIGH: fn(begin, end, target) -> iterator (4x unrolled) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INNOVATION_READINIT           = CK3_WIN_UNMAPPED_N(335); // HIGH: CCultureInnovationType ReadInit parser, 1346B (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INNOVATION_VALIDATE           = CK3_WIN_UNMAPPED_N(336); // HIGH: CCultureInnovationType PostReadInit validation (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CULTURE_GET_KNOWN_INNOVATIONS = CK3_WIN_UNMAPPED_N(330); // HIGH: fn(culture_obj) -> CPdxArray<CCultureInnovation*>*, 8B trivial  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CULTURE_ADD_KNOWN_INNOVATION  = CK3_WIN_UNMAPPED_N(331); // HIGH: fn(culture_obj, innovation_type_ptr), adds to known list  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CULTURE_GET_DISPLAY_NAME      = CK3_WIN_UNMAPPED_N(332); // HIGH: fn(culture_obj) -> std::string* (display name)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INNOVATION_CAN_GAIN_PROGRESS  = CK3_WIN_UNMAPPED_N(333); // HIGH: fn(innovation_type, culture, 0) -> bool  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INNOVATION_LINEAR_SEARCH      = CK3_WIN_UNMAPPED_N(334); // HIGH: fn(begin, end, target) -> iterator (4x unrolled)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INNOVATION_READINIT           = CK3_WIN_UNMAPPED_N(335); // HIGH: CCultureInnovationType ReadInit parser, 1346B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INNOVATION_VALIDATE           = CK3_WIN_UNMAPPED_N(336); // HIGH: CCultureInnovationType PostReadInit validation  /* win:poisoned (no Windows counterpart) */
 
     // Round 14: Innovation progress functions
-    constexpr uintptr_t ADD_SPREAD_PROGRESS           = CK3_WIN_UNMAPPED_N(337); // HIGH: fn(innov_inst, amount) adds to inst+0x18, caps at 10M (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ADD_FASCINATION_PROGRESS      = CK3_WIN_UNMAPPED_N(338); // HIGH: fn(era_entry, amount) adds to era+0x28, caps at 10M (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CULTURE_ADD_INNOV_PROGRESS    = CK3_WIN_UNMAPPED_N(339); // HIGH: fn(culture, innov_type, amount) indexes culture+0x5D0 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CULTURE_ADD_FASCIN_PROGRESS   = CK3_WIN_UNMAPPED_N(340); // HIGH: fn(culture, amount, year) adds fascination via era array (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ON_INNOVATION_COMPLETED       = CK3_WIN_UNMAPPED_N(341); // HIGH: fn(culture, innov_inst, flag) moves to known list (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MONTHLY_INNOVATION_TICK       = CK3_WIN_UNMAPPED_N(342); // HIGH: fn(tick_ctx, date_ptr) main monthly handler (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CALC_SPREAD_PROGRESS          = CK3_WIN_UNMAPPED_N(343); // HIGH: fn(innov_inst, debug) -> bool, research speed formula (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INNOVATION_GET_TYPE           = CK3_WIN_UNMAPPED_N(344); // HIGH: fn(innov_inst) -> CCultureInnovationType*, 8B trivial (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ADD_SPREAD_PROGRESS           = CK3_WIN_UNMAPPED_N(337); // HIGH: fn(innov_inst, amount) adds to inst+0x18, caps at 10M  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ADD_FASCINATION_PROGRESS      = CK3_WIN_UNMAPPED_N(338); // HIGH: fn(era_entry, amount) adds to era+0x28, caps at 10M  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CULTURE_ADD_INNOV_PROGRESS    = CK3_WIN_UNMAPPED_N(339); // HIGH: fn(culture, innov_type, amount) indexes culture+0x5D0  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CULTURE_ADD_FASCIN_PROGRESS   = CK3_WIN_UNMAPPED_N(340); // HIGH: fn(culture, amount, year) adds fascination via era array  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ON_INNOVATION_COMPLETED       = CK3_WIN_UNMAPPED_N(341); // HIGH: fn(culture, innov_inst, flag) moves to known list  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MONTHLY_INNOVATION_TICK       = CK3_WIN_UNMAPPED_N(342); // HIGH: fn(tick_ctx, date_ptr) main monthly handler  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CALC_SPREAD_PROGRESS          = CK3_WIN_UNMAPPED_N(343); // HIGH: fn(innov_inst, debug) -> bool, research speed formula  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INNOVATION_GET_TYPE           = CK3_WIN_UNMAPPED_N(344); // HIGH: fn(innov_inst) -> CCultureInnovationType*, 8B trivial  /* win:poisoned (no Windows counterpart) */
 
     // Round 13: Faith system functions
-    constexpr uintptr_t FAITH_ADD_DOCTRINE            = CK3_WIN_UNMAPPED_N(345); // HIGH: AddDoctrine(faith, doctrine), logs "already has doctrine" (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t FAITH_REMOVE_DOCTRINE         = CK3_WIN_UNMAPPED_N(346); // HIGH: RemoveDoctrine(faith, doctrine), logs "doesn't have" (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t FAITH_LOOKUP_BY_NAME          = CK3_WIN_UNMAPPED_N(347); // HIGH: faith name lookup, 55B (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CMD_ADD_DOCTRINE              = 0xe0bf90; // HIGH: add_doctrine console handler (ck-e58l.20)  /* win:win_rva funcs::CMD_ADD_DOCTRINE (same name) */
-    constexpr uintptr_t CMD_CHANGE_FERVOR             = CK3_WIN_UNMAPPED_N(348); // HIGH: change_fervor console handler (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CHANGE_FERVOR                = CK3_WIN_UNMAPPED_N(349); // HIGH: ChangeFervor(faith, delta, ctx) — R14 decompile-verified (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_CHAR_FAITH_ID            = CK3_WIN_UNMAPPED_N(350); // HIGH: trivial getter → char+0xB4 (FAITH_ID_DIRECT) — R14 decompile (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_DOCTRINE_MODIFIER        = CK3_WIN_UNMAPPED_N(351); // MED: GetDoctrineModifier(container, key, default) — R14 decompile context (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t FAITH_ADD_DOCTRINE            = CK3_WIN_UNMAPPED_N(345); // HIGH: AddDoctrine(faith, doctrine), logs "already has doctrine"  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t FAITH_REMOVE_DOCTRINE         = CK3_WIN_UNMAPPED_N(346); // HIGH: RemoveDoctrine(faith, doctrine), logs "doesn't have"  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t FAITH_LOOKUP_BY_NAME          = CK3_WIN_UNMAPPED_N(347); // HIGH: faith name lookup, 55B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CMD_ADD_DOCTRINE              = 0xe0bf90; // HIGH: add_doctrine console handler  /* win:win_rva funcs::CMD_ADD_DOCTRINE (same name) */
+    constexpr uintptr_t CMD_CHANGE_FERVOR             = CK3_WIN_UNMAPPED_N(348); // HIGH: change_fervor console handler  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHANGE_FERVOR                = CK3_WIN_UNMAPPED_N(349); // HIGH: ChangeFervor(faith, delta, ctx) — R14 decompile-verified  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_CHAR_FAITH_ID            = CK3_WIN_UNMAPPED_N(350); // HIGH: trivial getter → char+0xB4 (FAITH_ID_DIRECT) — R14 decompile  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_DOCTRINE_MODIFIER        = CK3_WIN_UNMAPPED_N(351); // MED: GetDoctrineModifier(container, key, default) — R14 decompile context  /* win:poisoned (no Windows counterpart) */
 
     // Faith reform / doctrine-change write path (re_faith_reform_doctrine.md)
     // set_doctrine is the implementable "change tenets/doctrines" play. The
@@ -1716,7 +1716,7 @@ namespace funcs {
     constexpr uintptr_t BUILD_SEND_CMD_FROM_BUF    = CK3_WIN_RECIPE(23);  // FUN_0619b410 - 0x100000  /* win:recipe recipes.inc #23 */
 
     // Round 6b: Army system functions. ARMY_RAISE_ALL / _INNER / _ALL_WRAPPER were
-    // deleted with raise_armies (cleanup 2026.11): RaiseAllArmiesCore is the
+    // deleted with raise_armies: RaiseAllArmiesCore is the
     // raise-all button's availability check, not the raise (re_raise_armies.md).
     constexpr uintptr_t ARMY_DISBAND               = CK3_WIN_UNMAPPED_N(365);  // HIGH: army disband core (4248B, full validation)  /* win:poisoned (no Windows counterpart) */
     // #96 Norse raiding (re_raid_system.md): the player-driven "toggle raiding on
@@ -1733,7 +1733,7 @@ namespace funcs {
     // raid INTENT index (0 = default toggle-raiding; the iStack_12c==2 branch
     // takes a different path, so pass 0). Bounded: one loop over the realm's
     // armies, validator-gated dispatch — safe no-op for an ineligible ruler.
-    // The deleted raise_raiders (cleanup 2026.11) called it under a
+    // The deleted raise_raiders called it under a
     // g_PlayerCharacterID swap; no code reads it now. (re_raid_system.md, #96)
     constexpr uintptr_t ARMY_TOGGLE_RAIDING_DISPATCH = CK3_WIN_UNMAPPED_N(366); // HIGH: raise-all-raiders / toggle-raiding command dispatch (player-global driven, validator-gated)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ARMY_IS_RETREATING         = CK3_WIN_RECIPE(10);  // HIGH: bool(army) — return *(army+0x16c)!=0, 11B  /* win:recipe recipes.inc #10 */
@@ -1742,7 +1742,7 @@ namespace funcs {
     constexpr uintptr_t ARMY_GET_COMMANDER         = CK3_WIN_UNMAPPED_N(368);  // HIGH: GetCommander, 66B  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ARMY_ENUM_SUB              = CK3_WIN_RECIPE(15);  // HIGH: fn(GAME_STATE_ROOT) → sub-object with army ID array  /* win:recipe recipes.inc #15 */
     constexpr uintptr_t ARMY_CHECK_ENEMIES_NEARBY  = CK3_WIN_UNMAPPED_N(369);  // HIGH: check enemies nearby, 317B  /* win:poisoned (no Windows counterpart) */
-    // L2 RE (this session): FUN_0634e600 is NOT a mobilizer — it is a read-only
+    // RE (this session): FUN_0634e600 is NOT a mobilizer — it is a read-only
     // UI-availability boolean predicate (raise-button enable). Args:
     // (CCharacter*, listData, holdingsList[+0xc=count], mode, out_vecA, out_vecB);
     // out vecs null => no mutation. Recorded as a predicate, never call as a raise.
@@ -1756,7 +1756,7 @@ namespace funcs {
     // (re_raid_system.md, live-verified in core dump). Army-relative offsets
     // (ARMY_DB=0x0bed7670). The toggle dispatch (ARMY_TOGGLE_RAIDING_DISPATCH
     // above) flips ARMY_IS_RAIDING natively.
-    // ARMY_LOCATION_PROV (0xec) — REMOVED 2026-09-13 (ck-meu5). REFUTED.
+    // ARMY_LOCATION_PROV (0xec) — REMOVED 2026-09-13. REFUTED.
     // 0xec is army_obj::OWNER_LINK_ID and always was: across 32 live armies in
     // william_1066_baseline.core its value is SEQUENTIAL WITH THE ARMY'S OWN DB
     // INDEX (0x0,0x1,...,0x1000005,...), (v & 0xffffff) == index for 32/32.
@@ -1846,7 +1846,7 @@ namespace funcs {
     // re/findings/re_building_construction.md (DISPATCH PATH RESOLVED).
     // ── The scripted-effect builders (CAddBuildingEffect's apply), a record only ──
     // The effect path the game's scripts use builds at once and for free; the bridge
-    // no longer calls it (lane l6, cleanup 2026.11: a build is the player's command
+    // no longer calls it (a build is the player's command
     // above). Its leaf functions below start a construction in the slot container
     // (province+0x1F8): the construction's state is building_slots (CONSTRUCTING 0x70
     // and the fields after it).
@@ -1876,7 +1876,7 @@ namespace funcs {
     constexpr uintptr_t ADD_CONSTRUCTION_CTOR      = CK3_WIN_UNMAPPED_N(391);  // HIGH: FUN_06133610 CAddConstructionCommand ctor(cmd,actor,loc,slot,bt_ref)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ADD_CONSTRUCTION_VALIDITY  = CK3_WIN_UNMAPPED_N(392);  // HIGH: FUN_06133800(cmd, std::string* why) can-build check (safe, no mutation)  /* win:poisoned (no Windows counterpart) */
     // The command's player path, as the game runs it when the order drains
-    // (cleanup 2026.11, lane l6; decompile of image 0x6133660, xref of the start
+    // (decompile of image 0x6133660, xref of the start
     // FUN_0611d9b0 next to the ctor and the validity):
     //   province = gamestate provinces[*(u32)(cmd+0x24)]   (+0x24 is a PROVINCE id,
     //              province_template::PROVINCE_ID, not a barony title id)
@@ -1948,7 +1948,7 @@ namespace funcs {
     // (FUN_05c83430) passes. scope_buf = COUNCIL_TASK_SCOPE_PREP(buf, ctxB, ctxA, target).
     constexpr uintptr_t COUNCIL_TASK_STORE         = CK3_WIN_UNMAPPED_N(409);  // HIGH: FUN_05cc8660 (VA 0x5cc8660-0x100000) → FUN_05cc9970 store  /* win:poisoned (no Windows counterpart) */
 
-    // ── THE NATIVE COUNCIL-TASK AI PASS (lane COUNCILRE, re/findings/re_council_ai.md) ──
+    // ── THE NATIVE COUNCIL-TASK AI PASS (re/findings/re_council_ai.md) ──
     // CAIManager::PostExecute (AI_MANAGER_POST_EXECUTE) -> FUN_04ded5f0 (bucket 3:
     // ai_mgr+0x138, one CAIStrategy per ruler whose ext+0x274 countdown ran out)
     // -> FUN_04d89360(CAIStrategy* ai, p2), the per-character subsystem dispatcher
@@ -1979,7 +1979,7 @@ namespace funcs {
     // sub rsp,0xe8 (17 bytes, no RIP-relative). HIGH (decompile + caller + dump).
     constexpr uintptr_t AI_COUNCIL_TASK_SELECT_FOR_POSITION = CK3_WIN_UNMAPPED_N(411);  // HIGH: FUN_04dc9fc0 per-seat council-task AI selection (VA 0x4dc9fc0-0x100000)  /* win:poisoned (no Windows counterpart) */
 
-    // ── COUNCIL APPOINT (L29: seat/replace a councillor, fill a vacant seat) ──
+    // ── COUNCIL APPOINT (seat/replace a councillor, fill a vacant seat) ──
     // re/findings/re_appoint_councillor.md (2026-06-18). The WRITE TARGET and the
     // POSITION RESOLUTION are SOLID (reuse do_set_council_task / do_query_council).
     // The native MUTATOR Execute entry is class-identified but NOT byte-pinned this
@@ -2107,27 +2107,27 @@ namespace funcs {
     constexpr uintptr_t ASSIGN_OBLIGATION          = CK3_WIN_UNMAPPED_N(436);  // MISNAMED: stores param_2 at param_1+0x38 after validity check  /* win:poisoned (no Windows counterpart) */
 
     // Vassal contract: verified functions (from serializer/vtable decompilation)
-    constexpr uintptr_t CONTRACT_DESTRUCTOR        = CK3_WIN_UNMAPPED_N(437);  // HIGH: CSubjectContract::~CSubjectContract (vfunc[0]) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CONTRACT_DESERIALIZE       = CK3_WIN_UNMAPPED_N(438);  // HIGH: CSubjectContract deserialization (vfunc[3]) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CONTRACT_SERIALIZE         = CK3_WIN_UNMAPPED_N(439);  // HIGH: CSubjectContract serialization (vfunc[4]) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CONTRACT_CHANGE_EXECUTE    = CK3_WIN_UNMAPPED_N(440);  // HIGH: CVassalContractChange::Execute (named in Ghidra) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_DESTRUCTOR        = CK3_WIN_UNMAPPED_N(437);  // HIGH: CSubjectContract::~CSubjectContract (vfunc[0])  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_DESERIALIZE       = CK3_WIN_UNMAPPED_N(438);  // HIGH: CSubjectContract deserialization (vfunc[3])  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_SERIALIZE         = CK3_WIN_UNMAPPED_N(439);  // HIGH: CSubjectContract serialization (vfunc[4])  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_CHANGE_EXECUTE    = CK3_WIN_UNMAPPED_N(440);  // HIGH: CVassalContractChange::Execute (named in Ghidra)  /* win:poisoned (no Windows counterpart) */
 
-    // Vassal contract negotiation scoring (from ck-x91l investigation)
+    // Vassal contract negotiation scoring (from investigation)
     // See: re/findings/re_vassal_contract_scoring.md for full analysis
-    constexpr uintptr_t CONTRACT_MGR_TICK           = CK3_WIN_UNMAPPED_N(441);  // HIGH: ContractManager tick, processes all contracts (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CONTRACT_MGR_EVAL_LIEGE     = CK3_WIN_UNMAPPED_N(442);  // HIGH: AI liege evaluates whether to modify contracts (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CONTRACT_MGR_EVAL_SUBJECT   = CK3_WIN_UNMAPPED_N(443);  // MEDIUM: AI subject evaluates modifications (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CONTRACT_ENTRY_PROCESS      = CK3_WIN_UNMAPPED_N(444);  // HIGH: per-contract 8-step change pipeline (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CONTRACT_ENTRY_VALIDATE     = CK3_WIN_UNMAPPED_N(445);  // HIGH: pre-change validation, returns 0/1/2 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CONTRACT_AI_ACCEPTANCE      = CK3_WIN_UNMAPPED_N(446);  // HIGH: AI acceptance eval: 0=reject,1=accept,2=force (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t COMPUTE_OBLIGATION_DESIRE   = CK3_WIN_UNMAPPED_N(447);  // HIGH: core scoring fn, returns fixed-point 100000 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_MGR_TICK           = CK3_WIN_UNMAPPED_N(441);  // HIGH: ContractManager tick, processes all contracts  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_MGR_EVAL_LIEGE     = CK3_WIN_UNMAPPED_N(442);  // HIGH: AI liege evaluates whether to modify contracts  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_MGR_EVAL_SUBJECT   = CK3_WIN_UNMAPPED_N(443);  // MEDIUM: AI subject evaluates modifications  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_ENTRY_PROCESS      = CK3_WIN_UNMAPPED_N(444);  // HIGH: per-contract 8-step change pipeline  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_ENTRY_VALIDATE     = CK3_WIN_UNMAPPED_N(445);  // HIGH: pre-change validation, returns 0/1/2  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CONTRACT_AI_ACCEPTANCE      = CK3_WIN_UNMAPPED_N(446);  // HIGH: AI acceptance eval: 0=reject,1=accept,2=force  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COMPUTE_OBLIGATION_DESIRE   = CK3_WIN_UNMAPPED_N(447);  // HIGH: core scoring fn, returns fixed-point 100000  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t FILL_CATEGORY_SCORES        = CK3_WIN_UNMAPPED_N(448);  // HIGH: fills 8-category scoring arrays  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t COLLECT_VASSAL_SCORING      = CK3_WIN_UNMAPPED_N(449);  // HIGH: per-vassal scoring data (hooks/military/dread) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_CATEGORY_VALUE          = CK3_WIN_UNMAPPED_N(450);  // HIGH: primary obligation value per category (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_CATEGORY_BASE_MOD       = CK3_WIN_UNMAPPED_N(451);  // HIGH: base modifier per category (int32) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_CATEGORY_HOOK_MAX       = CK3_WIN_UNMAPPED_N(452);  // HIGH: hook leverage cap per category (×100000) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_CATEGORY_MIN_VALUE      = CK3_WIN_UNMAPPED_N(453);  // HIGH: floor value per category (×100000) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_HOOK_TYPE               = CK3_WIN_UNMAPPED_N(454);  // HIGH: hook type: 0=none,1=weak,3=strong,8=blocked (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COLLECT_VASSAL_SCORING      = CK3_WIN_UNMAPPED_N(449);  // HIGH: per-vassal scoring data (hooks/military/dread)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_CATEGORY_VALUE          = CK3_WIN_UNMAPPED_N(450);  // HIGH: primary obligation value per category  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_CATEGORY_BASE_MOD       = CK3_WIN_UNMAPPED_N(451);  // HIGH: base modifier per category (int32)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_CATEGORY_HOOK_MAX       = CK3_WIN_UNMAPPED_N(452);  // HIGH: hook leverage cap per category (×100000)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_CATEGORY_MIN_VALUE      = CK3_WIN_UNMAPPED_N(453);  // HIGH: floor value per category (×100000)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_HOOK_TYPE               = CK3_WIN_UNMAPPED_N(454);  // HIGH: hook type: 0=none,1=weak,3=strong,8=blocked  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t COMPARE_CONTRACT_TARGET     = CK3_WIN_UNMAPPED_N(455);  // HIGH: opinion-based contract target comparison  /* win:poisoned (no Windows counterpart) */
 
     // ── Move-realm-capital command (ck modify-vassal-contract+move-capital lane, 20260618) ──
@@ -2161,8 +2161,8 @@ namespace funcs {
     // Round 7: Vitals
     constexpr uintptr_t GET_AGE                    = CK3_WIN_RECIPE(0);  // HIGH: GetAge(char) -> int16, age in years (R22 confirmed)  /* win:recipe recipes.inc #0 */
     constexpr uintptr_t IS_ADULT                   = CK3_WIN_UNMAPPED_N(464);  // HIGH: IsAdult(char) -> bool (R22 confirmed)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_STRESS                 = CK3_WIN_UNMAPPED_N(465);  // HIGH: 22B, reads core+0x2F8 (corrected from 0x0664b790) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ADD_STRESS                 = CK3_WIN_UNMAPPED_N(466);  // HIGH: 1032B, (char, delta, apply_mods) (corrected from 0x06679080) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_STRESS                 = CK3_WIN_UNMAPPED_N(465);  // HIGH: 22B, reads core+0x2F8 (corrected from 0x0664b790)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ADD_STRESS                 = CK3_WIN_UNMAPPED_N(466);  // HIGH: 1032B, (char, delta, apply_mods) (corrected from 0x06679080)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t GET_DREAD                  = CK3_WIN_UNMAPPED_N(467);  // HIGH: 23B, reads ruler+0x350  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ADD_DREAD                  = CK3_WIN_UNMAPPED_N(468);  // HIGH: 262B, (char, delta)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t SET_DREAD                  = CK3_WIN_UNMAPPED_N(469);  // HIGH: 67B, direct set  /* win:poisoned (no Windows counterpart) */
@@ -2212,7 +2212,7 @@ namespace funcs {
     constexpr uintptr_t VALIDATE_SCHEME_TARGET     = CK3_WIN_UNMAPPED_N(486);  // HIGH: 291B, switch on target_type (R10-8)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t SCHEME_REFDB_LOOKUP        = CK3_WIN_UNMAPPED_N(487);  // HIGH: 58B, cleanest RefDB accessor (R10-8)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t SCHEME_TYPE_NAME_ACCESSOR  = CK3_WIN_UNMAPPED_N(488);  // HIGH: 152B, CSchemeType name from "game_scheme_type_struct" (R10-8)  /* win:poisoned (no Windows counterpart) */
-    // lane l3-schemes 2026-10-20 (re/findings/re_schemes.md §2): the engine's own
+    // 2026-10-20 (re/findings/re_schemes.md §2): the engine's own
     // "can OWNER start scheme TYPE on TARGET", the body of the script trigger
     // can_start_scheme (CCanStartSchemeTrigger vtable image 0x0baea1a8, slot 0xd0
     // FUN_052d04f0 -> FUN_06cb5bc0 -> here).
@@ -2239,16 +2239,16 @@ namespace funcs {
     // recomputed (FUN_063aa2f0). HIGH: decompile x2.
     constexpr uintptr_t SCHEME_GET_SUCCESS_CHANCE  = CK3_WIN_UNMAPPED_N(490);  // HIGH: 140B, FUN_063aa260  /* win:poisoned (no Windows counterpart) */
 
-    // Scheme success probability (ck-1nab investigation)
-    constexpr uintptr_t SCHEME_COMPUTE_SUCCESS_TRIPLE  = CK3_WIN_UNMAPPED_N(491);  // HIGH: inner (base,growth,max) formula, 5210B (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCHEME_COMPUTE_SUCCESS_CHANCE  = CK3_WIN_UNMAPPED_N(492);  // HIGH: inner success chance %, 1653B (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCHEME_EVAL_AGENT_CONTRIBUTION = CK3_WIN_UNMAPPED_N(493);  // HIGH: agent modifier by type, 628B (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCHEME_EVAL_SCRIPTED_MOD       = CK3_WIN_UNMAPPED_N(494);  // HIGH: scripted modifier evaluator (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    // Scheme success probability (investigation)
+    constexpr uintptr_t SCHEME_COMPUTE_SUCCESS_TRIPLE  = CK3_WIN_UNMAPPED_N(491);  // HIGH: inner (base,growth,max) formula, 5210B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCHEME_COMPUTE_SUCCESS_CHANCE  = CK3_WIN_UNMAPPED_N(492);  // HIGH: inner success chance %, 1653B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCHEME_EVAL_AGENT_CONTRIBUTION = CK3_WIN_UNMAPPED_N(493);  // HIGH: agent modifier by type, 628B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCHEME_EVAL_SCRIPTED_MOD       = CK3_WIN_UNMAPPED_N(494);  // HIGH: scripted modifier evaluator  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t SCHEME_EVAL_CHAR_CULTURE_MOD   = CK3_WIN_UNMAPPED_N(495);  // HIGH: character/culture modifier evaluator  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCHEME_EVAL_MODIFIER_TREE      = CK3_WIN_UNMAPPED_N(496);  // HIGH: modifier definition block evaluator (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCHEME_EVAL_TYPE_BASE          = CK3_WIN_UNMAPPED_N(497);  // HIGH: scheme type base value evaluator (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCHEME_EVAL_CHAR_SKILL         = CK3_WIN_UNMAPPED_N(498);  // HIGH: character skill for growth (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCHEME_CHECK_GAME_RULE         = CK3_WIN_UNMAPPED_N(499);  // HIGH: game rule flag check (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCHEME_EVAL_MODIFIER_TREE      = CK3_WIN_UNMAPPED_N(496);  // HIGH: modifier definition block evaluator  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCHEME_EVAL_TYPE_BASE          = CK3_WIN_UNMAPPED_N(497);  // HIGH: scheme type base value evaluator  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCHEME_EVAL_CHAR_SKILL         = CK3_WIN_UNMAPPED_N(498);  // HIGH: character skill for growth  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCHEME_CHECK_GAME_RULE         = CK3_WIN_UNMAPPED_N(499);  // HIGH: game rule flag check  /* win:poisoned (no Windows counterpart) */
 
     // Scheme success globals (base-relative, core dump validated)
     constexpr uintptr_t SCHEME_GROWTH_FLOOR            = CK3_WIN_UNMAPPED_N(500);  // HIGH: int64=100000 (1.0/day min growth)  /* win:poisoned (no Windows counterpart) */
@@ -2283,27 +2283,27 @@ namespace funcs {
     constexpr uintptr_t SET_FOCUS_APPLY            = CK3_WIN_UNMAPPED_N(515);  // HIGH: SET_FOCUS_APPLY(char*, focus_obj*) — 2-arg, resolved 20260612  /* win:poisoned (no Windows counterpart) */
 
     // Development pipeline functions
-    constexpr uintptr_t DEV_MONTHLY_TICK           = CK3_WIN_UNMAPPED_N(516);  // HIGH: monthly dev tick — iterates all counties, calc + apply (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t DEV_CALC_GROWTH            = CK3_WIN_UNMAPPED_N(517);  // HIGH: CalcMonthlyDevelopmentGrowth(county_data, breakdown) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t DEV_MONTHLY_TICK           = CK3_WIN_UNMAPPED_N(516);  // HIGH: monthly dev tick — iterates all counties, calc + apply  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t DEV_CALC_GROWTH            = CK3_WIN_UNMAPPED_N(517);  // HIGH: CalcMonthlyDevelopmentGrowth(county_data, breakdown)  /* win:poisoned (no Windows counterpart) */
                                                                    //   computes spread from neighbors + modifier 0x1e9/0x1ea/0x1eb
-    constexpr uintptr_t DEV_APPLY_PROGRESS         = CK3_WIN_UNMAPPED_N(518);  // HIGH: ApplyDevelopmentProgress(county_data, growth_fp) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t DEV_APPLY_PROGRESS         = CK3_WIN_UNMAPPED_N(518);  // HIGH: ApplyDevelopmentProgress(county_data, growth_fp)  /* win:poisoned (no Windows counterpart) */
                                                                    //   accumulates +0x218, triggers level-up at 10M, resets to 0
-    constexpr uintptr_t COUNTY_SERIALIZE           = CK3_WIN_UNMAPPED_N(519);  // HIGH: CCountyData save (writes tagged fields) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t COUNTY_DESERIALIZE         = CK3_WIN_UNMAPPED_N(520);  // HIGH: CCountyData load (reads tagged fields) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COUNTY_SERIALIZE           = CK3_WIN_UNMAPPED_N(519);  // HIGH: CCountyData save (writes tagged fields)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COUNTY_DESERIALIZE         = CK3_WIN_UNMAPPED_N(520);  // HIGH: CCountyData load (reads tagged fields)  /* win:poisoned (no Windows counterpart) */
 
-    // County conversion functions (ck-pj01)
-    constexpr uintptr_t SET_COUNTY_FAITH           = CK3_WIN_UNMAPPED_N(521);  // HIGH: SetCountyFaith(county, faith, update_flag) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    // County conversion functions
+    constexpr uintptr_t SET_COUNTY_FAITH           = CK3_WIN_UNMAPPED_N(521);  // HIGH: SetCountyFaith(county, faith, update_flag)  /* win:poisoned (no Windows counterpart) */
                                                                    //   Writes county+0x208, updates faith+0x4c8 follower counts
                                                                    //   Handles religion tracking when crossing religion boundaries
-    constexpr uintptr_t SET_COUNTY_FAITH_PUB       = CK3_WIN_UNMAPPED_N(522);  // HIGH: wrapper — calls core + event dispatch (on_faith_conversion) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SET_COUNTY_CULTURE         = CK3_WIN_UNMAPPED_N(523);  // HIGH: SetCountyCulture(county, culture, update_flag) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SET_COUNTY_FAITH_PUB       = CK3_WIN_UNMAPPED_N(522);  // HIGH: wrapper — calls core + event dispatch (on_faith_conversion)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SET_COUNTY_CULTURE         = CK3_WIN_UNMAPPED_N(523);  // HIGH: SetCountyCulture(county, culture, update_flag)  /* win:poisoned (no Windows counterpart) */
                                                                    //   Writes county+0x20C, updates culture county tracking
-    constexpr uintptr_t SET_COUNTY_CULTURE_PUB     = CK3_WIN_UNMAPPED_N(524);  // HIGH: wrapper — calls core + event dispatch (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t FAITH_ADD_COUNTY_FOLLOWERS = CK3_WIN_UNMAPPED_N(525);  // HIGH: faith+0x4c8 += delta (trivial 6B function) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CULTURE_REMOVE_COUNTY      = CK3_WIN_UNMAPPED_N(526);  // HIGH: remove county from culture's county list (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CULTURE_ADD_COUNTY         = CK3_WIN_UNMAPPED_N(527);  // HIGH: add county to culture's county list (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t RELIGION_REMOVE_COUNTY     = CK3_WIN_UNMAPPED_N(528);  // HIGH: remove county from religion's county tracking (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t RELIGION_ADD_COUNTY        = CK3_WIN_UNMAPPED_N(529);  // HIGH: add county to religion's county tracking (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SET_COUNTY_CULTURE_PUB     = CK3_WIN_UNMAPPED_N(524);  // HIGH: wrapper — calls core + event dispatch  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t FAITH_ADD_COUNTY_FOLLOWERS = CK3_WIN_UNMAPPED_N(525);  // HIGH: faith+0x4c8 += delta (trivial 6B function)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CULTURE_REMOVE_COUNTY      = CK3_WIN_UNMAPPED_N(526);  // HIGH: remove county from culture's county list  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CULTURE_ADD_COUNTY         = CK3_WIN_UNMAPPED_N(527);  // HIGH: add county to culture's county list  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t RELIGION_REMOVE_COUNTY     = CK3_WIN_UNMAPPED_N(528);  // HIGH: remove county from religion's county tracking  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t RELIGION_ADD_COUNTY        = CK3_WIN_UNMAPPED_N(529);  // HIGH: add county to religion's county tracking  /* win:poisoned (no Windows counterpart) */
 
     // Round 10: Income calculators
     constexpr uintptr_t INCOME_DOMAIN_CALC         = CK3_WIN_UNMAPPED_N(530);  // HIGH: domain income calculator  /* win:poisoned (no Windows counterpart) */
@@ -2338,20 +2338,20 @@ namespace funcs {
     constexpr uintptr_t CB_FILTER_BY_RELATION      = 0x2d38780;  // HIGH: FilterByAttackerRelation — vassal-only CB detection  /* win:win_rva funcs::AI_CB_TITLE_RELATION_MODE (same name) */
     constexpr uintptr_t CB_VALIDATE_TARGET_CLAIM   = CK3_WIN_UNMAPPED_N(544);  // HIGH: ValidateTargetClaim — evaluates can_use trigger at cb+0x578  /* win:poisoned (no Windows counterpart) */
 
-    // ck-e58l.3: has_any_display_cb_on script trigger — "any CB passes" entry-point
+    // Has_any_display_cb_on script trigger — "any CB passes" entry-point
     constexpr uintptr_t HAS_ANY_DISPLAY_CB_ON_EVAL = CK3_WIN_UNMAPPED_N(545);  // HIGH: evaluator (vtbl+0xD0 of trigger-instance vtable 0x0bb40620)  /* win:poisoned (no Windows counterpart) */
-    // ck-e58l.3: has_any_display_cb_on outer evaluator (cascade entry from script-trigger dispatch)
-    constexpr uintptr_t HAS_ANY_DISPLAY_CB_EVALUATOR = CK3_WIN_UNMAPPED_N(546);  // HIGH: FUN_054092b0 - 0x100000: outer has_any_display_cb_on dispatch (ck-e58l.3) (ck-audit-B)  /* win:poisoned (no Windows counterpart) */
+    // Has_any_display_cb_on outer evaluator (cascade entry from script-trigger dispatch)
+    constexpr uintptr_t HAS_ANY_DISPLAY_CB_EVALUATOR = CK3_WIN_UNMAPPED_N(546);  // HIGH: FUN_054092b0 - 0x100000: outer has_any_display_cb_on dispatch  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CB_ANY_OR_ENUMERATE_BY_ID  = CK3_WIN_UNMAPPED_N(547);  // HIGH: id→ptr wrapper, forces out_list=NULL (126B)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CB_CASCADE                 = CK3_WIN_UNMAPPED_N(548);  // HIGH: full CB-group cascade — iterates CB_GROUP_DB, runs Gates 0-6, short-circuit if out_list=NULL, else collect — Ghidra: CB_Cascade (ck-audit-B: renamed from CB_ANY_OR_ENUMERATE)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CB_CASCADE                 = CK3_WIN_UNMAPPED_N(548);  // HIGH: full CB-group cascade — iterates CB_GROUP_DB, runs Gates 0-6, short-circuit if out_list=NULL, else collect — Ghidra: CB_Cascade (renamed from CB_ANY_OR_ENUMERATE)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CB_CHECK_IS_VASSAL_CB      = CK3_WIN_UNMAPPED_N(549);  // HIGH: CheckIsVassalCB — cb+0x6b4 and cb+0x1700 flags  /* win:poisoned (no Windows counterpart) */
     // NOTE: AI_POPULATE_WAR_CANDIDATES (0x04d99190) already defined in Phase 8 section
     // NOTE: AI_SELECT_WAR_TARGET_CB = WAR_BUILD_STATE (0x04d980d0) already defined in Round 6 section
 
     // Round 10: Realm/domain functions
-    constexpr uintptr_t COMPUTE_DOMAIN_LIMIT       = CK3_WIN_UNMAPPED_N(550);  // HIGH: ComputeDomainLimit, 1063B (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t COLLECT_REALM_TITLES       = CK3_WIN_UNMAPPED_N(551);  // HIGH: recursive realm size calc, 855B (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t COUNTS_TOWARD_DOMAIN       = CK3_WIN_UNMAPPED_N(552);  // HIGH: checks if title counts for domain, 275B (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COMPUTE_DOMAIN_LIMIT       = CK3_WIN_UNMAPPED_N(550);  // HIGH: ComputeDomainLimit, 1063B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COLLECT_REALM_TITLES       = CK3_WIN_UNMAPPED_N(551);  // HIGH: recursive realm size calc, 855B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COUNTS_TOWARD_DOMAIN       = CK3_WIN_UNMAPPED_N(552);  // HIGH: checks if title counts for domain, 275B  /* win:poisoned (no Windows counterpart) */
 
     // Round 10-5: Income/expense pipeline (source: income_utilities.cpp)
     constexpr uintptr_t INCOME_EXPENSE_WRAPPER     = CK3_WIN_UNMAPPED_N(553);  // HIGH: monthly expense calculator (wrapper), 66B  /* win:poisoned (no Windows counterpart) */
@@ -2382,10 +2382,10 @@ namespace funcs {
     constexpr uintptr_t GET_HOLY_ORDER_REGIMENTS   = CK3_WIN_UNMAPPED_N(576);  // HIGH: fn(ruler_data) → ruler_data+0x150, 127B  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t GET_MAA_OWNER_LINKS        = CK3_WIN_UNMAPPED_N(577);  // HIGH: fn(ruler_data) → ruler_data+0x290, 29B  /* win:poisoned (no Windows counterpart) */
 
-    // Mercenary/Holy Order Hiring RE (ck-mol-p6cm)
-    constexpr uintptr_t MERC_COMPANY_CONSTRUCTOR   = CK3_WIN_UNMAPPED_N(578);  // MEDIUM: CMercenaryCompany constructor, inits ~0xF1C bytes (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MERC_COMPANY_DESTRUCTOR    = CK3_WIN_UNMAPPED_N(579);  // MEDIUM: CMercenaryCompany destructor (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MERC_BASE_DESTRUCTOR       = CK3_WIN_UNMAPPED_N(580);  // MEDIUM: CMercenaryCompany base class destructor (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    // Mercenary/Holy Order Hiring RE
+    constexpr uintptr_t MERC_COMPANY_CONSTRUCTOR   = CK3_WIN_UNMAPPED_N(578);  // MEDIUM: CMercenaryCompany constructor, inits ~0xF1C bytes  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MERC_COMPANY_DESTRUCTOR    = CK3_WIN_UNMAPPED_N(579);  // MEDIUM: CMercenaryCompany destructor  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MERC_BASE_DESTRUCTOR       = CK3_WIN_UNMAPPED_N(580);  // MEDIUM: CMercenaryCompany base class destructor  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t GAME_CMD_DISPATCH_HELPER   = CK3_WIN_UNMAPPED_N(581);  // HIGH: GameCommand dispatch via helper vtable (void* helper, uint32_t type_hash)  /* win:poisoned (no Windows counterpart) */
     // Note: 208 game command helper vtables found via marker function 0x5ede1e0
     // Military command cluster at 0xbc97000-0xbca0000 in .data.rel.ro
@@ -2393,14 +2393,14 @@ namespace funcs {
     // Round 10-2: Alliance system functions
     constexpr uintptr_t ALLIANCE_IS_ALLIED_TO     = CK3_WIN_UNMAPPED_N(582);  // HIGH: bool(char_a, char_b), 150B — checks forced allies then CActiveRelation alliance flag (rel+0x94). #119 FIX: was 0x05750c50 (off by 0x1000000 — resolved to a vector-insert helper FUN_05850b80, NOT IsAlliedTo). IMAGE 0x6850c50 = "IsAlliedTo".  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ALLIANCE_GET_REASONS      = CK3_WIN_UNMAPPED_N(583);  // HIGH: fn(output, char_a, char_b), 1038B — enumerate all SAllianceReason entries  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ALLIANCE_CREATE           = CK3_WIN_UNMAPPED_N(584);  // HIGH: fn(relation, char_a_id, char_b_id, reason_enum), 192B — appends to CActiveRelation+0x88 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ALLIANCE_CREATE           = CK3_WIN_UNMAPPED_N(584);  // HIGH: fn(relation, char_a_id, char_b_id, reason_enum), 192B — appends to CActiveRelation+0x88  /* win:poisoned (no Windows counterpart) */
 
     // Round 10-3: Diplomatic relation / truce functions
     constexpr uintptr_t TRUCE_LIST_ACCESSOR        = CK3_WIN_UNMAPPED_N(585);  // HIGH: fn(char) -> *(*(char+0x1c0)+0x6a0), fallback sentinel  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t GET_DIPLOMATIC_RELATION    = CK3_WIN_UNMAPPED_N(586);  // HIGH: fn(char_a, char_b) -> CDiplomaticRelation*  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_OR_CREATE_RELATION     = CK3_WIN_UNMAPPED_N(587);  // HIGH: fn(char_a, char_b) -> CDiplomaticRelation* (creates if absent) — ck-ehbi: was 0x05678a40 (off by 0x01000000, resolved to unrelated graphics fn)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_OR_CREATE_RELATION     = CK3_WIN_UNMAPPED_N(587);  // HIGH: fn(char_a, char_b) -> CDiplomaticRelation* (creates if absent) —: was 0x05678a40 (off by 0x01000000, resolved to unrelated graphics fn)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t RELATION_BINARY_SEARCH     = CK3_WIN_UNMAPPED_N(588);  // HIGH: binary search sorted relation array at core+0x20  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t TRUCE_ADD_ENTRY            = CK3_WIN_UNMAPPED_N(589);  // HIGH: fn(rel, char_id, date_ptr, reason_str_ptr, reason_type, only_if_later) — ck-ehbi: was 0x05269460 (resolved to wrapper wrong function)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRUCE_ADD_ENTRY            = CK3_WIN_UNMAPPED_N(589);  // HIGH: fn(rel, char_id, date_ptr, reason_str_ptr, reason_type, only_if_later) —: was 0x05269460 (resolved to wrapper wrong function)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t TRUCE_REMOVE_ENTRY         = CK3_WIN_UNMAPPED_N(590);  // HIGH: clear truce from one side  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t TRUCE_EXPIRE               = CK3_WIN_UNMAPPED_N(591);  // HIGH: fn(rel, current_date) -- clean up expired truces  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t TRUCE_REASON_LOOKUP        = CK3_WIN_UNMAPPED_N(592);  // HIGH: token ID -> enum (0=attacker,1=defender,2=ally,3=invalid)  /* win:poisoned (no Windows counterpart) */
@@ -2440,8 +2440,8 @@ namespace funcs {
 
     // Round 11-6: War declaration command pipeline
     constexpr uintptr_t WAR_CREATE_CORE             = CK3_WIN_UNMAPPED_N(621);  // HIGH: FUN_066c9360, allocate CWar + setup (3433B, source: war_manager.cpp) (R11-6)  /* win:poisoned (no Windows counterpart) */
-    // ck-eyfb: helpers used by WAR_DECLARE_SPECIAL_HANDLER to build WAR_CREATE_CORE args.
-    // CORRECTED 2026-06-09: ck-eyfb recorded these two as the raw Ghidra FUN_ name
+    // Helpers used by WAR_DECLARE_SPECIAL_HANDLER to build WAR_CREATE_CORE args.
+    // CORRECTED 2026-06-09: recorded these two as the raw Ghidra FUN_ name
     // hex (= Ghidra addr) instead of subtracting the 0x100000 image base, so both
     // were +0x100000 too high. Verified against the byte-identical on-disk binary
     // (BuildID e61ff264…) by disassembling the real WAR_DECLARE_SPECIAL_HANDLER
@@ -2449,20 +2449,20 @@ namespace funcs {
     // (WAR_CREATE_CORE), and `call 75facf0` (lock). The old GAME_STATE_FROM_ROOT
     // value 0x06060210 landed mid-std::vector-realloc — calling it wedged/crashed
     // the game thread at force-path step 4 (gs_resolve), which is exactly the
-    // bl-vml1lg / ck-4ot67 "wedge after ENTRY, before war creation" symptom.
-    constexpr uintptr_t GAME_STATE_FROM_ROOT        = CK3_WIN_UNMAPPED_N(622);  // HIGH: FUN_06060210 (Ghidra) → raw 0x05f60210; *(root+0xa0)+0x299f0. VERIFIED via disasm (mov $0x299f0,eax; add 0xa0(rdi),rax; ret) + WAR_DECLARE_SPECIAL_HANDLER call site. (ck-eyfb corrected 2026-06-09)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GAME_LOCK_ACQUIRE           = CK3_WIN_UNMAPPED_N(623);  // HIGH: FUN_076facf0 (Ghidra) → raw 0x075facf0; the engine's lock-acquire stub is a bare `ret` (no-op) in this build — WAR_DECLARE_SPECIAL_HANDLER@0x65db970 calls it as its first instruction. Old value 0x076facf0 was also a `ret` so the no-op was accidentally correct. (ck-eyfb corrected 2026-06-09)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WAR_DB_ALLOCATE             = CK3_WIN_UNMAPPED_N(624);  // HIGH: CGameObjectDB slot allocator for CWar, returns (ptr, id), 232B (ck-veeg)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WAR_NAME_GENERATE           = CK3_WIN_UNMAPPED_N(625);  // HIGH: auto-generate war name from CB data → SSO string at war+0x2D8, 985B (ck-veeg)  /* win:poisoned (no Windows counterpart) */
+    // bl-vml1lg / "wedge after ENTRY, before war creation" symptom.
+    constexpr uintptr_t GAME_STATE_FROM_ROOT        = CK3_WIN_UNMAPPED_N(622);  // HIGH: FUN_06060210 (Ghidra) → raw 0x05f60210; *(root+0xa0)+0x299f0. VERIFIED via disasm (mov $0x299f0,eax; add 0xa0(rdi),rax; ret) + WAR_DECLARE_SPECIAL_HANDLER call site. (corrected 2026-06-09)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GAME_LOCK_ACQUIRE           = CK3_WIN_UNMAPPED_N(623);  // HIGH: FUN_076facf0 (Ghidra) → raw 0x075facf0; the engine's lock-acquire stub is a bare `ret` (no-op) in this build — WAR_DECLARE_SPECIAL_HANDLER@0x65db970 calls it as its first instruction. Old value 0x076facf0 was also a `ret` so the no-op was accidentally correct. (corrected 2026-06-09)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WAR_DB_ALLOCATE             = CK3_WIN_UNMAPPED_N(624);  // HIGH: CGameObjectDB slot allocator for CWar, returns (ptr, id), 232B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WAR_NAME_GENERATE           = CK3_WIN_UNMAPPED_N(625);  // HIGH: auto-generate war name from CB data → SSO string at war+0x2D8, 985B  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t AI_POPULATE_CB_CANDIDATES   = 0x1792600;  // HIGH: populate CB candidate array for AI war eval (R11-6)  /* win:win_rva funcs::AI_CB_EVALUATE_ALL (same name) */
-    // ck-39e1: AI_CB_EVALUATE_ALL helpers (Path A outer-filter RE).
+    // AI_CB_EVALUATE_ALL helpers (Path A outer-filter RE).
     // Image-base 0x100000 already subtracted; values are SBA-relative.
     // Source: re/findings/re_a1_path_a_re_20260425.md, AI_CB_EVALUATE_ALL decomp.
-    constexpr uintptr_t AI_CB_CANDIDATE_APPEND      = CK3_WIN_UNMAPPED_N(626);  // HIGH: append entry to 0x908-stride candidate list (Ghidra: AI_CB_CANDIDATE_APPEND, was FUN_04ea0840) — ck-39e1  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t AI_CB_CANDIDATE_ENTRY_DTOR  = CK3_WIN_UNMAPPED_N(627);  // HIGH: destructor for 0x908-stride candidate entry (frees sub-CDynArrays @+0x20,+0x68,+0xb8,+0x4e0) — ck-39e1  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t AI_GET_WAR_FRONT_BUFFER     = CK3_WIN_UNMAPPED_N(628);  // HIGH: returns *(ai_ctrl+0x20)+0x98 (war_data front buf); used by Path C entry[0] pre-seed — ck-39e1  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t AI_CB_TITLE_RELATION_MODE   = 0x2d38780;  // MEDIUM: classifies title.+0x738 → 0/1/2 (gates truce-required pairs in AI_CB_EVALUATE_ALL +0x374) — ck-39e1  /* win:win_rva funcs::AI_CB_TITLE_RELATION_MODE (same name) */
-    // ck-xdzo: AI_CB_EVALUATE_ALL Stage-1 bilateral helpers (sub-byte filter
+    constexpr uintptr_t AI_CB_CANDIDATE_APPEND      = CK3_WIN_UNMAPPED_N(626);  // HIGH: append entry to 0x908-stride candidate list (Ghidra: AI_CB_CANDIDATE_APPEND, was FUN_04ea0840) —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t AI_CB_CANDIDATE_ENTRY_DTOR  = CK3_WIN_UNMAPPED_N(627);  // HIGH: destructor for 0x908-stride candidate entry (frees sub-CDynArrays @+0x20,+0x68,+0xb8,+0x4e0) —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t AI_GET_WAR_FRONT_BUFFER     = CK3_WIN_UNMAPPED_N(628);  // HIGH: returns *(ai_ctrl+0x20)+0x98 (war_data front buf); used by Path C entry[0] pre-seed —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t AI_CB_TITLE_RELATION_MODE   = 0x2d38780;  // MEDIUM: classifies title.+0x738 → 0/1/2 (gates truce-required pairs in AI_CB_EVALUATE_ALL +0x374) —  /* win:win_rva funcs::AI_CB_TITLE_RELATION_MODE (same name) */
+    // AI_CB_EVALUATE_ALL Stage-1 bilateral helpers (sub-byte filter
     // chain at decomp lines 222-263). All values are SBA-relative
     // (Ghidra address - 0x100000). See re/findings/re_stage1_bilateral_helpers_ck-xdzo.md
     // #119 WARNING — MISNOMER. This returns char+0x1C0+0x7D0 (when +0x7DC flag) or
@@ -2474,21 +2474,21 @@ namespace funcs {
     // HAS_ALLIANCE @ rel+0x94). Use is_allied_via_relation() for the authoritative
     // bilateral alliance check. The engine's AI_CB_EVALUATE_ALL uses this list for a
     // war-co-belligerent test (like-typed scope find), NOT a general alliance gate.
-    constexpr uintptr_t MAYBE_GET_ALLIANCE_LIST     = CK3_WIN_UNMAPPED_N(629);  // MEDIUM/MISNOMER: NOT an alliance-partner list — see #119 note above — ck-xdzo  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_TRUCE_LIST              = CK3_WIN_RECIPE(11);  // HIGH: returns char+0x1C0+0x6A0 (CDynArray of 8-byte char-ptrs, sorted) — already-named "GetTruceList" in Ghidra — ck-xdzo  /* win:recipe recipes.inc #11 */
-    constexpr uintptr_t MAYBE_GET_REALM_STEP        = CK3_WIN_UNMAPPED_N(630);  // MEDIUM: 1-step realm/liege resolver. char+0x1B8!=0: chase realm ptr+0x1C0+vtable[2]+0x10; else: lookup char+0x1B0[+200] in CharacterDB — ck-xdzo  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MAYBE_GET_REALM_TOP         = CK3_WIN_UNMAPPED_N(631);  // MEDIUM: iterative version of MAYBE_GET_REALM_STEP — walks realm chain to fixed point (top liege) — ck-xdzo  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MAYBE_REALM_PREDICATE_INV   = CK3_WIN_UNMAPPED_N(632);  // MEDIUM: returns true iff char+0x1B8!=0 AND vtable[2]+0x10 on (char+0x1B8+0x1C0) returns 0 — ck-xdzo  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MAYBE_GET_ACTIVE_FAITH      = CK3_WIN_UNMAPPED_N(633);  // MEDIUM: returns char+0x1A8→+0x258→+0x10 (back-ptr-validated) or DAT_0xc4d6ee0 singleton — likely GetActiveFaith — ck-xdzo  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MAYBE_FAITH_DOCTRINE_CHECK  = CK3_WIN_UNMAPPED_N(634);  // MEDIUM: wrapper for MAYBE_DOCTRINE_LOWER_BOUND(struct+0x68, ushort key); called as (faith, 0x247) at line 260 — ck-xdzo  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t MAYBE_DOCTRINE_LOWER_BOUND  = CK3_WIN_UNMAPPED_N(635);  // MEDIUM: binary-search ushort key in sorted array at struct[0]; map values at struct[3], returns bool: value > 0 — ck-xdzo  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SIMD_FIND_LONG              = CK3_WIN_RECIPE(14);  // HIGH: dispatches std::find(begin,end,key) for 8-byte longs (SSE2 cmov path) — ck-xdzo  /* win:recipe recipes.inc #14 */
+    constexpr uintptr_t MAYBE_GET_ALLIANCE_LIST     = CK3_WIN_UNMAPPED_N(629);  // MEDIUM/MISNOMER: NOT an alliance-partner list — see #119 note above —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_TRUCE_LIST              = CK3_WIN_RECIPE(11);  // HIGH: returns char+0x1C0+0x6A0 (CDynArray of 8-byte char-ptrs, sorted) — already-named "GetTruceList" in Ghidra —  /* win:recipe recipes.inc #11 */
+    constexpr uintptr_t MAYBE_GET_REALM_STEP        = CK3_WIN_UNMAPPED_N(630);  // MEDIUM: 1-step realm/liege resolver. char+0x1B8!=0: chase realm ptr+0x1C0+vtable[2]+0x10; else: lookup char+0x1B0[+200] in CharacterDB —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MAYBE_GET_REALM_TOP         = CK3_WIN_UNMAPPED_N(631);  // MEDIUM: iterative version of MAYBE_GET_REALM_STEP — walks realm chain to fixed point (top liege) —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MAYBE_REALM_PREDICATE_INV   = CK3_WIN_UNMAPPED_N(632);  // MEDIUM: returns true iff char+0x1B8!=0 AND vtable[2]+0x10 on (char+0x1B8+0x1C0) returns 0 —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MAYBE_GET_ACTIVE_FAITH      = CK3_WIN_UNMAPPED_N(633);  // MEDIUM: returns char+0x1A8→+0x258→+0x10 (back-ptr-validated) or DAT_0xc4d6ee0 singleton — likely GetActiveFaith —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MAYBE_FAITH_DOCTRINE_CHECK  = CK3_WIN_UNMAPPED_N(634);  // MEDIUM: wrapper for MAYBE_DOCTRINE_LOWER_BOUND(struct+0x68, ushort key); called as (faith, 0x247) at line 260 —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t MAYBE_DOCTRINE_LOWER_BOUND  = CK3_WIN_UNMAPPED_N(635);  // MEDIUM: binary-search ushort key in sorted array at struct[0]; map values at struct[3], returns bool: value > 0 —  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SIMD_FIND_LONG              = CK3_WIN_RECIPE(14);  // HIGH: dispatches std::find(begin,end,key) for 8-byte longs (SSE2 cmov path) —  /* win:recipe recipes.inc #14 */
     constexpr uintptr_t ARE_AT_WAR                  = CK3_WIN_UNMAPPED_N(636);  // HIGH: check existing war between two chars (R11-6)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ADD_WAR_TO_CHAR             = CK3_WIN_UNMAPPED_N(637);  // HIGH: register war on character's war list (R11-6)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ADD_WAR_PARTICIPANT         = CK3_WIN_UNMAPPED_N(638);  // HIGH: add character to war side (R11-6)  /* win:poisoned (no Windows counterpart) */
 
     // ═══════════════════════════════════════════
-    // Realm-change command queue (ck-e58l.17.1)
+    // Realm-change command queue
     // ═══════════════════════════════════════════
     // Subsystem distinct from CSendCharacterInteractionCommand::Execute.
     // The ONLY path from queued items to WAR_CREATE_CORE is:
@@ -2496,44 +2496,44 @@ namespace funcs {
     //   (unconditional) → REALM_VASSAL_TRANSFER_WAR → WAR_DECLARE_SPECIAL_HANDLER
     //   → WAR_CREATE_CORE.
     // Bridge's CSendCharacterInteractionCommand pipeline is structurally
-    // disjoint from this queue — see ck-e58l.17.1 §4.
-    constexpr uintptr_t REALM_QUEUE_DISPATCH         = CK3_WIN_UNMAPPED_N(639);  // HIGH: queue-item dispatcher, 25 callers enumerated (ck-e58l.17.1) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t REALM_QUEUE_ITEM_ALLOC       = CK3_WIN_UNMAPPED_N(640);  // HIGH: item allocator(mgr, type) → 632B item, type at +0x268 (ck-e58l.17.1) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t REALM_QUEUE_ITEM_SET_TYPE    = CK3_WIN_UNMAPPED_N(641);  // HIGH: sets item+0x268 = type (ck-e58l.17.1) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t REALM_QUEUE_MAIN_DISPATCH    = CK3_WIN_UNMAPPED_N(642);  // HIGH: main dispatcher, unconditional fall-through to preproc at 0x065d5737 (ck-e58l.17.1) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t REALM_QUEUE_PREPROC          = CK3_WIN_UNMAPPED_N(643);  // HIGH: pre-processor, type-gated notifications + UNCONDITIONAL call to vassal-transfer (ck-e58l.17.1) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t REALM_VASSAL_TRANSFER_WAR    = CK3_WIN_UNMAPPED_N(644);  // HIGH: iterates target_list, calls WAR_DECLARE_SPECIAL_HANDLER for titleless rulers (ck-e58l.17.1, ck-e58l.5) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WAR_DECLARE_SPECIAL_HANDLER  = CK3_WIN_UNMAPPED_N(645);  // HIGH: sole direct caller of WAR_CREATE_CORE (ck-e58l.5, ck-e58l.17.1)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t REALM_QUEUE_ITEM_QMOVE       = CK3_WIN_UNMAPPED_N(646);  // HIGH: post-dispatch move pending→completed (ck-e58l.17.1) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    // disjoint from this queue — §4.
+    constexpr uintptr_t REALM_QUEUE_DISPATCH         = CK3_WIN_UNMAPPED_N(639);  // HIGH: queue-item dispatcher, 25 callers enumerated  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t REALM_QUEUE_ITEM_ALLOC       = CK3_WIN_UNMAPPED_N(640);  // HIGH: item allocator(mgr, type) → 632B item, type at +0x268  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t REALM_QUEUE_ITEM_SET_TYPE    = CK3_WIN_UNMAPPED_N(641);  // HIGH: sets item+0x268 = type  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t REALM_QUEUE_MAIN_DISPATCH    = CK3_WIN_UNMAPPED_N(642);  // HIGH: main dispatcher, unconditional fall-through to preproc at 0x065d5737  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t REALM_QUEUE_PREPROC          = CK3_WIN_UNMAPPED_N(643);  // HIGH: pre-processor, type-gated notifications + UNCONDITIONAL call to vassal-transfer  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t REALM_VASSAL_TRANSFER_WAR    = CK3_WIN_UNMAPPED_N(644);  // HIGH: iterates target_list, calls WAR_DECLARE_SPECIAL_HANDLER for titleless rulers  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WAR_DECLARE_SPECIAL_HANDLER  = CK3_WIN_UNMAPPED_N(645);  // HIGH: sole direct caller of WAR_CREATE_CORE  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t REALM_QUEUE_ITEM_QMOVE       = CK3_WIN_UNMAPPED_N(646);  // HIGH: post-dispatch move pending→completed  /* win:poisoned (no Windows counterpart) */
 
     // Queue-item struct offsets (632 bytes, FUN_065ea3e0 allocation)
-    constexpr size_t QITEM_VTABLE         = 0x000;  // HIGH: vtable ptr (ck-e58l.17.1)
-    constexpr size_t QITEM_FLAG           = 0x260;  // HIGH: byte — dispatcher skips if non-zero (ck-e58l.17.1)
-    constexpr size_t QITEM_TYPE           = 0x268;  // HIGH: int32 — type discriminator (ck-e58l.17.1)
-    constexpr size_t QITEM_SIZE           = 0x278;  // HIGH: 632 bytes total (ck-e58l.17.1)
+    constexpr size_t QITEM_VTABLE         = 0x000;  // HIGH: vtable ptr
+    constexpr size_t QITEM_FLAG           = 0x260;  // HIGH: byte — dispatcher skips if non-zero
+    constexpr size_t QITEM_TYPE           = 0x268;  // HIGH: int32 — type discriminator
+    constexpr size_t QITEM_SIZE           = 0x278;  // HIGH: 632 bytes total
 
     // Queue-manager struct offsets
-    constexpr size_t QMGR_PENDING_ARR     = 0x30;   // HIGH (ck-e58l.17.1)
-    constexpr size_t QMGR_PENDING_CNT     = 0x3c;   // HIGH (ck-e58l.17.1)
-    constexpr size_t QMGR_COMPLETED_ARR   = 0x48;   // HIGH (ck-e58l.17.1)
-    constexpr size_t QMGR_COMPLETED_CAP   = 0x50;   // HIGH (ck-e58l.17.1)
-    constexpr size_t QMGR_COMPLETED_CNT   = 0x54;   // HIGH (ck-e58l.17.1)
-    constexpr size_t QMGR_ALLOCATOR_VT    = 0x58;   // HIGH (ck-e58l.17.1)
-    constexpr size_t QMGR_RECURSION_DEPTH = 0x60;   // HIGH: capped at 0x32 (50) (ck-e58l.17.1)
+    constexpr size_t QMGR_PENDING_ARR     = 0x30;   // HIGH
+    constexpr size_t QMGR_PENDING_CNT     = 0x3c;   // HIGH
+    constexpr size_t QMGR_COMPLETED_ARR   = 0x48;   // HIGH
+    constexpr size_t QMGR_COMPLETED_CAP   = 0x50;   // HIGH
+    constexpr size_t QMGR_COMPLETED_CNT   = 0x54;   // HIGH
+    constexpr size_t QMGR_ALLOCATOR_VT    = 0x58;   // HIGH
+    constexpr size_t QMGR_RECURSION_DEPTH = 0x60;   // HIGH: capped at 0x32 (50)
 
-    // Known type codes for QITEM_TYPE (ck-e58l.17.1 §3.1 — per-type semantics inferred from caller context)
-    constexpr uint32_t QITEM_TYPE_TITLE_DESTROY       = 6;     // MEDIUM (ck-e58l.17.1)
-    constexpr uint32_t QITEM_TYPE_TITLE_GRANT         = 7;     // MEDIUM (ck-e58l.17.1 — most common; 8 call sites)
-    constexpr uint32_t QITEM_TYPE_TITLE_PASS          = 8;     // MEDIUM (ck-e58l.17.1)
-    constexpr uint32_t QITEM_TYPE_TITLE_CLAIM         = 9;     // MEDIUM (ck-e58l.17.1)
-    constexpr uint32_t QITEM_TYPE_FAITH_CULTURE_GOV   = 0xa;   // MEDIUM (ck-e58l.17.1)
-    constexpr uint32_t QITEM_TYPE_TITLE_REVOKE        = 0x12;  // MEDIUM (ck-e58l.17.1; primary type for revoke cascade)
-    constexpr uint32_t QITEM_TYPE_ACTIVITY_EFFECT     = 0x13;  // LOW (ck-e58l.17.1 — single caller)
-    constexpr uint32_t QITEM_TYPE_SUCCESSION          = 0x15;  // MEDIUM (ck-e58l.17.1)
-    constexpr uint32_t QITEM_TYPE_UNINITIALIZED       = 0x17;  // HIGH: default after alloc, dispatcher filters these out (ck-e58l.17.1)
+    // Known type codes for QITEM_TYPE (§3.1 — per-type semantics inferred from caller context)
+    constexpr uint32_t QITEM_TYPE_TITLE_DESTROY       = 6;     // MEDIUM
+    constexpr uint32_t QITEM_TYPE_TITLE_GRANT         = 7;     // MEDIUM (— most common; 8 call sites)
+    constexpr uint32_t QITEM_TYPE_TITLE_PASS          = 8;     // MEDIUM
+    constexpr uint32_t QITEM_TYPE_TITLE_CLAIM         = 9;     // MEDIUM
+    constexpr uint32_t QITEM_TYPE_FAITH_CULTURE_GOV   = 0xa;   // MEDIUM
+    constexpr uint32_t QITEM_TYPE_TITLE_REVOKE        = 0x12;  // MEDIUM (primary type for revoke cascade)
+    constexpr uint32_t QITEM_TYPE_ACTIVITY_EFFECT     = 0x13;  // LOW (— single caller)
+    constexpr uint32_t QITEM_TYPE_SUCCESSION          = 0x15;  // MEDIUM
+    constexpr uint32_t QITEM_TYPE_UNINITIALIZED       = 0x17;  // HIGH: default after alloc, dispatcher filters these out
 
     // ═══════════════════════════════════════════
-    // WarParticipationRecord — target_list entry (ck-e58l.17.1.2)
+    // WarParticipationRecord — target_list entry
     // ═══════════════════════════════════════════
     // 0x160-byte POD struct (NO vtable at +0x00). Consumed by REALM_VASSAL_TRANSFER_WAR
     // (FUN_065ccb90) as the target_list[] the war-materialization code iterates.
@@ -2548,45 +2548,45 @@ namespace funcs {
     // untouched fields are still open, see §Open Questions in findings).
     //
     // Per-entry push_back: FUN_065e5f90 (stride 0x160, growth factor 1.5×).
-    constexpr size_t WPR_SIZE                  = 0x160;  // HIGH (ck-e58l.17.1.2)
-    constexpr size_t WPR_TARGET_RULER          = 0x00;   // HIGH: CCharacter* — targeted ruler (IsRuler && held_titles.count==0) (ck-e58l.17.1.2)
-    constexpr size_t WPR_CONTEXT_TITLE         = 0x08;   // HIGH: CTitle* — kind-dependent context title; fields +0x22c (parent/de-jure title_id), +0x270 (holder char_id) read via this ptr (ck-e58l.17.1.2)
-    constexpr size_t WPR_CLAIM_TITLE           = 0x10;   // HIGH: CTitle* — claim title passed to FUN_061c8d70 to resolve CCasusBelliType from +0x490 of the walked-up title (ck-e58l.17.1.2)
+    constexpr size_t WPR_SIZE                  = 0x160;  // HIGH
+    constexpr size_t WPR_TARGET_RULER          = 0x00;   // HIGH: CCharacter* — targeted ruler (IsRuler && held_titles.count==0)
+    constexpr size_t WPR_CONTEXT_TITLE         = 0x08;   // HIGH: CTitle* — kind-dependent context title; fields +0x22c (parent/de-jure title_id), +0x270 (holder char_id) read via this ptr
+    constexpr size_t WPR_CLAIM_TITLE           = 0x10;   // HIGH: CTitle* — claim title passed to FUN_061c8d70 to resolve CCasusBelliType from +0x490 of the walked-up title
     constexpr size_t WPR_SCALAR_18             = 0x18;   // LOW: u64 — copied by FUN_065e6120; semantics undetermined
     constexpr size_t WPR_SCALAR_20             = 0x20;   // LOW: u32+u32 — copied by FUN_065e6120; semantics undetermined
-    constexpr size_t WPR_KIND                  = 0x28;   // HIGH: u32 — kind discriminator. Observed values {1,2,3,4,5,6}. Selects how CONTEXT_TITLE resolves (kind==2: use directly; kind==1: walk title+0x250 to liege title). FUN_065d0b80 processes target_list grouped by KIND in reverse order (6→5→4→3→2→1) (ck-e58l.17.1.2)
+    constexpr size_t WPR_KIND                  = 0x28;   // HIGH: u32 — kind discriminator. Observed values {1,2,3,4,5,6}. Selects how CONTEXT_TITLE resolves (kind==2: use directly; kind==1: walk title+0x250 to liege title). FUN_065d0b80 processes target_list grouped by KIND in reverse order (6→5→4→3→2→1)
     constexpr size_t WPR_SCALAR_2C             = 0x2c;   // LOW: u32 — copied by FUN_065e6120; semantics undetermined
-    constexpr size_t WPR_AUX_CTX               = 0x30;   // MEDIUM: ptr — passed as 3rd arg to FUN_0680d830 (post-materialization bookkeeping) (ck-e58l.17.1.2)
+    constexpr size_t WPR_AUX_CTX               = 0x30;   // MEDIUM: ptr — passed as 3rd arg to FUN_0680d830 (post-materialization bookkeeping)
     constexpr size_t WPR_SCALAR_38             = 0x38;   // LOW: u32+u32 — copied by FUN_065e6120; semantics undetermined
-    constexpr size_t WPR_FALLBACK_TITLE        = 0x40;   // MEDIUM: ptr (likely CTitle*) — 2nd arg to FUN_0676c890 when CASUS_BELLI resolution fails for WPR_CLAIM_TITLE (ck-e58l.17.1.2)
+    constexpr size_t WPR_FALLBACK_TITLE        = 0x40;   // MEDIUM: ptr (likely CTitle*) — 2nd arg to FUN_0676c890 when CASUS_BELLI resolution fails for WPR_CLAIM_TITLE
     // Embedded vector A (Jomini growable vector of qwords; inline cap 16):
-    constexpr size_t WPR_VEC_A_DATA            = 0x48;   // HIGH: qword data_ptr (initially → +0x68 inline buffer) (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_A_CAP             = 0x50;   // HIGH: u32 capacity (initial 0x10) (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_A_SIZE            = 0x54;   // HIGH: u32 size (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_A_ALLOC_REF       = 0x58;   // HIGH: ptr → embedded allocator vtable at +0x60 (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_A_ALLOC_VT        = 0x60;   // HIGH: &UNK_0b89c9f8 — embedded allocator vtable (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_A_INLINE          = 0x68;   // HIGH: 16 × 8 = 0x80 bytes of inline storage (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_A_EXT_ALLOC_REF   = 0xe8;   // HIGH: &DAT_0bf9f268 — external allocator used after inline overflow (ck-e58l.17.1.2)
+    constexpr size_t WPR_VEC_A_DATA            = 0x48;   // HIGH: qword data_ptr (initially → +0x68 inline buffer)
+    constexpr size_t WPR_VEC_A_CAP             = 0x50;   // HIGH: u32 capacity (initial 0x10)
+    constexpr size_t WPR_VEC_A_SIZE            = 0x54;   // HIGH: u32 size
+    constexpr size_t WPR_VEC_A_ALLOC_REF       = 0x58;   // HIGH: ptr → embedded allocator vtable at +0x60
+    constexpr size_t WPR_VEC_A_ALLOC_VT        = 0x60;   // HIGH: &UNK_0b89c9f8 — embedded allocator vtable
+    constexpr size_t WPR_VEC_A_INLINE          = 0x68;   // HIGH: 16 × 8 = 0x80 bytes of inline storage
+    constexpr size_t WPR_VEC_A_EXT_ALLOC_REF   = 0xe8;   // HIGH: &DAT_0bf9f268 — external allocator used after inline overflow
     // Embedded vector B (Jomini growable vector of qwords; inline cap 7):
-    constexpr size_t WPR_VEC_B_DATA            = 0xf0;   // HIGH: qword data_ptr (initially → +0x110 inline buffer) (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_B_CAP             = 0xf8;   // HIGH: u32 capacity (initial 0x7) (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_B_SIZE            = 0xfc;   // HIGH: u32 size (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_B_ALLOC_REF       = 0x100;  // HIGH: ptr → embedded allocator vtable at +0x108 (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_B_ALLOC_VT        = 0x108;  // HIGH: &UNK_0bd2e350 — embedded allocator vtable (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_B_INLINE          = 0x110;  // HIGH: 7 × 8 = 0x38 bytes of inline storage (ck-e58l.17.1.2)
-    constexpr size_t WPR_VEC_B_EXT_ALLOC_REF   = 0x148;  // HIGH: &DAT_0bf9f268 — external allocator (ck-e58l.17.1.2)
-    constexpr size_t WPR_TRAIL_U64             = 0x150;  // MEDIUM: u64 copied by FUN_065e6120 (semantics undetermined) (ck-e58l.17.1.2)
-    constexpr size_t WPR_TRAIL_FLAG            = 0x158;  // MEDIUM: 1 byte — boolean flag copied by FUN_065e6120 (ck-e58l.17.1.2)
+    constexpr size_t WPR_VEC_B_DATA            = 0xf0;   // HIGH: qword data_ptr (initially → +0x110 inline buffer)
+    constexpr size_t WPR_VEC_B_CAP             = 0xf8;   // HIGH: u32 capacity (initial 0x7)
+    constexpr size_t WPR_VEC_B_SIZE            = 0xfc;   // HIGH: u32 size
+    constexpr size_t WPR_VEC_B_ALLOC_REF       = 0x100;  // HIGH: ptr → embedded allocator vtable at +0x108
+    constexpr size_t WPR_VEC_B_ALLOC_VT        = 0x108;  // HIGH: &UNK_0bd2e350 — embedded allocator vtable
+    constexpr size_t WPR_VEC_B_INLINE          = 0x110;  // HIGH: 7 × 8 = 0x38 bytes of inline storage
+    constexpr size_t WPR_VEC_B_EXT_ALLOC_REF   = 0x148;  // HIGH: &DAT_0bf9f268 — external allocator
+    constexpr size_t WPR_TRAIL_U64             = 0x150;  // MEDIUM: u64 copied by FUN_065e6120 (semantics undetermined)
+    constexpr size_t WPR_TRAIL_FLAG            = 0x158;  // MEDIUM: 1 byte — boolean flag copied by FUN_065e6120
     // bytes 0x159..0x15f: padding to 0x160
 
     // Functions that manage WarParticipationRecord instances:
-    constexpr uintptr_t WPR_COPY_CTOR           = CK3_WIN_UNMAPPED_N(647);  // HIGH: 0x160-byte copy constructor; exhaustive field copy (ck-e58l.17.1.2) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WPR_VECTOR_PUSH_BACK    = CK3_WIN_UNMAPPED_N(648);  // HIGH: push_back into Jomini vector<WarParticipationRecord>; stride 0x160, growth 1.5× (ck-e58l.17.1.2) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WPR_ENTRY_POPULATE_FROM_TITLE_CHAR = CK3_WIN_UNMAPPED_N(649);  // HIGH: appends/updates target_list entries from (title_id, char_id) sub-vec tuples; signature (qitem, {title_id,char_id_src,char_id_dst}*, flag, target_list, &ctx, kind_override) (ck-e58l.17.1.2) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WPR_SIDE_GETTER         = CK3_WIN_UNMAPPED_N(650);  // HIGH: returns entry for (side=0|1, entry, target_list) (ck-e58l.17.1.2) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WPR_VEC_A_ALLOCATOR_VT  = CK3_WIN_UNMAPPED_N(651);  // HIGH: &UNK_0b89c9f8 (ck-e58l.17.1.2)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WPR_VEC_B_ALLOCATOR_VT  = CK3_WIN_UNMAPPED_N(652);  // HIGH: &UNK_0bd2e350 (ck-e58l.17.1.2)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t WPR_EXT_ALLOCATOR_REF   = CK3_WIN_UNMAPPED_N(653);  // HIGH: &DAT_0bf9f268 (shared by both vectors) (ck-e58l.17.1.2)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WPR_COPY_CTOR           = CK3_WIN_UNMAPPED_N(647);  // HIGH: 0x160-byte copy constructor; exhaustive field copy  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WPR_VECTOR_PUSH_BACK    = CK3_WIN_UNMAPPED_N(648);  // HIGH: push_back into Jomini vector<WarParticipationRecord>; stride 0x160, growth 1.5×  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WPR_ENTRY_POPULATE_FROM_TITLE_CHAR = CK3_WIN_UNMAPPED_N(649);  // HIGH: appends/updates target_list entries from (title_id, char_id) sub-vec tuples; signature (qitem, {title_id,char_id_src,char_id_dst}*, flag, target_list, &ctx, kind_override)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WPR_SIDE_GETTER         = CK3_WIN_UNMAPPED_N(650);  // HIGH: returns entry for (side=0|1, entry, target_list)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WPR_VEC_A_ALLOCATOR_VT  = CK3_WIN_UNMAPPED_N(651);  // HIGH: &UNK_0b89c9f8  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WPR_VEC_B_ALLOCATOR_VT  = CK3_WIN_UNMAPPED_N(652);  // HIGH: &UNK_0bd2e350  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WPR_EXT_ALLOCATOR_REF   = CK3_WIN_UNMAPPED_N(653);  // HIGH: &DAT_0bf9f268 (shared by both vectors)  /* win:poisoned (no Windows counterpart) */
 
     // Round 11-7: Succession system functions (R11-7 corrected addresses)
     // "Who inherits from me" is compute-on-demand via these functions (not cached).
@@ -2696,12 +2696,12 @@ namespace war_stance {
                                                        //   same value query_wars / query_war_score_breakdown return as war_id.
                                                        //   FUN_04e60920 masks &0xffffff → WarDB slot, validates war+8 == rec+0x18.
                                                        //   LIVE-MATCHED (WSTANCE mirror): node smokes 17/19/21 walked with
-                                                       //   this key, 30/54/30-of-56/88-of-88 records matched WAR_DB, smoke21
-                                                       //   read attacker_offensive on war 21 (node-smoke21.md §6b).
+                                                       //   this key, 30/54/30-of-56/88-of-88 records matched WAR_DB,
+                                                       //   read attacker_offensive on war 21 (node-.md §6b).
     constexpr size_t REC_FLAGS              = 0x68;    // HIGH: u16 bitfield; bit2(0x4)=is-attacker side, bit4(0x10)=cond
     constexpr size_t REC_STANCE_PTR         = 0x70;    // HIGH: SAIWarStance* — the LIVE chosen stance for this war ← the slot
     // Re-eval cooldown counters at rec+0x94/+0x98 (MEDIUM; their only reader,
-    // force_offensive_stance, was deleted in cleanup 2026.11).
+    // force_offensive_stance, was deleted in).
     constexpr size_t REC_REEVAL_CD_3        = 0x9c;    // MEDIUM: re-eval cooldown counter (decremented each tick)
 
     // CORRECTION (re_query_war_stance.md §2c/§7): the per-war coordinator RECORD
@@ -2733,7 +2733,7 @@ namespace war_stance {
     //   attacker offensive ⟺ enemy < own AND (enemy/own) < 0.75  (single-objective war).
     // rec+0x1b28 / rec+0x1b30: enemy-side / own-side total strength, longs (HIGH; the
     // REC_STRENGTH_ENEMY/OWN names were deleted with force_offensive_stance, their reader).
-    // L20-A (2026-11-04) NOT A STANDING READ — do not re-add a reader that reports them
+    // (2026-11-04) NOT A STANDING READ — do not re-add a reader that reports them
     // as "how far below 1.33x": the HIGH is for what the SELECTOR reads at its own
     // moment, not for what the record holds between ticks. Census of the 1097 dump
     // ck3_20260421_195552.core (CAIManager at the CAIMAN_VTABLE vptr, records via
@@ -2769,7 +2769,7 @@ namespace character {
     constexpr size_t BIRTH_DATE_SHORT   = 0x6C;   // HIGH: int16, birth date index (R8V-1 confirmed via FUN_0674c0c0)
     constexpr size_t CULTURE_ID_DIRECT  = 0xB0;   // HIGH: uint32, culture ID (Round 5e confirmed via SetCulture)  /* win:agreed probe */
     constexpr size_t FAITH_ID_DIRECT    = 0xB4;   // HIGH: uint32, faith ID (Round 5f confirmed via SetFaith)  /* win:agreed probe */
-    // CORRECTED (lane l4, re_interactions.md §4): 0x199 is NOT an AI flag (query_handlers.cpp
+    // CORRECTED (re_interactions.md §4): 0x199 is NOT an AI flag (query_handlers.cpp
     // already stopped reading it as one). It is the character's sex: the engine's marry
     // effect (FUN_0684f3b0) and the matrilinear_marriage trigger (FUN_04fd7c00) both order a
     // couple by this byte, man (0) first; in the 867 dump it is 0 on 4,487 of 4,593 living
@@ -2907,7 +2907,7 @@ namespace character {
     constexpr size_t TITLE_LIEGE_PTR    = 0x448;  // HIGH: liege ptr
 
     // The pre-Round-3 guesses REALM_DOMAIN_SIZE(0x30) .. SCHEME_COUNT(0x138) are gone
-    // (cleanup 2026.11, lane l6): no bridge or script read them, the Windows layout
+    //: no bridge or script read them, the Windows layout
     // probe graded every one `unwitnessed` (re/findings/windows/p3_probe_867_pair.json:
     // not_a_field / type_unknown), and each has a measured home elsewhere in this file:
     // vassals and military strength in title_realm (VASSAL_LIST, VASSAL_COUNT,
@@ -2926,12 +2926,12 @@ namespace family {
     constexpr size_t MOTHER_ID          = 0x04;   // HIGH: uint32, mother char ID  /* win:agreed probe */
     constexpr size_t REAL_FATHER_ID     = 0x08;   // HIGH: uint32, biological father (may differ)
     constexpr size_t HOUSE_HEAD_ID      = 0x0C;   // HIGH: uint32, dynasty house head char ID
-    // CONTRADICTED (lane l4, re/findings/re_interactions.md §4b): +0x10 is the BETROTHED
+    // CONTRADICTED (re/findings/re_interactions.md §4b): +0x10 is the BETROTHED
     // character's id. FUN_0674a7d0 (the betrothed getter the matrilinear_betrothal trigger
     // calls) resolves *(family+0x10) through the CHARACTER DB, and in the 867 dump it is
     // set on 6 characters only, all mutual pairs (12765<->16989, 13835<->15707,
     // 15433<->15846); 17,879 families hold 0xFFFFFFFF. This was named DYNASTY_ID; the
-    // "phantom dynasty ids that resolve as living characters" of ck-vvqu were betrothed
+    // "phantom dynasty ids that resolve as living characters" of were betrothed
     // ids. Every dynasty reader reads the house's dynasty (dynasty_house_obj::DYNASTY_ID).
     constexpr size_t BETROTHED_ID       = 0x10;   // HIGH: uint32, betrothed character id (0xFFFFFFFF = none)
     constexpr size_t HOUSE_ID           = 0x18;   // HIGH: uint32, house ID (0xFFFFFFFF=none)
@@ -3011,7 +3011,7 @@ namespace core_data {
     constexpr size_t INCOME_FIELD_3     = 0x2C0;  // DEPRECATED: use NET_DOMAIN_INCOME
     constexpr size_t INCOME_FIELD_4     = 0x2C8;  // DEPRECATED: use TOTAL_EXPENSES
     constexpr size_t INCOME_FIELD_5     = 0x2D0;  // DEPRECATED: use NET_GOLD_INCOME
-    // 0x2E8 is BASE HEALTH, not income (L15 A3, 2026-10-31; re/findings/re_core_data_merit_not_income.md).
+    // 0x2E8 is BASE HEALTH, not income (2026-10-31; re/findings/re_core_data_merit_not_income.md).
     // It was INCOME_ACCUMULATOR / MONTHLY_INCOME_FP ("monthly income accumulator, 4 accessors",
     // no source recorded) and emitted as `monthly_income` by query_county_details and
     // get_ai_evaluations and as `accumulated` by query_realm. Evidence: FUN_068e2350 (the
@@ -3024,7 +3024,7 @@ namespace core_data {
     constexpr size_t BASE_HEALTH        = 0x2E8;  // HIGH: int64 fp /100000, health before modifiers (decompile FUN_068e2350 + dumps)
     constexpr size_t PIETY_LEVEL        = 0x118;  // ALIAS: piety level (int32, same addr as PIETY_CURRENT)  /* win:agreed probe */
     constexpr size_t PRESTIGE_LEVEL     = 0x138;  // ALIAS: prestige level (int32, same addr as PRESTIGE_CURRENT)  /* win:agreed probe */
-    // (PIETY_CAP 0x120 / PRESTIGE_CAP 0x140 deleted in cleanup 2026.11, lane l6, F10:
+    // (PIETY_CAP 0x120 / PRESTIGE_CAP 0x140 deleted in, F10:
     // CK3 caps neither; both read 0 for every ruler in dump ck3_20260625_152901_ivar867
     // and garbage in one of two live launches, so query_county_details and the
     // observation no longer report them.)
@@ -3040,7 +3040,7 @@ namespace core_data {
     constexpr size_t AGE_COUNTER        = 0x2F8;  // DEPRECATED: actually STRESS, kept for compat
     constexpr size_t DATE_TIMESTAMP     = 0x2FC;  // MEDIUM: int32 (3 accessors, set from game date)  /* win:agreed probe */
 
-    // MERIT (L15 A3, 2026-10-31; re/findings/re_core_data_merit_not_income.md). Was
+    // MERIT (2026-10-31; re/findings/re_core_data_merit_not_income.md). Was
     // INCOME_DISPLAY ("monthly income", R8V-1 via FUN_0674b920): the getter was right, the
     // meaning was not, and query_character / the observation emitted it as `monthly_income`
     // (0.0 for every ruler without merit while income_breakdown.total_monthly read 5.68).
@@ -3107,26 +3107,26 @@ namespace character_vitals {
 // Level = stress_raw / 100 (levels 0-3, thresholds at 100/200/300)
 // =============================================================================
 namespace stress_funcs {
-    constexpr uintptr_t GET_STRESS_LEVEL          = CK3_WIN_UNMAPPED_N(718);  // HIGH: int(char*), stress/100 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_STRESS_LEVEL_AFTER    = CK3_WIN_UNMAPPED_N(719);  // HIGH: int(char*, delta), predicted level after delta (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t STRESS_MODIFIER_CALC      = CK3_WIN_UNMAPPED_N(720);  // HIGH: int(char*, delta), apply gain/loss modifiers (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t IS_PLAYER_CHARACTER       = 0x20f7ec0;  // HIGH: bool(char*), checks g_PlayerCharacterID (ck-e58l.20)  /* win:win_rva funcs::IS_PLAYER_CHARACTER (same name) */
+    constexpr uintptr_t GET_STRESS_LEVEL          = CK3_WIN_UNMAPPED_N(718);  // HIGH: int(char*), stress/100  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_STRESS_LEVEL_AFTER    = CK3_WIN_UNMAPPED_N(719);  // HIGH: int(char*, delta), predicted level after delta  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t STRESS_MODIFIER_CALC      = CK3_WIN_UNMAPPED_N(720);  // HIGH: int(char*, delta), apply gain/loss modifiers  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t IS_PLAYER_CHARACTER       = 0x20f7ec0;  // HIGH: bool(char*), checks g_PlayerCharacterID  /* win:win_rva funcs::IS_PLAYER_CHARACTER (same name) */
     constexpr uintptr_t STRESS_IMPACT_TRAIT       = CK3_WIN_UNMAPPED_N(721);  // MEDIUM: trait-based stress impact calculation  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ON_STRESS_LEVEL_INCREASE  = CK3_WIN_UNMAPPED_N(722);  // MEDIUM: event dispatch for level increase (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    // ON_STRESS_LEVEL_DECREASE removed (ck-audit-B): the former 0x061c1b50 entry
+    constexpr uintptr_t ON_STRESS_LEVEL_INCREASE  = CK3_WIN_UNMAPPED_N(722);  // MEDIUM: event dispatch for level increase  /* win:poisoned (no Windows counterpart) */
+    // ON_STRESS_LEVEL_DECREASE removed: the former 0x061c1b50 entry
     // was a mislabel — that function is the generic on-action-manager dispatch
     // (Ghidra: OnActionManager_Dispatch), not a stress-specific handler. Use
     // event_weight::ON_ACTION_DISPATCH_BY_ID for the canonical reference.
-    constexpr uintptr_t TRIGGER_MENTAL_BREAK      = CK3_WIN_UNMAPPED_N(723);  // MEDIUM: mental break event (player char only) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRIGGER_MENTAL_BREAK      = CK3_WIN_UNMAPPED_N(723);  // MEDIUM: mental break event (player char only)  /* win:poisoned (no Windows counterpart) */
 }
 
 namespace stress_globals {
-    // NOTE: ck-e58l.16 (second pass) verified via core-dump read that these WERE Ghidra-VA.
+    // NOTE: (second pass) verified via core-dump read that these WERE Ghidra-VA.
     // Converted to raw below. Previous values (0x0c3a92d0 / 0x0c3a92b8) were Ghidra-VA
     // and read as 1 / 0 respectively — incorrect. Raw values read 100 / 3 — correct.
     constexpr uintptr_t STRESS_PER_LEVEL          = CK3_WIN_UNMAPPED_N(724);  // HIGH: int32 = 100, core-dump verified 2026-04-21  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t MAX_STRESS_LEVEL          = CK3_WIN_UNMAPPED_N(725);  // HIGH: int32 = 3, core-dump verified 2026-04-21  /* win:poisoned (no Windows counterpart) */
-    // NOTE: ck-e58l.16 showed the "stress event" singleton at 0x0c0b0768 is actually
+    // NOTE: showed the "stress event" singleton at 0x0c0b0768 is actually
     // the generic on-action manager (same address as on_action_dispatch::
     // ON_ACTION_MGR_WAR_SINGLETON). Removed from this namespace to avoid duplication;
     // use on_action_dispatch::ON_ACTION_MGR_WAR_SINGLETON (raw 0x0bfb0768).
@@ -3222,7 +3222,7 @@ namespace title_realm {
     // symbol/string; found by scanning a live ruler's title_realm graph for an
     // object whose key std::string ends in "_government"). title_realm+0x3F0 → a
     // CGovernmentType*; its key std::string is at gov_obj+0x10. Verified across
-    // mandala/celestial/administrative/nomad governments. (ck-51)
+    // mandala/celestial/administrative/nomad governments.
     constexpr size_t GOVERNMENT_TYPE_PTR = 0x3F0;  // HIGH: ptr to CGovernmentType (name std::string @ +0x10)
 
     // Law container (Round 5e confirmed)
@@ -3266,13 +3266,13 @@ namespace title_realm {
     constexpr size_t TITLE_ARRAY_COUNT  = 0x1EC;  // HIGH: int32, DIRECTLY-held title count (ALL tiers).  /* win:agreed probe */
                                                   // NOT realm size: flat when a vassal grows. For true
                                                   // vassal-inclusive county count use the top-liege walk
-                                                  // (count_realm_counties) — re_realm_size_vassal_inclusive.md (ck-realmsize)
+                                                  // (count_realm_counties) — re_realm_size_vassal_inclusive.md
 
     // +0xA8 is NOT a vassal array: on dumps ivar867 and 1097 its 9,459 / 12,029 entries
     // (all rulers) include no landed character and none of the rulers' vassals (the
     // bridge's old DIRECT_VASSAL_ARRAY read listed the king's wife and unlanded characters as
     // vassals). Direct vassals come from VASSAL_CONTRACT_ARRAY (below): vassal_roster.h.
-    // +0xC0 and +0xD8 (named INDIRECT_VASSAL_ARRAY / FOURTH_VASSAL_ARRAY until lane l6)
+    // +0xC0 and +0xD8 (named INDIRECT_VASSAL_ARRAY / FOURTH_VASSAL_ARRAY until)
     // are empty for 4,592 of the 4,593 landed characters on dump ivar867: no vassal list.
     // Vassal contract array (PDX array of int32 contract IDs): the contracts this ruler
     // is the LIEGE of; their SUBJECTs are its direct vassals (vassal_roster.h).
@@ -3407,7 +3407,7 @@ namespace diplomatic_data {
 //   8=tributary, 9=truce, 10=liege, 11+=other
 // =============================================================================
 // The sorted per-character relation list described above (the array behind
-// *(char + 0x1A8), searched by funcs::RELATION_BINARY_SEARCH). Lane l4 named it; the
+// *(char + 0x1A8), searched by funcs::RELATION_BINARY_SEARCH). named it; the
 // layout is the one this comment block records, confirmed in the 867 dump (13173's one
 // entry is 12592, 12592's list holds 13173 at the same relation object).
 namespace relation_list {
@@ -3450,7 +3450,7 @@ namespace diplomatic_relation {
     // contained WAR participants and NEVER the real ally (see re_alliance_false_positive_119.md).
     constexpr size_t HAS_ALLIANCE       = 0x94;   // HIGH: int32, alliance count/flag (!=0 == allied) — HasAllianceInRelation
 
-    // --- Matrilineal marriage flag (lane l4, re/findings/re_interactions.md §4) ---
+    // --- Matrilineal marriage flag (re/findings/re_interactions.md §4) ---
     // The marry effect (FUN_0684f460) gets-or-creates the husband->wife relation and sets
     // this byte (FUN_063695f0) only for a matrilineal marriage; the matrilinear_marriage
     // trigger (CIsMarriageTypeTrigger<1>, FUN_04fd7c00) reads it through FUN_06850990
@@ -3558,7 +3558,7 @@ namespace trait_entry {
     constexpr size_t TRAIT_ID           = 0x10;   // HIGH: uint32, numeric trait index  /* win:measured probe relocation */
     constexpr size_t NAME_DESCRIPTOR    = 0x10;   // HIGH: CJominiScriptDbObject desc ptr (name at desc+0x10)
     // (MIN_VALUE 0x68 / MAX_VALUE 0x6C, "education level range", deleted in cleanup
-    // 2026.11 lane l6: they read 1 and 0 for all 297 traits of the ivar867 dump.)
+    // 2026.11: they read 1 and 0 for all 297 traits of the ivar867 dump.)
 
     // Modifier collection (sub-object at +0x90, stores all stat bonuses)
     // Access: value_array = *(trait + 0xA8), values are 8-byte CFixedPoint, indexed by modifier slot
@@ -3610,7 +3610,7 @@ namespace trait_entry {
     // HIGH: all 297 traits of dump ck3_20260625_152901_ivar867 against
     // game/common/traits/00_traits.txt (34 traits minimum_age 16, 5 childhood traits
     // 3..15, sickly maximum_age 6; brave ruler_designer_cost 40, education_diplomacy_4
-    // 80, rowdy 5). Until cleanup 2026.11 (lane l6, F10) the header had
+    // 80, rowdy 5). Until (F10) the header had
     // RULER_DESIGNER_COST 0x394, MINIMUM_AGE 0x39C, MAXIMUM_AGE 0x3A0 and VALID_SEX
     // 0x3A4: one slot off, so minimum_age showed the maximum and an unset value read
     // whatever the allocator left (unstable between launches). VALID_SEX is deleted:
@@ -3695,7 +3695,7 @@ namespace building_slots {
     constexpr size_t CONSTRUCTING_SLOT   = 0x78;   // HIGH: int32, its slot (decompile; live)
     constexpr size_t CONSTRUCTING_START  = 0x7C;   // HIGH: int32 raw game date the order was given (game_state::GAME_DATE copied; decompile; live)
     constexpr size_t CONSTRUCTING_BY     = 0xE0;   // HIGH: uint32 full character id that ordered it (decompile; live)
-    // The construction's progress (lane l6, cleanup 2026.11). The start (FUN_0611da40) sets
+    // The construction's progress. The start (FUN_0611da40) sets
     // REMAINING to the building's construction days * 100000 and SPEED to 0. The daily
     // advance (FUN_0611e610) subtracts 1e10 / SPEED from REMAINING, and when SPEED < 1 sets
     // REMAINING to 0: the building is finished that day. SPEED is the construction time
@@ -3723,7 +3723,7 @@ namespace province_template {
     // "drylands","forest","desert","taiga","jungle","steppe","farmlands","wetlands",
     // "floodplains","desert_mountains","oasis","terraced_hills"). HIGH — core dump
     // ck3_20260421_195552: 300+ provinces clustered into exactly 15 distinct ptrs, all
-    // sharing vtable 0x...ce5800 and decoding to valid CK3 terrain keys. (ck-readlane)
+    // sharing vtable 0x...ce5800 and decoding to valid CK3 terrain keys.
     constexpr size_t TERRAIN_TYPE_PTR    = 0x0b8;  // HIGH: ptr, CTerrainType* (key at +0x10, db_object::NAME_KEY)  /* win:agreed probe */
 }
 
@@ -3768,7 +3768,7 @@ namespace personality_mods {
 // AI Controller Struct Offsets (from *(core_data + AI_CONTROLLER))
 // =============================================================================
 namespace ai_ctrl {
-    // CAIStrategy struct layout. PROVENANCE (ck-2u2a, re-derived 2026-09-24;
+    // CAIStrategy struct layout. PROVENANCE (re-derived 2026-09-24;
     // the previous citation named 'PerTickSetup @ 0x04e22cb0', which is not a
     // function name in the project and not where the writes are):
     //   FUN_04e22cb0  entry 0x4e22cb0, size 16 — a FORWARDER, reached per tick
@@ -3797,7 +3797,7 @@ namespace ai_ctrl {
     // That function's Ghidra plate comment types param_1 as CCharacter*. NOT
     // REPEATED HERE ON PURPOSE: the bridge reaches this byte as ai_ctrl+0x28 via
     // core_data + AI_CONTROLLER (0x278), and this struct already holds a separate
-    // CCharacter* at +0x18. The receiver TYPE is disputed and is ck-8o2x's
+    // CCharacter* at +0x18. The receiver TYPE is disputed and is
     // subject; the entry, the size and the store are true either way.
     constexpr size_t AI_ENABLED         = 0x28;   // byte: AI enabled for this character (checked in MainTick)  /* win:measured struct_layout::AI_CTRL_AI_ENABLED */
     constexpr size_t DAILY_FLAG         = 0x29;   // byte: if 0, forces daily category bucket
@@ -3808,7 +3808,7 @@ namespace ai_ctrl {
     constexpr size_t EXT_WAR_LIST       = 0x140;  // CPdxArray: current wars for character  /* win:slot_run ai_ctrl_ext run delta +0x8 */
     // Tick counters (decremented per evaluation, 8 categories), relative to the extended
     // state, NOT to ai_ctrl: read at ai_ctrl+0x268 they are pointer halves (live867
-    // l6-stab-b, two launches). No bridge reader since cleanup 2026.11 (lane l6).
+    // l6-stab-b, two launches). No bridge reader since.
     constexpr size_t TICK_COUNTER_0     = 0x270;  /* win:medium struct_layout::AI_EXT_TICK_COUNTER_0 */
     constexpr size_t TICK_COUNTER_1     = 0x274;  /* win:slot_run ai_ctrl_ext run delta +0x8 */
     constexpr size_t TICK_COUNTER_2     = 0x278;  /* win:slot_run ai_ctrl_ext run delta +0x8 */
@@ -3824,7 +3824,7 @@ namespace ai_ctrl {
     // The per-tick setup (forwarder FUN_04e22cb0 @ 0x4e22cb0 -> writer
     // FUN_04e52690 @ 0x4e52690) sets MILITARY_POWER, STATE, RANK_DATA and FLAGS
     // per tick — FOUR fields; this comment used to name three and omit RANK_DATA.
-    // After set_character_ai(true), must wait 1 tick for it to run. (ck-2u2a)
+    // After set_character_ai(true), must wait 1 tick for it to run.
 
     // NOTE: ai_ctrl IS the CAIStrategy object (RTTI-confirmed: "11CAIStrategy")
     // EXT_STATE_PTR (+0x20) points to ai_ctrl+0x40 (interior sub-object).
@@ -3873,14 +3873,14 @@ namespace ai_goal {
 // AI Goal Selection Functions (base-relative, need ASLR adjustment)
 // =============================================================================
 namespace ai_goal_funcs {
-    constexpr uintptr_t SELECT_GOALS         = CK3_WIN_UNMAPPED_N(732);  // HIGH: goal pool selection (financial state) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SELECT_BEST_GOAL     = CK3_WIN_UNMAPPED_N(733);  // HIGH: core priority scoring loop (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CHECK_ELIGIBILITY    = CK3_WIN_UNMAPPED_N(734);  // HIGH: evaluate "potential" trigger (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCORE_PRIORITY       = CK3_WIN_UNMAPPED_N(735);  // HIGH: evaluate "weight" script (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_CANDIDATE_LIST   = CK3_WIN_UNMAPPED_N(736);  // HIGH: look up goal list by mode+tier (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SELECT_GOALS         = CK3_WIN_UNMAPPED_N(732);  // HIGH: goal pool selection (financial state)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SELECT_BEST_GOAL     = CK3_WIN_UNMAPPED_N(733);  // HIGH: core priority scoring loop  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHECK_ELIGIBILITY    = CK3_WIN_UNMAPPED_N(734);  // HIGH: evaluate "potential" trigger  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCORE_PRIORITY       = CK3_WIN_UNMAPPED_N(735);  // HIGH: evaluate "weight" script  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_CANDIDATE_LIST   = CK3_WIN_UNMAPPED_N(736);  // HIGH: look up goal list by mode+tier  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t STRATEGY_EXECUTE     = CK3_WIN_UNMAPPED_N(737);  // HIGH: timer mgmt + goal dispatch (683B)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CREATE_NEW_GOALS     = CK3_WIN_UNMAPPED_N(738);  // MEDIUM: goal creation (timer B expiry) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t EVAL_WEIGHT_SCRIPT   = CK3_WIN_UNMAPPED_N(739);  // MEDIUM: script engine for weight eval (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CREATE_NEW_GOALS     = CK3_WIN_UNMAPPED_N(738);  // MEDIUM: goal creation (timer B expiry)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t EVAL_WEIGHT_SCRIPT   = CK3_WIN_UNMAPPED_N(739);  // MEDIUM: script engine for weight eval  /* win:poisoned (no Windows counterpart) */
     // Minimum score threshold global
     constexpr uintptr_t MIN_SCORE_THRESHOLD  = CK3_WIN_UNMAPPED_N(740);  // MEDIUM: int32, goals must score >= this  /* win:poisoned (no Windows counterpart) */
 }
@@ -3937,7 +3937,7 @@ namespace interaction_db_internal {
     constexpr size_t INDEX_ARRAY_BASE    = 0x1020;  // CONFIRMED: base of interaction ptr array
     constexpr size_t INDEX_ARRAY_STRIDE  = 8;       // 8 bytes per entry (pointer)
 
-    // ck-8cns: REFUTED — "current interaction" / "Gate 2 stamp" hypothesis was wrong.
+    // REFUTED — "current interaction" / "Gate 2 stamp" hypothesis was wrong.
     // (*g_InteractionDB) + 0x1000 = slot 14 of the 16-slot pinned-interaction array
     // (offsets 0xF20..0x1018, stride 0x10). It is bound at DB load to
     // influence_candidacy_interaction's CCharacterInteractionType*. There are NO
@@ -3980,7 +3980,7 @@ namespace interaction_ht {
 }
 
 // =============================================================================
-// WAR_DB (TPdxRefDatabase<CWar,8>) layout — ck-s0qu cross-dump validated.
+// WAR_DB (TPdxRefDatabase<CWar,8>) layout — cross-dump validated.
 // Singleton at globals::WAR_DB. Used by WAR_DB_ALLOCATE / lookup paths.
 // =============================================================================
 namespace war_db {
@@ -3999,7 +3999,7 @@ namespace war_db {
     constexpr size_t SLOT_WAR_PTR     = 0x08;  // ptr: CWar* (NULL when slot is free)
     constexpr uint32_t SLOT_OCCUPIED  = 0x00FFFFFF;  // sentinel pattern in BOTH meta words for occupied slots
 
-    // war_id encoding (ck-s0qu: validated across 41 wars in 2 dumps).
+    // war_id encoding (validated across 41 wars in 2 dumps).
     constexpr uint32_t WAR_ID_GEN_SHIFT = 24;
     constexpr uint32_t WAR_ID_GEN_MASK  = 0xFF000000;  // (gen << 24) — incremented on slot reuse
     constexpr uint32_t WAR_ID_IDX_MASK  = 0x00FFFFFF;  // slot table index
@@ -4007,11 +4007,11 @@ namespace war_db {
 }
 
 // =============================================================================
-// CWar Object Offsets (0x300 bytes total, Round 5c-d + R8V4 + ck-0q79 core dump enumeration)
+// CWar Object Offsets (0x300 bytes total, Round 5c-d + R8V4 + core dump enumeration)
 // Confirmed via WAR_INIT FUN_066d10a0 + WAR_PARTICIPANT_SETUP FUN_066be2d0
 // R8V4: primary atk/def refs, participant counts, battle side flag, war access chain
-// ck-0q79: full struct validated against 11 wars in core dump, allocation stride = 0x300
-// ck-s0qu: cross-validated against 87-war 1097 dump; CCasusBelli vtable corrected.
+// Full struct validated against 11 wars in core dump, allocation stride = 0x300
+// Cross-validated against 87-war 1097 dump; CCasusBelli vtable corrected.
 // =============================================================================
 namespace war_obj {
     constexpr size_t VTABLE             = 0x00;   // HIGH: ptr, CWar vtable
@@ -4036,31 +4036,31 @@ namespace war_obj {
     constexpr size_t DEF_SIDE_FLAGS     = 0x78;   // HIGH: byte, defender side flags  /* win:agreed probe */
 
     // Dates/flags
-    // ck-sd4d: the two halves of this qword are now named. LOW dword is the raw
+    // The two halves of this qword are now named. LOW dword is the raw
     // game clock (same units as game_state::GAME_DATE); HIGH dword is the same
     // instant PRE-DECODED as (year << 16) | ((month-1) << 8) | (day-1), with
     // 0xFFFFFFFF as the unset sentinel WAR_CONSTRUCTOR writes. Validated on all
     // 87 wars of ck3_20260421_195552.core: decoding the low dword through the
-    // engine's real calendar (ck3::gamedate, ck-05mg) reproduces the high dword
+    // engine's real calendar (ck3::gamedate) reproduces the high dword
     // exactly, 87/87 — which is also a fourth independent confirmation that the
     // calendar has no leap years and real month lengths.
     constexpr size_t START_DATE_PACKED  = 0x80;   // HIGH: uint64 = raw clock (lo dword) + packed Y/M/D (hi dword)  /* win:agreed probe */
-    constexpr size_t START_DATE_RAW     = 0x80;   // HIGH: uint32, raw clock ticks at declaration (ck-sd4d)  /* win:agreed probe */
-    constexpr size_t START_DATE_YMD     = 0x84;   // HIGH: uint32, (year<<16)|((month-1)<<8)|(day-1); 0xFFFFFFFF = unset (ck-sd4d)  /* win:agreed probe */
-    // ck-sd4d CORRECTION: this is NOT an end date. WAR_CONSTRUCTOR never writes
+    constexpr size_t START_DATE_RAW     = 0x80;   // HIGH: uint32, raw clock ticks at declaration  /* win:agreed probe */
+    constexpr size_t START_DATE_YMD     = 0x84;   // HIGH: uint32, (year<<16)|((month-1)<<8)|(day-1); 0xFFFFFFFF = unset  /* win:agreed probe */
+    // CORRECTION: this is NOT an end date. WAR_CONSTRUCTOR never writes
     // it, WAR_END_CORE never writes it, and it reads 0 in all 87 wars of
     // ck3_20260421_195552.core. The war is memset to zero the instant it ends,
     // so no end date could survive here anyway. Kept (and still emitted, raw,
     // as `end_date_field_raw`) so the disproof is visible rather than silently
     // re-guessed. The observable end date comes from the game clock sampled
     // inside the WAR_END_CORE hook. Was labelled HIGH on no stated evidence.
-    constexpr size_t END_DATE_PACKED    = 0x88;   // REFUTED (ck-sd4d): always 0; NOT an end date
+    constexpr size_t END_DATE_PACKED    = 0x88;   // REFUTED: always 0; NOT an end date
     constexpr size_t ACTIVE_FLAG        = 0x90;   // DEPRECATED: always reads inactive. Use IS_ENDED (0x2F8) instead (R8V4 confirmed)
 
     // CCasusBelli sub-object (0x1A0 bytes at +0x98, constructor FUN_05b5a820)
     constexpr size_t CB_SUBOBJ          = 0x98;   // HIGH: ptr, CCasusBelli::vftable (cb+0x00)
     constexpr size_t CB_TYPE_REF        = 0xA0;   // HIGH: uint64, CB type reference (cb+0x08)  /* win:agreed probe */
-    constexpr size_t CB_TARGET          = 0xA8;   // HIGH: type tag (cb+0x10), always 0x12 across 11 wars in ck-s0qu probe — NOT a title/char ref. Use CB_TITLE_ARRAY (0x210) or PRIMARY_DEF_REF (0x22C) for actual target.
+    constexpr size_t CB_TARGET          = 0xA8;   // HIGH: type tag (cb+0x10), always 0x12 across 11 wars in probe — NOT a title/char ref. Use CB_TITLE_ARRAY (0x210) or PRIMARY_DEF_REF (0x22C) for actual target.
     constexpr size_t CB_WAR_ID          = 0xB0;   // HIGH: uint32, CB back-reference to owning war ID (cb+0x18)  /* win:agreed probe */
     constexpr size_t CB_HASH            = 0xB8;   // LOW: uint32, unique per-war hash (purpose unclear, not CB-type-dependent) (cb+0x20)  /* win:agreed probe */
     constexpr size_t CB_TITLE_ARRAY     = 0x210;  // HIGH: ptr to uint32[] title refs (cb+0x178); 4-byte elements (dump ivar867: Saffarid-Tahirid War 0x186b,0x181d), read through read_war_target_titles
@@ -4069,9 +4069,9 @@ namespace war_obj {
     // FUN_066b92e0 reads war+0x22C as primary attacker char ref. These overlap with
     // the tail of the CB sub-object (cb internal 0x190/0x194). The old "claim type" and
     // "war goal" labels for CB_PARAM_1/CB_PARAM_2 were likely wrong — these are character refs.
-    // ck-qeod CORRECTION: R8V4 labels are INVERTED from war-side semantics.
+    // CORRECTION: R8V4 labels are INVERTED from war-side semantics.
     // Verified across all 11 wars in core dump: war+0x228 = ATK side, war+0x22C = DEF side.
-    // ck-yifp: THESE ARE NOT FIXED AT DECLARATION. The engine reassigns the
+    // THESE ARE NOT FIXED AT DECLARATION. The engine reassigns the
     // primary DEFENDER to the new holder when the contested title changes
     // hands, and the bridge's own WAR_END_CORE ledger has recorded it:
     //     war 0 ended defender_victory 1070.05.04 (norwegian_invasion_cb 29767->31808)
@@ -4085,11 +4085,11 @@ namespace war_obj {
     // `mov [reg+0x22c]` and `mov [reg+0x194]` found no war-code candidate, so
     // the store is reached through another base or width. Recorded as a gap
     // rather than guessed at. See re/findings/re_war_end_outcome.md sec.10.
-    constexpr size_t PRIMARY_ATK_REF    = 0x228;  // HIGH: uint32, attacker char ref, MUTABLE (= cb+0x190, verified ck-qeod: matches war side 1 participant)  /* win:agreed probe */
-    constexpr size_t PRIMARY_DEF_REF    = 0x22C;  // HIGH: uint32, defender char ref, MUTABLE — follows the contested title (ck-yifp)  /* win:agreed probe */
+    constexpr size_t PRIMARY_ATK_REF    = 0x228;  // HIGH: uint32, attacker char ref, MUTABLE (= cb+0x190, verified: matches war side 1 participant)  /* win:agreed probe */
+    constexpr size_t PRIMARY_DEF_REF    = 0x22C;  // HIGH: uint32, defender char ref, MUTABLE — follows the contested title  /* win:agreed probe */
     constexpr size_t CB_PARAM_1         = 0x228;  // DEPRECATED: alias, actually PRIMARY_ATK_REF
     constexpr size_t CB_PARAM_2         = 0x22C;  // DEPRECATED: alias, actually PRIMARY_DEF_REF
-    constexpr size_t CLAIMANT_REF       = 0x230;  // HIGH: uint32, claimant char ref for claim_cb (= cb+0x198); 0xFFFFFFFF for non-claim CBs (ck-qeod)
+    constexpr size_t CLAIMANT_REF       = 0x230;  // HIGH: uint32, claimant char ref for claim_cb (= cb+0x198); 0xFFFFFFFF for non-claim CBs
 
     // Ticking war score (R24: raw memory, no function calls needed)
     constexpr size_t ATK_TICKING_SCORE   = 0x40;   // HIGH: int64, fixed-point / 100k, attacker ticking score accumulator
@@ -4104,9 +4104,9 @@ namespace war_obj {
     // Battle data
     constexpr size_t BATTLE_LIST_PTR    = 0x238;  // HIGH: ptr, battle object array
     constexpr size_t BATTLE_COUNT       = 0x244;  // HIGH: int32, battle count
-    constexpr size_t BATTLE_ALLOCATOR   = 0x248;  // HIGH: ptr, allocator for battle array (ck-0q79)
+    constexpr size_t BATTLE_ALLOCATOR   = 0x248;  // HIGH: ptr, allocator for battle array
 
-    // War flags (ck-0q79: varies per war, most wars have byte1=0x01)
+    // War flags (varies per war, most wars have byte1=0x01)
     constexpr size_t WAR_FLAGS          = 0x250;  // MEDIUM: uint16, war state flags (byte 0 + byte 1)  /* win:agreed probe */
 
     // Participant tracking containers (R25: NOT numeric scores — these are double-buffered
@@ -4122,19 +4122,19 @@ namespace war_obj {
     constexpr size_t DEF_SCORE_DATA     = 0x290;  // DEPRECATED: renamed to CACHED_TRACK_DATA (not defender-specific)
 
     // War name (std::string SSO, preceded by allocator at +0x2D0)
-    constexpr size_t NAME_ALLOCATOR     = 0x2D0;  // HIGH: ptr, string allocator for war name (ck-0q79)
+    constexpr size_t NAME_ALLOCATOR     = 0x2D0;  // HIGH: ptr, string allocator for war name
     constexpr size_t NAME_DATA_PTR      = 0x2D8;  // HIGH: SSO string data ptr
     constexpr size_t NAME_LENGTH        = 0x2E0;  // HIGH: size_t, name length
     constexpr size_t NAME_INLINE_BUF    = 0x2E8;  // HIGH: SSO inline buffer (16 bytes)
 
     // Active/ended flag (R7-4 confirmed: 0=active, non-zero=ended)
     constexpr size_t IS_ENDED           = 0x2F8;  // HIGH: byte, 0=active, non-0=ended. Set by WAR_END_CORE, which then wipes the object — see funcs::WAR_END_CORE.
-    constexpr size_t END_SUPPRESS_MSG   = 0x2F9;  // MEDIUM: byte, read by WAR_END_CORE to suppress the result message (ck-sd4d)
-    constexpr size_t END_BLOCKED        = 0x2FA;  // MEDIUM: byte, war exempt from the invalidation sweep (ck-sd4d, FUN_066c7f70)
-    constexpr size_t END_IN_PROGRESS    = 0x2FB;  // MEDIUM: byte, re-entrancy guard set around the invalidation check (ck-sd4d)
+    constexpr size_t END_SUPPRESS_MSG   = 0x2F9;  // MEDIUM: byte, read by WAR_END_CORE to suppress the result message
+    constexpr size_t END_BLOCKED        = 0x2FA;  // MEDIUM: byte, war exempt from the invalidation sweep (FUN_066c7f70)
+    constexpr size_t END_IN_PROGRESS    = 0x2FB;  // MEDIUM: byte, re-entrancy guard set around the invalidation check
 
     // Engine outcome enum — the 3rd argument to funcs::WAR_END_CORE.
-    // Cross-validated four ways (ck-sd4d, re/findings/re_war_end_outcome.md):
+    // Cross-validated four ways (re/findings/re_war_end_outcome.md):
     //   (1) the invalidation sweep FUN_066c7f70 passes 3;
     //   (2) the engine's own trigger documents the enum as
     //       "victory/defeat/white_peace/invalidated" (has_war_result_message_with_outcome);
@@ -4161,16 +4161,16 @@ namespace war_obj {
 
     // Backwards-compat aliases (deprecated names)
     constexpr size_t RULES_PTR          = 0xA0;   // DEPRECATED: use CB_TYPE_REF (same offset; war_rules offsets are relative to *(war+0xA0))  /* win:agreed probe */
-    constexpr size_t TOTAL_SIZE         = 0x300;  // HIGH: confirmed via allocation stride across 11 consecutive CWar objects in core dump (ck-0q79). Constructor inits to 0x2FC. UI model struct (separate object) extends to 0x1c40+.
+    constexpr size_t TOTAL_SIZE         = 0x300;  // HIGH: confirmed via allocation stride across 11 consecutive CWar objects in core dump. Constructor inits to 0x2FC. UI model struct (separate object) extends to 0x1c40+.
     // NOTE: ATK_PARTICIPANT/DEF_PARTICIPANT containers store POINTERS to CWarParticipant (8-byte stride),
     // NOT inline structs. To read participant[i]: dereference *(ptr*)(data_ptr + i*8), then read fields.
 
-    // CWar vtable-data addresses (ck-e58l.11, file-rel; Ghidra = +0x00100000).
-    // All 11 wars in ck-0q79 core dump share CWAR_VTABLE. typeinfo "4CWar" at 0x0bc50e10.
+    // CWar vtable-data addresses (file-rel; Ghidra = +0x00100000).
+    // All 11 wars in core dump share CWAR_VTABLE. typeinfo "4CWar" at 0x0bc50e10.
     constexpr uintptr_t CWAR_VTABLE               = CK3_WIN_UNMAPPED_N(741);  // HIGH: CWar primary vtable (first vfunc; 6 declared slots; offset_to_top=0)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CWAR_VTABLE_ISVALID       = CK3_WIN_UNMAPPED_N(742);  // HIGH: CWar::IsValid = slot[2], 7B: `return war->war_id != 0xFFFFFFFF` — SF3 predicate (ck-e58l.11)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CWAR_VTABLE_ISVALID       = CK3_WIN_UNMAPPED_N(742);  // HIGH: CWar::IsValid = slot[2], 7B: `return war->war_id != 0xFFFFFFFF` — SF3 predicate  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t NULL_WAR_VTABLE           = CK3_WIN_UNMAPPED_N(743);  // HIGH: _g_NullWar_sentinel vtable (subclass override). Sentinel object at *(WAR_DB_SENTINEL).  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t NULL_WAR_VTABLE_ISVALID   = CK3_WIN_UNMAPPED_N(744);  // HIGH: NullWar::IsValid = slot[2], 2B: unconditional return 0. Drives SF3 on SF2 cascade (ck-e58l.11).  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t NULL_WAR_VTABLE_ISVALID   = CK3_WIN_UNMAPPED_N(744);  // HIGH: NullWar::IsValid = slot[2], 2B: unconditional return 0. Drives SF3 on SF2 cascade.  /* win:poisoned (no Windows counterpart) */
 }
 
 // =============================================================================
@@ -4363,7 +4363,7 @@ namespace scheme_manager {
 }
 
 // =============================================================================
-// CSchemeType Struct Offsets (ck-1nab: from ComputeSuccessTriple/Chance decompilation)
+// CSchemeType Struct Offsets (from ComputeSuccessTriple/Chance decompilation)
 // Schema type definition — read-only game data, accessed via active_scheme+0x18 ptr
 // =============================================================================
 namespace scheme_type {
@@ -4376,7 +4376,7 @@ namespace scheme_type {
     constexpr size_t MIN_CHANCE_FLOOR     = 0x9b0;  // HIGH: int32, min success chance floor (percentage)  /* win:slot_run scheme_type run delta +0x8 */
     constexpr size_t BASE_MAX_PROGRESS    = 0x9b4;  // HIGH: int32, base max progress (days)  /* win:measured probe relocation */
     // l3-schemes 2026-10-20: 0xB40 is the scheme CATEGORY, and it is also the cap-table
-    // index ck-1nab named CAP_TYPE: one field. CanStartScheme compares an owned
+    // index named CAP_TYPE: one field. CanStartScheme compares an owned
     // scheme's category (FUN_063aab40) with *(int*)(type+0xB40), and the
     // is_hostile_scheme getter tests category == 0. 46 non-contract types in the 867
     // dump against their script `category`: 0 = hostile, 1 = contract, 2 = personal,
@@ -4390,7 +4390,7 @@ namespace scheme_type {
     // PASSIVE_FLAG is the script's is_basic (CIsTypeBasicScheme getter FUN_052d6000;
     // 46 types match: sway/befriend/seduce/learn_language = 1, murder/abduct = 0).
     // The literal keeps the probe's name, as CAP_TYPE does; IS_BASIC is defined from it.
-    constexpr size_t PASSIVE_FLAG         = 0xb4e;  // HIGH: byte, is_basic (the guaranteed-floor flag ck-1nab read)  /* win:measured probe relocation */
+    constexpr size_t PASSIVE_FLAG         = 0xb4e;  // HIGH: byte, is_basic (the guaranteed-floor flag read)  /* win:measured probe relocation */
     constexpr size_t IS_BASIC             = PASSIVE_FLAG;  // the script's is_basic (l3-schemes)
     constexpr size_t MAX_BREACHES         = 0x9bc;  // HIGH: int32, maximum_breaches (CSchemeMaxBreachesTrigger getter FUN_052d6d40)  /* win:slot_run scheme_type run delta +0x8 */
     // What the scheme targets: CreateActiveScheme's first gate compares it with the
@@ -4423,7 +4423,7 @@ namespace scheme_type_db {
 // Its reverse map, token id -> std::string*: a trigger's TOKEN_ID indexes it. HIGH:
 // decompile FUN_08269e60 + core dump ivar867 (25074 ids; 9 read back to the script
 // keys at the lines their triggers record) (l3-schemes, re_schemes.md §2). No bridge
-// reader since L14 S4 (the scheme refusal no longer names the script key).
+// reader since then S4 (the scheme refusal no longer names the script key).
 // =============================================================================
 namespace token_table {
     constexpr size_t REVERSE_PTR          = 0x40;   // HIGH: std::string*[] (l3-schemes)
@@ -4437,8 +4437,8 @@ namespace token_table {
 // sink only reads it). Sources: CanStartScheme's steps 3 and 4 (l3-schemes), the
 // identical stack init in FUN_0762b310 (CAndTrigger evaluate-with-sink) and the
 // leaf evaluate-with-sink FUN_04f1e000, and the destructor FUN_049aab50, which
-// frees +0x30, +0x10 and the +0x08 object (L14 S4, re_schemes.md §2).
-// Live (L14 S4, live867 eval_d_words_court, 2026-10-30): with the sink's wants_text()
+// frees +0x30, +0x10 and the +0x08 object (re_schemes.md §2).
+// Live (live867 eval_d_words_court, 2026-10-30): with the sink's wants_text
 // true, every desc open_child got and every leaf entry add_entry got on 10 refused
 // abduct targets had an empty +0x10, an empty +0x30 and a null +0x08: a trigger's
 // words are not in it. The bridge reads TRIGGER (open_child) and TEXT (the root
@@ -4446,12 +4446,12 @@ namespace token_table {
 // =============================================================================
 namespace scheme_fail_entry {
     constexpr size_t TRIGGER              = 0x00;   // MEDIUM: CTrigger*, the trigger described (FUN_0762b310, FUN_04f1e000: param_1)
-    constexpr size_t LINES                = 0x08;   // MEDIUM: ptr, a heap object of lines, null when none (FUN_049aab50 frees it) (L14 S4)
+    constexpr size_t LINES                = 0x08;   // MEDIUM: ptr, a heap object of lines, null when none (FUN_049aab50 frees it)
     constexpr size_t TEXT                 = 0x10;   // MEDIUM: std::string, the refusal text (l3-schemes; FUN_049aab50 frees it)
     constexpr size_t KEY                  = 0x30;   // MEDIUM: std::string, the loc key, e.g. can_target_character_with_scheme (l3-schemes; FUN_049aab50)
 }
 // The lines object at scheme_fail_entry::LINES: an array of 0x78-byte lines, two
-// std::strings each. MEDIUM: one source, the destructor FUN_049aab50 (L14 S4);
+// std::strings each. MEDIUM: one source, the destructor FUN_049aab50;
 // null in every trigger description read live (above). No bridge reader.
 namespace scheme_fail_lines {
     constexpr size_t ARRAY                = 0x00;   // MEDIUM: ptr, the lines (FUN_049aab50)
@@ -4470,7 +4470,7 @@ namespace army_obj {
     constexpr size_t ID                 = 0x10;   // HIGH: uint32, army ID (full 32-bit, 24-bit for DB index)  /* win:agreed probe */
 
     // Regiment membership — the army's mobilized sub-units (CArmyRegiment, NOT CRegiment).
-    // HIGH (ck-warstrength): CoreReader ck3_20260421_195552 across 407 live armies +
+    // HIGH: CoreReader ck3_20260421_195552 across 407 live armies +
     //   CArmyRegiment serializer FUN_05bf75f0/FUN_05bf70c0 decompile.
     // REG_VEC is a vector of CArmyRegiment ref-IDs (uint32, type-prefix byte varies); each
     // resolves via globals::ARMY_REGIMENT_DB (NOT REGIMENT_DB — different class/DB).
@@ -4480,7 +4480,7 @@ namespace army_obj {
     constexpr size_t REG_COUNT          = 0x28;   // HIGH: int32, slot count (capacity; skip 0-IDs)  /* win:medium struct_layout::ARMY_REG_COUNT */
 
     // Location & movement (Round 11: CoreReader probe of 53 armies, cross-validated via title DB)
-    // LOCATION_BARONY (0xE8) — REFUTED 2026-09-13 (ck-meu5), was "HIGH: uint32,
+    // LOCATION_BARONY (0xE8) — REFUTED 2026-09-13, was "HIGH: uint32,
     // current location barony title ID (-> LANDED_TITLE_DB)". It is NOT a title id:
     // in william_1066_baseline.core, 5 of 32 live armies hold the 0xFFFFFFFF
     // sentinel and the other 27 hold values in 27035..58867, while the landed-title
@@ -4489,7 +4489,7 @@ namespace army_obj {
     // populated and stable and is worth identifying; do not read it as a location.
     // The only resolvable CProvince* on CArmy is DESTINATION_PROV (0x1A0) below,
     // and a destination is not a location (null-object when idle: 17/32).
-    // IDENTIFIED 2026-09-17 (ck-nuet, ck-760i seat): it is a CHARACTER ID, and
+    // IDENTIFIED 2026-09-17 (seat): it is a CHARACTER ID, and
     // the army's COMMANDER. Counted against william_1066_baseline.core, 32 live
     // armies: 27 populated, 5 hold 0xFFFFFFFF, and 27/27 of the populated ones
     // resolve through CHARACTER_DB and read their OWN id back at
@@ -4503,13 +4503,13 @@ namespace army_obj {
     // CDetachCommanderCommand / NAIWar::HandleAssignCommanders are in
     // re/rtti/rtti_vtables.csv and showing one of them WRITE this byte is what
     // would make it HIGH. Full measurement: re/findings/re_army_commander_and_coords.md
-    // AND IT IS NOT A LOCATION — a commander is a character; ck-nuet is still open.
+    // AND IT IS NOT A LOCATION — a commander is a character; is still open.
     constexpr size_t COMMANDER_CHAR_ID  = 0xf0;   // MEDIUM: uint32, commanding character (→ CHARACTER_DB); 0xFFFFFFFF = none  /* win:medium struct_layout::ARMY_COMMANDER_CHAR_ID */
     constexpr size_t OWNER_LINK_ID      = 0xf4;   // HIGH: uint32, owner-link ID (→ OWNER_LINK_DB lookup)  /* win:medium struct_layout::ARMY_OWNER_LINK_ID */
     constexpr size_t COMBAT_REF_ID      = 0xf8;   // MEDIUM: uint32, combat-related DB ID (24-bit masked, from InCombat decompile)  /* win:medium struct_layout::ARMY_COMBAT_REF_ID */
     constexpr size_t MOVEMENT_SPEED     = 0x100;   // MEDIUM: int32, movement-related value (0 when stationary, fixed-point?)  /* win:medium struct_layout::ARMY_MOVEMENT_SPEED */
     constexpr size_t MOVEMENT_PROGRESS  = 0x150;  // MEDIUM: int32, movement/arrival progress (~10M typical, fixed-point?)  /* win:medium struct_layout::ARMY_MOVEMENT_PROGRESS */
-    // ck-1f85 RECONCILED 2026-09-17 (ck-760i seat), NOT overturned. ck-1f85
+    // RECONCILED 2026-09-17 (seat), NOT overturned.
     // refuted this annotation against 170 LIVE armies at 1069 (zero holding
     // 0x10000). In william_1066_baseline.core it is CORRECT and correlates
     // cleanly: 12 armies hold 0x10000 and ALL 12 have PATH_LENGTH 0, no
@@ -4517,10 +4517,10 @@ namespace army_obj {
     // are moving. SAME BuildID, SAME offsets, DIFFERENT WORLD STATE (a freshly
     // loaded bookmark vs a world three game-years in), so BOTH measurements are
     // true and the field's CONTENT IS STATE-DEPENDENT.
-    // THE OPERATIVE HALF OF ck-1f85 IS UNCHANGED: do not rely on the sentinels.
-    // The name is left alone because ck-1f85 owns it and is still open.
-    constexpr size_t MOVEMENT_FLAG      = 0x15c;  // DISPUTED: sentinels hold at a bookmark, NOT in a running world (ck-1f85)  /* win:slot_run army_obj run delta +0x8 */
-    // REFUTED 2026-09-17 (ck-nuet, ck-760i seat) as per-army COORDINATES. Across
+    // THE OPERATIVE HALF OF IS UNCHANGED: do not rely on the sentinels.
+    // The name is left alone because owns it and is still open.
+    constexpr size_t MOVEMENT_FLAG      = 0x15c;  // DISPUTED: sentinels hold at a bookmark, NOT in a running world  /* win:slot_run army_obj run delta +0x8 */
+    // REFUTED 2026-09-17 (seat) as per-army COORDINATES. Across
     // the same 32 live armies — scattered from England to Anatolia — these span
     // 648 and 253 units out of ~53.1M and ~69.9M respectively (15 distinct
     // values each). Thirty-two armies cannot share an X to within 648 parts in
@@ -4532,8 +4532,8 @@ namespace army_obj {
     // decimal — every army resolving to ONE point. Magnitude (~5.3e7) is the
     // order of this dump family's game-date raw; identity NOT claimed.
     // 0x150 beside them is IDENTICAL in all 32 armies (43,808,760, spread 0).
-    constexpr size_t UNKNOWN_158        = 0x160;  // REFUTED as a map X coord (ck-nuet) — effectively constant across armies  /* win:slot_run army_obj run delta +0x8 */
-    constexpr size_t UNKNOWN_15C        = 0x164;  // REFUTED as a map Y coord (ck-nuet) — effectively constant across armies  /* win:slot_run army_obj run delta +0x8 */
+    constexpr size_t UNKNOWN_158        = 0x160;  // REFUTED as a map X coord — effectively constant across armies  /* win:slot_run army_obj run delta +0x8 */
+    constexpr size_t UNKNOWN_15C        = 0x164;  // REFUTED as a map Y coord — effectively constant across armies  /* win:slot_run army_obj run delta +0x8 */
     constexpr size_t MAP_ENTITY_PTR     = 0x160;  // MEDIUM: ptr, map visual/entity object (NULL when stationary)
     constexpr size_t PATH_LENGTH        = 0x170;  // HIGH: int32, movement path step count (0=stationary, >0=moving)  /* win:medium struct_layout::ARMY_PATH_LENGTH */
     constexpr size_t MOVEMENT_STATE     = 0x174;  // HIGH: int32, movement state enum (0=idle, 1=march, 2+= other states)  /* win:medium struct_layout::ARMY_MOVEMENT_STATE */
@@ -4553,7 +4553,7 @@ namespace army_obj {
 // references it. (CSiege/province_siege_link offsets below remain — read-side only.)
 
 // =============================================================================
-// CSiege Object Offsets (ck-mol-6uaq: RTTI, vtable decompilation, coredump)
+// CSiege Object Offsets (RTTI, vtable decompilation, coredump)
 // Lookup: same DB pattern — *(*(SIEGE_DB+0x20) + 8 + (id & 0xffffff) * 0x10)
 // DB capacity at SIEGE_DB+0x2C. Entry stride 0x10 (16 bytes).
 // =============================================================================
@@ -4574,7 +4574,7 @@ namespace siege_obj {
 }
 
 // =============================================================================
-// Province/Barony→Siege Link Offsets (ck-mol-6uaq)
+// Province/Barony→Siege Link Offsets
 // These offsets are on province/barony objects, NOT on CSiege.
 // =============================================================================
 namespace province_siege_link {
@@ -4726,7 +4726,7 @@ namespace council_pos_type {
 // The offset was a literal in query_council and council_task_hook (lane-p5 named it).
 namespace council_task_type {
     constexpr size_t POSITION_TYPE_PTR  = 0x38;   // HIGH: ptr, CCouncilPositionType* (514/514 positions reach councillor_* keys, 867 core)  /* win:medium struct_layout::COUNCIL_TASK_TYPE_POSITION_TYPE */
-    // L20-A (B5): a task another seat CLONES (council_tasks `clone = <task>`) is
+    // A task another seat CLONES (council_tasks `clone = <task>`) is
     // its own type whose +0x14d8 points at the template; 0 when not a clone.
     // HIGH: decompile of FUN_05cb9ed0 (image VA 0x05cb9ed0; returns when
     // *(t+0x14d8)==0, else copies the template's +0x38..+0x44, +0x278..+0x27c
@@ -4797,7 +4797,7 @@ namespace law_group {
     // A CPdxArray (pdx_array: the layout rule, checked below it). HIGH: dump
     // ck3_20260625_152901_ivar867, succession_order_laws 42 at the capacity and 29 at
     // the count with exactly 29 laws before the null slots, succession_gender_laws
-    // 6 / 5 with 5 laws. Count and capacity were swapped until cleanup 2026.11 (l6).
+    // 6 / 5 with 5 laws. Count and capacity were swapped until (l6).
     constexpr size_t MEMBER_LAW_ARRAY    = 0x50;   // HIGH: CLaw** array of member laws (ordered by level)  /* win:slot_gap law_group gap between runs of +0x8 */
     constexpr size_t MEMBER_CAPACITY     = 0x58;   // HIGH: uint32  /* win:measured probe relocation */
     constexpr size_t MEMBER_COUNT        = 0x5c;   // HIGH: uint32  /* win:measured probe relocation */
@@ -4818,7 +4818,7 @@ namespace title_realm_laws {
     // (image 0x68839a0) ends its search at data + count * 8, and in dump
     // ck3_20260625_152901_ivar867 rulers 10465 and 12618 read 6 at the capacity and 5
     // at the count, the sixth slot holding non-pointer bytes (0x41f7edbf4547504a). Count and
-    // capacity were swapped here until cleanup 2026.11 (lane l6, F10): every reader
+    // capacity were swapped here until (F10): every reader
     // walked one slot past the end when the array had spare capacity, which made
     // query_realm_laws' length and last group_id, and query_succession's realm-law
     // fallback, differ between launches.
@@ -4944,7 +4944,7 @@ namespace title_obj {
     //   +0x14 uint32 packed date = (year<<16)|(month<<8)|day  (e.g. 0x0445020A = 1093.2.10)
     constexpr size_t TITLE_HOLDER_HISTORY_PTR   = 0x2c8;  // HIGH: ptr to CTitleHolderHistoryEntry[] (core-dump validated)  /* win:medium struct_layout::TITLE_HOLDER_HISTORY_PTR */
     // A CPdxArray (pdx_array: the layout rule, checked below it); count and capacity
-    // were swapped here until cleanup 2026.11, lane l6: dump ck3_20260625_152901_ivar867
+    // were swapped here until: dump ck3_20260625_152901_ivar867
     // title 149 reads 13 at the capacity and 10 at the count, entries 10..12 are not
     // dated history rows; query_title_history listed them.
     constexpr size_t TITLE_HOLDER_HISTORY_CAP   = 0x2d0;  // HIGH: int32, capacity  /* win:medium struct_layout::TITLE_HOLDER_HISTORY_CAP */
@@ -4990,7 +4990,7 @@ namespace county {
                                                    //   229/231 varying per county; resolve via CULTURE_INDEXED_DB(0x0beda7a8), then
                                                    //   culture::NAME (+0x260, display) / culture::SCRIPT_KEY (+0x1C8, key) — culture_names
                                                    //   (dispatch_router.cpp). +0x10 is the culture's id: 0 of 242 cultures read a string
-                                                   //   there in the ivar867 dump, 242/242 at +0x260 (L14 FB M-1).
+                                                   //   there in the ivar867 dump, 242/242 at +0x260.
     constexpr size_t DEVELOPMENT        = 0x210;  // HIGH: int32, development level (0-100, capped at 100)  /* win:agreed probe */
     constexpr size_t DEV_PROGRESS       = 0x218;  // HIGH: int64 fixed-point ÷ 100000, progress toward next dev level  /* win:agreed probe */
                                                    //   threshold = 10000000 (100.0): triggers level-up, resets to 0
@@ -5006,10 +5006,10 @@ namespace county {
 namespace building_type {
     constexpr size_t NAME_PTR           = 0x18;   // HIGH: char*, e.g. "castle_01", "temple_02" (R16)  /* win:slot_gap building_type gap between runs of +0x8 */
     constexpr size_t LEVEL              = 0x38;   // HIGH: int32, building level (the type IS the level) (R16)  /* win:measured probe relocation */
-    constexpr size_t CONSTRUCTION_DAYS  = 0x50;   // HIGH: int32, days to build (FUN_0611da40 stores it *100000 at the slot's +0x88; dump: castle_0N 1825, barracks_01 1095). Read as a "category" until cleanup 2026.11  /* win:medium struct_layout::BUILDING_TYPE_CONSTRUCTION_DAYS */
+    constexpr size_t CONSTRUCTION_DAYS  = 0x50;   // HIGH: int32, days to build (FUN_0611da40 stores it *100000 at the slot's +0x88; dump: castle_0N 1825, barracks_01 1095). Read as a "category" until  /* win:medium struct_layout::BUILDING_TYPE_CONSTRUCTION_DAYS */
     constexpr size_t MODIFIER_GROUP     = 0x60;   // MEDIUM: ptr, modifier group descriptor
     // (SCRIPTED_VALUE_1..3 at 0xC0 / 0x120 / 0x180, "cost slot" indices, deleted in
-    // cleanup 2026.11, lane l6, F10: query_building_types reported them and they
+    // F10: query_building_types reported them and they
     // differed between two launches of one save, the pattern of allocation counters,
     // not of script indices; no reader turned them into a cost.)
     constexpr size_t SOURCE_FILE_PATH   = 0x1a0;  // MEDIUM: std::string, e.g. "common/buildings/..."  /* win:medium struct_layout::BUILDING_TYPE_SOURCE_FILE_PATH */
@@ -5089,8 +5089,8 @@ namespace interaction_def {
     constexpr size_t OPTION_ARRAY_PTR     = 0x2548; // ptr: array of option entries (each 0x7D0 = 2000 bytes)  /* win:medium struct_layout::INTERACTION_DEF_OPTION_ARRAY_PTR */
     constexpr size_t OPTION_COUNT         = 0x2554; // int32: number of options in the array  /* win:measured probe relocation */
     constexpr size_t IS_SINGLE_SELECT     = 0x2a4e; // byte: 0=multi-select (send_options checkboxes), non-0=single-select (CB radio buttons)  /* win:measured probe relocation */
-    constexpr size_t HAS_ON_AUTO_ACCEPT   = 0x2a4a; // byte: secondary validation flag (0 for all tested interactions, ck-x328)  /* win:measured probe relocation */
-    constexpr size_t BYPASS_DUP_CHECK     = 0x2a51; // HIGH: byte, nonzero=skip the duplicate-interaction guard at funcs::INTERACTION_HAS_NO_DUPLICATE (ck-jvyj/ck-go1m)  /* win:measured probe relocation */
+    constexpr size_t HAS_ON_AUTO_ACCEPT   = 0x2a4a; // byte: secondary validation flag (0 for all tested interactions)  /* win:measured probe relocation */
+    constexpr size_t BYPASS_DUP_CHECK     = 0x2a51; // HIGH: byte, nonzero=skip the duplicate-interaction guard at funcs::INTERACTION_HAS_NO_DUPLICATE  /* win:measured probe relocation */
     constexpr size_t REQUIRES_VALIDATION  = 0x2a56; // byte: non-0 if FullValidation required after option change  /* win:medium struct_layout::INTERACTION_DEF_REQUIRES_VALIDATION */
 
     // Option entry layout (0x7D0 = 2000 bytes per option, at OPTION_ARRAY_PTR + index * 0x7D0)
@@ -5099,7 +5099,7 @@ namespace interaction_def {
     constexpr size_t OPT_STARTS_ENABLED   = 0x1C0;  // trigger block: starts_enabled (only if OPT_HAS_STARTS_ENABLED != 0)
     constexpr size_t OPT_HAS_STARTS_ENABLED = 0x21C; // int32: if 0, skip starts_enabled evaluation
     constexpr size_t OPT_FAILURES_ONLY    = 0x2A0;  // trigger block: is_valid_showing_failures_only
-    // HIGH (lane l4, re_interactions.md §2): NOT a hash. It is the id of the option's
+    // HIGH (re_interactions.md §2): NOT a hash. It is the id of the option's
     // `flag = <name>` in the scope-name registry (globals::SCOPE_NAME_REGISTRY): the scope
     // setup (INTERACTION_FLAG_RESET_AND_SCOPE_SETUP, FUN_06b3f5a0) publishes each option's
     // selection byte under this key, which is why scripts read `scope:matrilineal`. Dump
@@ -5132,8 +5132,8 @@ namespace interaction_def {
     // Initial-feasibility gate read by FUN_06b42b30 (InteractionTrySend_V2 first sub-validator).
     // BLOCKING_TRIGGER fires (returns 1) → interaction NOT feasible. NULL trigger → use BLOCKING_FLAG.
     // For declare_war_interaction both are 0 (always feasible at this gate). See
-    // re/findings/re_fun_06b42b30_initial_feasibility.md (ck-imsy) and
-    // re/findings/re_fun_06b42b30_revalidation_2026-05-01.md (ck-2yz3).
+    // re/findings/re_fun_06b42b30_initial_feasibility.md and
+    // re/findings/re_fun_06b42b30_revalidation_2026-05-01.md.
     constexpr size_t BLOCKING_TRIGGER     = 0x2580; // HIGH: ptr, scripted blocking trigger (NULL → use BLOCKING_FLAG)  /* win:measured probe relocation */
     constexpr size_t BLOCKING_FLAG        = 0x2a48; // HIGH: byte, fallback static blocking flag (used when BLOCKING_TRIGGER == NULL)  /* win:measured probe relocation */
     constexpr size_t HOSTILE_TRIGGER      = 0x2588; // MEDIUM: ptr, scripted trigger for hostile interaction check  /* win:medium struct_layout::INTERACTION_DEF_HOSTILE_TRIGGER */
@@ -5146,8 +5146,8 @@ namespace interaction_def {
     //
     // Slot identities below were cross-verified via core-dump debug labels across
     // all 38 interactions in g_InteractionDB. See
-    //   re/findings/re_interaction_slot_layout_corrected.md (ck-angk re-do)
-    // for the matrix, methodology, and why prior (ck-x328 / ad9d795) names were wrong.
+    //   re/findings/re_interaction_slot_layout_corrected.md (re-do)
+    // for the matrix, methodology, and why prior (/ ad9d795) names were wrong.
     //
     // Existing names IS_SHOWN_TRIGGER / IS_VALID_TRIGGER / HAS_VALID_TARGET /
     // CAN_SEND_TRIGGER / SHOULD_USE_EXTRA_ICON are preserved at their existing
@@ -5157,36 +5157,36 @@ namespace interaction_def {
     //
     // CANONICAL CORRECTED NAMES (use these in new code):
     constexpr size_t IS_SHOWN_TRIGGER             = 0xbd8;  // HIGH: scope "is_shown"  /* win:medium struct_layout::INTERACTION_DEF_IS_SHOWN_TRIGGER */
-    constexpr size_t IS_HIGHLIGHTED_TRIGGER       = 0xcb8;  // HIGH (NEW ck-angk): scope "is_highlighted"  /* win:medium struct_layout::INTERACTION_DEF_IS_HIGHLIGHTED_TRIGGER */
+    constexpr size_t IS_HIGHLIGHTED_TRIGGER       = 0xcb8;  // HIGH (NEW): scope "is_highlighted"  /* win:medium struct_layout::INTERACTION_DEF_IS_HIGHLIGHTED_TRIGGER */
     constexpr size_t IS_VALID_TRIGGER             = 0xd98;  // HIGH: scope "is_valid_showing_failures_only"  /* win:medium struct_layout::INTERACTION_DEF_IS_VALID_TRIGGER */
-    constexpr size_t IS_VALID_TRIGGER_AI          = 0xe78;  // HIGH (NEW ck-angk): scope "is_valid" (AI variant of IS_VALID_TRIGGER). Same offset as deprecated AUTO_ACCEPT_TRIGGER but the slot is is_valid, not auto_accept.  /* win:medium struct_layout::INTERACTION_DEF_IS_VALID_TRIGGER_AI */
+    constexpr size_t IS_VALID_TRIGGER_AI          = 0xe78;  // HIGH (NEW): scope "is_valid" (AI variant of IS_VALID_TRIGGER). Same offset as deprecated AUTO_ACCEPT_TRIGGER but the slot is is_valid, not auto_accept.  /* win:medium struct_layout::INTERACTION_DEF_IS_VALID_TRIGGER_AI */
     constexpr size_t HAS_VALID_TARGET             = 0xf58;  // HIGH: scope "has_valid_target_showing_failures_only"  /* win:medium struct_layout::INTERACTION_DEF_HAS_VALID_TARGET */
-    constexpr size_t HAS_VALID_TARGET_AI          = 0x1038; // HIGH (NEW ck-angk): scope "has_valid_target" (AI variant). Same offset as deprecated ON_AUTO_ACCEPT but the slot is has_valid_target, not on_auto_accept (on_auto_accept EFFECT is at ON_AUTO_ACCEPT_EFFECT/+0x16A0).  /* win:medium struct_layout::INTERACTION_DEF_HAS_VALID_TARGET_AI */
-    constexpr size_t CAN_BE_PICKED_TRIGGER        = 0x1118; // HIGH (NEW ck-angk): scope "can_be_picked" / "can_be_picked_title". Same offset as the legacy CAN_SEND_TRIGGER, but the slot is can_be_picked (picker), NOT can_send.  /* win:medium struct_layout::INTERACTION_DEF_CAN_BE_PICKED_TRIGGER */
-    // +0x11E0 reserved/unused (no debug label across all 38 interactions, ck-angk).
-    constexpr size_t CAN_SEND_FINAL_TRIGGER       = 0x12d8; // HIGH (NEW ck-angk): scope "can_send" (final-send-time check; the cascade evaluates this at +0x12C0 only when InteractionTrySend_Cascade param_3 byte is non-zero). Same offset as deprecated CAN_SEND_WITH_EXCEPTION.  /* win:medium struct_layout::INTERACTION_DEF_CAN_SEND_FINAL_TRIGGER */
+    constexpr size_t HAS_VALID_TARGET_AI          = 0x1038; // HIGH (NEW): scope "has_valid_target" (AI variant). Same offset as deprecated ON_AUTO_ACCEPT but the slot is has_valid_target, not on_auto_accept (on_auto_accept EFFECT is at ON_AUTO_ACCEPT_EFFECT/+0x16A0).  /* win:medium struct_layout::INTERACTION_DEF_HAS_VALID_TARGET_AI */
+    constexpr size_t CAN_BE_PICKED_TRIGGER        = 0x1118; // HIGH (NEW): scope "can_be_picked" / "can_be_picked_title". Same offset as the legacy CAN_SEND_TRIGGER, but the slot is can_be_picked (picker), NOT can_send.  /* win:medium struct_layout::INTERACTION_DEF_CAN_BE_PICKED_TRIGGER */
+    // +0x11E0 reserved/unused (no debug label across all 38 interactions).
+    constexpr size_t CAN_SEND_FINAL_TRIGGER       = 0x12d8; // HIGH (NEW): scope "can_send" (final-send-time check; the cascade evaluates this at +0x12C0 only when InteractionTrySend_Cascade param_3 byte is non-zero). Same offset as deprecated CAN_SEND_WITH_EXCEPTION.  /* win:medium struct_layout::INTERACTION_DEF_CAN_SEND_FINAL_TRIGGER */
     constexpr size_t SHOULD_USE_EXTRA_ICON        = 0x13b8; // HIGH: scope "should_use_extra_icon"  /* win:medium struct_layout::INTERACTION_DEF_SHOULD_USE_EXTRA_ICON */
-    constexpr size_t AI_POTENTIAL_TRIGGER         = 0x1498; // HIGH (NEW ck-angk): scope "ai_potential" (AI scoring trigger)  /* win:medium struct_layout::INTERACTION_DEF_AI_POTENTIAL_TRIGGER */
-    // +0x1560 reserved/unused (no debug label across all 38 interactions, ck-angk).
+    constexpr size_t AI_POTENTIAL_TRIGGER         = 0x1498; // HIGH (NEW): scope "ai_potential" (AI scoring trigger)  /* win:medium struct_layout::INTERACTION_DEF_AI_POTENTIAL_TRIGGER */
+    // +0x1560 reserved/unused (no debug label across all 38 interactions).
 
     // Effect region — inline CJominiEffect blocks (stride 0x60, label_ptr at slot+0x28).
-    // All vtables = 0x55f76dabad98 in current build. ck-angk re-do.
+    // All vtables = 0x55f76dabad98 in current build. re-do.
     constexpr size_t ON_ACCEPT_EFFECT               = 0x1658; // HIGH: scope "on_accept"  /* win:medium struct_layout::INTERACTION_DEF_ON_ACCEPT_EFFECT */
-    constexpr size_t ON_AUTO_ACCEPT_EFFECT          = 0x16b8; // HIGH (NEW ck-angk): scope "on_auto_accept"  /* win:medium struct_layout::INTERACTION_DEF_ON_AUTO_ACCEPT_EFFECT */
-    constexpr size_t PRE_AUTO_ACCEPT_EFFECT         = 0x1718; // HIGH (NEW ck-angk): scope "pre_auto_accept"  /* win:medium struct_layout::INTERACTION_DEF_PRE_AUTO_ACCEPT_EFFECT */
-    constexpr size_t ON_SEND_EFFECT                 = 0x1778; // HIGH (NEW ck-angk): scope "on_send"  /* win:medium struct_layout::INTERACTION_DEF_ON_SEND_EFFECT */
-    constexpr size_t ON_DECLINE_EFFECT              = 0x17d8; // HIGH (NEW ck-angk): scope "on_decline"  /* win:medium struct_layout::INTERACTION_DEF_ON_DECLINE_EFFECT */
+    constexpr size_t ON_AUTO_ACCEPT_EFFECT          = 0x16b8; // HIGH (NEW): scope "on_auto_accept"  /* win:medium struct_layout::INTERACTION_DEF_ON_AUTO_ACCEPT_EFFECT */
+    constexpr size_t PRE_AUTO_ACCEPT_EFFECT         = 0x1718; // HIGH (NEW): scope "pre_auto_accept"  /* win:medium struct_layout::INTERACTION_DEF_PRE_AUTO_ACCEPT_EFFECT */
+    constexpr size_t ON_SEND_EFFECT                 = 0x1778; // HIGH (NEW): scope "on_send"  /* win:medium struct_layout::INTERACTION_DEF_ON_SEND_EFFECT */
+    constexpr size_t ON_DECLINE_EFFECT              = 0x17d8; // HIGH (NEW): scope "on_decline"  /* win:medium struct_layout::INTERACTION_DEF_ON_DECLINE_EFFECT */
     // +0x1820 / +0x1880 reserved/unused (no debug label across all 38 interactions).
-    constexpr size_t ON_INTERMEDIARY_DECLINE_EFFECT = 0x18f8; // HIGH (NEW ck-angk): scope "on_intermediary_decline"  /* win:medium struct_layout::INTERACTION_DEF_ON_INTERMEDIARY_DECLINE_EFFECT */
+    constexpr size_t ON_INTERMEDIARY_DECLINE_EFFECT = 0x18f8; // HIGH (NEW): scope "on_intermediary_decline"  /* win:medium struct_layout::INTERACTION_DEF_ON_INTERMEDIARY_DECLINE_EFFECT */
 
     // AI score region — different layout: vtable at slot, label at slot+0x30 (NOT +0x28).
-    // Block stride 0x60. ck-angk re-do; only present on a few interactions.
-    constexpr size_t AI_WILL_DO_BLOCK               = 0x1ad8; // HIGH (NEW ck-angk): scope "ai_will_do" (vtable 0x55f76db6c5d8 — MTTH/score)  /* win:medium struct_layout::INTERACTION_DEF_AI_WILL_DO_BLOCK */
-    constexpr size_t AI_INTERMEDIARY_ACCEPT_BLOCK   = 0x1b38; // HIGH (NEW ck-angk): scope "ai_intermediary_accept" (vtable 0x55f76db58ec8)  /* win:medium struct_layout::INTERACTION_DEF_AI_INTERMEDIARY_ACCEPT_BLOCK */
-    constexpr size_t AI_ACCEPT_BLOCK                = 0x1b98; // HIGH (NEW ck-angk): scope "ai_accept" (vtable 0x55f76db58ec8)  /* win:medium struct_layout::INTERACTION_DEF_AI_ACCEPT_BLOCK */
+    // Block stride 0x60. re-do; only present on a few interactions.
+    constexpr size_t AI_WILL_DO_BLOCK               = 0x1ad8; // HIGH (NEW): scope "ai_will_do" (vtable 0x55f76db6c5d8 — MTTH/score)  /* win:medium struct_layout::INTERACTION_DEF_AI_WILL_DO_BLOCK */
+    constexpr size_t AI_INTERMEDIARY_ACCEPT_BLOCK   = 0x1b38; // HIGH (NEW): scope "ai_intermediary_accept" (vtable 0x55f76db58ec8)  /* win:medium struct_layout::INTERACTION_DEF_AI_INTERMEDIARY_ACCEPT_BLOCK */
+    constexpr size_t AI_ACCEPT_BLOCK                = 0x1b98; // HIGH (NEW): scope "ai_accept" (vtable 0x55f76db58ec8)  /* win:medium struct_layout::INTERACTION_DEF_AI_ACCEPT_BLOCK */
 
     // ───────────────────────────────────────────────────────────────────────
-    // DEPRECATED ALIASES — old ck-x328 / ad9d795 names retained for callers.
+    // DEPRECATED ALIASES — old / ad9d795 names retained for callers.
     //
     // These constants resolve to the SAME OFFSETS they always did, so existing
     // bridge code (query_handlers.cpp / ai_eval_hook.cpp slot tables) reads
@@ -5216,14 +5216,14 @@ namespace interaction_def {
     constexpr size_t MAX_TARGETS          = 0x40;   // MEDIUM: int32, max targets per AI evaluation cycle
 
     // Vtable slot offsets for CCharacterInteractionType (shared vtable at Ghidra 0x0be16ae8).
-    // DECOMP-VERIFIED (ck-e58l.31): slot 7 at 0x0be16ae8+0x38 = 0x03a5c3e0, body "mov al,1; ret" —
+    // DECOMP-VERIFIED: slot 7 at 0x0be16ae8+0x38 = 0x03a5c3e0, body "mov al,1; ret" —
     // a trivial stub that always returns true, ignoring `this`. This is NOT a semantic is_valid
     // check on CInteractionDef; it appears to be a base-class default (likely CPdxCommand or
     // similar). Calls through this slot on a CInteractionDef only serve as a vtable-dispatch
     // sanity ping (sigsetjmp catches vtable corruption); they do NOT filter invalid interactions.
     // Distinct from `interaction_cmd::VTABLE_IS_VALID` which names the same numeric offset but
     // applies to the CSendCharacterInteractionCommand wrapper from BUILD_SEND_INTERACTION_CMD.
-    constexpr size_t VTABLE_IS_VALID      = 0x0;   // HIGH: vtable[7], trivial "return 1" stub (ck-e58l.31)  /* win:measured struct_layout::INTERACTION_DEF_VTABLE_IS_VALID */
+    constexpr size_t VTABLE_IS_VALID      = 0x0;   // HIGH: vtable[7], trivial "return 1" stub  /* win:measured struct_layout::INTERACTION_DEF_VTABLE_IS_VALID */
 }
 
 // =============================================================================
@@ -5237,17 +5237,17 @@ namespace marriage_group {
 }
 
 // =============================================================================
-// Pinned Interactions Array — from *g_InteractionDB (ck-8cns.1, ck-8cns.2)
+// Pinned Interactions Array — from *g_InteractionDB
 // Write-once at DB init by FUN_06b46d50 ×16 from FUN_06b3d100 (slot registrar).
 // Zero-filled first by FUN_06b3c5f0 (DB constructor) with g_NullInteraction_sentinel.
 // Each 0x10 slot = { CCharacterInteractionType* ptr @ +0, tagged aux ptr @ +8 }.
 // Tag byte (slot+8 low byte) = 0x01 = "binding attempted"; NOT a runtime stamp.
-// Hypothesis refuted: "Gate 2 stamp at +0x1000" (ck-q402) was mistaken —
+// Hypothesis refuted: "Gate 2 stamp at +0x1000" was mistaken —
 // slot 14 at +0x1000 is influence_candidacy, NOT declare_war. Slot 7 is declare_war.
 // =============================================================================
 // Pending-interaction registry — param to funcs::INTERACTION_HAS_NO_DUPLICATE.
 // Reached via *(GameStateRoot+0xa0) + 0xCE48 (FUN_06061850). Tracks active
-// interactions for duplicate-conflict detection. See ck-jvyj/ck-go1m and
+// interactions for duplicate-conflict detection. See and
 // re/findings/re_game_state_validation_062e5450.md.
 // =============================================================================
 namespace interaction_pending_registry {
@@ -5263,7 +5263,7 @@ namespace interaction_pending_registry {
 }
 
 // =============================================================================
-// Pending-interaction queue infrastructure (ck-pu05)
+// Pending-interaction queue infrastructure
 //
 // FUN_062e71b0 reads two effect IDs from an InteractionResult and queues each
 // onto the per-character PendingVector at handler+0x28 via FUN_062e8ec0. Used
@@ -5307,17 +5307,17 @@ namespace interaction_effect_funcs {
     // each gets queued via PUSH_BACK_PENDING into the lookup_or_create_pending_handler's
     // PendingVector. Direct callers: DirectPath_ScriptRunner (gated by enable_effects),
     // FUN_062e8490 / FUN_062e8610 / FUN_062e7260 (unconditional wrappers).
-    constexpr uintptr_t APPLY_EFFECTS_QUEUE        = CK3_WIN_UNMAPPED_N(748);  // HIGH: 159B (ck-pu05)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t PUSH_BACK_PENDING          = CK3_WIN_UNMAPPED_N(749);  // HIGH: 414B vector push_back, stride 0x348 (ck-pu05)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t LOOKUP_OR_CREATE_HANDLER   = CK3_WIN_UNMAPPED_N(750);  // HIGH: per-character handler lookup w/ char-DB fallback (ck-pu05)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t PUSH_BACK_PENDING_THUNK    = CK3_WIN_UNMAPPED_N(751);  // HIGH: 1-line wrapper around PUSH_BACK_PENDING (ck-pu05)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t APPLY_EFFECTS_QUEUE        = CK3_WIN_UNMAPPED_N(748);  // HIGH: 159B  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t PUSH_BACK_PENDING          = CK3_WIN_UNMAPPED_N(749);  // HIGH: 414B vector push_back, stride 0x348  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t LOOKUP_OR_CREATE_HANDLER   = CK3_WIN_UNMAPPED_N(750);  // HIGH: per-character handler lookup w/ char-DB fallback  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t PUSH_BACK_PENDING_THUNK    = CK3_WIN_UNMAPPED_N(751);  // HIGH: 1-line wrapper around PUSH_BACK_PENDING  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t INTERACTION_DEEP_COPY      = CK3_WIN_UNMAPPED_N(752);  // HIGH: copies the 0x338B InteractionCtx (already named in Ghidra)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t DATE_NORMALIZE             = CK3_WIN_UNMAPPED_N(753);  // HIGH: SIMD date normalization, used to date-stamp pending entries  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t DATE_FIELD_WRITER          = CK3_WIN_UNMAPPED_N(754);  // HIGH: writes structured date fields after DATE_NORMALIZE  /* win:poisoned (no Windows counterpart) */
 }
 
 // =============================================================================
-// CPendingCharacterInteraction — interaction result object (ck-hm9w)
+// CPendingCharacterInteraction — interaction result object
 //
 // 0x5C8-byte heap object built by CPendingCharacterInteraction_construct
 // (FUN_062e88c0) from a slot pool (CPendingCharacterInteraction_pool_alloc,
@@ -5353,7 +5353,7 @@ namespace c_pending_character_interaction {
     constexpr size_t SCOPE_REPORT              = 0x350;       // HIGH: ScopeReport (0x268B); init by SCOPE_REPORT_INIT below
     constexpr size_t FIELD_5B8                 = 0x5B8;       // HIGH layout / MEDIUM semantics: u32 — saved tag 0x28AE
     constexpr size_t CALLER_TAG                = 0x5BC;       // HIGH layout / MEDIUM semantics: u32 — saved tag 0x28AF; DirectPath_ScriptRunner passes 0
-    constexpr size_t STATUS_CODE               = 0x5C0;       // HIGH: u32 enum 0/1/2/3 (cf. ck-1yq7 V2 status); init = (ctx.secondary_target != -1)
+    constexpr size_t STATUS_CODE               = 0x5C0;       // HIGH: u32 enum 0/1/2/3 (V2 status); init = (ctx.secondary_target != -1)
     constexpr size_t FLAG_A                    = 0x5C4;       // HIGH layout / MEDIUM semantics: u8 — saved tag 0x3742; suppressed when =1 (default)
     constexpr size_t FLAG_B                    = 0x5C5;       // HIGH layout / MEDIUM semantics: u8 — saved tag 0x28A4; suppressed when =1 (default)
     constexpr size_t FLAG_C                    = 0x5C6;       // HIGH layout / MEDIUM semantics: bool — saved tag 0x3266; suppressed when =0 (default)
@@ -5414,10 +5414,10 @@ namespace pinned_interactions {
     constexpr size_t ARRAY_OFFSET   = 0xF20;  // HIGH: 16 fixed slots × 0x10 bytes each
     constexpr size_t SLOT_COUNT     = 16;
     constexpr size_t SLOT_STRIDE    = 0x10;
-    constexpr size_t SLOT_PTR_OFF   = 0x00;   // HIGH: CCharacterInteractionType* (ck-8cns.1)
+    constexpr size_t SLOT_PTR_OFF   = 0x00;   // HIGH: CCharacterInteractionType*
     constexpr size_t SLOT_AUX_OFF   = 0x08;   // HIGH: tagged aux ptr, low byte = binding marker
 
-    // Slot → interaction name (hardcoded at DB registration, ck-8cns.1 §Writer #2)
+    // Slot → interaction name (hardcoded at DB registration, §Writer #2)
     // Slot 0:  grant_title_to_new_random_character_interaction
     // Slot 1:  hof_redirect_great_holy_war_interaction
     // Slot 2:  select_ghw_beneficiary_interaction
@@ -5432,25 +5432,25 @@ namespace pinned_interactions {
     // Slot 11: offer_tributary_status_interaction
     // Slot 12: cease_paying_tribute_interaction
     // Slot 13: request_great_project_contribution_interaction
-    // Slot 14: influence_candidacy_interaction    ← NOT declare_war (refutes ck-q402)
+    // Slot 14: influence_candidacy_interaction    ← NOT declare_war (refutes)
     // Slot 15: join_vassal_war_interaction
     constexpr size_t SLOT_DECLARE_WAR_OFFSET = 0xF90;  // HIGH: slot 7
 }
 
-constexpr uintptr_t G_NULL_INTERACTION_SENTINEL = 0x4e6a9d8;  // HIGH: Ghidra VA, zero-fill target (ck-8cns.1) (ck-e58l.20)  /* win:win_rva globals::NULL_INTERACTION (same name) */
-constexpr uintptr_t INTERACTION_DB_CONSTRUCTOR   = CK3_WIN_UNMAPPED_N(770); // HIGH: FUN_06b3c5f0 — CInteractionDatabase ctor (ck-8cns.1) (ck-e58l.20) (ck-audit-B: renamed from FN_DB_CONSTRUCTOR to match Ghidra symbol InteractionDB_Constructor)  /* win:poisoned (no Windows counterpart) */
-constexpr uintptr_t INTERACTION_SLOT_BINDER      = CK3_WIN_UNMAPPED_N(771); // HIGH: FUN_06b46d50 — slot binder (ck-8cns.1) (ck-e58l.20) (ck-audit-B: renamed from FN_SLOT_BINDER)  /* win:poisoned (no Windows counterpart) */
-constexpr uintptr_t INTERACTION_SLOT_REGISTRAR   = CK3_WIN_UNMAPPED_N(772); // HIGH: FUN_06b3d100 — slot registrar (ck-8cns.1) (ck-e58l.20) (ck-audit-B: renamed from FN_SLOT_REGISTRAR)  /* win:poisoned (no Windows counterpart) */
+constexpr uintptr_t G_NULL_INTERACTION_SENTINEL = 0x4e6a9d8;  // HIGH: Ghidra VA, zero-fill target  /* win:win_rva globals::NULL_INTERACTION (same name) */
+constexpr uintptr_t INTERACTION_DB_CONSTRUCTOR   = CK3_WIN_UNMAPPED_N(770); // HIGH: FUN_06b3c5f0 — CInteractionDatabase ctor (renamed from FN_DB_CONSTRUCTOR to match Ghidra symbol InteractionDB_Constructor)  /* win:poisoned (no Windows counterpart) */
+constexpr uintptr_t INTERACTION_SLOT_BINDER      = CK3_WIN_UNMAPPED_N(771); // HIGH: FUN_06b46d50 — slot binder (renamed from FN_SLOT_BINDER)  /* win:poisoned (no Windows counterpart) */
+constexpr uintptr_t INTERACTION_SLOT_REGISTRAR   = CK3_WIN_UNMAPPED_N(772); // HIGH: FUN_06b3d100 — slot registrar (renamed from FN_SLOT_REGISTRAR)  /* win:poisoned (no Windows counterpart) */
 
 // =============================================================================
-// CCharacterInteractionType — AI Scoring Offsets (ck-zaal)
+// CCharacterInteractionType — AI Scoring Offsets
 // All interactions share these offsets. CModValue = base + modifier chain.
 // =============================================================================
 namespace interaction_scoring {
     // CModValue blocks for AI scoring
     constexpr size_t ITYPE_AI_WILL_DO             = 0x1AD0;  // HIGH: CModValue, initiator AI desire
-    constexpr size_t ITYPE_AI_ACCEPT              = 0x1B30;  // HIGH: CModValue, offset; NOTE (l10 witness 4, decompile of FUN_06b43be0): evaluated in the SECONDARY recipient's scope (ctx+0x2E8), not the target's
-    constexpr size_t ITYPE_AI_ACCEPT_NEGOTIATION  = 0x1B90;  // HIGH: CModValue, offset; NOTE (l10 witness 4, decompile of FUN_06b43c70): evaluated in the RECIPIENT's scope (ctx+0x2DC); the send's recipient answer (ACCEPTANCE_DECISION mode 1) decides on it
+    constexpr size_t ITYPE_AI_ACCEPT              = 0x1B30;  // HIGH: CModValue, offset; NOTE (l10, decompile of FUN_06b43be0): evaluated in the SECONDARY recipient's scope (ctx+0x2E8), not the target's
+    constexpr size_t ITYPE_AI_ACCEPT_NEGOTIATION  = 0x1B90;  // HIGH: CModValue, offset; NOTE (l10, decompile of FUN_06b43c70): evaluated in the RECIPIENT's scope (ctx+0x2DC); the send's recipient answer (ACCEPTANCE_DECISION mode 1) decides on it
 
     // CModValue internal layout
     constexpr size_t MODVAL_BASE_VALUE            = 0x38;    // HIGH: int64, fixed-point /100000
@@ -5466,7 +5466,7 @@ namespace interaction_scoring {
     constexpr size_t ITYPE_DECLINE_TEXT           = 0x21F0;  // MEDIUM: locstring ptr+len, decline text
     constexpr size_t ITYPE_AUTO_ACCEPT_TEXT       = 0x2210;  // MEDIUM: locstring ptr+len, auto-accept text
 
-    // Control flags (ck-x328: names corrected based on execute handler decompilation)
+    // Control flags (names corrected based on execute handler decompilation)
     constexpr size_t ITYPE_SECONDARY_VALIDATION   = 0x2A32;  // HIGH: byte, secondary validation flag (0 for all tested interactions)
     constexpr size_t ITYPE_SENDER_COST_BYPASS     = 0x2A3F;  // MEDIUM: byte, sender cost bypass (was AUTO_ACCEPT_PRIMARY)
     constexpr size_t ITYPE_RNG_ACCEPT_MODE        = 0x2A40;  // MEDIUM: byte, RNG acceptance mode (was AUTO_ACCEPT_NEGOT)
@@ -5492,7 +5492,7 @@ namespace interaction_ctx {
     // runtime scan of that function (bridge log: "FS-segment ref at func+0x22:
     // disp=0xffffffffffffc8c0"), and the decompile (`in_FS_OFFSET[-0x6e8]` with
     // in_FS_OFFSET typed long*, so 0x6e8 * 8 = 0x3740 bytes).
-    // The guard was 0x6e8 here until cleanup 2026.11 (lane l6, F12): the decompile's
+    // The guard was 0x6e8 here until (F12): the decompile's
     // element index read as a byte offset. The bridge then read and wrote an
     // unrelated TLS byte as the guard, skipped constructing a context the engine had
     // not built yet, and CTX_INIT faulted growing a scope list whose allocator was
@@ -5515,11 +5515,11 @@ namespace interaction_ctx {
     constexpr size_t CLAIMANT_REF           = 0x2E4;  // alias: same offset, used for declare_war (who holds the claim)
     constexpr size_t TERTIARY_REF           = 0x2E8;  // uint32: tertiary character ref  /* win:measured struct_layout::INTERACTION_CTX_TERTIARY */
     // 0x2F0 is the interaction's TARGET SCOPE OBJECT (16 bytes: u16 scope type at +0x2F0,
-    // u64 value at +0x2F8), not a pointer (lane l5, re/findings/re_war.md §2): FUN_06b3f270
+    // u64 value at +0x2F8), not a pointer (re/findings/re_war.md §2): FUN_06b3f270
     // returns ctx+0x2F0 as the target; SET_TARGET clears it (FUN_0758aed0); SCOPE_SETUP saves
     // it as scope:target (scope-name id 4) when its type is non-zero; the deep copy FUN_06b3d770
     // copies +0x2F0..+0x2FF; the CEndWar*InteractionData scope hook writes a war there as type 0x10.
-    // Lane l4 (re_interactions.md §3) reached the same layout independently: title-target
+    // (re_interactions.md §3) reached the same layout independently: title-target
     // interactions (revoke_title, grant_titles: `target_type = title`) carry the title here
     // (type scope_value_type::TITLE, value = the title's full id), written after the recipient
     // through funcs::INTERACTION_CTX_SET_TARGET_OBJECT. These reads refute the earlier reading
@@ -5548,7 +5548,7 @@ namespace interaction_ctx {
 // =============================================================================
 // Scope values (CScopeValue, 16 bytes): {u16 type @+0x00, u64 value @+0x08}; the type
 // tags are namespace scope_value_type. FUN_0758ae90 writes the type, FUN_0758aef0 the
-// value (lane l4, re_interactions.md §3).
+// value (re_interactions.md §3).
 // =============================================================================
 namespace scope_value {
     constexpr size_t TYPE  = 0x00;  // HIGH: uint16, a scope_value_type tag
@@ -5557,7 +5557,7 @@ namespace scope_value {
 }
 
 // =============================================================================
-// Scope-name registry (globals::SCOPE_NAME_REGISTRY, lane l4, re_interactions.md §2)
+// Scope-name registry (globals::SCOPE_NAME_REGISTRY, re_interactions.md §2)
 // id -> name is a plain vector read (FUN_081f0c80): names[id & 0xFFFFFF], an
 // std::string (libstdc++, 0x20 bytes) per id; ids past NAMES_COUNT are invalid.
 // =============================================================================
@@ -5570,7 +5570,7 @@ namespace scope_name_registry {
 // =============================================================================
 // The interaction's special data (ctx + interaction_ctx::SCRIPTED_DATA_PTR, a pointer
 // to an object FUN_064a1100 creates from the interaction's special_interaction kind,
-// interaction_def+0x2A10; the scope setup calls its vt[7]/vt[8]). Lane l4,
+// interaction_def+0x2A10; the scope setup calls its vt[7]/vt[8]).,
 // re/findings/re_interactions.md §3b. The title the player picks for these two lives
 // here, not only in the target object:
 //   grant_titles (kind 7/8): CGrantTitlesOffer, 0x20 B, made by FUN_047c0280: a PDX
@@ -5592,8 +5592,8 @@ namespace special_data {
 }
 
 // =============================================================================
-// CAddTitleLawCommand (0x30 bytes): the title-law window's command (lane l4,
-// re_interactions.md §5). ctor(cmd, title_id, actor_id, CLaw*) stores the full title id
+// CAddTitleLawCommand (0x30 bytes): the title-law window's command
+// (re_interactions.md §5). ctor(cmd, title_id, actor_id, CLaw*) stores the full title id
 // @+0x20, the actor's full id @+0x24 and the law's index (CLaw+0x08) @+0x28. vt[7]
 // IsValid(cmd, std::string* why) resolves all three and runs the law's can-change check
 // (FUN_06e30270), writing the engine's refusal text into *why; vt[9] clones (0x30 B);
@@ -5621,11 +5621,11 @@ namespace casus_belli {
     constexpr size_t TITLE_ARRAY_CAP    = 0x180;  // HIGH: int32, capacity
     constexpr size_t TITLE_ARRAY_COUNT  = 0x184;  // HIGH: int32, count
     constexpr size_t ALLOCATOR_PTR      = 0x188;  // HIGH: ptr, allocator
-    // ck-yifp: MUTABLE, same as the war_obj aliases above — the defender
+    // MUTABLE, same as the war_obj aliases above — the defender
     // follows the contested title. Never identify a war by this pair.
-    constexpr size_t PRIMARY_ATK_REF    = 0x190;  // HIGH: uint32, attacker char ref, MUTABLE (ck-qeod: verified all 11 wars match war side 1)  /* win:agreed probe */
-    constexpr size_t PRIMARY_DEF_REF    = 0x194;  // HIGH: uint32, defender char ref, MUTABLE (ck-qeod: verified all 11 wars match war side 2)  /* win:agreed probe */
-    constexpr size_t CLAIMANT_REF       = 0x198;  // HIGH: uint32, claimant char ref for claim_cb; 0xFFFFFFFF for non-claim CBs (ck-qeod)
+    constexpr size_t PRIMARY_ATK_REF    = 0x190;  // HIGH: uint32, attacker char ref, MUTABLE (verified all 11 wars match war side 1)  /* win:agreed probe */
+    constexpr size_t PRIMARY_DEF_REF    = 0x194;  // HIGH: uint32, defender char ref, MUTABLE (verified all 11 wars match war side 2)  /* win:agreed probe */
+    constexpr size_t CLAIMANT_REF       = 0x198;  // HIGH: uint32, claimant char ref for claim_cb; 0xFFFFFFFF for non-claim CBs
     constexpr size_t PARAM_CLAIM_TYPE   = 0x190;  // DEPRECATED: alias, actually PRIMARY_ATK_REF (not "claim type")
     constexpr size_t PARAM_WAR_GOAL     = 0x194;  // DEPRECATED: alias, actually PRIMARY_DEF_REF (not "war goal")
     constexpr size_t PARAM_FLAGS        = 0x198;  // DEPRECATED: alias, use CLAIMANT_REF
@@ -5638,18 +5638,18 @@ namespace casus_belli {
 // =============================================================================
 namespace cb_type {
     constexpr size_t DB_INDEX           = 0x10;   // HIGH: uint32, database index/ID (R11-25)  /* win:measured probe relocation */
-    constexpr size_t NAME_STR           = 0x18;   // HIGH: std::string, CB type PDX name (e.g. "claim_cb", "humiliation_cb"). SSO layout: data_ptr / length / capacity / inline (ck-s0qu validated across 22 distinct CB types in 867+1097 dumps).  /* win:measured probe relocation */
-    constexpr size_t SUB_OBJ_PTR        = 0x38;   // HIGH: ptr to CCasusBelliGroup (see cb_group namespace) — shared across all CBs in same script `group = …` (ck-e58l.3)  /* win:measured probe relocation */
-    // Group layout now formalized in cb_group namespace; legacy notes (ck-e58l.3 corrections):
+    constexpr size_t NAME_STR           = 0x18;   // HIGH: std::string, CB type PDX name (e.g. "claim_cb", "humiliation_cb"). SSO layout: data_ptr / length / capacity / inline (validated across 22 distinct CB types in 867+1097 dumps).  /* win:measured probe relocation */
+    constexpr size_t SUB_OBJ_PTR        = 0x38;   // HIGH: ptr to CCasusBelliGroup (see cb_group namespace) — shared across all CBs in same script `group = …`  /* win:measured probe relocation */
+    // Group layout now formalized in cb_group namespace; legacy notes (corrections):
     //   group+0x30  = CBType** array of sibling CBs in same group
     //   group+0x3C  = uint32 count
-    //   group+0x48  = is_valid trigger (Gate 1 — was previously the *(cb+0x30)+0x48 indirection in ck-5oyp)
+    //   group+0x48  = is_valid trigger (Gate 1 — was previously the *(cb+0x30)+0x48 indirection in)
     //   group+0x208 = disabled flag (was mislabeled as ai_only; actually DLC/content-gate disable)
     //   group+0x209 = ai_allowed flag (was documented as "another flag" at +0x20a)
-    constexpr size_t ALLOWED_FOR_CHAR   = 0x40;   // HIGH: trigger, allowed_for_character (attacker scope) — Gate 2 (ck-5oyp, ck-e58l.3 runtime-verified)  /* win:measured struct_layout::CB_TYPE_ALLOWED_FOR_CHAR */
-    constexpr size_t VALID_TO_START_ATK = 0x120;  // HIGH: trigger, valid_to_start (attacker scope) — Gate 3, GUI-only (ck-5oyp, ck-e58l.3: corrected from prior mislabel as ALLOWED_AGAINST)  /* win:measured struct_layout::CB_TYPE_VALID_TO_START_ATK */
-    constexpr size_t ALLOWED_AGAINST    = 0x200;  // HIGH: trigger, allowed_against_character (defender scope) — Gate 4 (ck-5oyp, ck-e58l.3: corrected from prior mislabel as VALID_TO_START_ATK)  /* win:measured struct_layout::CB_TYPE_ALLOWED_AGAINST */
-    constexpr size_t VALID_TO_START_DEF = 0x2e0;  // HIGH: trigger, valid_to_start (defender scope) — Gate 5, GUI-only (ck-5oyp)  /* win:measured struct_layout::CB_TYPE_VALID_TO_START_DEF */
+    constexpr size_t ALLOWED_FOR_CHAR   = 0x40;   // HIGH: trigger, allowed_for_character (attacker scope) — Gate 2 (runtime-verified)  /* win:measured struct_layout::CB_TYPE_ALLOWED_FOR_CHAR */
+    constexpr size_t VALID_TO_START_ATK = 0x120;  // HIGH: trigger, valid_to_start (attacker scope) — Gate 3, GUI-only (corrected from prior mislabel as ALLOWED_AGAINST)  /* win:measured struct_layout::CB_TYPE_VALID_TO_START_ATK */
+    constexpr size_t ALLOWED_AGAINST    = 0x200;  // HIGH: trigger, allowed_against_character (defender scope) — Gate 4 (corrected from prior mislabel as VALID_TO_START_ATK)  /* win:measured struct_layout::CB_TYPE_ALLOWED_AGAINST */
+    constexpr size_t VALID_TO_START_DEF = 0x2e0;  // HIGH: trigger, valid_to_start (defender scope) — Gate 5, GUI-only  /* win:measured struct_layout::CB_TYPE_VALID_TO_START_DEF */
     constexpr size_t NO_TARGET_TRIG_1   = 0x3c0;  // HIGH: trigger, no-target CB trigger 1 (when target_mode==0) (R11-25)  /* win:measured struct_layout::CB_TYPE_NO_TARGET_TRIG_1 */
     constexpr size_t NO_TARGET_TRIG_2   = 0x4a0;  // HIGH: trigger, no-target CB trigger 2 (conditional) (R11-25)  /* win:measured struct_layout::CB_TYPE_NO_TARGET_TRIG_2 */
     constexpr size_t CAN_USE_TRIGGER    = 0x580;  // HIGH: trigger, can_use (claim validation for title-targeted CBs) (Phase 9)  /* win:measured struct_layout::CB_TYPE_CAN_USE_TRIGGER */
@@ -5665,14 +5665,14 @@ namespace cb_type {
     // Note: `*(int16_t*)(cb+0x1700) < 0` is read by WAR_CREATE_CORE Block L to gate
     // ally-enlistment. The sign bit corresponds to bit 7 of FLAGS_1701 (high byte of i16).
     constexpr size_t FLAGS_1702         = 0x171a; // HIGH: byte, flags (bit 4 = title_required) (R11-25)  /* win:measured probe relocation */
-    constexpr size_t FLAGS_1703         = 0x171b; // HIGH: byte, flags (bit 0 = AI-allowed, checked only under CB_CASCADE mode=2) (ck-e58l.3)  /* win:measured probe relocation */
+    constexpr size_t FLAGS_1703         = 0x171b; // HIGH: byte, flags (bit 0 = AI-allowed, checked only under CB_CASCADE mode=2)  /* win:measured probe relocation */
 
     // Compiled Clausewitz effect block for the CB's `on_declaration = { ... }`.
     // Fires inside WAR_CREATE_CORE after participants+CB+name, BEFORE final validity
     // check, via CLAUSEWITZ_EFFECT_EXECUTOR(cb_type + 0x900, scope). Scope is built
     // with the new CWar as root. For declare_war CBs, this block contains
-    // `on_declared_war = yes` (invokes the user scripted_effect) (ck-e58l.5).
-    constexpr size_t ON_DECLARATION_EFFECT = 0x908;  // HIGH: effect-tree header (ck-e58l.5)  /* win:measured struct_layout::CB_TYPE_ON_DECLARATION_EFFECT */
+    // `on_declared_war = yes` (invokes the user scripted_effect).
+    constexpr size_t ON_DECLARATION_EFFECT = 0x908;  // HIGH: effect-tree header  /* win:measured struct_layout::CB_TYPE_ON_DECLARATION_EFFECT */
 
     // CB target mode enum values
     constexpr int TARGET_NONE           = 0;      // no title target (subjugation, forced_vassalization)
@@ -5691,7 +5691,7 @@ namespace cb_type {
 }
 
 // =============================================================================
-// CCasusBelliGroup Struct Offsets (ck-e58l.3)
+// CCasusBelliGroup Struct Offsets
 // Accessed via CB_GROUP_DB (+0x88 = group array, +0x94 = count).
 // Referenced from CCasusBelliType: *(cb + 0x30) = CBGroup*.
 // Iterated by CB_CASCADE (0x065d6b20, has_any_display_cb_on path).
@@ -5700,13 +5700,13 @@ namespace cb_group {
     constexpr size_t MEMBERS_ARR   = 0x38;   // HIGH: CBType** array of member CBs (runtime-verified)  /* win:slot_gap cb_group gap between runs of +0x8 */
     constexpr size_t MEMBERS_COUNT = 0x44;   // HIGH: uint32 count of member CBs  /* win:measured probe relocation */
     constexpr size_t IS_VALID      = 0x50;   // HIGH: inline trigger — group-level is_valid (Gate 1)  /* win:measured struct_layout::CB_GROUP_IS_VALID */
-                                              // Resolves the *(cb+0x30)+0x48 indirection documented in ck-5oyp.
+                                              // Resolves the *(cb+0x30)+0x48 indirection documented in.
     constexpr size_t DISABLED_FLAG = 0x210;  // HIGH: byte — set=group disabled (DLC/content gate)  /* win:measured probe relocation */
     constexpr size_t AI_ALLOWED    = 0x211;  // MEDIUM: byte — AI-filter bit (checked only under mode=2)  /* win:measured probe relocation */
     constexpr size_t STAGE2_FLAG   = 0x212;  // MEDIUM: byte — second outer-trigger gate paired with DISABLED_FLAG  /* win:measured struct_layout::CB_GROUP_STAGE2_FLAG */
                                               // in AI_CB_EVALUATE_ALL Stage 2 (line 359 of decomp:
                                               // *(char *)(group + 0x20a) == '\0'). Distinct from AI_ALLOWED;
-                                              // exact semantics unknown (ck-39e1 Stage 1+2 mirror).
+                                              // exact semantics unknown (Stage 1+2 mirror).
 }
 
 // =============================================================================
@@ -5846,7 +5846,7 @@ namespace faction_write {
     // (or NULL_FACTION_SENTINEL on rejection). Models CCreateFactionCommand.
     constexpr uintptr_t GET_OR_CREATE_AND_JOIN  = CK3_WIN_UNMAPPED_N(779); // HIGH: CFaction*(FactionMgr*, CFactionType*, CChar* actor, CChar* liege) (FUN_05f9c920)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t GET_FACTION_MANAGER     = CK3_WIN_UNMAPPED_N(780); // HIGH: FactionMgr*(GameState* gsr) → *(gsr+0xa0)+0x17918 (FUN_06060240)  /* win:poisoned (no Windows counterpart) */
-    // FACTION_CAN_CREATE argument order corrected 2026-10-20 (lane l10-factions): the
+    // FACTION_CAN_CREATE argument order corrected 2026-10-20: the
     // call site in GET_OR_CREATE_AND_JOIN (FUN_05f9c920) passes (type, actor, liege,
     // &reason) — its own args are (mgr, type, actor, liege) and the liege is the one it
     // initialises the faction's target from (FACTION_INIT target_ref = liege+0x18).
@@ -5904,24 +5904,24 @@ namespace faction_write {
     constexpr uintptr_t FACTION_PRESS_DEMAND    = CK3_WIN_UNMAPPED_N(792); // HIGH: void(CFaction*) (FUN_05f8d8e0), self-gating  /* win:poisoned (no Windows counterpart) */
 }
 
-// Faction power/ultimatum functions (ck-bf34)
+// Faction power/ultimatum functions
 namespace faction_funcs {
-    constexpr uintptr_t CALC_POWER_RATIO     = CK3_WIN_UNMAPPED_N(793);  // HIGH: int64(faction) → fp/100k power ratio (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CALC_POWER_BALANCE   = CK3_WIN_UNMAPPED_N(794);  // HIGH: int64(faction) → liege_mil - faction_mil (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_MILITARY_POWER   = CK3_WIN_UNMAPPED_N(795);  // HIGH: int64(faction) → total faction military (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_DISCONTENT       = CK3_WIN_UNMAPPED_N(796);  // HIGH: int64(faction) → *(faction+0x20) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ADD_DISCONTENT       = CK3_WIN_UNMAPPED_N(797);  // HIGH: void(faction, delta) → clamps ≥ 0 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CALC_DISCONTENT_DELTA = CK3_WIN_UNMAPPED_N(798); // HIGH: int64(faction) → script eval per tick (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t FACTION_TICK         = CK3_WIN_UNMAPPED_N(799);  // HIGH: void(faction) → monthly update + ultimatum check (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CAN_FIRE_ULTIMATUM   = CK3_WIN_UNMAPPED_N(800);  // HIGH: bool(faction, debug_out) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CALC_ULT_PROGRESS    = CK3_WIN_UNMAPPED_N(801);  // HIGH: int64(faction) → ultimatum countdown progress (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t UPDATE_LEADER        = CK3_WIN_UNMAPPED_N(802);  // HIGH: void(faction) → re-elect leader (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t JOIN_FACTION         = CK3_WIN_UNMAPPED_N(803);  // HIGH: void(faction, char_ref, ...) → add member (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t FACTION_MGR_TICK     = CK3_WIN_UNMAPPED_N(804);  // HIGH: void(mgr) → monthly slot iteration (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t TRIGGER_FACTION_POWER = CK3_WIN_UNMAPPED_N(805); // HIGH: float(faction_ref) → faction/liege (0.0-1.0) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t TRIGGER_FACTION_RATIO = CK3_WIN_UNMAPPED_N(806); // HIGH: int64(faction_ref) → faction/balance fp/100k (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_REALM_MILITARY   = CK3_WIN_UNMAPPED_N(807);  // HIGH: int32(char) → *(char->realm+0x2F4) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_REALM_MAX_LEVIES = CK3_WIN_UNMAPPED_N(808);  // HIGH: int32(char) → *(char->realm+0x2FC) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CALC_POWER_RATIO     = CK3_WIN_UNMAPPED_N(793);  // HIGH: int64(faction) → fp/100k power ratio  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CALC_POWER_BALANCE   = CK3_WIN_UNMAPPED_N(794);  // HIGH: int64(faction) → liege_mil - faction_mil  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_MILITARY_POWER   = CK3_WIN_UNMAPPED_N(795);  // HIGH: int64(faction) → total faction military  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_DISCONTENT       = CK3_WIN_UNMAPPED_N(796);  // HIGH: int64(faction) → *(faction+0x20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ADD_DISCONTENT       = CK3_WIN_UNMAPPED_N(797);  // HIGH: void(faction, delta) → clamps ≥ 0  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CALC_DISCONTENT_DELTA = CK3_WIN_UNMAPPED_N(798); // HIGH: int64(faction) → script eval per tick  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t FACTION_TICK         = CK3_WIN_UNMAPPED_N(799);  // HIGH: void(faction) → monthly update + ultimatum check  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CAN_FIRE_ULTIMATUM   = CK3_WIN_UNMAPPED_N(800);  // HIGH: bool(faction, debug_out)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CALC_ULT_PROGRESS    = CK3_WIN_UNMAPPED_N(801);  // HIGH: int64(faction) → ultimatum countdown progress  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t UPDATE_LEADER        = CK3_WIN_UNMAPPED_N(802);  // HIGH: void(faction) → re-elect leader  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t JOIN_FACTION         = CK3_WIN_UNMAPPED_N(803);  // HIGH: void(faction, char_ref, ...) → add member  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t FACTION_MGR_TICK     = CK3_WIN_UNMAPPED_N(804);  // HIGH: void(mgr) → monthly slot iteration  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRIGGER_FACTION_POWER = CK3_WIN_UNMAPPED_N(805); // HIGH: float(faction_ref) → faction/liege (0.0-1.0)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRIGGER_FACTION_RATIO = CK3_WIN_UNMAPPED_N(806); // HIGH: int64(faction_ref) → faction/balance fp/100k  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_REALM_MILITARY   = CK3_WIN_UNMAPPED_N(807);  // HIGH: int32(char) → *(char->realm+0x2F4)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_REALM_MAX_LEVIES = CK3_WIN_UNMAPPED_N(808);  // HIGH: int32(char) → *(char->realm+0x2FC)  /* win:poisoned (no Windows counterpart) */
 }
 
 // Faction global constants
@@ -5941,7 +5941,7 @@ namespace decision_ht {
 }
 
 // =============================================================================
-// CDecisionType Trigger Block Offsets (ck-mol-09pam, expanded ck-39tc)
+// CDecisionType Trigger Block Offsets (expanded)
 // All offsets relative to CDecisionType object base
 // Trigger blocks are CAndTrigger (RTTI: 11CAndTrigger, vtable: 0xbe147b0)
 // Cost blocks are CScriptedCost (RTTI: 13CScriptedCost, vtable: 0xbd2ca48)
@@ -6002,52 +6002,52 @@ namespace trigger_vtable {
 
 // Decision prerequisite validation functions
 namespace decision_funcs {
-    constexpr uintptr_t CHECK_AI_POTENTIAL = CK3_WIN_UNMAPPED_N(811);  // HIGH: bool(decision, scopes) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CHECK_IS_SHOWN    = CK3_WIN_UNMAPPED_N(812);  // HIGH: bool(decision, scopes) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CHECK_IS_VALID    = CK3_WIN_UNMAPPED_N(813);  // HIGH: bool(decision, char, scopes, ?, failures) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CHECK_COST        = CK3_WIN_UNMAPPED_N(814);  // HIGH: bool(decision, scopes, ?, failures) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t GET_AI_WILL_DO    = CK3_WIN_UNMAPPED_N(815);  // HIGH: int(decision, scopes) → score/100000 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CHECK_CAN_TAKE    = CK3_WIN_UNMAPPED_N(816);  // HIGH: void(char, decision, result, scopes) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t BUILD_SCOPES      = CK3_WIN_UNMAPPED_N(817);  // HIGH: void(scope_ctx, character) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHECK_AI_POTENTIAL = CK3_WIN_UNMAPPED_N(811);  // HIGH: bool(decision, scopes)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHECK_IS_SHOWN    = CK3_WIN_UNMAPPED_N(812);  // HIGH: bool(decision, scopes)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHECK_IS_VALID    = CK3_WIN_UNMAPPED_N(813);  // HIGH: bool(decision, char, scopes, ?, failures)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHECK_COST        = CK3_WIN_UNMAPPED_N(814);  // HIGH: bool(decision, scopes, ?, failures)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t GET_AI_WILL_DO    = CK3_WIN_UNMAPPED_N(815);  // HIGH: int(decision, scopes) → score/100000  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHECK_CAN_TAKE    = CK3_WIN_UNMAPPED_N(816);  // HIGH: void(char, decision, result, scopes)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t BUILD_SCOPES      = CK3_WIN_UNMAPPED_N(817);  // HIGH: void(scope_ctx, character)  /* win:poisoned (no Windows counterpart) */
 }
 
 // Universal trigger evaluation functions
 namespace trigger_eval_funcs {
-    constexpr uintptr_t SCRIPT_TRIGGER_EVALUATOR = 0x320f450;  // HIGH: bool(trigger_block, scope_ctx) — Ghidra: ScriptTriggerEvaluator (ck-e58l.20) (ck-audit-B: renamed from EVALUATE)  /* win:win_rva funcs::SCRIPT_TRIGGER_EVALUATOR (same name) */
-    constexpr uintptr_t EVAL_WITH_DIAG     = CK3_WIN_UNMAPPED_N(818);  // HIGH: uint32(trigger, scope_obj, diag_obj) — eval with diagnostic target (ck-vqth) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t EVAL_WITH_FAILURES = CK3_WIN_UNMAPPED_N(819);  // HIGH: void(result**, trigger_block, scopes) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t FORMAT_FAILURES    = CK3_WIN_UNMAPPED_N(820);  // MEDIUM: void(result**, loc_key, failures) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INIT_DIAG_OBJ     = CK3_WIN_UNMAPPED_N(821);  // HIGH: void(diag_obj) — init 0xD8-byte diagnostic object (ck-vqth) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t RECORD_FAILURE     = CK3_WIN_UNMAPPED_N(822);  // HIGH: void(diag_obj, trigger, scope) — record failure + clear fresh flag (ck-vqth) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INIT_EVAL_CTX     = CK3_WIN_UNMAPPED_N(823);  // HIGH: void(eval_ctx*, scope_obj) — init two typed arrays + scope ref (ck-vqth) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t BUILD_TYPED_SCOPE = CK3_WIN_UNMAPPED_N(824);  // HIGH: scope*(buf, scope_obj, eval_ctx*) — 40-byte typed scope wrapper (ck-vqth) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t IS_EMPTY           = CK3_WIN_UNMAPPED_N(825);  // HIGH: bool(scripted_cost) — all sub-counts=0 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    // L20-D 2026-11-04: DIAG_OBJECT_DTOR was 0x04a5b060 (item81 subtracted 0x1000000, not 0x100000),
+    constexpr uintptr_t SCRIPT_TRIGGER_EVALUATOR = 0x320f450;  // HIGH: bool(trigger_block, scope_ctx) — Ghidra: ScriptTriggerEvaluator (renamed from EVALUATE)  /* win:win_rva funcs::SCRIPT_TRIGGER_EVALUATOR (same name) */
+    constexpr uintptr_t EVAL_WITH_DIAG     = CK3_WIN_UNMAPPED_N(818);  // HIGH: uint32(trigger, scope_obj, diag_obj) — eval with diagnostic target  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t EVAL_WITH_FAILURES = CK3_WIN_UNMAPPED_N(819);  // HIGH: void(result**, trigger_block, scopes)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t FORMAT_FAILURES    = CK3_WIN_UNMAPPED_N(820);  // MEDIUM: void(result**, loc_key, failures)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INIT_DIAG_OBJ     = CK3_WIN_UNMAPPED_N(821);  // HIGH: void(diag_obj) — init 0xD8-byte diagnostic object  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t RECORD_FAILURE     = CK3_WIN_UNMAPPED_N(822);  // HIGH: void(diag_obj, trigger, scope) — record failure + clear fresh flag  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INIT_EVAL_CTX     = CK3_WIN_UNMAPPED_N(823);  // HIGH: void(eval_ctx*, scope_obj) — init two typed arrays + scope ref  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t BUILD_TYPED_SCOPE = CK3_WIN_UNMAPPED_N(824);  // HIGH: scope*(buf, scope_obj, eval_ctx*) — 40-byte typed scope wrapper  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t IS_EMPTY           = CK3_WIN_UNMAPPED_N(825);  // HIGH: bool(scripted_cost) — all sub-counts=0  /* win:poisoned (no Windows counterpart) */
+    // 2026-11-04: DIAG_OBJECT_DTOR was 0x04a5b060 (item81 subtracted 0x1000000, not 0x100000),
     // which is image 0x4b5b060, mid FUN_04b5af30 (a sort helper): every failure-key extraction jumped
-    // there, wrote into its caller's frame and SIGSEGVed at 0x4a5b0d3 (smoke17 bridge.log 24130, r14 =
+    // there, wrote into its caller's frame and SIGSEGVed at 0x4a5b0d3 (bridge.log 24130, r14 =
     // 0x9019eb00000001bb = the code bytes at 0x4a5b098). The ENGINE names the dtor: EVAL_WITH_FAILURES
     // +0x3b is `e8 60 d2 41 fe` = call 0x0595b060 (objdump, binary MD5 09ba163b). Ghidra FUN_05a5b060
     // (image) is a 537-byte entry whose first store is the diag vtable trigger_diag::VTABLE. The
     // bridge resolves it through bridge/include/diag_dtor.h, which re-reads that call at runtime and
     // refuses on disagreement. Text is file-backed, not in the core dump; the binary is the witness.
-    constexpr uintptr_t DIAG_OBJECT_DTOR  = CK3_WIN_UNMAPPED_N(826);  // HIGH: void(diag_obj) — destroy (not free) the 0xD8 diag object allocated by EVAL_WITH_FAILURES; Ghidra FUN_05a5b060 (image 0x5a5b060 = header + 0x100000); 3 sources: the engine call at EVAL_WITH_FAILURES+0x3b, Ghidra entry 537 B, the vtable store (L20-D)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t EVAL_WITH_FAILURES_DTOR_CALL = 0x3b;  // HIGH: byte offset in EVAL_WITH_FAILURES of its `call rel32` to DIAG_OBJECT_DTOR (objdump 0x753ddfb; L20-D)
+    constexpr uintptr_t DIAG_OBJECT_DTOR  = CK3_WIN_UNMAPPED_N(826);  // HIGH: void(diag_obj) — destroy (not free) the 0xD8 diag object allocated by EVAL_WITH_FAILURES; Ghidra FUN_05a5b060 (image 0x5a5b060 = header + 0x100000); 3 sources: the engine call at EVAL_WITH_FAILURES+0x3b, Ghidra entry 537 B, the vtable store  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t EVAL_WITH_FAILURES_DTOR_CALL = 0x3b;  // HIGH: byte offset in EVAL_WITH_FAILURES of its `call rel32` to DIAG_OBJECT_DTOR (objdump 0x753ddfb)
 }
 
 // Diagnostic record (0xD8-byte) field layout, populated by EVAL_WITH_FAILURES
 // (FUN_0763ddc0). std::strings at +0x18/+0x38 carry localization keys when the
 // loud evaluator records a failure. See re_gate4_rejection_keys.md §4.
 namespace diag_record {
-    constexpr size_t STR1_DATA       = 0x18;  // MEDIUM (ck-wtk7): std::string #1 data ptr (libstdc++ dual-abi)
+    constexpr size_t STR1_DATA       = 0x18;  // MEDIUM: std::string #1 data ptr (libstdc++ dual-abi)
     constexpr size_t STR1_SIZE       = 0x20;
-    constexpr size_t STR2_DATA       = 0x38;  // MEDIUM (ck-wtk7): std::string #2 data ptr
+    constexpr size_t STR2_DATA       = 0x38;  // MEDIUM: std::string #2 data ptr
     constexpr size_t STR2_SIZE       = 0x40;
     constexpr size_t POPULATED_FLAG  = 0xD0;  // u8; 0=populated, 1=empty/reset
     constexpr size_t TOTAL_SIZE      = 0xD8;
 }
 
 // CAndTrigger / CJominiTrigger struct layout (~0xE0 bytes per slot)
-// Confirmed via core dump RTTI-guided traversal (ck-ysls, ck-vqth)
+// Confirmed via core dump RTTI-guided traversal
 namespace trigger_struct {
     constexpr size_t VTABLE            = 0x00;   // HIGH: vtable ptr (RTTI: 11CAndTrigger, etc.)
     // l3-schemes 2026-10-20: every trigger, leaf or block, carries where the script
@@ -6084,16 +6084,16 @@ namespace trigger_diag {
     constexpr size_t TOTAL_SIZE        = 0xD8;   // HIGH: total diagnostic object size
 }
 
-// Trigger tree evaluation pipeline (ck-39tc)
+// Trigger tree evaluation pipeline
 namespace trigger_pipeline {
-    constexpr uintptr_t CORE_EVAL          = CK3_WIN_UNMAPPED_N(827);  // HIGH: scope check + vtable[0xd0] dispatch (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ENTRY_EVAL_CHAIN   = CK3_WIN_UNMAPPED_N(828);  // HIGH: AND short-circuit over entry array (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SLOT_EVALUATE      = CK3_WIN_UNMAPPED_N(829);  // HIGH: per-slot 3-mode dispatch (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t LIST_ITERATE       = CK3_WIN_UNMAPPED_N(830);  // HIGH: iterate list, vtable[8] per entry (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t COST_EVAL_ALL      = CK3_WIN_UNMAPPED_N(831);  // HIGH: eval all 10 CScriptedCost slots (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t COST_POSTPROCESS   = CK3_WIN_UNMAPPED_N(832);  // HIGH: clamp negatives + fixed-point (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t COST_TO_FIXEDPOINT = CK3_WIN_UNMAPPED_N(833);  // HIGH: multiply each slot by 100000 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CHECK_COOLDOWN     = CK3_WIN_UNMAPPED_N(834);  // MEDIUM: decision cooldown/domain check (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CORE_EVAL          = CK3_WIN_UNMAPPED_N(827);  // HIGH: scope check + vtable[0xd0] dispatch  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ENTRY_EVAL_CHAIN   = CK3_WIN_UNMAPPED_N(828);  // HIGH: AND short-circuit over entry array  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SLOT_EVALUATE      = CK3_WIN_UNMAPPED_N(829);  // HIGH: per-slot 3-mode dispatch  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t LIST_ITERATE       = CK3_WIN_UNMAPPED_N(830);  // HIGH: iterate list, vtable[8] per entry  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COST_EVAL_ALL      = CK3_WIN_UNMAPPED_N(831);  // HIGH: eval all 10 CScriptedCost slots  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COST_POSTPROCESS   = CK3_WIN_UNMAPPED_N(832);  // HIGH: clamp negatives + fixed-point  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t COST_TO_FIXEDPOINT = CK3_WIN_UNMAPPED_N(833);  // HIGH: multiply each slot by 100000  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CHECK_COOLDOWN     = CK3_WIN_UNMAPPED_N(834);  // MEDIUM: decision cooldown/domain check  /* win:poisoned (no Windows counterpart) */
 }
 
 // =============================================================================
@@ -6168,10 +6168,10 @@ namespace event_sys {
     constexpr size_t OPTION_AI_CHANCE_DIRECT  = 0x318;  // int32: direct ai_chance override (0 = use script)
 
     // CONFIRMED (Round 3): AI event evaluator helper
-    constexpr uintptr_t AI_CHANCE_COMPUTE     = CK3_WIN_UNMAPPED_N(844);  // HIGH: fn(option_ptr) → int64 weight (CORRECTED from 0x07445820) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t AI_CHANCE_COMPUTE     = CK3_WIN_UNMAPPED_N(844);  // HIGH: fn(option_ptr) → int64 weight (CORRECTED from 0x07445820)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t PENDING_EVENT_ENUM    = CK3_WIN_UNMAPPED_N(845);  // fn enumerating pending events (365B)  /* win:poisoned (no Windows counterpart) */
 
-    // ── The AI's event-option pick (re_factions.md §5, lane l10-factions 2026-10-20) ──
+    // ── The AI's event-option pick (re_factions.md §5, 2026-10-20) ──
     // CoreEventQueue (image 0x05f5cab0) resolves the event's root character from the
     // scope context (FUN_05f72a60: tag at +0, char ref at +8 when tag==4), and for a
     // character the AI answers it calls AI_PICK_EVENT_OPTION(event, ctx, rng, flag) —
@@ -6248,7 +6248,7 @@ namespace alliance {
     constexpr int REASON_TRIBUTARY             = 4;
     constexpr int REASON_BLOOD_BROTHER         = 5;
 
-    // --- break-alliance effect chain (re_break_alliance_impl.md, #ck-bt9x) ---
+    // --- break-alliance effect chain (re_break_alliance_impl.md, #) ---
     // character-scoped effect (CBreakAllowAllianceEffect ⟵ CCharacterEffect ⟵
     // CJominiEffect). Chain: effect-apply → virtual CanExecute gate →
     // break_alliance_cmd (alive + relation re-check) → relation_dissolve (clears
@@ -6261,7 +6261,7 @@ namespace alliance {
     // engine's FUN_05f72a60 unwrap does). Path B (direct gated cmd) needs NO
     // scope_ctx frame, NO recipient saved-target. The bridge has no caller of
     // these addresses: the default-off break_alliance write path (flag, intent
-    // and game-thread drain case) was deleted in cleanup 2026.11 (D6) because the
+    // and game-thread drain case) was deleted in (D6) because the
     // §5 disposable-save smoke that would have confirmed live dissolve behaviour
     // was never run, so the path never became agent-reachable. The offsets stay
     // as RE record: the ABI is HIGH; live dissolve behaviour was never observed.
@@ -6291,7 +6291,7 @@ namespace interaction_cmd {
 // Accessed via DAT_0c69dd68; engine calls FUN_07660390(&mgr, &clone, 7, 0)
 // =============================================================================
 namespace dispatch_mgr {
-    // L13 (re_frame_update_hook.md): GATE_BYTE is "local peer is an observer". It is written only by
+    // GATE_BYTE is "local peer is an observer". It is written only by
     // CSetObserverCommand::Execute (funcs::SET_OBSERVER_CMD_EXECUTE) for the local peer; dump = 1
     // in an observer game. When set, GameCommandDispatch WITHOUT flag bit0 destroys any command
     // lacking flags 6/8 and returns 0.
@@ -6366,7 +6366,7 @@ namespace console_handlers {
     constexpr uintptr_t CMD_CHARINFO           = CK3_WIN_UNMAPPED_N(881);  // HIGH: charinfo (toggle debug info)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CMD_SET_SEXUALITY      = CK3_WIN_UNMAPPED_N(882);  // HIGH: set_sexuality  /* win:poisoned (no Windows counterpart) */
 
-    // Script console commands (lane MODPROBE 2026-11-11, ported by lane v4act;
+    // Script console commands (2026-11-11, ported;
     // re/findings/re_console_effect.md). Registration (RegisterConsoleCommands
     // body, ELF 0x1906f40): name lea then handler lea, read with objdump:
     // "effect"@0x8d2a0c1 -> 0x040f59a0, "run"@0x8d0f6c2 -> 0x040f5f50,
@@ -6401,13 +6401,13 @@ namespace console_handlers {
     // Debug / Script debugging
     constexpr uintptr_t CMD_HELPLOG            = CK3_WIN_UNMAPPED_N(893);  // HIGH: helplog (decompile-verified)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CMD_AIWATCH            = CK3_WIN_UNMAPPED_N(894);  // HIGH: aiwatch (matches funcs::CMD_AIWATCH)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CMD_DEBUG_MODE         = CK3_WIN_UNMAPPED_N(895);  // HIGH: debug_mode — toggles debug mode (tooltips, province IDs, extra logging) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CMD_SCRIPT_DOCS        = CK3_WIN_UNMAPPED_N(896);  // HIGH: script_docs / script_documentation — prints script documentation (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CMD_SCRIPTED_TESTS     = CK3_WIN_UNMAPPED_N(897);  // HIGH: scripted_tests — runs scripted tests (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CMD_DEBUG_EVENT        = CK3_WIN_UNMAPPED_N(898);  // HIGH: debug_event — trigger event for character, prints trigger info (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CMD_DEBUG_MODE         = CK3_WIN_UNMAPPED_N(895);  // HIGH: debug_mode — toggles debug mode (tooltips, province IDs, extra logging)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CMD_SCRIPT_DOCS        = CK3_WIN_UNMAPPED_N(896);  // HIGH: script_docs / script_documentation — prints script documentation  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CMD_SCRIPTED_TESTS     = CK3_WIN_UNMAPPED_N(897);  // HIGH: scripted_tests — runs scripted tests  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CMD_DEBUG_EVENT        = CK3_WIN_UNMAPPED_N(898);  // HIGH: debug_event — trigger event for character, prints trigger info  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CMD_EVENT_QUEUE        = CK3_WIN_UNMAPPED_N(899);  // HIGH: event_queue — prints event queue debug info  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t CMD_EVENT_COUNTS       = CK3_WIN_UNMAPPED_N(900);  // HIGH: event_counts — prints event counts  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CMD_MISSING_TRIG_LOC   = CK3_WIN_UNMAPPED_N(901);  // HIGH: missing_trigger_localization — dumps missing trigger loc (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CMD_MISSING_TRIG_LOC   = CK3_WIN_UNMAPPED_N(901);  // HIGH: missing_trigger_localization — dumps missing trigger loc  /* win:poisoned (no Windows counterpart) */
 
     // Script optimizer
     constexpr uintptr_t CMD_SCRIPT_OPT_DUMP    = CK3_WIN_UNMAPPED_N(902);  // HIGH: ScriptOptimizer.DumpHeuristicsInfo  /* win:poisoned (no Windows counterpart) */
@@ -6417,7 +6417,7 @@ namespace console_handlers {
 } // namespace ck3
 
 // =============================================================================
-// Script Debug / Logging System (ck-oaqw)
+// Script Debug / Logging System
 // CK3's built-in trigger/effect debug infrastructure
 // =============================================================================
 namespace script_debug {
@@ -6446,9 +6446,9 @@ namespace script_debug {
     // Mislabeled in Ghidra as "g_AI_EventEvalEnabled" — its actual semantics are
     // game-wide debug mode, not AI-specific (verified via xref count + console
     // command "Toggles debug mode" + "Turning debug ON/OFF" status messages).
-    constexpr uintptr_t DEBUG_MODE_FLAG        = CK3_WIN_UNMAPPED_N(907);  // HIGH: byte in .bss (ck-oaqw)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t DEBUG_MODE_GET_FN      = CK3_WIN_UNMAPPED_N(908);  // HIGH: getter — `mov al, [DEBUG_MODE_FLAG]; ret` (ck-oaqw)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t DEBUG_MODE_SET_FN      = CK3_WIN_UNMAPPED_N(909);  // HIGH: setter — `mov [DEBUG_MODE_FLAG], sil; ret` (sil=arg2 byte) (ck-oaqw)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t DEBUG_MODE_FLAG        = CK3_WIN_UNMAPPED_N(907);  // HIGH: byte in .bss  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t DEBUG_MODE_GET_FN      = CK3_WIN_UNMAPPED_N(908);  // HIGH: getter — `mov al, [DEBUG_MODE_FLAG]; ret`  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t DEBUG_MODE_SET_FN      = CK3_WIN_UNMAPPED_N(909);  // HIGH: setter — `mov [DEBUG_MODE_FLAG], sil; ret` (sil=arg2 byte)  /* win:poisoned (no Windows counterpart) */
 
     // Log file paths (written by NLog pdx_rotating_file_sink)
     // Located at: ~/.local/share/Paradox Interactive/Crusader Kings III/logs/
@@ -6549,7 +6549,7 @@ namespace innovation_instance {
     constexpr size_t MODIFIER_DATA       = 0x70;   // MEDIUM: modifier/effect data block
     constexpr size_t MODIFIER_CONTAINER  = 0xD8;   // MEDIUM: modifier container
     constexpr size_t STRIDE              = 0x210;  // HIGH: stride between instances (528 bytes)
-    // (ARRAY_COUNT 110 deleted, cleanup 2026.11 l6: the count is per culture and read from culture::INNOVATION_COUNT; Franconian holds 108)
+    // (ARRAY_COUNT 110 deleted, l6: the count is per culture and read from culture::INNOVATION_COUNT; Franconian holds 108)
 }
 
 // =============================================================================
@@ -6601,7 +6601,7 @@ namespace culture {
     // slots 0..107 carry the instance vtable while slot 108 on holds float bytes.
     // query_innovation_progress / query_fascination_progress walked up to 200 slots
     // until a page was unmapped, so their lists took rows from whatever followed the
-    // array and differed between launches (cleanup 2026.11, lane l6, F10).
+    // array and differed between launches (F10).
     constexpr size_t INNOVATION_COUNT   = 0x5ec;  // HIGH: int32, number of instances  /* win:slot_gap culture gap between runs of +0x10 */
     // Known innovations array: CPdxArray<CCultureInnovationType*>
     // Confirmed via decompilation of FUN_05d208c0 (8 bytes):
@@ -6642,8 +6642,8 @@ namespace faith {
     constexpr size_t FAITH_ID           = 0x08;   // HIGH: uint32, sequential faith ID (0-139, R14 core dump verified)  /* win:agreed probe */
     constexpr size_t NAME_KEY           = 0x10;   // LOW (was HIGH): NOT a string on a CFaith — an image pointer in all 140 faiths of the
                                                    //   ivar867 dump (0 read as a string). The key is FAITH_KEY (+0x98); the faith's id is
-                                                   //   FAITH_ID (+0x08), which FAITH_DB's lookup checks (faith_lookup). Unread. L14 FB M-1.
-    constexpr size_t RELIGION_TEMPLATE_REF = 0x1c; // HIGH: uint32, religion template DB ref — used in SetCountyFaith (ck-pj01)  /* win:agreed probe */
+                                                   //   FAITH_ID (+0x08), which FAITH_DB's lookup checks (faith_lookup). Unread.
+    constexpr size_t RELIGION_TEMPLATE_REF = 0x1c; // HIGH: uint32, religion template DB ref — used in SetCountyFaith  /* win:agreed probe */
     constexpr size_t FAITH_TEMPLATE     = 0x20;   // HIGH: ptr to CFaithTemplate (R14 RTTI verified: 14CFaithTemplate)  /* win:agreed probe */
 
     // Round 14: Comprehensive struct layout from core dump + decompilation
@@ -6675,7 +6675,7 @@ namespace faith {
     // CModifierInstance* arrays (active modifiers on faith, 1 per faith at 867 start)
     constexpr size_t ACTIVE_MODS_ARRAY_1        = 0x478;  // MED: ptr to CModifierInstance* array
     constexpr size_t ACTIVE_MODS_COUNT_1        = 0x480;  // MED: uint32, count (1 at game start for all faiths)
-    // County follower count — used by fervor size adjustment and conversion tracking (ck-pj01)
+    // County follower count — used by fervor size adjustment and conversion tracking
     constexpr size_t NUM_COUNTY_FOLLOWERS        = 0x4d8;  // HIGH: int32, counties following this faith (decompile-verified)  /* win:medium struct_layout::FAITH_NUM_COUNTY_FOLLOWERS */
                                                             //   Catholic=443, Tengri=365, Orthodox=170 at 867 start
                                                             //   Updated by FUN_05faa4e0: faith+0x4c8 += delta
@@ -6836,7 +6836,7 @@ namespace regiment {
     // Resolve via LANDED_TITLE_DB (ad_db_lookup). HIGH — core dump ck3_20260421_195552:
     // distinct-owner regiments resolved cleanly to titles (Deheubarth duchy, Steyr barony,
     // Dundee barony, ...); ref 881 (Steyr) is well outside the troop-count range, ruling
-    // out a count-field false positive. Duplicate copy at +0x160 (same value). (ck-readlane)
+    // out a count-field false positive. Duplicate copy at +0x160 (same value).
     constexpr size_t STATION_TITLE_ID   = 0x168;  // HIGH: uint32, stationed holding/title ID (TPdxRef, mask 0xFFFFFF)  /* win:medium struct_layout::REGIMENT_STATION_TITLE_ID */
 }
 
@@ -6865,7 +6865,7 @@ namespace merc_company {
 }
 
 // =============================================================================
-// CArmyRegiment Struct Offsets (ck-warstrength)
+// CArmyRegiment Struct Offsets
 // The DEPLOYED regiment sub-unit listed in CArmy+0x18 (army_obj::REG_VEC). NOT CRegiment.
 // Looked up via globals::ARMY_REGIMENT_DB (TPdxRefDatabase<CArmyRegiment, 8>):
 //   idx = ref & 0x00FFFFFF; entry = *(*(db+0x20) + 8 + idx*0x10); verify *(entry+0x10) == ref.
@@ -6923,7 +6923,7 @@ namespace maa_type {
     // HIGH — core dump verified across MaA types: light_footmen 0.45, pikemen 0.90,
     // armored_footmen 1.20, mubarizun 1.44 — all match CK3 vanilla MaA maintenance values.
     // Total regiment maintenance ~= MAINT_GOLD_PER_STACK * (stacks alive) per CalcMaintenanceCost
-    // (regiment::REGIMENT_MAINT_COST 0x0625cfc0); this field is the cheap-read per-stack base. (ck-readlane)
+    // (regiment::REGIMENT_MAINT_COST 0x0625cfc0); this field is the cheap-read per-stack base.
     constexpr size_t MAINT_GOLD_PER_STACK = 0x110; // HIGH: int64 fp/100000, monthly gold maintenance per stack  /* win:measured probe relocation */
 }
 
@@ -7138,7 +7138,7 @@ namespace aiwatch_struct {
 // THE CPdxArray RULE, the one statement of it: a CPdxArray's element pointer at +0,
 // its capacity (uint32, the elements allocated) at +8, its count (uint32, the
 // elements in use) at +0xC. A reader counts with COUNT; slots from the count up to
-// the capacity hold whatever was there before (lane l6, F10: four arrays below had
+// the capacity hold whatever was there before (F10: four arrays below had
 // the two swapped and read past their last element). An array field elsewhere in
 // this file names its count and capacity as literals (the Windows generator,
 // re/scripts/windows/gen_win_offsets.py, maps literals and copies expressions
@@ -7192,11 +7192,11 @@ namespace dynasty_obj {
     constexpr size_t CUSTOM_NAME         = 0x118;  // LOW (was MEDIUM): NOT a std::string here — a 0x20-byte string at +0x110 would  /* win:slot_gap dynasty_obj gap between runs of +0x8 */
                                                    //   overlap HOUSES_ARRAY (+0x118) and HOUSES_COUNT (+0x124); in the ivar867 dump all
                                                    //   12,025 dynasties hold an image pointer at +0x110 and a heap pointer at +0x118, and
-                                                   //   none reads as a string. No bridge code reads it (L14 FB M-2).
+                                                   //   none reads as a string. No bridge code reads it.
     constexpr size_t HOUSES_ARRAY        = 0x120;  // MEDIUM-HIGH: ptr, array of dynasty house objects  /* win:slot_gap dynasty_obj gap between runs of +0x8 */
     constexpr size_t HOUSES_COUNT        = 0x12c;  // MEDIUM-HIGH: int32, number of houses in dynasty  /* win:slot_gap dynasty_obj gap between runs of +0x8 */
     constexpr size_t HAS_CUSTOM_NAME     = 0x138;  // LOW (was MEDIUM): its pairing with CUSTOM_NAME is refuted (above); 0 in all 12,025  /* win:slot_gap dynasty_obj gap between runs of +0x8 */
-                                                   //   dynasties of the ivar867 dump. No bridge code reads it (L14 FB M-2).
+                                                   //   dynasties of the ivar867 dump. No bridge code reads it.
     constexpr size_t PRESTIGE            = 0x160;  // HIGH: int64, fixed-point /100000, dynasty prestige (renown)  /* win:medium struct_layout::DYNASTY_PRESTIGE */
     constexpr size_t PRESTIGE_LEVEL      = 0x160;  // HIGH: uint32, dynasty prestige level (0-10)
     constexpr size_t LEGACY_PERKS_ARRAY  = 0x168;  // MEDIUM-HIGH: ptr, array of CDynastyLegacyPerk* (8-byte ptrs)
@@ -7220,7 +7220,7 @@ namespace dynasty_house_obj {
     constexpr size_t DYNASTY_ID          = 0x2c;   // HIGH: uint32, parent dynasty ID (House_GetDynastyID returns *(obj+0x24))  /* win:medium struct_layout::HOUSE_DYNASTY_ID */
     constexpr size_t NAME                = 0x248;  // HIGH: std::string, house name ("Ivaring"). House_GetName (image 0x05eba4d0) is
                                                    //   `return param_1 + 0x248`; the ivar867 dump reads a string there for 12,576 of 12,576
-                                                   //   houses (+0x10: 0 of 12,576). Reader: house_name (dispatch_router.cpp). L14 FB M-1.
+                                                   //   houses (+0x10: 0 of 12,576). Reader: house_name (dispatch_router.cpp).
 }
 
 // =============================================================================
@@ -7237,7 +7237,7 @@ namespace subject_contract {
     constexpr size_t VTABLE_SECONDARY    = 0x10;   // HIGH: ptr, secondary MI vtable
 
     // --- Contract parties ---
-    // Corrected (lane l6, cleanup 2026.11): +0x20 is the SUBJECT and +0x28 the LIEGE. The
+    // Corrected: +0x20 is the SUBJECT and +0x28 the LIEGE. The
     // earlier reading (liege +0x20) named the two serializer tags without a dump check.
     // Dumps ivar867 and 1097: for all 917 / 1,089 rulers holding contracts, every contract
     // in the ruler's VASSAL_CONTRACT_ARRAY has +0x28 == the ruler and the +0x20 set equals
@@ -7293,7 +7293,7 @@ namespace subject_contract_type {
 }
 
 // =============================================================================
-// Event Weight / MTTH Calculation Engine (ck-t0z8)
+// Event Weight / MTTH Calculation Engine
 //
 // Weight evaluation pipeline: AI_CHANCE_COMPUTE checks direct override at
 // option+0x318, else evaluates script block at option+0x28 via fixed-point
@@ -7304,11 +7304,11 @@ namespace subject_contract_type {
 namespace event_weight {
     // Script evaluation functions for weight computation
     constexpr uintptr_t SCRIPT_FIXEDPT_MULT     = CK3_WIN_UNMAPPED_N(917);  // HIGH: fn(block) → int64 fixed-point multiply  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCRIPT_BASE_EVAL        = CK3_WIN_UNMAPPED_N(918);  // HIGH: fn(p1,p2) → int64 base value eval (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t AI_CHANCE_DIRECT_READ   = CK3_WIN_UNMAPPED_N(919);  // HIGH: fn() → read direct override value (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCRIPT_BASE_EVAL        = CK3_WIN_UNMAPPED_N(918);  // HIGH: fn(p1,p2) → int64 base value eval  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t AI_CHANCE_DIRECT_READ   = CK3_WIN_UNMAPPED_N(919);  // HIGH: fn → read direct override value  /* win:poisoned (no Windows counterpart) */
 
     // AI event option evaluation (higher-level wrapper)
-    constexpr uintptr_t AI_EVENT_OPTION_EVAL_INNER = CK3_WIN_UNMAPPED_N(920);  // HIGH: fn(name,p2,p3,idx,flags) → int32 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t AI_EVENT_OPTION_EVAL_INNER = CK3_WIN_UNMAPPED_N(920);  // HIGH: fn(name,p2,p3,idx,flags) → int32  /* win:poisoned (no Windows counterpart) */
 
     // CJominiMeanTimeToHappen RTTI
     constexpr uintptr_t MTTH_VTABLE             = CK3_WIN_UNMAPPED_N(921);  // HIGH: CJominiMeanTimeToHappen vtable  /* win:poisoned (no Windows counterpart) */
@@ -7319,33 +7319,33 @@ namespace event_weight {
     // CAIMTTHChance RTTI (inherits CJominiMeanTimeToHappen)
     constexpr uintptr_t AIMTTH_VTABLE           = CK3_WIN_UNMAPPED_N(925);  // HIGH: CAIMTTHChance vtable  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t AIMTTH_TYPEINFO         = CK3_WIN_UNMAPPED_N(926);  // HIGH: typeinfo  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t AIMTTH_CACHE_REHASH     = CK3_WIN_UNMAPPED_N(927);  // HIGH: hash table rehash (vtable[1] override) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t AIMTTH_CACHE_REHASH     = CK3_WIN_UNMAPPED_N(927);  // HIGH: hash table rehash (vtable[1] override)  /* win:poisoned (no Windows counterpart) */
 
     // COnActionManager dispatch
     constexpr uintptr_t ON_ACTION_MGR_VTABLE    = CK3_WIN_UNMAPPED_N(928);  // HIGH: COnActionManager vtable  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ON_ACTION_DISPATCH      = CK3_WIN_UNMAPPED_N(929);  // HIGH: fn(mgr, scope) → queue event  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ON_ACTION_FIRE_EVENT    = CK3_WIN_UNMAPPED_N(930);  // HIGH: fn(mgr, scope, on_action, char) → ptr (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ON_ACTION_FIRE_EVENT    = CK3_WIN_UNMAPPED_N(930);  // HIGH: fn(mgr, scope, on_action, char) → ptr  /* win:poisoned (no Windows counterpart) */
 
-    // On-action dispatch variant used by WAR_CREATE_CORE (ck-e58l.5, ck-e58l.16).
+    // On-action dispatch variant used by WAR_CREATE_CORE.
     // Called as: FUN_062c1b50(mgr=_DAT_0c0b0768, action_id=0x55, scope, game_root+8)
     // immediately after the CB.on_declaration effect block executes. Dispatcher
     // indexes *(mgr+0x38) + action_id*8 to get the listener-chain head.
     // Distinct from ON_ACTION_DISPATCH above (different arg order + arity).
-    constexpr uintptr_t ON_ACTION_DISPATCH_BY_ID   = CK3_WIN_UNMAPPED_N(931); // HIGH: (mgr, id, scope, gs+8) — Ghidra: OnActionManager_Dispatch (ck-e58l.20) (ck-audit-B: dedup of stress_funcs::ON_STRESS_LEVEL_DECREASE mislabel)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t ON_ACTION_MGR_WAR_SINGLETON = CK3_WIN_UNMAPPED_N(932); // HIGH: raw addr (Ghidra VA 0x0c0b0768 = _DAT_0c0b0768); core-dump verified ck-e58l.16  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ON_ACTION_DISPATCH_BY_ID   = CK3_WIN_UNMAPPED_N(931); // HIGH: (mgr, id, scope, gs+8) — Ghidra: OnActionManager_Dispatch (dedup of stress_funcs::ON_STRESS_LEVEL_DECREASE mislabel)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t ON_ACTION_MGR_WAR_SINGLETON = CK3_WIN_UNMAPPED_N(932); // HIGH: raw addr (Ghidra VA 0x0c0b0768 = _DAT_0c0b0768); core-dump verified  /* win:poisoned (no Windows counterpart) */
 
-    // On-action manager (heap, *0x0bfb0768) struct fields (ck-yxlq):
+    // On-action manager (heap, *0x0bfb0768) struct fields:
     //   mgr+0x38: ptr to action descriptor table (array of 8B descriptor ptrs)
     //   mgr+0x40: u32 action count (observed 0xC6 = 198 in 867-AD core dump)
     //   mgr+0x340/0x348/0x350: default-handler / sibling-set / final-stage
     //                           (mirrors per-descriptor +0x340/+0x348/+0x350)
-    constexpr size_t ON_ACTION_MGR_TABLE_PTR_OFFSET   = 0x38; // HIGH (ck-e58l.16)
-    constexpr size_t ON_ACTION_MGR_TABLE_COUNT_OFFSET = 0x40; // HIGH: u32 (ck-yxlq)
+    constexpr size_t ON_ACTION_MGR_TABLE_PTR_OFFSET   = 0x38; // HIGH
+    constexpr size_t ON_ACTION_MGR_TABLE_COUNT_OFFSET = 0x40; // HIGH: u32
 
     // On-action descriptor (entry at *(table[id])); heap-allocated, vtable-bearing.
-    // Verified via core-dump probe of table[0x55] = "on_war_started" (ck-yxlq).
+    // Verified via core-dump probe of table[0x55] = "on_war_started".
     namespace on_action_descriptor {
-        constexpr size_t VTABLE              = 0x000; // HIGH (ck-yxlq)
+        constexpr size_t VTABLE              = 0x000; // HIGH
         constexpr size_t NAME_STRING         = 0x008; // HIGH: std::string action name (e.g. "on_war_started")
         constexpr size_t SOURCE_FILE_STRING  = 0x030; // HIGH: std::string source file path
         constexpr size_t PRIMARY_HANDLER     = 0x340; // HIGH: callback ptr; called first
@@ -7353,56 +7353,56 @@ namespace event_weight {
         constexpr size_t FINAL_HANDLER       = 0x350; // HIGH: runs after primary, before recursion
     }
 
-    // War-lifecycle on-action IDs. 0x55 confirmed by ck-e58l.16; the others
-    // are runtime-verified via descriptor-string reads in ck-yxlq. NOTE: these
+    // War-lifecycle on-action IDs. 0x55 confirmed; the others
+    // are runtime-verified via descriptor-string reads in. NOTE: these
     // IDs are NOT stable across modded games or future-version content
     // changes — for patch-resilient code, look up by name via descriptor+0x08.
-    constexpr uint32_t  ON_ACTION_ID_WAR_TRANSFERRED       = 0x42; // HIGH (ck-yxlq): on_war_transferred
-    constexpr uint32_t  ON_ACTION_ID_JOIN_WAR_AS_SECONDARY = 0x43; // HIGH (ck-yxlq): on_join_war_as_secondary
-    constexpr uint32_t  ON_ACTION_ID_WAR_CREATED   = 0x55;       // HIGH: id fired from WAR_CREATE_CORE Block I = `on_war_started` (ck-e58l.16)
-    constexpr uint32_t  ON_ACTION_ID_WAR_WON_ATTACKER      = 0x56; // HIGH (ck-yxlq): on_war_won_attacker
-    constexpr uint32_t  ON_ACTION_ID_WAR_WON_DEFENDER      = 0x57; // HIGH (ck-yxlq): on_war_won_defender
-    constexpr uint32_t  ON_ACTION_ID_WAR_WHITE_PEACE       = 0x58; // HIGH (ck-yxlq): on_war_white_peace
-    constexpr uint32_t  ON_ACTION_ID_WAR_INVALIDATED       = 0x59; // HIGH (ck-yxlq): on_war_invalidated
-    constexpr uint32_t  ON_ACTION_ID_MIGRATION_WAR_END     = 0xBC; // HIGH (ck-yxlq): on_migration_war_end
+    constexpr uint32_t  ON_ACTION_ID_WAR_TRANSFERRED       = 0x42; // HIGH: on_war_transferred
+    constexpr uint32_t  ON_ACTION_ID_JOIN_WAR_AS_SECONDARY = 0x43; // HIGH: on_join_war_as_secondary
+    constexpr uint32_t  ON_ACTION_ID_WAR_CREATED   = 0x55;       // HIGH: id fired from WAR_CREATE_CORE Block I = `on_war_started`
+    constexpr uint32_t  ON_ACTION_ID_WAR_WON_ATTACKER      = 0x56; // HIGH: on_war_won_attacker
+    constexpr uint32_t  ON_ACTION_ID_WAR_WON_DEFENDER      = 0x57; // HIGH: on_war_won_defender
+    constexpr uint32_t  ON_ACTION_ID_WAR_WHITE_PEACE       = 0x58; // HIGH: on_war_white_peace
+    constexpr uint32_t  ON_ACTION_ID_WAR_INVALIDATED       = 0x59; // HIGH: on_war_invalidated
+    constexpr uint32_t  ON_ACTION_ID_MIGRATION_WAR_END     = 0xBC; // HIGH: on_migration_war_end
 
     // Per-character post-declare notify, called twice (atk then def) in WAR_CREATE_CORE
     // Block M. Likely fires character-scope on-actions (on_war_started@attacker, etc.).
-    constexpr uintptr_t WAR_CHAR_POST_DECLARE_NOTIFY = CK3_WIN_UNMAPPED_N(933); // HIGH: FUN_066ca320 (ck-e58l.5)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WAR_CHAR_POST_DECLARE_NOTIFY = CK3_WIN_UNMAPPED_N(933); // HIGH: FUN_066ca320  /* win:poisoned (no Windows counterpart) */
 
     // Compiled Clausewitz effect block executor — runs CB.on_declaration block
     // in WAR_CREATE_CORE Block I (and delegated to from DIRECT_PATH_SCRIPT_RUNNER
     // for all 4 script slots). Generic effect runner over compiled CEffectEntry trees.
-    constexpr uintptr_t CLAUSEWITZ_EFFECT_EXECUTOR = CK3_WIN_UNMAPPED_N(934); // HIGH: FUN_0750aaf0 - 0x100000: generic Clausewitz effect-block executor (ck-1ps.5) (ck-audit-B)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CLAUSEWITZ_EFFECT_EXECUTOR = CK3_WIN_UNMAPPED_N(934); // HIGH: FUN_0750aaf0 - 0x100000: generic Clausewitz effect-block executor  /* win:poisoned (no Windows counterpart) */
 
     // Post-declare game-state update (invoked between validity check and
     // active-wars append — purpose inferred: map/dynasty/UI refresh).
-    constexpr uintptr_t WAR_POST_DECLARE_GAME_UPDATE = CK3_WIN_UNMAPPED_N(935); // MEDIUM: FUN_06dc8ee0 (ck-e58l.5)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WAR_POST_DECLARE_GAME_UPDATE = CK3_WIN_UNMAPPED_N(935); // MEDIUM: FUN_06dc8ee0  /* win:poisoned (no Windows counterpart) */
 
     // CJominiOnActionList
     constexpr uintptr_t ON_ACTION_LIST_VTABLE   = CK3_WIN_UNMAPPED_N(936);  // HIGH: vtable  /* win:poisoned (no Windows counterpart) */
 
     // CJominiEffect — base class for all 604 effect types.
-    // Execute is vtable slot [23] at +0xB8 (corrected ck-e58l.15; ck-n18o's
+    // Execute is vtable slot [23] at +0xB8 (corrected
     // slot-[7] claim was wrong — slot [7] is GetScopeMask, see
     // JOMINI_EFFECT_GET_SCOPE_MASK below). Signature:
     //   uint64_t Execute(CJominiEffect* this, void* scope_context)
     constexpr uintptr_t JOMINI_EFFECT_VTABLE       = CK3_WIN_UNMAPPED_N(937);  // HIGH: CJominiEffect base vtable (25 slots)  /* win:poisoned (no Windows counterpart) */
 
     // CStartWarEffect — war creation effect
-    // Vtable at base+0x0ba2f088, 25 slots (per ck-e58l.15; ck-pu05's 16-slot
-    // dump was truncated). Slot layout (ck-pu05, ck-e58l.15):
+    // Vtable at base+0x0ba2f088, 25 slots (16-slot
+    // dump was truncated). Slot layout:
     //   [0]=dtor [1]=del-dtor [2]=shared [3]=shared-dispatch [4,5]=shared
     //   [6]=0x052a40d0 type-disc (ret 4)
     //   [7]=0x052a40e0 STUB (ret 8) — GetScopeMask helper, NOT Execute
-    //   [9]=0x052a0fc0 SCRIPT-LOAD RESOLVER (not the executor — ck-1ps.5 was WRONG)
+    //   [9]=0x052a0fc0 SCRIPT-LOAD RESOLVER (not the executor — was WRONG)
     //   [10]=0x052a40f0 post-validate (iterates CB-option array at self+0x1d8)
-    //   [23]=0x052a11a0 CreateWar — actual executor (corrects ck-n18o slot-[7] claim)
+    //   [23]=0x052a11a0 CreateWar — actual executor (corrects slot-[7] claim)
     constexpr uintptr_t START_WAR_EFFECT_VTABLE    = CK3_WIN_UNMAPPED_N(938);  // HIGH: CStartWarEffect vtable (25 slots)  /* win:poisoned (no Windows counterpart) */
-    // Ghidra symbols (ck-audit-B): CStartWarEffect_Resolve / _PostVal / _CreateWar
-    constexpr uintptr_t START_WAR_EFFECT_RESOLVE   = CK3_WIN_UNMAPPED_N(939);  // HIGH: vtable[9] — script-load interaction resolver (Ghidra: CStartWarEffect_Resolve) (ck-pu05, CORRECTS ck-1ps.5)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t START_WAR_EFFECT_POST_VAL  = CK3_WIN_UNMAPPED_N(940);  // HIGH: vtable[10] — post-validate CB options (Ghidra: CStartWarEffect_PostVal) (ck-pu05)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t START_WAR_EFFECT_CREATE_WAR = CK3_WIN_UNMAPPED_N(941); // HIGH: vtable[23] war-creating function (Ghidra: CStartWarEffect_CreateWar). IsRuler + truce + CB-option validation then calls WAR_CREATE_CORE. (ck-pu05) (ck-e58l.20) (ck-audit-B: dedup of former START_WAR_EFFECT_EXECUTE_V23 alias — same address 0x052a11a0)  /* win:poisoned (no Windows counterpart) */
+    // Ghidra symbols: CStartWarEffect_Resolve / _PostVal / _CreateWar
+    constexpr uintptr_t START_WAR_EFFECT_RESOLVE   = CK3_WIN_UNMAPPED_N(939);  // HIGH: vtable[9] — script-load interaction resolver (Ghidra: CStartWarEffect_Resolve) (CORRECTS)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t START_WAR_EFFECT_POST_VAL  = CK3_WIN_UNMAPPED_N(940);  // HIGH: vtable[10] — post-validate CB options (Ghidra: CStartWarEffect_PostVal)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t START_WAR_EFFECT_CREATE_WAR = CK3_WIN_UNMAPPED_N(941); // HIGH: vtable[23] war-creating function (Ghidra: CStartWarEffect_CreateWar). IsRuler + truce + CB-option validation then calls WAR_CREATE_CORE. (dedup of former START_WAR_EFFECT_EXECUTE_V23 alias — same address 0x052a11a0)  /* win:poisoned (no Windows counterpart) */
 
     // CStartWarEffect self-struct offsets (used by CREATE_WAR at 0x053a11a0):
     //   +0x60  std::string  CB type name (script-time, for RESOLVE hash lookup)
@@ -7411,8 +7411,8 @@ namespace event_weight {
     //   +0x140              Claimant scope evaluator
     //   +0x1d8 array*       CB option entries (stride 0xa8, count at +0x1e4)
 
-    // declare_war special_interaction dispatch (ck-pu05):
-    //   The declare_war interaction has enable_effects=0 (ck-1ps.7), so its
+    // declare_war special_interaction dispatch:
+    //   The declare_war interaction has enable_effects=0, so its
     //   script effect pipeline is bypassed entirely. Actual CWar creation
     //   happens via this dedicated handler, invoked indirectly by the
     //   engine's interaction-type registry (table address unpinned
@@ -7425,43 +7425,43 @@ namespace event_weight {
     //     req+0x10  = embedded CB-params array (title refs)
     //     req+0x28  = claimant char id (0xFFFFFFFF if none)
     //   Calls WAR_CREATE_CORE with no validation (upstream gates already ran).
-    constexpr uintptr_t DECLARE_WAR_SPECIAL_HANDLER = 0x26f7a90; // HIGH: tiny (22 lines) special_interaction handler for declare_war (ck-pu05)  /* win:win_rva funcs::DECLARE_WAR_SPECIAL_HANDLER (same name) */
+    constexpr uintptr_t DECLARE_WAR_SPECIAL_HANDLER = 0x26f7a90; // HIGH: tiny (22 lines) special_interaction handler for declare_war  /* win:win_rva funcs::DECLARE_WAR_SPECIAL_HANDLER (same name) */
 
     // Sibling WAR_CREATE_CORE callers (5 remaining — full set of 6 total via Ghidra xref filtered to UNCONDITIONAL_CALL):
-    constexpr uintptr_t SCOPE_EFFECT_START_WAR    = CK3_WIN_UNMAPPED_N(942);  // MEDIUM: scope-based start_war effect runner (likely CAiStartBestWarEffect) (ck-pu05)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t AI_BEST_CB_START_WAR      = CK3_WIN_UNMAPPED_N(943);  // MEDIUM: AI CB-iterating war starter, reads faith from param_1+0x20 (likely holy-war AI path) (ck-pu05) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t INVASION_SPECIAL_HANDLER  = CK3_WIN_UNMAPPED_N(944);  // MEDIUM: command-level handler, no claimant (0xFFFFFFFF), CB from global _DAT_0bfe39f8+0xf30 (likely invasion_war / no-claimant path) (ck-pu05) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t SCRIPTED_FULL_WAR_STARTER = CK3_WIN_UNMAPPED_N(945);  // MEDIUM: heavy setup with participant arrays (+0x40 atk, +0x58 def), title list (+0xd0), army pre-assignment (likely CStartGhwWarEffect / CFactionStartWarEffect) (ck-pu05)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCOPE_EFFECT_START_WAR    = CK3_WIN_UNMAPPED_N(942);  // MEDIUM: scope-based start_war effect runner (likely CAiStartBestWarEffect)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t AI_BEST_CB_START_WAR      = CK3_WIN_UNMAPPED_N(943);  // MEDIUM: AI CB-iterating war starter, reads faith from param_1+0x20 (likely holy-war AI path)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INVASION_SPECIAL_HANDLER  = CK3_WIN_UNMAPPED_N(944);  // MEDIUM: command-level handler, no claimant (0xFFFFFFFF), CB from global _DAT_0bfe39f8+0xf30 (likely invasion_war / no-claimant path)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCRIPTED_FULL_WAR_STARTER = CK3_WIN_UNMAPPED_N(945);  // MEDIUM: heavy setup with participant arrays (+0x40 atk, +0x58 def), title list (+0xd0), army pre-assignment (likely CStartGhwWarEffect / CFactionStartWarEffect)  /* win:poisoned (no Windows counterpart) */
 
     // Null-war sentinel constructor (called once at startup):
-    constexpr uintptr_t WAR_NULL_SENTINEL_CTOR    = CK3_WIN_UNMAPPED_N(946);  // HIGH: initializes _g_NullWar_sentinel at _DAT_0bfd8890 via memset + CWar_Constructor (ck-pu05) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t WAR_NULL_SENTINEL_CTOR    = CK3_WIN_UNMAPPED_N(946);  // HIGH: initializes _g_NullWar_sentinel at _DAT_0bfd8890 via memset + CWar_Constructor  /* win:poisoned (no Windows counterpart) */
 
     // ─────────────────────────────────────────────────────────────────────
-    // Interaction & effect registries (ck-e58l.7)
+    // Interaction & effect registries
     //
     // Static scan (re/scripts/interaction/scan_registries.py) confirms:
     // there is NO flat function-pointer array registry in .data.rel.ro.
     // Handler addresses appear ONLY inside per-class vtables, confirming
-    // hypothesis H2 from ck-pu05 §10 (and refuting H1, "flat fnptr table").
+    // hypothesis H2 from §10 (and refuting H1, "flat fnptr table").
     //
     // The single script-name "registry" is the hash table owned by
     // INTERACTION_CB_DB_ROOT. Its VALUES are pointers to per-class
     // singleton instances; dispatch calls the class-specific vtable slot.
     // Table base at INTERACTION_CB_DB_ROOT + interaction_ht::TABLE_OFFSET
     // (0x1b0), cap-mask at +0x1bc, sentinel at +0x1c0 — same structure
-    // that CStartWarEffect::vtable[9] probes via FNV-1a (ck-e58l.2 §1.3).
-    constexpr uintptr_t INTERACTION_CB_DB_ROOT    = 0x5568368;  // HIGH: _DAT_0bfe39f8 — shared registry root for special_interactions, CBs, and CEffectEntry<T> (ck-pu05, ck-e58l.2, ck-e58l.7) (ck-e58l.20)  /* win:win_rva globals::FACTION_TYPE_DB (same name) */
+    // that CStartWarEffect::vtable[9] probes via FNV-1a (§1.3).
+    constexpr uintptr_t INTERACTION_CB_DB_ROOT    = 0x5568368;  // HIGH: _DAT_0bfe39f8 — shared registry root for special_interactions, CBs, and CEffectEntry<T>  /* win:win_rva globals::FACTION_TYPE_DB (same name) */
 
-    // Per-class dispatch — special_interaction subclasses (ck-e58l.7)
+    // Per-class dispatch — special_interaction subclasses
     // Each concrete interaction type has its own vtable. The script-facing
     // name hashes to a pointer in the INTERACTION_CB_DB_ROOT hash table,
     // and the engine calls the per-class handler through that vtable.
     // Addresses below are Ghidra virtual (image base 0x00100000 already
     // applied — raw would be VA - 0x100000).
-    constexpr uintptr_t CWARDECLARATION_VTABLE       = CK3_WIN_UNMAPPED_N(947);  // HIGH: CWarDeclaration primary vtable. Handler DECLARE_WAR_SPECIAL_HANDLER (=0x065db970 raw, 0x066db970 Ghidra) appears at vtable[9]. Typeinfo at 0x0bd54568 → name string at 0x08bd8119 ("15CWarDeclaration") (ck-e58l.7)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CWARDECLARATION_HANDLER_SLOT = 9;           // HIGH: vtable slot index for the special_interaction handler (ck-e58l.7)
-    constexpr uintptr_t CMIGRATEINTERACTION_VTABLE   = CK3_WIN_UNMAPPED_N(948);  // HIGH: CMigrateInteraction primary vtable. Handler INVASION_SPECIAL_HANDLER (=0x06286f90 Ghidra = 0x06186f90 raw, originally labelled "invasion/murder" in ck-pu05 §3 caller #4) appears at vtable[11]. Typeinfo at 0x0bca2340 → name string at 0x08b227a0 ("19CMigrateInteraction") (ck-e58l.7)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t CMIGRATEINTERACTION_HANDLER_SLOT = 11;      // HIGH: vtable slot index for the special_interaction handler in this class (ck-e58l.7)
+    constexpr uintptr_t CWARDECLARATION_VTABLE       = CK3_WIN_UNMAPPED_N(947);  // HIGH: CWarDeclaration primary vtable. Handler DECLARE_WAR_SPECIAL_HANDLER (=0x065db970 raw, 0x066db970 Ghidra) appears at vtable[9]. Typeinfo at 0x0bd54568 → name string at 0x08bd8119 ("15CWarDeclaration")  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CWARDECLARATION_HANDLER_SLOT = 9;           // HIGH: vtable slot index for the special_interaction handler
+    constexpr uintptr_t CMIGRATEINTERACTION_VTABLE   = CK3_WIN_UNMAPPED_N(948);  // HIGH: CMigrateInteraction primary vtable. Handler INVASION_SPECIAL_HANDLER (=0x06286f90 Ghidra = 0x06186f90 raw, originally labelled "invasion/murder" in §3 caller #4) appears at vtable[11]. Typeinfo at 0x0bca2340 → name string at 0x08b227a0 ("19CMigrateInteraction")  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t CMIGRATEINTERACTION_HANDLER_SLOT = 11;      // HIGH: vtable slot index for the special_interaction handler in this class
 
     // NOTE: the CWarDeclaration handler slot (9) differs from the
     // CMigrateInteraction handler slot (11). This is expected: the classes
@@ -7471,7 +7471,7 @@ namespace event_weight {
     // single universal "SPECIAL_INTERACTION_HANDLER_SLOT" — dispatch is
     // resolved by the concrete class's vtable, not a fixed offset.
 
-    // Effect-name "registry" (ck-e58l.7) — same hash-table mechanism.
+    // Effect-name "registry" — same hash-table mechanism.
     //   The effect-name registry has the same topology as the special-
     //   interaction registry: the registration table IS the hash table
     //   at INTERACTION_CB_DB_ROOT + interaction_ht::TABLE_OFFSET. Each
@@ -7482,7 +7482,7 @@ namespace event_weight {
     //   record: it is the SAME table as the special_interaction registry,
     //   keyed by script-facing name.
     //
-    // Open: ck-pu05 §10 OQ1 and ck-e58l.2 §9 OQ1 asked for an address.
+    // Open: §10 OQ1 and §9 OQ1 asked for an address.
     // The resolution is: there is no separate address; both registries
     // share INTERACTION_CB_DB_ROOT. See re/findings/re_interaction_effect_registries.md.
 
@@ -7497,25 +7497,25 @@ namespace event_weight {
     // The consumer re-validates pending interactions with CanSend before processing.
     // Failed re-validation silently destroys the interaction — this is where wars get lost.
     constexpr uintptr_t PENDING_MGR_VTABLE             = CK3_WIN_UNMAPPED_N(951);  // HIGH: primary vtable (12 slots)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t PENDING_MGR_SEC_VTABLE         = CK3_WIN_UNMAPPED_N(952);  // HIGH: CLegacyGameManagerInterface secondary vtable (primary+0x70) — used for singleton scan validation (ck-r56i)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t PENDING_MGR_SEC_VTABLE         = CK3_WIN_UNMAPPED_N(952);  // HIGH: CLegacyGameManagerInterface secondary vtable (primary+0x70) — used for singleton scan validation  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t PENDING_MGR_TICK               = CK3_WIN_UNMAPPED_N(953);  // HIGH: main consumer tick function  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t PENDING_MGR_PROCESS_ACCEPTED   = CK3_WIN_UNMAPPED_N(954);  // HIGH: post-CanSend processing  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t PENDING_MGR_APPLY_EFFECTS      = CK3_WIN_UNMAPPED_N(955);  // HIGH: effect dispatch by mode  /* win:poisoned (no Windows counterpart) */
-    // ck-e58l.17 — CSendCharacterInteractionCommand::Execute → dispatcher cascade
+    // CSendCharacterInteractionCommand::Execute → dispatcher cascade
     // Entry point for interaction-command consumer. Dequeues command and routes
     // to either DIRECT_PATH_SCRIPT_RUNNER (direct path) or back to CanSend cascade.
-    constexpr uintptr_t SEND_CHAR_INTERACTION_CMD_EXECUTE = CK3_WIN_UNMAPPED_N(956);  // HIGH: FUN_062e8030 - 0x100000: core dispatcher, dequeues cmd + routes (ck-e58l.17) (ck-audit-B)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t DIRECT_PATH_SCRIPT_RUNNER         = CK3_WIN_UNMAPPED_N(957);  // HIGH: FUN_062e82f0 - 0x100000: DIRECT dispatch path script runner (all 4 script slots NULL for war) (ck-e58l.17) (ck-audit-B)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SEND_CHAR_INTERACTION_CMD_EXECUTE = CK3_WIN_UNMAPPED_N(956);  // HIGH: FUN_062e8030 - 0x100000: core dispatcher, dequeues cmd + routes  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t DIRECT_PATH_SCRIPT_RUNNER         = CK3_WIN_UNMAPPED_N(957);  // HIGH: FUN_062e82f0 - 0x100000: DIRECT dispatch path script runner (all 4 script slots NULL for war)  /* win:poisoned (no Windows counterpart) */
     // INTERACTION_TRY_SEND_CASCADE (interaction_funcs namespace) is the CanSend re-validator
     // used by this consumer; moved to the canonical interaction_funcs::INTERACTION_TRY_SEND_CASCADE.
 
     // Evaluation framework
-    constexpr uintptr_t EVAL_DISPATCH           = CK3_WIN_UNMAPPED_N(958);  // HIGH: generic eval dispatcher (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t EVAL_DATAMODEL_RESOLVE  = CK3_WIN_UNMAPPED_N(959);  // HIGH: data model resolver (MurmurHash3) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t RNG_WRAPPER             = CK3_WIN_UNMAPPED_N(960);  // MEDIUM: thread-safe RNG call (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t EVAL_DISPATCH           = CK3_WIN_UNMAPPED_N(958);  // HIGH: generic eval dispatcher  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t EVAL_DATAMODEL_RESOLVE  = CK3_WIN_UNMAPPED_N(959);  // HIGH: data model resolver (MurmurHash3)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t RNG_WRAPPER             = CK3_WIN_UNMAPPED_N(960);  // MEDIUM: thread-safe RNG call  /* win:poisoned (no Windows counterpart) */
 
     // ─────────────────────────────────────────────────────────────────────
-    // on_accept sibling effect classes (ck-e58l.15, resolves ck-e58l.2 OQ4)
+    // on_accept sibling effect classes (resolves OQ4)
     //
     // Full vtables dumped from core dump memory, cross-validated with Ghidra
     // decompilation. Addresses are offset-header style (Ghidra VA - 0x100000).
@@ -7523,11 +7523,11 @@ namespace event_weight {
     // CRITICAL: vtable[7] is NOT Execute for these classes — it is a
     // "GetScopeMask" virtual (bitfield of allowed scope types, computed from
     // vtable[6]). The actual Execute method is at vtable slot [23] (offset
-    // +0xb8). This corrects/extends the ck-n18o claim that "slot [7] is
-    // universally Execute"; ck-pu05 already noted this was wrong for
+    // +0xb8). This corrects/extends the claim that "slot [7] is
+    // universally Execute"; already noted this was wrong for
     // CStartWarEffect. See re/findings/re_onaccept_sibling_effects.md.
     //
-    // All 8 vtables are 25-26 slots long (not 16 as ck-pu05's CStartWarEffect
+    // All 8 vtables are 25-26 slots long (not 16 as CStartWarEffect
     // dump suggested). The typeinfo struct for each class immediately follows
     // its vtable in .data.rel.ro.
 
@@ -7578,7 +7578,7 @@ namespace event_weight {
     // The actual user-script template is held in CJominiScriptedEffectTemplate;
     // this class is the engine-side per-call wrapper that resolves the template
     // by name at script-load time and runs it at game-tick time.
-    // RTTI: 21CJominiScriptedEffect (rtti_classes.txt:12605).  (ck-kz1v)
+    // RTTI: 21CJominiScriptedEffect (rtti_classes.txt:12605).
     constexpr uintptr_t SCRIPTED_EFFECT_VTABLE   = CK3_WIN_UNMAPPED_N(984);  // HIGH: 25 slots; vfunc0 = where vptr stored in objects (offset_to_top=0, typeinfo at -0x08)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t SCRIPTED_EFFECT_TYPEINFO = CK3_WIN_UNMAPPED_N(985);  // HIGH: typeinfo struct (name="21CJominiScriptedEffect" @ rodata 0x08d298f0)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t SCRIPTED_EFFECT_EXECUTE  = CK3_WIN_UNMAPPED_N(986);  // HIGH: vtable[23] — push scope frame, FUN_075dddb0(self+0x60,self+0x88) to bind params, FUN_0750b090 to walk child effect tree, pop scope. Bead acceptance OQ-B.  /* win:poisoned (no Windows counterpart) */
@@ -7588,13 +7588,13 @@ namespace event_weight {
     // Calls vtable[6] and returns a 128-bit bitfield of allowed scope types.
     // The real Execute lives at slot [23] (base default = 0x0740beb0, the
     // generic child-effect iterator used by CCustomDescriptionEffect etc.).
-    // See ck-e58l.15 for the correction of ck-n18o's slot-[7] claim.
+    // See for the correction of slot-[7] claim.
     constexpr uintptr_t JOMINI_EFFECT_GET_SCOPE_MASK = CK3_WIN_UNMAPPED_N(988);  // HIGH: base slot[7] — scope-type bitfield helper  /* win:poisoned (no Windows counterpart) */
-    // Historical (ck-e58l.30): JOMINI_EFFECT_EXECUTE_BASE (0x03aed6f0, same
+    // Historical: JOMINI_EFFECT_EXECUTE_BASE (0x03aed6f0, same
     // address — slot-[7]-as-Execute mislabel) and START_WAR_EFFECT_EXECUTE_STUB
     // (0x052a40e0, CStartWarEffect slot [7] stub) removed. Neither was used
     // by bridge code and both propagated the incorrect slot-[7] layout.
-    // START_WAR_EFFECT_EXECUTE_V23 removed (ck-audit-B): was a duplicate of
+    // START_WAR_EFFECT_EXECUTE_V23 removed: was a duplicate of
     // START_WAR_EFFECT_CREATE_WAR (same address 0x052a11a0).
 }
 
@@ -7651,7 +7651,7 @@ namespace artifact_rarity {
 // See: re/findings/re_vassal_contract_scoring.md
 // =============================================================================
 namespace contract_scoring_globals {
-    constexpr uintptr_t SCORING_WEIGHT_TABLE     = CK3_WIN_UNMAPPED_N(990);  // HIGH: ptr→table, taxation/levy values per level (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t SCORING_WEIGHT_TABLE     = CK3_WIN_UNMAPPED_N(990);  // HIGH: ptr→table, taxation/levy values per level  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t ACCEPTANCE_THRESHOLD      = CK3_WIN_UNMAPPED_N(991);  // HIGH: long, score must exceed this to accept  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t OBLIGATION_SCALING_FACTOR = CK3_WIN_UNMAPPED_N(992);  // HIGH: long, obligation level scaling  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t RETRY_COUNT_THRESHOLD     = CK3_WIN_UNMAPPED_N(993);  // MEDIUM: int, AI re-evaluation retry limit  /* win:poisoned (no Windows counterpart) */
@@ -7707,11 +7707,11 @@ namespace contract_entry {
 }
 
 // =============================================================================
-// Dispatch-registry infrastructure (ck-fo7x.1)
+// Dispatch-registry infrastructure
 //
 // Shared mechanics for the trigger/effect/special_interaction name→handler
 // dispatch. All three registries share the hash table at
-// INTERACTION_CB_DB_ROOT + 0x1b0 (ck-e58l.2, ck-e58l.7). See
+// INTERACTION_CB_DB_ROOT + 0x1b0. See
 // re/findings/re_compiled_dispatch_registries.md for the full synthesis.
 // =============================================================================
 namespace dispatch_registry {
@@ -7719,16 +7719,16 @@ namespace dispatch_registry {
     // 1,617 CALL sites across the binary. Pattern:
     //   LEA RDI,[name]; MOV ESI,<len>; CALL TRIGGER_HASH_FN; CALL
     //   TRIGGER_ENTRY_ALLOC_FN; ... ; LEA RCX,[factory_vtable]; CALL register.
-    constexpr uintptr_t TRIGGER_REGISTER_FN    = CK3_WIN_UNMAPPED_N(1000);  // HIGH: register(db, hash, entry) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t TRIGGER_HASH_FN        = CK3_WIN_UNMAPPED_N(1001);  // HIGH: FNV1a_32(name_bytes) (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
-    constexpr uintptr_t TRIGGER_ENTRY_ALLOC_FN = CK3_WIN_UNMAPPED_N(1002);  // HIGH: allocate entry heap object (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRIGGER_REGISTER_FN    = CK3_WIN_UNMAPPED_N(1000);  // HIGH: register(db, hash, entry)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRIGGER_HASH_FN        = CK3_WIN_UNMAPPED_N(1001);  // HIGH: FNV1a_32(name_bytes)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t TRIGGER_ENTRY_ALLOC_FN = CK3_WIN_UNMAPPED_N(1002);  // HIGH: allocate entry heap object  /* win:poisoned (no Windows counterpart) */
 
     // Effect-name FNV-1a dispatcher — hash-keyed lookup into the effect registry
     // (same hash-table mechanism as trigger registry, keyed by effect script-name).
     // Used by CStartWarEffect::vtable[9] (RESOLVE) and other script-load resolvers.
-    constexpr uintptr_t EFFECT_FNV1A_DISPATCHER = CK3_WIN_UNMAPPED_N(1003);  // HIGH: FUN_076298d0 - 0x100000: FNV-1a effect-registry dispatcher (ck-e58l.2) (ck-audit-B)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t EFFECT_FNV1A_DISPATCHER = CK3_WIN_UNMAPPED_N(1003);  // HIGH: FUN_076298d0 - 0x100000: FNV-1a effect-registry dispatcher  /* win:poisoned (no Windows counterpart) */
 
-    // FNV-1a constants (shared with CStartWarEffect resolver, ck-e58l.2 §1.3).
+    // FNV-1a constants (shared with CStartWarEffect resolver, §1.3).
     // See re/findings/registries/fnv1a_reference.py for implementation.
     constexpr uint32_t FNV_OFFSET_BASIS = 0x811c9dc5;  // HIGH
     constexpr uint32_t FNV_PRIME        = 0x01000193;  // HIGH
@@ -7736,7 +7736,7 @@ namespace dispatch_registry {
 
     // Master war-trigger registrar (registers `has_any_display_cb_on`,
     // `has_cb_on`, `can_declare_war`, ~30 war-related triggers).
-    constexpr uintptr_t INIT_2584_WAR_TRIGGERS = CK3_WIN_UNMAPPED_N(1004);  // HIGH: _INIT_2584 (ck-e58l.20)  /* win:poisoned (no Windows counterpart) */
+    constexpr uintptr_t INIT_2584_WAR_TRIGGERS = CK3_WIN_UNMAPPED_N(1004);  // HIGH: _INIT_2584  /* win:poisoned (no Windows counterpart) */
 
     // War-trigger name string pool (wartriggerimpl.cpp).
     // Contains 81 snake_case identifiers starting here.
@@ -7744,7 +7744,7 @@ namespace dispatch_registry {
 }
 
 // =============================================================================
-// User-scripted template databases (ck-j31o)
+// User-scripted template databases
 //
 // Four sibling CGameDatabase<DB, Template> singletons that hold user-defined
 // scripted_effects, scripted_triggers, scripted_lists, and scripted_modifiers
@@ -7818,7 +7818,7 @@ namespace scripted_template_db {
     constexpr uintptr_t VFUNC_FOR_EACH_TEMPLATE = 0x30;  // HIGH
     constexpr uintptr_t VFUNC_DESTROY_HELPER    = 0x40;  // HIGH
 
-    // ── LookupTemplate compound-key shape (ck-phex) ─────────────────────────
+    // ── LookupTemplate compound-key shape ─────────────────────────
     // The key passed to LookupTemplate is NOT {char*, len}; it's a small
     // envelope pointing at an array of 0x40-byte Block objects. Each block
     // holds a (std::string, std::string) pair compared via strcmp-equality.
@@ -7851,7 +7851,7 @@ namespace scripted_template_db {
     constexpr uintptr_t COMPOUND_KEY_HASH_FN   = CK3_WIN_UNMAPPED_N(1015);  // HIGH: hash combiner for compound key (Ghidra 0x0758efb0)  /* win:poisoned (no Windows counterpart) */
     constexpr uintptr_t STRCMP_EQ_FN           = CK3_WIN_UNMAPPED_N(1016);  // HIGH: SSE strcmp-equality (Ghidra 0x08298d60)  /* win:poisoned (no Windows counterpart) */
 
-    // ── Load-time parser pipeline (ck-zvu5l.1) ──────────────────────────────
+    // ── Load-time parser pipeline ──────────────────────────────
     // The singleton trampoline (SCRIPTED_EFFECT_DB_NEW_SINGLETON) tail-calls
     // DB primary vt[2] = LoadAllScriptedEffectFiles, which iterates
     // common/scripted_effects/*.txt and parses each top-level entry into a
@@ -7907,7 +7907,7 @@ namespace scripted_template_db {
 }
 
 // =============================================================================
-// Script-engine scope-eval context (`scope_ctx`) — ck-rw9m
+// Script-engine scope-eval context (`scope_ctx`) —
 //
 // 0x30-byte stack-allocated struct passed as the second argument to every
 // CJominiEffect::Execute (vt[23], all subclasses). Built by FUN_07551640
@@ -7916,7 +7916,7 @@ namespace scripted_template_db {
 // scope-type tag at +0x00 the engine reads for mask validation against the
 // effect's required scope (vt[7] = JOMINI_EFFECT_GET_SCOPE_MASK).
 //
-// See re/findings/re_scripted_effect_scope_ctx.md (ck-rw9m).
+// See re/findings/re_scripted_effect_scope_ctx.md.
 // =============================================================================
 namespace scope_ctx {
     constexpr size_t SIZE                  = 0x30;  // HIGH: 6 fields, 8-byte aligned
@@ -7962,10 +7962,10 @@ namespace scope_ctx_fns {
 }
 
 // Global byte read into scope_ctx[+0x20] — debug/tooltip flag (0 in normal play).
-constexpr uintptr_t SCRIPT_SCOPE_DEBUG_FLAG = 0x0bed26f8;  // HIGH: byte, DAT_0bfd26f8 (Ghidra) (ck-rw9m)
+constexpr uintptr_t SCRIPT_SCOPE_DEBUG_FLAG = 0x0bed26f8;  // HIGH: byte, DAT_0bfd26f8 (Ghidra)
 
 // =============================================================================
-// Scope-eval chain iterator + CJominiLinkBehavior hierarchy — ck-4jf6
+// Scope-eval chain iterator + CJominiLinkBehavior hierarchy —
 //
 // FUN_07561f50 (Ghidra) is the universal scope-chain iterator embedded at
 // CStartWarEffect+0x98 / +0x140 / CB-option+0x10 and ~816 other call sites.
@@ -7977,7 +7977,7 @@ constexpr uintptr_t SCRIPT_SCOPE_DEBUG_FLAG = 0x0bed26f8;  // HIGH: byte, DAT_0b
 // a 128-bit input-type bitmap — most subclasses inherit a no-op zero
 // ("accept any") at LINK_TYPEMASK_NOOP below.
 //
-// See re/findings/re_scope_eval_node_class.md (ck-4jf6).
+// See re/findings/re_scope_eval_node_class.md.
 // =============================================================================
 namespace scope_eval_chain {
     // Iterator entry point.
@@ -8182,10 +8182,10 @@ namespace char_memory {
     constexpr size_t REFDB_ENTRY_STRIDE  = 0x10; // HIGH: bytes per slot; memobj ptr is at slot BASE (offset 0), NOT slot+8
 }
 
-// CScopeValue type-tag registry (consolidated - extends ck-lr20 sec.2).
+// CScopeValue type-tag registry (consolidated - extends sec.2).
 namespace scope_value_type {
     constexpr uint16_t UNSET     = 0;  // HIGH: returned on resolution failure
     constexpr uint16_t BOOL      = 2;  // HIGH: re_scope_system.md sec.1
-    constexpr uint16_t CHARACTER = 4;  // HIGH: ck-lr20; cross-confirmed by CCharacterLink::Resolve (ck-4jf6)
-    constexpr uint16_t TITLE     = 5;  // HIGH: pinned by CTitleLink::Resolve (ck-4jf6) - closes ck-lr20 OQ-D hypothesis
+    constexpr uint16_t CHARACTER = 4;  // HIGH:; cross-confirmed by CCharacterLink::Resolve
+    constexpr uint16_t TITLE     = 5;  // HIGH: pinned by CTitleLink::Resolve - closes OQ-D hypothesis
 }

@@ -1,4 +1,4 @@
-// flush_scheduler.h — R1a: the buffered, polarity-driven flush loop (ck-6kvq.8).
+// flush_scheduler.h — R1a: the buffered, polarity-driven flush loop.
 //
 // SHAPE (design of record: docs/design/event-pipeline-conductor.md §2.1-§2.3,
 // §2.8; overseer ruling 2026-09-10, decision G2). This is NOT a window
@@ -12,7 +12,7 @@
 // cannot pause anything by itself. It takes buffered call descriptors, session
 // facts and a clock READING, and emits a PLAN. Applying that plan (flipping the
 // clock, serving the reads, handing the tick batch to drain_and_execute_intents)
-// is the wiring bead, ck-6kvq.9. That split is what makes this host-testable
+// is the wiring bead,. That split is what makes this host-testable
 // with no game and no CK3 binary.
 //
 // POLARITY IS AN INPUT. The bridge already computes an action's required pause
@@ -34,7 +34,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "registered_speed.h"   // ck-on4u: the resting speed is DECLARED
+#include "registered_speed.h"   // The resting speed is DECLARED
 
 namespace bridge {
 
@@ -48,7 +48,7 @@ enum class Polarity {
     TICK_WRITE, // every tier-3 mutation: needs a live tick to take effect.
     UNKNOWN,    // not classified by the caller; resolves to PAUSED.
 
-    // Compatibility alias. The first cut of this header (ck-6kvq.8) had ONE
+    // Compatibility alias. The first cut of this header had ONE
     // tick class; §2.2 splits it because ordering a deferred-drain READ behind
     // the WRITES of the same flush answers it from a world that has already
     // moved past another agent's write. `TICK` keeps meaning "the write half",
@@ -116,12 +116,12 @@ enum class FlushTrigger {
     Cadence,               // FLUSH_PERIOD_MS elapsed (also the empty-buffer heartbeat)
     AllAny,                // (a) every buffered call is ANY-polarity: serve now, no cycle
     AllSessionsSubmitted,  // (b) every registered session has spoken since the last flush
-    ReadLaneEarly,         // (D', ck-h6nx) the EPISODE'S DECLARED OBSERVER spoke:
+    ReadLaneEarly,         // (D') the EPISODE'S DECLARED OBSERVER spoke:
                            // serve the READ lane now; buffered WRITES stay for
                            // the cadence flush
     SizeBound,             // (c) the buffer reached its early-flush size
 
-    // ck-tqx2: NOT A TRIGGER. The counter array's extent is derived from this,
+    // NOT A TRIGGER. The counter array's extent is derived from this,
     // so a trigger added ANYWHERE above is counted automatically. Deriving from
     // SizeBound instead — which is what I did first — only works while SizeBound
     // happens to be last, and "keep SizeBound last" in a comment is a warning,
@@ -227,7 +227,7 @@ struct FlushConfig {
     // freeze the baseline. Only pipeline mode sets it.
     bool     hold_clock_until_observer  = false;
     // THE RESTING SPEED IS THE PRE-REGISTERED PIN, NOT A NUMBER CHOSEN HERE
-    // (ck-on4u). It was `3` — a literal with no relationship to
+    // It was `3` — a literal with no relationship to
     // `episode_validity.PINNED_SPEED = 2`, unreachable from production (the
     // default, three reads in the planner, and one assignment in a unit test),
     // and therefore a SECOND HOME for a pre-registered constant. The plan's
@@ -240,7 +240,7 @@ struct FlushConfig {
     // fails on an integer literal here, by design.
     int      resting_speed              = kRegisteredGameSpeed;
 
-    // ── ck-h6nx (D'): THE EPISODE'S OWN DECLARED OBSERVER ───────────────────
+    // ── THE EPISODE'S OWN DECLARED OBSERVER ───────────────────
     // WHY THIS EXISTS. Early-flush condition (b) fires only when EVERY
     // registered session has spoken, and ipc_server registers every session
     // including agents. An agent speaks about once per LLM turn, so (b) stopped
@@ -272,7 +272,7 @@ class FlushScheduler {
 public:
     explicit FlushScheduler(const FlushConfig& cfg = FlushConfig());
 
-    // --- the declared resting speed (ck-on4u) --------------------------------
+    // --- the declared resting speed --------------------------------
     // Set ONCE at bridge init from the episode policy, BEFORE the conductor
     // thread starts (bridge_init.cpp resolves the policy at .init_array time and
     // calls pipeline_start() several hundred lines later), so this needs no lock
@@ -284,12 +284,12 @@ public:
     // in agreement.
     bool   set_resting_speed(int speed);
 
-    // ck-h6nx (D'): name the episode's declared observer. Set ONCE at its
+    // Name the episode's declared observer. Set ONCE at its
     // handshake, before it has spoken, so no flush can have been decided by a
     // half-installed privilege. `pipeline_declare_episode_observer` enforces
     // first-wins; this setter is the mechanism, not the policy.
     void   set_privileged_reader(const std::string& session_id);
-    // ck-zen6: PIPELINE MODE ONLY. See FlushConfig::hold_clock_until_observer
+    // PIPELINE MODE ONLY. See FlushConfig::hold_clock_until_observer
     // — null mode is E0's free run and must never be gated on a declaration.
     void   set_hold_clock_until_observer(bool on);
 
@@ -303,7 +303,7 @@ public:
     // {accepted:false, reason:"buffer_full", retry_after_ms}.
     SubmitResult submit(const CallRequest& req, uint64_t now_ms);
 
-    // Withdraw a still-buffered call (ck-6kvq.9, §2.10 `cancel`: "best-effort,
+    // Withdraw a still-buffered call (§2.10 `cancel`: "best-effort,
     // before the flush that would run it"). Returns true iff the call was still
     // in the buffer and has now been removed, so a cancelled call is never
     // planned, never served, and — the part that matters at N=6 — never spends
@@ -327,7 +327,7 @@ public:
     size_t   buffer_depth() const;
     uint64_t last_flush_ms() const;
 
-    // ck-43u3: WHICH TRIGGER SERVED EACH FLUSH, counted HERE rather than in the
+    // WHICH TRIGGER SERVED EACH FLUSH, counted HERE rather than in the
     // conductor. The trigger is the scheduler's own decision, so the count
     // belongs beside it — and it is what lets the rule be DRIVEN: a probe can
     // tick this scheduler and watch the counts move, which a counter living in
@@ -342,10 +342,10 @@ public:
 
 private:
     mutable std::mutex mu_;
-    //: ck-43u3: one slot per FlushTrigger, guarded by mu_ like everything else
+    //: One slot per FlushTrigger, guarded by mu_ like everything else
     //: here. Not atomics: they are written inside plan_flush, which already
     //: holds the lock, and read by a query that takes it.
-    // ck-tqx2: the bound is DERIVED, not a literal. It was `[6]` here with a
+    // The bound is DERIVED, not a literal. It was `[6]` here with a
     // hardcoded `< 6` at two use sites — so adding a seventh FlushTrigger would
     // have left the array at six and silently dropped the new trigger's count.
     // A census that loses a member reports FEWER triggers than fired, which is

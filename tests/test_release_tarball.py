@@ -1,6 +1,6 @@
 """The linux tarball carries the docs README.txt points at.
 
-smoke16 and smoke17 (2026.11.0, 2026.12.0): docs/reference/tools.md shipped in
+Docs/reference/tools.md shipped in
 the sdist only; the tarball had no docs/ and README.txt pointed at a URL. This
 runs release.yml's own "Assemble tarball" script (not a copy of it) in a scratch
 tree with stand-ins for the build outputs, and reads the tarball it makes.
@@ -107,7 +107,7 @@ def test_the_listing_check_reds_a_tarball_without_tools_md(tmp_path):
 @pytest.mark.skipif(not shutil.which("tar"), reason="needs tar")
 def test_the_listing_check_reds_a_tarball_without_version(tmp_path):
     """README.txt names VERSION (`ck3agent version` prints it); the listing check
-    covers it (witness r1 item 10: the check omitted it)."""
+    covers it (the check omitted it)."""
     assert re.search(r"^VERSION\b", (ROOT / "installer/README.txt").read_text(), re.M)
     tree = scratch(tmp_path)
     script = assemble_script().replace(

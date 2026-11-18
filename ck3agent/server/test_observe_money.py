@@ -1,4 +1,4 @@
-"""ck-m3xd — the money block reports what is real and says what is missing.
+"""The money block reports what is real and says what is missing.
 
 HOST ONLY. Pure shape over a reply; no bridge, no game.
 
@@ -8,7 +8,7 @@ MEASURED over d45-d50, 1,983 observations carrying `income_breakdown`:
                  number. A breakdown that breaks nothing down, and four zeros
                  that read as "no expenses" rather than "not populated".
      761 (38%)   income_breakdown.total_monthly DISAGREED with monthly_income.
-                 L15 A3: they were never one quantity. query_character's
+                 They were never one quantity. query_character's
                  `monthly_income` was core_data+0x170, the MERIT stock (loc key
                  TOTAL_MERIT); the bridge now emits it as `merit`, and the money's
                  monthly_income is income_breakdown.total_monthly.
@@ -24,13 +24,13 @@ seat is meant to trust.
       never passed through as zeros
   M3  a partially populated breakdown reports the populated keys AND names the
       ones still missing
-  M4  L15 A3: monthly_income is income_breakdown.total_monthly, never the merit;
+  M4: monthly_income is income_breakdown.total_monthly, never the merit;
       there is no second total and no "totals disagree" note
   M5  no breakdown, no income: monthly_income None (unmeasured), never 0 or merit
   M6  `expenses` is None with a reason -- never 0, which would read as a realm
       with no costs
   M7  no fabricated arithmetic: the block contains no derived expense or margin
-  M8  L15 (witness r4 N4-1): the figures are query_character's (build_char_profile
+  M8  (N4-1): the figures are query_character's (build_char_profile
       writes gold, merit and income_breakdown); query_realm writes none of
       them, and reading it there told every seat "monthly_income null, the bridge
       published no income_breakdown" (l14i geval-p eval_e_names). The doubles below

@@ -1,4 +1,4 @@
-// test_clock_rate.cpp — ck-ijfa. The meter that converts the covariate's unit
+// test_clock_rate.cpp —. The meter that converts the covariate's unit
 // into the unit every question about it is asked in.
 //
 // NO GAME. Wall time is passed IN, so a year of episode runs in a microsecond.

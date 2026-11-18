@@ -1,7 +1,7 @@
 // observer_data_functions.h — gui data-function callback pointers registered for
-// Observer-related actions, extracted per ck-sml8 prerequisite §"Concrete next steps".
+// Observer-related actions, extracted prerequisite §"Concrete next steps".
 //
-// Produced by: ck-sml8 (polecat furiosa, 2026-04-23)
+// Produced by: (polecat furiosa, 2026-04-23)
 // Method: scan .text for `LEA reg, [rip+disp32]` referencing each Observer-related
 //         string rodata address, then within 250 bytes scan for
 //         `LEA RAX, [rip+disp32]; MOV [RSP+??], RAX` — that RAX disp32 target is
@@ -13,7 +13,7 @@
 //   ghidra_va = raw + 0x00100000
 // All uintptr_t values below are RAW (runtime, ASLR-base-relative).
 //
-// ─── Decomp verification (ck-sml8, 2026-04-23) ─────────────────────────────────
+// ─── Decomp verification (2026-04-23) ─────────────────────────────────
 //
 // ⚠ Key finding: NONE of these five gui-datafunction callbacks are the correct
 // target for "start the game in Observer mode from character-select". They are
@@ -29,7 +29,7 @@
 //
 // Table below is therefore REFERENCE ONLY for the post-Observer path — useful
 // for future "change observed character / toggle observe mode" bridge actions
-// but NOT for the ck-sml8 cold-boot auto-select path.
+// but NOT for the cold-boot auto-select path.
 
 #pragma once
 #include <cstdint>
@@ -83,7 +83,7 @@ constexpr uintptr_t REG_LEA_TOGGLE_OBSERVE      = 0x2416bad;  // _INIT_2880
 }  // namespace ck3::observer_data_functions
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Frontend-idler vtables (for Path B1 infrastructure — ck-sml8 §Deliverable 2)
+// Frontend-idler vtables (for Path B1 infrastructure — §Deliverable 2)
 // Extracted via .rela.dyn scan: find RELATIVE relocs writing each class's
 // typeinfo-name pointer (§classname strings), walk back to the __si_class_type_info
 // struct address, find the vtable whose typeinfo-slot writes that struct address.
@@ -177,7 +177,7 @@ constexpr uintptr_t CJOMINI_IDLER_TYPEINFO = 0xbe1eb30;  // __si_class_type_info
 //      (Path B1) to invoke OnStartInternal(this_view, OBSERVER, TUTORIAL_OFF, nullptr)
 //      from a safe engine-thread moment.
 //
-// UPDATE (ck-rr27 session3, polecat:rictus, 2026-04-24): this premise is
+// UPDATE (session3, polecat:rictus, 2026-04-24): this premise is
 // likely wrong. See re/findings/re_observer_autoselect_session3.md.
 // `frontend_bookmarks.gui` contains no "Observe" button; the post-load
 // prompt our uinput fallback accepts is owned by `CFrontEndLoadView`
@@ -187,7 +187,7 @@ constexpr uintptr_t CJOMINI_IDLER_TYPEINFO = 0xbe1eb30;  // __si_class_type_info
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CFrontEndLoadView gui-datafunction callbacks (ck-rr27 session3, 2026-04-24)
+// CFrontEndLoadView gui-datafunction callbacks (session3, 2026-04-24)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Source: `/mnt/gsg/ck3/titus/source/interface/frontendloadview.cpp` (path
@@ -238,18 +238,18 @@ constexpr uintptr_t REG_LEA_GET_CONTINUE_SAVE     = 0x1b40c81;
 // "17CFrontEndLoadView" appears in rodata at three offsets. The canonical
 // name used by the typeinfo struct was not identified this session — walking
 // one of these xrefs to the typeinfo struct would reveal the runtime vtable
-// once Ghidra chases the relocation (same path ck-sml8 attempted for
+// once Ghidra chases the relocation (same path attempted for
 // CFrontEndGameSetupView).
 
 }  // namespace ck3::frontend_load
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CFrontEndLoadView struct layout + load-state-machine entry points
-//   (ck-dq7ym.7 session 4, polecat:furiosa, 2026-05-22)
+//   (session 4, polecat:furiosa, 2026-05-22)
 //
 // Decompiled by disassembling each callback via Ghidra MCP and tracing the
 // post-fade orchestrator + load-orchestrator + state-machine primitive.
-// See re/sessions/ck-dq7ym.7/SESSION-REPORT.md for the full walkthrough.
+// See re/sessions//SESSION-REPORT.md for the full walkthrough.
 //
 // All offsets verified by reading the disassembly directly — HIGH confidence.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -314,7 +314,7 @@ constexpr uintptr_t FUN_SAVE_RELOADER_CTOR     = 0x464c1f0;  // raw — HIGH
 }  // namespace ck3::frontend_load::layout
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PREMISE CORRECTION (ck-dq7ym.7 session 4)
+// PREMISE CORRECTION (session 4)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // The actual "Observe" button the uinput fallback clicks at (540, 1060) is
@@ -328,7 +328,7 @@ constexpr uintptr_t FUN_SAVE_RELOADER_CTOR     = 0x464c1f0;  // raw — HIGH
 //
 // LobbyView.ToggleObserve is already in ck3::observer_data_functions above
 // (TOGGLE_OBSERVE_THUNK @ 0x591a6d0) — it's GameCommandDispatch-bound but the
-// queue does drain once unpaused (per ck-ionq runtime probe).
+// queue does drain once unpaused (runtime probe).
 //
 // CloseGameView is a separate gui-datafunction not yet RE'd. It is the prime
 // candidate for the actual state-mutation step (immediate, on-thread).
@@ -338,7 +338,7 @@ constexpr uintptr_t FUN_SAVE_RELOADER_CTOR     = 0x464c1f0;  // raw — HIGH
 // dismiss the lobby Observe screen.
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CJominiMultiplayerLobbyView class + ownership chain (ck-dq7ym.8, 2026-05-22)
+// CJominiMultiplayerLobbyView class + ownership chain (2026-05-22)
 //
 // Recovered by static byte-scan of the CK3 binary
 // (binaries/ck3, BuildID e61ff2642f07094defd140fcc98e078d42541275).
@@ -408,7 +408,7 @@ constexpr uintptr_t OUTER_VTABLE_VPTR        = 0xb66a018;  // HIGH
 }  // namespace ck3::lobby_view
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CloseGameView gui-datafunction (ck-dq7ym.8, 2026-05-22)
+// CloseGameView gui-datafunction (2026-05-22)
 //
 // Registered alongside several other GameView-class data-functions in a
 // single _INIT_* registration block. Recovered via the standard recipe:
@@ -433,7 +433,7 @@ constexpr uintptr_t REG_LEA_CLOSE_GAME_VIEW   = 0x167e8a1;  // HIGH
 // Signature observed at entry: (?=rdi, ?=rsi, args=rdx, ?=rcx) — RDX holds
 // an arg-pack struct. The body dereferences `[rdx]` and indexes via the
 // arg-count `[rdx+8]`, then reads a flag byte at runtime VA 0xbecefa8.
-//   See first 80 bytes at re/sessions/ck-dq7ym.8/SESSION-REPORT.md for the
+//   See first 80 bytes at re/sessions//SESSION-REPORT.md for the
 //   verbatim disassembly.
 constexpr uintptr_t CALLBACK_BODY             = 0x388cc90;  // HIGH
 
@@ -444,7 +444,7 @@ constexpr uintptr_t CALLBACK_MANAGER          = 0x388cbe0;  // HIGH
 }  // namespace ck3::close_game_view
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Implementation status (ck-dq7ym.8)
+// Implementation status
 //
 // What's hooked / captured at runtime:
 //   • Constructor hook on CONSTRUCTOR_BODY captures the live LobbyView

@@ -1,7 +1,7 @@
-"""No dict literal in the server names a key twice (cleanup 2026.11, L12 item 8).
+"""No dict literal in the server names a key twice.
 
-RAW_REASON_TO_GATE carried "no_contract_with_that_vassal" twice (lane l6:
-target_not_assignable; lane l10: no_such_contract): Python keeps the later one
+RAW_REASON_TO_GATE carried "no_contract_with_that_vassal" twice
+(target_not_assignable; no_such_contract): Python keeps the later one
 silently, so the earlier line read as a rule and was not one. The census walks
 every dict literal in every server module (fails OPEN: a module that does not
 parse is a failure, not a skip).

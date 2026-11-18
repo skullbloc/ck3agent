@@ -1,4 +1,4 @@
-"""rc2 B8: docs/research.md states facts about the bridge source. Check them.
+"""Docs/research.md states facts about the bridge source. Check them.
 
 The B8 defect was a doc and a code change made in parallel that disagreed in
 the merged tree, with nothing to notice. Each test below reads the claim from
@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "bridge"
 
-# L13 FF3 (witness X4): the one C++ tokenizer (bridge/scripts/cpp_strip.py).
+# The one C++ tokenizer (bridge/scripts/cpp_strip.py).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "scripts"))
 import cpp_strip  # noqa: E402
 
@@ -110,7 +110,7 @@ ENV_SHAPE = re.compile(r'"((?:CK3|BRIDGE_)[A-Z0-9_]*|XDG_[A-Z_]+|HOME|DISPLAY|TM
 WRAPPER_PARAMS = {"name", "key", "k", "kGameSpeedEnv"}
 
 
-#: lane QMOD: the incoming-proposal mod's debug.log WORDS share the CK3 shape
+#: The incoming-proposal mod's debug.log WORDS share the CK3 shape
 #: (script_templates.h kProposalLogWords, the line parser's prefix); they are
 #: text the bridge reads in the game's log, not variables it reads from its
 #: environment. Excluded by prefix, and only while no getenv-shaped call names one.
@@ -161,7 +161,7 @@ def test_handshake_effective_config_is_the_table_minus_the_two_named():
 
 
 def test_boot_log_row_matches_instance_open_boot_log():
-    """rc2 B1: the row once said a non-strict build writes the boot log even when
+    """The row once said a non-strict build writes the boot log even when
     unset. The code gates on CK3_BRIDGE_BOOT_LOG == "1" alone, in every build."""
     row = next(l for l in _doc().splitlines() if l.startswith("| `CK3_BRIDGE_BOOT_LOG`"))
     assert "even when unset" not in row and "STRICT" not in row.upper().replace("CK3_BRIDGE_BOOT_LOG", "")

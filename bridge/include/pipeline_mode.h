@@ -1,4 +1,4 @@
-// pipeline_mode.h — R8: what `null` MEANS (ck-6kvq.4).
+// pipeline_mode.h — R8: what `null` MEANS.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §6.3, with §2.1
 // (the flush loop), §2.7 (the checkpoint gate) and §8 (migration, G11).
@@ -71,7 +71,7 @@ PipelineMode parse_pipeline_mode(const char* s, bool* recognised);
 //   admits_control_sessions          YES      YES        no
 //   admits_observer_clock_verbs      no       no         YES
 //
-// ck-1ek9 REMOVED A SIXTH COLUMN, `may_arm_checkpoint_gate`. The original
+// REMOVED A SIXTH COLUMN, `may_arm_checkpoint_gate`. The original
 // table (425c20b) carried it, and it was the column the WIP author called the
 // one that "would have bitten hardest". It is gone because THE SUBSYSTEM IT
 // GOVERNS IS GONE: the checkpoint clock gate was withdrawn from the experiment
@@ -84,14 +84,14 @@ PipelineMode parse_pipeline_mode(const char* s, bool* recognised);
 // query_handlers.cpp:7330 — a client must be able to learn which mode it is
 // talking to without a second call — so it is not a policy column.)
 //
-// ⚠ TWO OF THESE COLUMNS HAVE NO CALLER YET (ck-1ek9). `mode_buffers_calls`
+// ⚠ TWO OF THESE COLUMNS HAVE NO CALLER YET. `mode_buffers_calls`
 // and `mode_runs_flush_loop` answer correctly and NOTHING ASKS THEM:
 // pipeline.cpp still computes `pipeline_active()` as `mode != Legacy` and
-// `pipeline_start()` still starts the conductor for `Null`. ck-1ek9 wired the
+// `pipeline_start` still starts the conductor for `Null`. wired the
 // control-session column and the clock carve-out — the P0, the one that made
 // two guards unfireable — and stopped there, because changing how `null`
 // SERVES CALLS changes the runtime characteristics of an E0 set that is
-// mid-flight. Follow-up: ck-1ek9.1. Said here as well as in the runbook,
+// mid-flight. Follow-up:. Said here as well as in the runbook,
 // because this file is where someone will come to find out what `null` means,
 // and a table that overstates itself is what this bead was about.
 //
@@ -133,7 +133,7 @@ bool mode_admits_control_sessions(PipelineMode m);
 
 // The typed reason recorded when a control handshake is downgraded. A constant
 // so the log line, the handshake ack and the test all quote the same token.
-// THE ONE THING A NULL-MODE OBSERVER MAY STILL DO: set the clock (ck-1ek9).
+// THE ONE THING A NULL-MODE OBSERVER MAY STILL DO: set the clock.
 //
 // `admits_control_sessions` is false for null, and `set_speed` is a MUTATION
 // (session.cpp `action_is_readonly` does not list it), so the downgrade alone

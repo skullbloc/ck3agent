@@ -1,4 +1,4 @@
-"""actor_doors is checked against the bridge source (L14 FF1 m-20).
+"""actor_doors is checked against the bridge source.
 
 Every bridge action the query and discover tools reach is classified: an actor
 door (ACTOR_DOORS: its handler falls back to the bound ruler when no actor is

@@ -1,4 +1,4 @@
-"""query(): behaviour against a fake bridge (cleanup 2026.11 F15).
+"""query: behaviour against a fake bridge (F15).
 
 The fake answers each bridge action from a table and records every send, so a
 row can say which bridge action a call reached and with what parameters. Rows:
@@ -222,7 +222,7 @@ def test_the_defaults_the_description_states(bridge):
 
 
 def test_female_a_non_boolean_is_refused_at_the_mcp_boundary_and_nothing_is_sent(bridge):
-    """L14 m-10 (server half): the MCP boundary refuses female="yes" instead of
+    """The MCP boundary refuses female="yes" instead of
     turning it into True; at a1fb8c6b pydantic's lax bool plus bool(female) sent
     female=True for "yes". Control: a real boolean reaches the bridge as given."""
     for bad in ("yes", "no", 1):
@@ -264,7 +264,7 @@ def test_an_unknown_domain_is_named(bridge):
     assert bridge.sent == []
 
 
-#: Domains deleted in cleanup 2026.11 L14 (lane S2), each with why. A domain added
+#: Domains deleted in (lane S2), each with why. A domain added
 #: back under one of these names reds here.
 DELETED_DOMAINS = {
     "event_probabilities": "finding 7: answered events: [] in both clock modes; no tool answers an event",
@@ -329,7 +329,7 @@ def test_a_reply_the_bridge_declined_is_a_refusal_not_a_reading(bridge, reply, g
     assert "query_realm" in b["summary"]
 
 
-#: The replies the bridge really sends for a READ it did not answer (L14 FF3 N3-1):
+#: The replies the bridge really sends for a READ it did not answer:
 #:   pipeline_timeout  pipeline.cpp (serve, `run_on_game_thread` false):
 #:                     {"success":false,"reason":"game_thread_timeout","phase":"serve"};
 #:   inline_timeout    ipc_server.cpp serve_on_game_thread (`!ran`), no `success`:
@@ -563,7 +563,7 @@ def test_court_of_reaches_search_characters_and_is_absent_by_default(bridge):
 
 
 def test_female_reaches_search_characters_both_ways_and_is_absent_by_default(bridge):
-    """L14 S4 (surface-eval minor 10): female=False is a filter (men), not unset."""
+    """Female=False is a filter (men), not unset."""
     run(ms.query(domain="characters", court_of=163110, female=True))
     run(ms.query(domain="characters", court_of=163110, female=False))
     run(ms.query(domain="characters", court_of=163110))

@@ -51,7 +51,7 @@ import refusal_memo                     # fix10: a game-refused write is not sen
 #: The most domains one query(domains=[...]) call reads.
 QUERY_BATCH_MAX = 5
 
-# ck-2r9k. §8.2 — what a pipeline-mode reply actually looks like — lives in ONE
+# §8.2 — what a pipeline-mode reply actually looks like — lives in ONE
 # module, and this file had zero occurrences of it. The three clients that got
 # this wrong got it wrong three different ways; a fourth reading of
 # `for_request_id` here would be a fourth way.
@@ -61,7 +61,7 @@ import pipeline_correlation as _pcorr
 # file only registers the tool when the seat's arm declares a topology other
 # than `none`, and delivers inboxes inside `observe`.
 import channel as _channel
-# v4 §6 (lane v4sees): the goal block an experiment seat's observe carries.
+# v4 §6: the goal block an experiment seat's observe carries.
 import goal_block as _goal_block
 
 log = logging.getLogger("ck3-mcp")
@@ -80,7 +80,7 @@ except _channel.ChannelBootRefusal as _exc:
     raise SystemExit(3)
 _SEAT = _channel.SeatState()
 
-# v4 (lane v4note): the seats' notepads, `note_read` / `note_write`, served by
+# v4: the seats' notepads, `note_read` / `note_write`, served by
 # this server like msg_send and declared per arm (notepad.py is the one
 # definition). None when the environment declares no notepad: the tools are
 # absent, and the seat-surface pin refuses a seat whose arm declared them and
@@ -93,7 +93,7 @@ except _notepad.NotepadBootRefusal as _exc:
     sys.stderr.flush()
     raise SystemExit(3)
 
-# v4 (lane v4instr): the guide, `guide_read(topic)`, served like the notepad
+# v4: the guide, `guide_read(topic)`, served like the notepad
 # and declared by the manifest's sha (guide.py is the one definition). None
 # when the environment declares none: the tool is absent. A declaration whose
 # content does not match its sha refuses the boot, typed. Where a guide is
@@ -130,7 +130,7 @@ _PUSH_CACHE: dict = {}
 # Redesign (SPEC docs/notes/mcp-redesign/SPEC.md): the gateway the goal-shaped
 # tools compose through — dispatch, single-flight serialization of the bridge's
 # deferred-drain reads, and since-tick delta tracking — so the tools stay pure
-# composition. It never touches the clock (L13): only session(pause|unpause|
+# composition. It never touches the clock: only session(pause|unpause|
 # speed|wait) does, on the player's call.
 # ---------------------------------------------------------------------------
 
@@ -169,13 +169,13 @@ class BridgeGateway:
 
     The clock is what get_tick_info says NOW (clock(), redesign.read_clock). The
     bridge pushes no tick_start or observation frame, so a cache fed by those
-    reads "paused" forever (witness W1); game() is the last fresh reading, taken
+    reads "paused" forever; game is the last fresh reading, taken
     at every tool's entry (_gateway_now) and by every confirmed_write.
     """
 
     #: Reads the bridge serves on the game thread (snapshot.cpp is_game_thread_read):
-    #: they run the game's triggers under the fake random scope (lane l6, witness #2)
-    #: and leave no record in the completed ring (witness #3). Checked against the
+    #: they run the game's triggers under the fake random scope
+    #: and leave no record in the completed ring. Checked against the
     #: bridge by test_polarity_bridge_table.
     _GAME_THREAD_READS = frozenset({"construction_check", "query_fabricate_targets",
                                     "query_create_title_cost"})
@@ -192,7 +192,7 @@ class BridgeGateway:
     _COMMANDS = frozenset({
         "pause_game", "unpause_game", "set_speed",
         "set_controlled_character", "release_character",
-        # ck-6kvq.13 (R6): the decision-budget governor's write surface.
+        # The decision-budget governor's write surface.
         "report_usage", "set_budget_config",
     })
 
@@ -270,13 +270,13 @@ class BridgeGateway:
     async def read_many(self, requests: "list[tuple[str, dict]]") -> list:
         """Issue INDEPENDENT reads CONCURRENTLY; results in request order.
 
-        ck-p3vd. The agent paid one flush period PER READ: observe(depth=full)
+        The agent paid one flush period PER READ: observe(depth=full)
         fans out to ~10 reads awaited in turn, ~10 s each, ~100 s for one
         observation — the whole graded episode. A flush serves its entire buffer
         in one span (flush_scheduler.cpp), so reads issued together cost ONE
         period however many there are.
 
-        MEASURED by ck-zgh4 on the live bridge, four independent reads:
+        MEASURED on the live bridge, four independent reads:
             sequential            20.01 s
             one call_many envelope 10.23 s
             SEPARATE envelopes issued back-to-back then collected  9.83 s
@@ -284,7 +284,7 @@ class BridgeGateway:
         new client method is needed. `_send_and_wait` already mints a uuid4
         request_id per call and registers its own future, so concurrent issue
         correlates BY CONSTRUCTION, with none of the misrouting risk that made
-        ck-iu11 expensive.
+        expensive.
 
         Each read keeps its own path (a deferred-drain read still takes the
         single-flight lock, so those serialize among themselves while the rest
@@ -302,7 +302,7 @@ class BridgeGateway:
                               deadline_s: float = 12.0, max_polls: int = 8,
                               poll_interval_s: Optional[float] = None):
         """Dispatch a write, then read it back: redesign.confirm_write (the two
-        waits, L13 contract D5 amendment 3)."""
+        waits, contract D5 amendment 3)."""
         if self.health == "hung":
             return {"raw": {"reason": "bridge_disconnected"}, "resolved": None,
                     "polls": 0, "drain": None, "refused": "bridge_disconnected",
@@ -319,7 +319,7 @@ class BridgeGateway:
                                             poll_interval_s=poll_interval_s)
 
     async def delta_records_since_last(self) -> list:
-        """Since-tick events as RECORDS (ck-s8vr): the war, scheme and council-task
+        """Since-tick events as RECORDS: the war, scheme and council-task
         feeds since the last call, each record tagged with its `kind`. The bridge's
         war and scheme records carry no `summary` or `name`, so they are passed as
         dicts for observe's `since` filter to read, never formatted into strings.
@@ -344,10 +344,10 @@ class BridgeGateway:
 
 
 def is_management_ledger_broadcast(msg: dict) -> bool:
-    """The bridge's management-ledger record (ck-324r, built by
+    """The bridge's management-ledger record (built by
     management_ledger_frame.h): `type: result`, `ledger_source:
     inline_management`, the caller's id under `caller_request_id` and NO
-    `request_id` (ck-h4pn; the caller's id rides under `caller_request_id` when
+    `request_id` (the caller's id rides under `caller_request_id` when
     the call had one). It is broadcast for the ARM relay on every control call,
     so this session never waits on it; anything else of type `result` that
     reaches the terminal else (a request_id nobody waits on, another
@@ -369,8 +369,8 @@ def _get_gateway() -> "BridgeGateway":
 async def _gateway_now() -> "BridgeGateway":
     """The gateway with a fresh clock reading. Every tool takes one at entry (the
     goal-shaped tools, query, discover, steer, pass_turn), so its
-    envelope's game block says what get_tick_info said at the call (witness W1:
-    nothing else refreshes it; m-16: no tool shows a stale reading).
+    envelope's game block says what get_tick_info said at the call
+    (nothing else refreshes it; m-16: no tool shows a stale reading).
 
     Its cost: one get_tick_info round trip per tool call, served on the bridge's
     IPC thread (bridge-internal, no game-thread wait), so it queues only behind
@@ -404,7 +404,7 @@ class BridgeState:
     pending_resume_token: Optional[str] = None
     #: fix10: handshakes refused `session_attached` while holding that token.
     resume_attached_refusals: int = 0
-    #: ck-ey8p. Frames this listener's type dispatch did not handle, counted by
+    #: Frames this listener's type dispatch did not handle, counted by
     #: `type`. THE DICT IS EMPTY UNTIL ONE ARRIVES, never pre-seeded with zeroes:
     #: an absent key means none of that type was seen, and a zero would claim a
     #: reading nobody took. Before this existed the dispatch had no `result`
@@ -416,16 +416,16 @@ class BridgeState:
     #: v3 §7.5 (seat_lineage): what this seat last knew of its ruler and the
     #: title its lineage follows. None until the first armed observe.
     seat_lineage_prior: Any = None
-    #: ck-324r's management-ledger records, counted by `action`: the bridge
+    #: management-ledger records, counted by `action`: the bridge
     #: broadcasts one on every set_controlled_character / release_character for
     #: the ARM relay, with the caller's id under `caller_request_id` and,
-    #: deliberately, no `request_id` (ck-h4pn), so no caller is waiting on it.
+    #: deliberately, no `request_id`, so no caller is waiting on it.
     #: EXPECTED traffic, not an unmatched frame: counted here, logged at DEBUG.
     #: Empty until one arrives, like unhandled_frames.
     management_ledger_frames: dict = field(default_factory=dict)
     action_log: list = field(default_factory=list)
     pending_queries: dict = field(default_factory=dict)  # request_id -> asyncio.Future
-    #: ck-2r9k, THE SECOND CONSUMER. request_id -> the flush ETA IN SECONDS that
+    #: THE SECOND CONSUMER. request_id -> the flush ETA IN SECONDS that
     #: the pipeline's own acceptance ack quoted for that call. The ack is keyed
     #: `for_request_id` and never `request_id` (§8.2), so the correlation block
     #: below cannot see it and this is where it is remembered.
@@ -438,7 +438,7 @@ class BridgeState:
     #: long this call will take, and the result genuinely cannot arrive before
     #: it.
     pending_acks: dict = field(default_factory=dict)  # request_id -> eta seconds
-    #: ck-2r9k. request_id -> the ticket its ack named. THE ONLY HANDLE ON A
+    #: Request_id -> the ticket its ack named. THE ONLY HANDLE ON A
     #: CALL WHOSE PUSH WAS LOST: `check` is keyed by ticket, not by the original
     #: request_id, so without this a missed push is unrecoverable and the call
     #: can only ever time out.
@@ -489,7 +489,7 @@ async def _bridge_listener(state: BridgeState):
                 state.pending_acks.pop(req_id, None)
                 continue
 
-            # ── ck-2r9k, THIS CONSUMER: THE ACK CARRIES THE DEADLINE ─────────
+            # ── THIS CONSUMER: THE ACK CARRIES THE DEADLINE ─────────
             #
             # The block above routes STRICTLY by `request_id`. The pipeline's
             # acceptance ack is keyed `for_request_id` and carries no
@@ -497,7 +497,7 @@ async def _bridge_listener(state: BridgeState):
             # so it has always fallen straight past it into the terminal else
             # and been counted as an unhandled frame.
             #
-            # ck-2r9k fixed that in agent.py. IT DID NOT REACH HERE, and this is
+            # fixed that in agent.py. IT DID NOT REACH HERE, and this is
             # the consumer every write tool runs through: BridgeGateway.write ->
             # _action_bridge -> _send_and_wait, all in this file. Two clients,
             # one protocol, one of them taught.
@@ -509,8 +509,8 @@ async def _bridge_listener(state: BridgeState):
             # future still settles on the real result.
             #
             # BOTH CONSUMERS NOW DO THIS, and the history is worth the three
-            # lines because it is the argument. ck-2r9k made agent.py resolve on
-            # the ack; ck-xksn (4859d957) found that was the defect above and
+            # lines because it is the argument. made agent.py resolve on
+            # the ack; (4859d957) found that was the defect above and
             # made it extend-and-wait, which is what this does. So the comment
             # that used to stand here — "agent.py resolves the future on the
             # ack" — went stale at 77d4d01b and is corrected rather than
@@ -518,14 +518,14 @@ async def _bridge_listener(state: BridgeState):
             # they once did not, and why. pipeline_correlation says it plainly —
             # "the result genuinely CANNOT arrive before this, so treating the
             # wait as a timeout is how a correct pipeline-mode bridge gets
-            # reported broken". The module has said so since ck-6kvq.18; this
+            # reported broken". The module has said so since; this
             # file had zero occurrences of it.
             if msg_type == "accepted":
                 for pending_rid in list(state.pending_queries):
                     if _pcorr.is_our_ack(msg, pending_rid):
                         state.pending_acks[pending_rid] = \
                             _pcorr.ack_eta_seconds(msg)
-                        # ck-2r9k: and the TICKET, which is the handle `check`
+                        # And the TICKET, which is the handle `check`
                         # takes. An ack with no ticket settles nothing and is
                         # not recorded as one — `ticket_of` returns None and
                         # the recovery below simply does not arm.
@@ -566,7 +566,7 @@ async def _bridge_listener(state: BridgeState):
                 log.error("Bridge error: %s", msg.get("error"))   # ipc_server.cpp error frames
 
             else:
-                # ck-ey8p: THE TERMINAL ELSE. Everything above names a type; a
+                # THE TERMINAL ELSE. Everything above names a type; a
                 # frame of any other type used to reach here and vanish. The
                 # ledger record is exactly that shape — `"type":"result"` — so
                 # an unmatched one left no trace at all.
@@ -685,7 +685,7 @@ async def bridge_lifespan(server: FastMCP):
     # 2026.12.5: read the predecessor's session BEFORE the wrapper below
     # overwrites the record with this server's own session.
     handover = _handover_resume_token()
-    _record_session_at_handshake(client)   # rc2 B7: before the pre-bind claims anything
+    _record_session_at_handshake(client)   # Before the pre-bind claims anything
 
     EXPECTED_BRIDGE_VERSION = "v8-2026-03-20"
 
@@ -721,7 +721,7 @@ async def bridge_lifespan(server: FastMCP):
         log.warning("Bridge not available — tools will return errors. "
                      "Start CK3 with bridge DLL and reconnect.")
 
-    _arm_exit_signals(state)            # rc2 B7: opt-in, see _release_on_exit
+    _arm_exit_signals(state)            # Opt-in, see _release_on_exit
     try:
         yield state
     finally:
@@ -756,7 +756,7 @@ def unknown_arguments(input_schema: dict, arguments: Any) -> list[str]:
 
 
 class _StrictArgumentsFastMCP(FastMCP):
-    """L18 ruling (a): every tool refuses an argument its schema does not declare.
+    """ ruling (a): every tool refuses an argument its schema does not declare.
 
     FastMCP's argument model ignores an extra key, so a call carrying one ran as
     if the key were absent: pass_turn(character_id=...) on 174 pilot calls (fixed
@@ -797,7 +797,7 @@ class _StrictArgumentsFastMCP(FastMCP):
 mcp = _StrictArgumentsFastMCP(
     "CK3 Bridge",
     instructions=(
-        # ck-zgh4 deploy-51: "the LLM acts as a 'personality tuner'" told the
+        # deploy-51: "the LLM acts as a 'personality tuner'" told the
         # caller what its ROLE was. It describes what the tools do instead.
         "This server connects to a running Crusader Kings 3 game via an "
         "injected bridge library. Its tools read game state and write changes "
@@ -849,7 +849,7 @@ def overview_payload(state) -> dict:
     """ck3://state/overview's body. The handshake is the ack less the withheld
     keys (bridge_client.HANDSHAKE_ACK_WITHHELD): the resume token is an
     authorisation over this session's claims and a resource body lands in the
-    client's transcript (L20 witness r2, follow-up b)."""
+    client's transcript (follow-up b)."""
     return {
         "connected": state.connected,
         "mock_mode": state.mock_mode,
@@ -964,7 +964,7 @@ def _declined(reply: Any, action: str = "") -> dict[str, Any] | None:
     with `reason` (or `error`) when the handler named why; the bridge's own fault
     and timeout replies carry no `success` at all. Either is a refusal, never a
     reading: shown as ok=true it reads like data. The rule is redesign.read_refusal,
-    the read twin of the write predicate (L14 FF3 N3-1): a game-thread read that
+    the read twin of the write predicate: a game-thread read that
     did not run in time is read_timeout, retryable."""
     name = str((reply.get("action") if isinstance(reply, dict) else "") or action or "the read")
     return redesign.read_refusal(reply, name)
@@ -997,14 +997,14 @@ async def _try_reconnect(state: BridgeState) -> bool:
         # seat's session; it is presented before any other.
         resume = getattr(state, "pending_resume_token", None) or resume
         state._client = AsyncBridgeClient()
-        # rc2 B7 (cli-4): the new client's session is recorded like the first
+        # The new client's session is recorded like the first
         # one, or CK3_SESSION_OUT keeps naming a session that no longer holds
         # the claims and `ck3agent run` resumes the wrong one after a SIGKILL.
         _record_session_at_handshake(state._client)
         connected = await state._client.connect()
         if connected:
             state.connected = True
-            # ck-mxlt: a reconnect mints a NEW session (session.cpp:819 —
+            # A reconnect mints a NEW session (session.cpp:819 —
             # "RELEASED and the session ERASED; the client must handshake"), so
             # the claim does NOT survive it. Re-bind here or the agent carries
             # on unbound for the rest of the episode with nothing saying so.
@@ -1151,7 +1151,7 @@ async def _ensure_connected(state: BridgeState, tool: str) -> dict[str, Any] | N
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ck-mxlt / ck-hlpb: ARRIVE BOUND, AND SAY WHO YOU ARE
+# ARRIVE BOUND, AND SAY WHO YOU ARE
 # ═══════════════════════════════════════════════════════════════════════════
 
 #: The character this agent plays, plumbed in by the harness. ABSENT MEANS NO
@@ -1242,7 +1242,7 @@ async def _handshake_and_bind(client, state,
                               resume_token: Optional[str] = None) -> Optional[dict]:
     """Handshake at v2, then CLAIM the declared character before the first turn.
 
-    WHY THE CLAIM IS HERE AND NOT IN THE PROMPT (ck-mxlt, e0's ruling
+    WHY THE CLAIM IS HERE AND NOT IN THE PROMPT (e0's ruling
     2026-09-21). The registered prompt says "You ARE Harold Godwinson" — present
     tense, already him — while the driver expects the agent to seize control of
     itself as an early act, and the `session` tool that does it is described as
@@ -1261,9 +1261,9 @@ async def _handshake_and_bind(client, state,
     harness's session is not held by the agent's), which is why it cannot be
     done driver-side.
 
-    ck-hlpb rides here: passing client_name/mode promotes the frame to v2. A
+    rides here: passing client_name/mode promotes the frame to v2. A
     BARE handshake omits protocol_version, the bridge assumes legacy v1, and the
-    session is logged as client='unknown'. v1 fails PERMISSIVE — ck-zgh4
+    session is logged as client='unknown'. v1 fails PERMISSIVE —
     measured a bare handshake returning session_mode "control" — so this is not
     what blocked the claim, but an observe-only request at v1 silently yields
     CONTROL, and a session that cannot say what it asked for cannot be audited.
@@ -1272,10 +1272,10 @@ async def _handshake_and_bind(client, state,
     # to keep import order independent of the MCP framework's.
     from bridge_client import (DEFAULT_CLIENT_NAME, MODE_CONTROL,
                                seat_declaration_kwargs)
-    # ck-j6lk: DECLARE THE SEAT. This session is what an arm's agent acts
+    # DECLARE THE SEAT. This session is what an arm's agent acts
     # through, so it is a seat; the driver's steer-probe and speed-pin helpers
     # are control sessions that never claim and must not declare.
-    # rc2 B7 (cli-4): a reconnect under release-on-exit presents the old token.
+    # A reconnect under release-on-exit presents the old token.
     resume = {"resume_token": resume_token} if resume_token else {}
     ack = await client.handshake(client_name=DEFAULT_CLIENT_NAME,
                                  mode=MODE_CONTROL,
@@ -1465,7 +1465,7 @@ async def _prebind_one(state, cid: int, add: bool) -> dict:
     except Exception as exc:                                   # noqa: BLE001
         log.error("pre-bind to character %d FAILED to send: %s", cid, exc)
         return {"character_id": cid, "ok": False, "reason": str(exc)}
-    # THE RESULT IS INSPECTED, NOT ASSUMED (ck-tygb is the same file's lesson:
+    # THE RESULT IS INSPECTED, NOT ASSUMED (is the same file's lesson:
     # a write whose reply is never read leaves the client believing something
     # that did not happen). A refusal is recorded and the agent still runs —
     # it can still claim for itself, exactly as it does today.
@@ -1529,7 +1529,7 @@ async def _send_and_wait(state: BridgeState, action: str, params: dict,
         state.pending_tickets.pop(request_id, None)
 
 
-#: ck-2r9k. Added to the ack's own `flush_eta_ms` before it is used as a
+#: Added to the ack's own `flush_eta_ms` before it is used as a
 #: deadline. The ETA is the time until the flush is DUE; serving the call and
 #: getting the frame back across the socket happens after that, so a deadline of
 #: exactly the ETA expires just as the work begins. Deliberately generous and
@@ -1539,7 +1539,7 @@ async def _send_and_wait(state: BridgeState, action: str, params: dict,
 #: silent false negative in the episode record.
 ACK_ETA_MARGIN_S = 5.0
 
-#: ck-9rto. The bridge's flush cadence, MIRRORED from
+#: The bridge's flush cadence, MIRRORED from
 #: `bridge/include/flush_scheduler.h` (`period_ms = 10000`, a member
 #: initialiser with no getenv) and CHECKED against it by
 #: `test_mcp_confirmation.test_C5_the_flush_period_mirror_matches_the_header`.
@@ -1557,7 +1557,7 @@ FLUSH_PERIOD_S = 10.0
 class BridgeTimeout(TimeoutError):
     """A call that was not confirmed, CARRYING WHAT WAS OBSERVED ABOUT IT.
 
-    ck-9rto. `_action_bridge` used to catch every TimeoutError and return one
+    `_action_bridge` used to catch every TimeoutError and return one
     sentence — "did not confirm within 8.0s" — for three outcomes that have
     three different repairs. A reader of `actions.jsonl` could not tell a
     bridge that never answered from one that ACCEPTED the call, minted a
@@ -1656,7 +1656,7 @@ async def _await_with_ack_extension(state: BridgeState, request_id: str,
     ticket = state.pending_tickets.get(request_id)
     extra = max(0.0, eta - timeout) + ACK_ETA_MARGIN_S
 
-    # ck-9rto: AND A WRITE CAN MISS THE FLUSH IT WAS QUOTED. The eta is the time
+    # AND A WRITE CAN MISS THE FLUSH IT WAS QUOTED. The eta is the time
     # until the next flush is DUE, not a promise that THIS write is served on
     # it: `flush_scheduler` caps tick calls per flush and a read-lane flush
     # hands them back, so an accepted write can be deferred to the following
@@ -1677,7 +1677,7 @@ async def _await_with_ack_extension(state: BridgeState, request_id: str,
     # PUSH_GRACE_S, FIRST_CHECK_S)`, with the reason written beside it — "a
     # flush period is seconds, and a client that simply waits it out is a client
     # that cannot tell 'not flushed yet' from 'my push was lost', which is the
-    # state the ck-zgh4 readiness probe was in when it declared a live world
+    # state the readiness probe was in when it declared a live world
     # dead. So ask early, once."
     #
     # A check is ANY-polarity and served INLINE, so asking costs a socket round
@@ -1692,10 +1692,10 @@ async def _await_with_ack_extension(state: BridgeState, request_id: str,
     except asyncio.TimeoutError:
         pass
 
-    # ── ck-2r9k: THE PUSH HAD ITS CHANCE. ASK. ──────────────────────────────
+    # ── THE PUSH HAD ITS CHANCE. ASK. ──────────────────────────────
     #
     # Waiting alone is not a settlement protocol; it is a hope —
-    # pipeline_correlation's words, written when the node's readiness probe read
+    # pipeline_correlation's words, written when the test host's readiness probe read
     # one frame out of phase and reported a live world dead. The result frame is
     # BROADCAST from the game thread, and a client can miss it: a reconnect
     # between the ack and the flush, a recv budget shorter than the eta, a
@@ -1708,7 +1708,7 @@ async def _await_with_ack_extension(state: BridgeState, request_id: str,
         if settled is not None:
             return settled
 
-    # ck-9rto: THE CHECKS ARE EXHAUSTED; THE BUDGET IS NOT. This tail used to be
+    # THE CHECKS ARE EXHAUSTED; THE BUDGET IS NOT. This tail used to be
     # the `else` of the branch above — reachable only when there was NO ticket —
     # so the one case where the bridge had told us most about the call was the
     # one case we stopped listening in. `_settle_by_check` returns None when it
@@ -1746,7 +1746,7 @@ async def _await_with_ack_extension(state: BridgeState, request_id: str,
         ticket=None, ack_eta_s=eta, waited_s=timeout + extra)
 
 
-#: ck-2r9k. How many times a still-running ticket is re-asked before giving up.
+#: How many times a still-running ticket is re-asked before giving up.
 #: BOUNDED, and small: a check reply for a live ticket carries that ticket's own
 #: remaining `flush_eta_ms`, so the interval corrects itself to the real flush
 #: period after the first round trip. Two round trips is the expected worst
@@ -1756,7 +1756,7 @@ CHECK_ATTEMPTS = 4
 #: round trip and not a flush wait; a second is generous.
 CHECK_REPLY_S = 2.0
 
-#: ck-9rto. The poll interval for a ticket the bridge says is LIVE while
+#: The poll interval for a ticket the bridge says is LIVE while
 #: quoting no time to its flush — eta 0, or no eta at all.
 #:
 #: Read eta 0 literally and it means "ask again in no time", so the four
@@ -1867,7 +1867,7 @@ async def _settle_by_check(state: BridgeState, request_id: str,
             if quoted:
                 wait = max(_pcorr.CHECK_POLL_S, float(eta_ms) / 1000.0)
             else:
-                # ck-9rto: LIVE AND QUOTING NOTHING IS OVERDUE, NOT IMMINENT.
+                # LIVE AND QUOTING NOTHING IS OVERDUE, NOT IMMINENT.
                 # A missing eta and an eta of 0 are the same statement here —
                 # the bridge cannot say when this ticket's flush will come —
                 # and the old code read both as `CHECK_POLL_S`, which spent the
@@ -1892,7 +1892,7 @@ async def _query_bridge(state: BridgeState, action: str, params: dict,
                          timeout: float = 15.0) -> dict | str:
     """Send a query to the bridge and return its reply."""
     # the reply as the bridge wrote it: no bridge reply carries a `data` or
-    # `message` wrapper (L15 A2 deleted the unwrap that looked for one)
+    # `message` wrapper (deleted the unwrap that looked for one)
     return await _send_and_wait(state, action, params, timeout)
 
 
@@ -1910,7 +1910,7 @@ async def _action_bridge(state: BridgeState, action: str, params: dict,
         result = await _send_and_wait(state, action, params, timeout)
         return result
     except TimeoutError as exc:
-        # ck-9rto: SAY WHICH OF THE THREE THINGS HAPPENED, AND WHAT WAS SEEN.
+        # SAY WHICH OF THE THREE THINGS HAPPENED, AND WHAT WAS SEEN.
         # This used to flatten every timeout into one sentence quoting
         # `timeout`, which was not even the budget actually waited — the ack
         # extension spends `timeout + extra`. Two facts were thrown away at
@@ -2060,7 +2060,7 @@ async def query(
         "include_vassals": include_vassals,
         "war_id": war_id, "culture_id": culture_id,
         "dynasty_id": dynasty_id,
-        # ck-leg: character-browser params (domain="characters" → search_characters).
+        # Character-browser params (domain="characters" → search_characters).
         "filter": filter, "sort": sort,
         "sort_order": sort_order, "max_results": max_results,
         "require_in_range": 1 if require_in_range else 0,
@@ -2074,7 +2074,7 @@ async def query(
     # scheme_inits, council_tasks, event_log) only when explicitly set.
     if court_of:
         params["court_of"] = court_of
-    # The caller's value, uncoerced (L14 m-10): StrictBool refuses a non-boolean
+    # The caller's value, uncoerced: StrictBool refuses a non-boolean
     # ("yes", 1) at the MCP boundary, and a value that reaches here another way
     # still meets the bridge's own female_must_be_boolean refusal.
     if female is not None:
@@ -2124,7 +2124,7 @@ async def query(
             return None, [], redesign.why_blocked(
                 "unknown_domain", summary=f"unknown domain '{d}'; valid: {', '.join(QUERY_DOMAINS)}")
         action, bridge_params = resolved
-        # L14 finding 6: a domain about the bound ruler, with none bound, answers
+        # finding 6: a domain about the bound ruler, with none bound, answers
         # the refusal every actor-bearing tool answers.
         unbound = await redesign.unbound_refusal(gw, "query", action, bridge_params)
         if unbound is not None:
@@ -2171,7 +2171,7 @@ async def query(
     return _ok("query", state, got, errors=errs)
 
 
-#: L20-B (smoke17 new item 4): the pauses before each re-read of a character whose
+#: The pauses before each re-read of a character whose
 #: name the bridge has queued for the game thread (name_tables.cpp: a cache miss
 #: answers name_key + name_pending and queues the id; the drain after the next
 #: game-thread pass, paused or running, resolves it). ~1.5 s in all.
@@ -2182,7 +2182,7 @@ NAME_PENDING_NOTE = ("the game has not localized this name yet (the bridge queue
 
 async def _reread_pending_name(state, action: str, bridge_params: dict, reply):
     """query(domain="character") for an id the bridge has not named yet: re-read it
-    while the drain resolves the name (smoke17: 12015 and 11329 came back with
+    while the drain resolves the name (12015 and 11329 came back with
     name_key + name_pending on the first read of the session, and `name` absent,
     while the same ids were named by later reads). A name still pending after the
     re-reads is said: `name` null beside name_pending and a note, never a key."""
@@ -2431,9 +2431,9 @@ async def _discover_decision_why_blocked(state, decision: str, actor_id: int,
         held = titles.get("held_titles") if isinstance(titles, dict) else None
         if not redesign.hierarchy_was_read(titles, realm):
             # D1-B: never fabricate a confident empty verdict from a failed
-            # read — report the gate as unmeasured, loudly. L16 R9: the bridge
+            # read — report the gate as unmeasured, loudly.: the bridge
             # answers a clamp or a skipped lookup as an error (title_count_clamped,
-            # title_lookup_failed); L15 witness n6 stays as the second line: an
+            # title_lookup_failed); stays as the second line: an
             # empty list while query_realm counts held titles is not "holds none"
             # (redesign.hierarchy_was_read).
             reason = (titles.get("error")
@@ -2448,7 +2448,7 @@ async def _discover_decision_why_blocked(state, decision: str, actor_id: int,
             verdict = shield_decision_why_blocked(
                 decision, realm=realm, character=character, duchy_control=None)
             return _ok("discover", state, verdict)
-        # L15 A2: read by the keys emit_title_info writes (query_handlers.cpp:
+        # Read by the keys emit_title_info writes (query_handlers.cpp:
         # `key` :2910, `tier` :2935, `de_jure_parent_key` :2964; the list is
         # `held_titles` :3046). The reader used to take "titles", "title_key" and
         # "de_jure_kingdom", none of which the bridge writes, so the kingdom
@@ -2601,7 +2601,7 @@ async def discover(
         return _blocked("discover", state, "missing_required_argument",
                         f"what is required; valid: {', '.join(DISCOVER_WHATS)}")
     if what in ("targets", "decision_why_blocked"):
-        # L14 finding 6: about the bound ruler when no actor is named
+        # finding 6: about the bound ruler when no actor is named
         unbound = await redesign.unbound_refusal(
             gw, "discover", what, {"actor_id": actor_id or character_id})
         if unbound is not None:
@@ -2613,7 +2613,7 @@ async def discover(
     if what == "targets":
         return await _discover_targets(state, action, actor_id, title_id)
 
-    # L14 (finding 8): one door per read. An enumeration discover once had is
+    # One door per read. An enumeration discover once had is
     # do's; the refusal names that door and reads nothing.
     from tools import DISCOVER_MOVED_TO_DO
     if what in DISCOVER_MOVED_TO_DO:
@@ -2658,7 +2658,7 @@ async def discover(
 
     action, bridge_params = resolved
     if what in ("decisions_annotated", "valid_decisions") and not decisions:
-        # L18-B: without a list the bridge serves the light list, which is
+        # Without a list the bridge serves the light list, which is
         # what="decisions"; an annotated read of nothing is a missing argument.
         return _blocked("discover", state, "missing_required_argument",
                         f"what='{what}' evaluates the decisions you name: pass "
@@ -2743,7 +2743,7 @@ async def pass_turn(reason: str = "", character_id: int = 0) -> dict[str, Any]:
     """
     state = _get_state()
     await _gateway_now()                  # the envelope's game block: a fresh clock reading
-    # L18-B: pass_turn was the one tool without character_id while the protocol
+    # Pass_turn was the one tool without character_id while the protocol
     # says to pin it on every call; 174 pilot calls passed it and FastMCP dropped
     # it without a word, so a several-ruler log could not say who passed.
     who = {"character_id": int(character_id)} if character_id else {}
@@ -2812,7 +2812,7 @@ async def observe(
     if _sink:
         _st = _get_state()
         if _st.seat_lineage_prior is None:
-            # A resumed seat's new server (L23 r2 item 1): the lineage so far.
+            # A resumed seat's new server: the lineage so far.
             _st.seat_lineage_prior = seat_lineage.prior_from_sink(_sink)
         _st.seat_lineage_prior = await seat_lineage.step(
             gw, _st.seat_lineage_prior, sink=_sink,
@@ -2833,7 +2833,7 @@ async def observe(
 
 
 async def _attach_pushed(gw, env: dict[str, Any], facts: dict) -> dict[str, Any]:
-    """v4 (lane v4instr): `result.warnings`, after `goal`: the pushed warnings
+    """v4: `result.warnings`, after `goal`: the pushed warnings
     (pushed_warnings.compose), each from a trigger of its table and naming a
     guide topic. The vassal reads (one query_realm per direct vassal) are
     taken once per cycle. A read that fails leaves its trigger silent and a
@@ -2877,7 +2877,7 @@ async def _attach_pushed(gw, env: dict[str, Any], facts: dict) -> dict[str, Any]
 
 
 async def _attach_goal(gw, env: dict[str, Any]) -> dict[str, Any]:
-    """v4 §6 (lane v4sees): the goal block FIRST in `result`
+    """v4 §6: the goal block FIRST in `result`
     (goal_block.goal_block). Outside an experiment cell it is stated absent
     (`{"state": "not_an_experiment_episode"}`), never zeros."""
     actor = env.get("actor") if isinstance(env.get("actor"), dict) else {}
@@ -3485,7 +3485,7 @@ if _CHANNEL is not None and _CHANNEL.enabled:
 
 
 # ---------------------------------------------------------------------------
-# note_read / note_write — pre-registration v4 draft sections 3 and 7 (v4note)
+# note_read / note_write — pre-registration v4 draft sections 3 and 7
 # ---------------------------------------------------------------------------
 
 async def _notepad_call(tool: str):
@@ -3609,7 +3609,7 @@ if _NOTEPAD is not None and _NOTEPAD.enabled:
 
 
 # ---------------------------------------------------------------------------
-# guide_read — pre-registration v4 draft section 6 (v4instr)
+# guide_read — pre-registration v4 draft section 6
 # ---------------------------------------------------------------------------
 
 async def guide_read(
@@ -3654,7 +3654,7 @@ if _GUIDE is not None:
 
 
 def _remember_actions() -> None:
-    """v4 (lane v4instr): every action tool's call goes through the seat's
+    """v4: every action tool's call goes through the seat's
     action memory (the `refusal_repeated` trigger). Wrapped at the tool
     manager so the tools themselves are untouched."""
     import functools
@@ -3712,9 +3712,9 @@ def registered_tool_definitions() -> list[dict]:
 
 
 def _write_tool_surface_record() -> None:
-    """ck-jpej. THE SERVER IS THE ONLY AUTHORITY ON WHAT IT REGISTERED.
+    """THE SERVER IS THE ONLY AUTHORITY ON WHAT IT REGISTERED.
 
-    ck-3ron graded the arm's tool surface from the CLI's `init` event, and in
+    graded the arm's tool surface from the CLI's `init` event, and in
     registered-d45 slot 2 that event listed 15 tools where the seat had 17 —
     the two absent being the ones registered LAST (the CLI defers schemas, so
     its init list can be short of the real surface). All six seats were refused
@@ -3749,7 +3749,7 @@ def _write_tool_surface_record() -> None:
                 via = "tool_manager._tools"
     except Exception:                                           # noqa: BLE001
         names, via = [], "unavailable"
-    # rc2 B7: what the MODEL is served, not just the names: FastMCP.list_tools()
+    # What the MODEL is served, not just the names: FastMCP.list_tools
     # is the tools/list handler, so its output IS the surface (name, description,
     # inputSchema). Run in a thread so an importer's running loop cannot block it.
     schemas, schemas_via = None, "unavailable"
@@ -3788,7 +3788,7 @@ def _write_tool_surface_record() -> None:
         return
 
 
-# rc2 B7: RELEASE THIS SESSION'S OWN CLAIMS WHEN THE SERVER STOPS. The bridge
+# RELEASE THIS SESSION'S OWN CLAIMS WHEN THE SERVER STOPS. The bridge
 # refuses a release from any session but the owner (not_owned_by_session), so
 # `ck3agent run`'s teardown cannot do it after the fact. Opt-in: the CLI sets
 # CK3_RELEASE_ON_EXIT to a record path. Never set in an experiment episode,

@@ -1,4 +1,4 @@
-// script_templates.h — the script action layer's FIXED templates (lane v4act).
+// script_templates.h — the script action layer's FIXED templates.
 //
 // The bridge carries a write out as one of the game's own script effects, run
 // through the engine's `effect` console handler (console_handlers::CMD_EFFECT,
@@ -38,7 +38,7 @@ enum class Template : uint8_t {
     kCouncilTask,    // exists = cp:<seat> guard -> set_council_task
     kSetPolicy,      // a standing policy variable on, and the policy event armed
     kClearPolicy,    // a standing policy variable off
-    // lane QMOD: the incoming-proposal queue (ck3agent/proposal_mod/,
+    // The incoming-proposal queue (ck3agent/proposal_mod/,
     // docs/design/incoming-proposals.md). Each enters the SEAT's own scope
     // through his primary title, so it cannot reach an offer to anyone else.
     kProposalSeat,   // the seat marker on (400-day timed variable) or off
@@ -107,7 +107,7 @@ inline constexpr const char* kPolicyModEnabledLine =
     "ck3agent_policies|mod/ck3agent_policies.mod|Enabled";
 inline constexpr const char* kPolicyEvent = "ck3agent_policy.1";
 
-// ── the incoming-proposal queue (lane QMOD) ──────────────────────────────────
+// ── the incoming-proposal queue ──────────────────────────────────
 // THE NAMES live here once for the bridge; their mirrors are checked:
 // scripts/proposal_overrides.py FIRST_SET (classes, kinds, families),
 // scripts/proposal_mod.py (codes, words, the enabled line) and the mod's own
@@ -115,7 +115,7 @@ inline constexpr const char* kPolicyEvent = "ck3agent_policy.1";
 
 struct ProposalClass { const char* name; const char* family; };
 //: The classes a seat's answer policy is set on. call_to_war and peace hold
-//: only if live rows L7 / L8 show the offer is held a tick or more; a class
+//: only if live rows show the offer is held a tick or more; a class
 //: that cannot be held is removed by deleting its row here and its constant in
 //: proposal_overrides.py.
 inline constexpr ProposalClass kProposalClasses[] = {
@@ -249,7 +249,7 @@ struct Slots {
     std::string policy;            // set_policy / clear_policy
     std::string peace_terms;       // end_war: we_win | white_peace | we_yield, "" = read only
     std::string token;             // SACT_<n>
-    // lane QMOD: the proposal templates
+    // The proposal templates
     bool proposal_on = false;      // proposal_seat
     std::string proposal_class;    // proposal_policy
     int proposal_answer = 0;       // proposal_policy (1-4) / proposal_answer (1, 2, 4)
@@ -579,7 +579,7 @@ inline std::vector<std::string> console_effect_errors(std::string_view text, siz
     return out;
 }
 
-// ── the proposal queue's lines (lane QMOD) ──────────────────────────────────
+// ── the proposal queue's lines ──────────────────────────────────
 // The mod writes `CK3AGENT_PROPOSAL_<WORD>|f1|f2|...` (the effects file's
 // header names every word and field); the game prefixes its own
 // "[time][D][file:line]: file: ... line: N (ctx): ". Numbers are printed by

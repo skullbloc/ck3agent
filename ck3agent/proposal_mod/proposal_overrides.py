@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Incoming-proposal queue: the INSTALL-TIME GENERATOR of the game side's
-interaction copies (lane QMOD, grown from lane QDESIGN's prototype; design:
+interaction copies (grown from prototype; design:
 docs/design/incoming-proposals.md).
 
 It reads the INSTALLED game's own `common/character_interactions/*.txt` and
@@ -56,7 +56,7 @@ MARK = "# ck3agent:proposal"
 # interaction key -> (class, application family). The class is the unit a
 # seat's answer policy is set on; the family is how an answer is applied
 # (design, "Applying an answer"). One constant per class: a class the live rows
-# show cannot be held (L7 call_to_war, L8 peace) is removed by DELETING its
+# show cannot be held (call_to_war, peace) is removed by DELETING its
 # constant, its line in FIRST_SET, its rows in the design table and its row in
 # bridge/include/script_templates.h kProposalClasses (the mirror tests red on
 # any one left behind), never by a rewrite.
@@ -75,7 +75,7 @@ FIRST_SET: dict[str, tuple[str, str]] = {**MARRIAGE, **ALLIANCE, **CALL_TO_WAR, 
 #: The classes, in the order the tables list them.
 CLASSES: tuple[str, ...] = tuple(dict.fromkeys(c for c, _ in FIRST_SET.values()))
 
-#: Lane ACTORKEY (wave 15), L8: the classes whose every send is logged at the very
+#: The classes whose every send is logged at the very
 #: top of the capture (before every exclusion: the seat marker, the pass list,
 #: one-per-sender, auto-accept) as CK3AGENT_PROPOSAL_SENT|<kind>|<class>|<actor>|
 #: <recipient>. Nothing reads it but the live scenario (the bridge's proposal_lines
@@ -648,7 +648,7 @@ def kinds_files(lifted: dict[str, dict], kinds: dict[str, tuple[str, str]] = FIR
         (_is_kind(k), _logged(f"\t\tdebug_log = \"CK3AGENT_PROPOSAL_ITEM|{_sv('ck3a_pid')}|{k}|{c}|{actor}|{recip}|"
                               f"{_sv('ck3a_age')}\"\n"))
         for k, (c, _f) in kinds.items()])
-    # L8 (SENT_LOGGED_CLASSES): one effect per kind, called as the capture's FIRST
+    # One effect per kind, called as the capture's FIRST
     # statement; empty for a kind whose class is not logged. It runs for every send,
     # seated or not, so it leaves no state: the two globals it prints are removed
     # after the line (the save holds nothing of it; only debug.log does).

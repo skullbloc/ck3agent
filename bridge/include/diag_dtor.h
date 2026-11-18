@@ -1,7 +1,7 @@
 // diag_dtor.h — the destructor of the loud evaluator's 0xD8 diagnostic record, as
 // the ENGINE names it.
 //
-// WHY THIS EXISTS (L20-D, smoke17 B3):
+// WHY THIS EXISTS:
 //
 // Three bridge paths harvest a requirement loc-key from a failing trigger block:
 // EVAL_WITH_FAILURES allocates a 0xD8 diag record, the bridge reads two strings out
@@ -9,7 +9,7 @@
 // DIAG_OBJECT_DTOR = 0x04a5b060 (an arithmetic slip, image VA minus 0x1000000), which
 // is the middle of an unrelated sort helper. Every failing decision eval therefore
 // jumped into that helper, which wrote into the caller's frame and SIGSEGVed
-// (smoke17 bridge.log: rip_off 0x4a5b0d3 inside FUN_04b5af30), and the server could
+// (bridge.log: rip_off 0x4a5b0d3 inside FUN_04b5af30), and the server could
 // only answer decision_eval_faulted.
 //
 // The engine itself says which function destroys the record: EVAL_WITH_FAILURES

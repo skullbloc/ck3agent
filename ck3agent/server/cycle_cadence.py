@@ -24,7 +24,7 @@ the block and the episode's horizon) and the bundle's lineage reader
     `CK3_EPISODE_HORIZON_END`, the same spelling the bridge reads), set per
     seat by the driver. A `session(action="wait")` made when the game date is
     at or past it is REFUSED (`horizon_reached`): the harness ends the seat,
-    and the seat is never told the date (owner ruling 2026-11-04) — it learns
+    and the seat is never told the date — it learns
     the horizon only by reaching it. Absent = the public behaviour, unchanged.
   * `CycleCounter` — THE seat's cycle index (v3 §5.2, §7.2: ONE cycle, not
     two). Under a registered cadence a cycle ends when the game date has
@@ -44,7 +44,7 @@ the block and the episode's horizon) and the bundle's lineage reader
     the pause alarm (below); the 2026.12.0 smoke measured 25 days for an ask of
     10 from its 15 s probe alone.
   * `date_from_ordinal` — the inverse of `ordinal`, in the bridge's spelling
-    (`%04d.%02d.%02d`): the target date of a game-day wait. Since L20-A a
+    (`%04d.%02d.%02d`): the target date of a game-day wait. Since then a
     `game_days` wait hands that target to the bridge (`unpause_game
     {"pause_at": ...}`), whose game thread pauses on the first pass at or past
     it (bridge/include/pause_alarm.h); the reply stops `alarm`.
@@ -58,14 +58,14 @@ from typing import Any, Mapping, Optional
 
 CYCLE_GAME_DAYS_ENV = "CK3_CYCLE_GAME_DAYS"
 HORIZON_END_ENV = "CK3_EPISODE_HORIZON_END"
-#: 2026.12.4 (cell0 gaps 5+7, PLAN §P decision 1): the registered horizon START,
+#: 2026.12.4 (cell0 gaps 5+7): the registered horizon START,
 #: the same spelling the bridge's episode policy reads. Its presence is what
 #: makes a seat's server a CELL seat (`cell_schedule`): every
 #: `session(action="wait")` then returns at the next cycle boundary, start +
 #: k x cadence, capped at the horizon end, whatever `seconds` it asked for.
 #: Absent = the published wait, unchanged.
 HORIZON_START_ENV = "CK3_EPISODE_HORIZON_START"
-#: (v4, lane v4integ: the fixed 3,650-game-day ceiling on a `game_days` ask is
+#: (v4, the fixed 3,650-game-day ceiling on a `game_days` ask is
 #: deleted. It was v3's ten-year horizon, and v4's horizon is declared per
 #: registration (up to 150 game-years for the unsteered pilot). An ask is bounded
 #: by the registered cadence when one is declared (`R_OVER_CADENCE`), by the
@@ -88,7 +88,7 @@ R_CADENCE_UNREADABLE = "cycle_cadence_unreadable"
 R_HORIZON_REACHED = "horizon_reached"
 R_HORIZON_UNREADABLE = "episode_horizon_unreadable"
 STOP_REACHED = "game_days_reached"
-#: L20-A: the bridge's pause alarm fired (the stop the game thread made).
+#: The bridge's pause alarm fired (the stop the game thread made).
 STOP_ALARM = "alarm"
 #: The alarm was disarmed by a pause someone else wrote before it fired.
 STOP_ALARM_CLEARED = "alarm_cleared"
@@ -235,7 +235,7 @@ CYCLE_NOT_A_CELL = "not_a_cell"
 
 def episode_cycle(environ: Optional[Mapping[str, str]], game_date: Any
                   ) -> tuple[Optional[int], Optional[str]]:
-    """THE EPISODE CYCLE at `game_date` (lane v4instr item 4a): `(index, None)`
+    """THE EPISODE CYCLE at `game_date` (item 4a): `(index, None)`
     by the cell's one schedule (`cell_schedule(...).cycle_index`), or
     `(None, why)`: `CYCLE_NOT_A_CELL` when no schedule is declared, else what
     could not be read (the schedule, or the date). The one derivation every
@@ -262,7 +262,7 @@ POS_READ = "read"
 
 
 def schedule_position(game_date: Any, environ: Optional[Mapping[str, str]] = None) -> dict:
-    """Where `game_date` sits on the cell's schedule (v4 §6, lane v4sees): THE
+    """Where `game_date` sits on the cell's schedule (v4 §6): THE
     position both readers state, `observe`'s goal block and `ck3agent run`'s
     per-turn record. Every number comes from `cell_schedule` (the cycle
     authority the cell wait and the channel's cycle stamp use); none is

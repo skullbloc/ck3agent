@@ -34,7 +34,7 @@ Python 3.11 to 3.14. CMake downloads Zydis on first configure. `make help` lists
 * `pyproject.toml` deselects the upstream test ids that read research-tree files not in this repo; each one is listed, with its reason, in a comment above `addopts`.
 * Tests sit beside the module: `ck3agent/server/test_<module>.py`. Basenames must be unique repo-wide; there is no `__init__.py`.
 * `ck3agent/server/` uses bare sibling imports such as `from tools import ...`.
-  Keep them; the files are shared verbatim with upstream. IDEs: pyright
+  Keep them; the files are shared with upstream. IDEs: pyright
   `extraPaths = ["ck3agent/server"]`, VS Code `python.analysis.extraPaths`.
 * Native tests: `make bridge` builds the default target and runs `ctest` ([bridge/test/README.md](bridge/test/README.md)).
 
@@ -96,7 +96,9 @@ reformat-only or rename-only PRs: export overwrites files shared with upstream, 
 ## 11. Glossary
 
 Terms such as dormant, active, envelope and observer save are in [docs/glossary.md](docs/glossary.md).
-Ids like `ck-xxxx` in comments are upstream tracker ids; see [bridge/test/README.md](bridge/test/README.md).
+Code comments cite research notes by name (`re/findings/re_<system>.md`, `docs/design/*.md`,
+`scripts/...`); those notes live in the private research tree and are not published. The comment
+beside the citation states the reason.
 
 ## 12. Review process
 

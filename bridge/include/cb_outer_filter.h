@@ -1,8 +1,8 @@
-// ck-laf5: per-CB outer-filter classification table.
+// Per-CB outer-filter classification table.
 //
 // Maps the 83 AI-eligible CB names to one of 8 outer-rejection class tags
 // derived from the offline PDXScript classification in
-// re/findings/re_a1_67cb_rejection_classification_2026-04-25.md (ck-iyhl).
+// re/findings/re_a1_67cb_rejection_classification_2026-04-25.md.
 //
 // The table is consumed by process_cb_query (bridge/src/ai_eval_hook.cpp)
 // to populate `outer_reason` when the per-CB allowed_for_character trigger

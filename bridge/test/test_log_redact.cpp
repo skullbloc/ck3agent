@@ -1,11 +1,11 @@
 // test_log_redact.cpp — the bridge log's redaction of raw frames (log_redact.h),
 // driven with every adversarial shape the TK5 round-3 witness listed
-// (docs/cleanup-2026.11/evidence/v3pilot/witness-tk5-r3.md, finding 1).
+// (finding 1).
 //
 // Each row names a SECRET that must not survive and, where it applies, text that
 // MUST survive (so a redactor that blanks whole lines does not pass). The rows
 // named r3miss_* were missed by the round-3 redactor (string values under
-// plain-byte keys only): 12 rows, all red on 5e42c229 (measured on the node).
+// plain-byte keys only): 12 rows, all red on 5e42c229 (measured on the test host).
 // The rest were already redacted there and are kept as guards (the partly
 // escaped key still spelled "esume_token" in raw bytes); the CONTROL rows
 // (nothing secret) must come back byte-identical.

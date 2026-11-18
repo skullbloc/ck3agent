@@ -1,4 +1,4 @@
-"""ck-z3kh — the council-task target must be sent under the key the BRIDGE reads.
+"""The council-task target must be sent under the key the BRIDGE reads.
 
 `do_set_council_task` gates on `json_get_int(params_json, "target_title_id") <= 0`
 and answers `target_required`. It never reads `title_id`. This surface used to
@@ -116,7 +116,7 @@ def _enumerated_do_calls():
 
 
 def test_ONE_NAME_the_printed_call_the_executor_and_the_bridge_agree():
-    """L14 (surface-eval finding 8): discover and the docs said target_title_id while
+    """Discover and the docs said target_title_id while
     the enumerator printed target_id and the executor took both. One name now: the
     key the bridge reads (read out of action_handlers.cpp above), the key the
     executor reads (do_intent_args, from _intent_to_act_params' own AST) and the key
@@ -161,7 +161,7 @@ def test_the_printed_do_call_uses_a_key_the_builder_reads():
     the printed key must be one the builder consumes, whichever name it is.
     """
     # the do_call rows the enumerator prints, run (a fixed window of its source
-    # went blind when L20 r3 put the seat resolution ahead of the row)
+    # went blind when put the seat resolution ahead of the row)
     printed = {k for call in _enumerated_do_calls() for k in call["args"]
                if re.fullmatch(r"target_[a-z_]+|title_id", k)}
     assert printed, "the council_tasks enumerator no longer prints a target key"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_actor_resolution.py — lane ACTOR census: no code resolves an unnamed
+"""check_actor_resolution.py — census: no code resolves an unnamed
 actor outside the one resolver (bridge/include/actor_resolve.h).
 
 v4 seats several rulers in one game, one bridge session each. Before this lane,
@@ -28,7 +28,7 @@ Enumerated from the code, failing OPEN:
      that no longer exists, FAILS (a stale exemption is an unread site).
   5. The shared helpers must route through the resolver: get_controlled_character
      and controlled_character_reading call resolve_actor_id; resolve_actor and
-     resolve_character call controlled_character_reading (lane ACTORKEY: it
+     resolve_character call controlled_character_reading (it
      passes the key each reads, for actor_resolve.h rule 0) for an unnamed
      actor; the dispatch macro installs ActorDispatchScope. A helper that stops
      doing so FAILS.

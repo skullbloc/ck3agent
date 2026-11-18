@@ -1,10 +1,10 @@
-// pulse_ledger.cpp — R1c (ck-6kvq.10). See pulse_ledger.h for the why.
+// pulse_ledger.cpp — R1c. See pulse_ledger.h for the why.
 //
 // No engine dependencies on purpose: memory goes through PulseMemory, so this
 // whole file — crash path included — is host-compiled by test_pulse_ledger.
 
 #include "pulse_ledger.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 
 #include <pthread.h>
 
@@ -66,7 +66,7 @@ std::string PulseLeak::to_json() const {
     o += "\",\"site\":\"";
     append_escaped(o, site);
     o += "\"";
-#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // A process VA defeats ASLR; debug builds only
     o += ",\"addr\":\"" + hex(addr) + "\"";
 #endif
     o += ",\"width\":" + std::to_string((unsigned)width);

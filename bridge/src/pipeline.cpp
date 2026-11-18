@@ -1,4 +1,4 @@
-// pipeline.cpp — R1b: the wired conductor (ck-6kvq.9). See pipeline.h.
+// pipeline.cpp — R1b: the wired conductor. See pipeline.h.
 //
 // Design of record: docs/design/event-pipeline-conductor.md §2.2-§2.4, §2.8,
 // §2.10, §8; decisions G1, G2, G11.
@@ -11,7 +11,7 @@
 
 #include "thread_registry.h"
 #include "pipeline.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 
 #include "bridge.h"
 #include "ck3_offsets.h"
@@ -28,9 +28,9 @@
 #include "tick_bookkeeping.h"
 #include "episode_policy.h"
 #include "unavailability.h"
-#include "clock_rate.h"   // ck-ijfa
+#include "clock_rate.h"
 #include "game_date.h"
-#include "speed_read.h"   // ck-k57a
+#include "speed_read.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/writer.h>
@@ -61,7 +61,7 @@ extern thread_local bool g_in_protected_region;
 // ============================================================================
 static std::atomic<int> g_pipeline_mode{static_cast<int>(PipelineMode::Legacy)};
 
-// `pipeline_mode_name` moved to pipeline_mode.cpp (ck-6kvq.4 / ck-1ek9) — it
+// `pipeline_mode_name` moved to pipeline_mode.cpp — it
 // was defined here AND there, which is a duplicate symbol in the .so.
 
 PipelineMode pipeline_mode() {
@@ -87,7 +87,7 @@ bool is_clock_verb(const char* action_type) {
 }
 
 void pipeline_init_from_env() {
-    // ck-1ek9: the parse is `parse_pipeline_mode` (pipeline_mode.cpp) rather
+    // The parse is `parse_pipeline_mode` (pipeline_mode.cpp) rather
     // than a second copy of the same ladder. It is pure, it takes the string
     // instead of reading the environment, and it reports whether the value was
     // RECOGNISED — so a misspelling is still said out loud here rather than
@@ -111,7 +111,7 @@ void pipeline_init_from_env() {
 // THE POLARITY AUTHORITY (§2.2)
 // ============================================================================
 //
-// Derived from the bridge's own classifiers. Pipeline mode only (L13 D6): it
+// Derived from the bridge's own classifiers. Pipeline mode only: it
 // partitions a flush, and its names are the `polarity` field of the ack and
 // check frames — pre-registered vocabulary, kept byte for byte. Outside
 // pipeline mode nothing routes by polarity: the reader routes by thread class
@@ -135,18 +135,18 @@ void pipeline_init_from_env() {
 // `query` are reads that the readonly table does not list (search_characters
 // was a third until 2026.12.4 listed it), and as "mutations" they used to publish
 // TICK_WRITE, which told the gateway to UNPAUSE for a read the reader then
-// refused (cleanup 2026.11).
+// refused.
 //
 // Step 4 is why is_bridge_internal_query alone is not the ANY set: the bridge
 // classifies declare_war as "safe to call from the IPC thread", which is true,
 // but the intent it enqueues does not execute until a tick runs.
 Polarity classify_polarity(const char* action_type) {
     if (!action_type || !action_type[0]) return Polarity::UNKNOWN;
-    // THE PRE-REGISTERED POLARITY OF THE ACTIONS L13 RE-CLASSIFIED. Pipeline
+    // THE PRE-REGISTERED POLARITY OF THE ACTIONS RE-CLASSIFIED. Pipeline
     // mode's flush plan and its ack/check `polarity` field are pre-registered
-    // (L13 contract D3: wire bytes unchanged). L13 D1 moved these between thread
+    // (contract D3: wire bytes unchanged). moved these between thread
     // classes; derived from the new classes they would publish a different
-    // polarity, so these rows keep what each published before L13 (439ab5a6).
+    // polarity, so these rows keep what each published before (439ab5a6).
     // They are the only place the pipeline departs from the thread classes.
     // (Inline here, not a helper: ck3agent/server/test_polarity_bridge_table.py
     // lifts this function's body out of the source.) The deferred-slot
@@ -176,8 +176,8 @@ bool action_routes_to_drain(const char* action_type) {
     // queries were served in the flush (0); everything else that needed a tick
     // went to g_msg_queue, the graph-walkers (query_dejure_progress,
     // query_conquest_targets) among them (1).
-    // PRE-REGISTERED ANSWERS (L13 D3): which call is ticketed for the drain and
-    // which is served in the flush is pipeline wire behaviour, so the rows L13's
+    // PRE-REGISTERED ANSWERS: which call is ticketed for the drain and
+    // which is served in the flush is pipeline wire behaviour, so the rows
     // reclassification would change keep their 439ab5a6 answer:
     //   - the deferred-slot submitters were bridge-internal then (served in the
     //     flush, 0); they are game-state reads now, and serve() still runs them
@@ -193,7 +193,7 @@ bool action_routes_to_drain(const char* action_type) {
 }
 
 // ============================================================================
-// THE APPLYING FLUSH, for handlers (ck-6kvq.12, R4)
+// THE APPLYING FLUSH, for handlers (R4)
 // ============================================================================
 // Thread-local rather than a member of the conductor: the only consumer is a
 // handler running synchronously underneath serve(), and a thread-local keeps
@@ -238,7 +238,7 @@ static uint64_t mono_ms() {
 }
 
 // Render a game DAY NUMBER as the bridge's canonical "YYYY.MM.DD", through
-// ck-05mg's single calendar (ck-6kvq.10 publishes `last_activity` and every
+// single calendar (publishes `last_activity` and every
 // span endpoint through here, and R5 asks for REAL dates).
 static std::string game_date_for_day(int64_t day) {
     // Day 0 is year 0 January 1 — a date no CK3 save can hold, and what the
@@ -251,12 +251,12 @@ static std::string game_date_for_day(int64_t day) {
     return std::string(buf);
 }
 
-// ck-05mg: this MUST go through game_date.h. The first cut of this function
+// This MUST go through game_date.h. The first cut of this function
 // open-coded the 365/30 calendar, which is wrong by up to 4 days and renders 5
 // days a year as month 13 — and it is the function that stamps
 // game_date_executed on EVERY pipeline-attributed action, i.e. the spine R4/R9
 // and every paper mediator read. An open-coded site here would have re-imported
-// the exact bug ck-05mg paid to eradicate, into the one lane the whole
+// the exact bug paid to eradicate, into the one lane the whole
 // paper-1066 pack runs on. scripts/test_game_calendar.py section D fails the
 // build if a calendar is ever open-coded outside game_date.h again.
 static std::string current_game_date() {
@@ -270,7 +270,7 @@ static std::string current_game_date() {
 
 // The game's DAY NUMBER: monotone, exact, and the only sane input to a cadence
 // or to §2.7's unavailability spans. Do arithmetic on THIS, never on the
-// formatted "YYYY.MM.DD" above — that string is correct since ck-05mg, but it is
+// formatted "YYYY.MM.DD" above — that string is correct since, but it is
 // a calendar rendering and subtracting two of them is not a day count.
 // INT64_MIN means "the game state is not loaded", which every caller reads as
 // "no day yet".
@@ -281,7 +281,7 @@ static int64_t current_game_day() {
     return static_cast<int64_t>(ck3::game_date::raw_to_total_days(raw_date));
 }
 
-// ck-k57a: 0 means NO READING, and the two callers below already read it that
+// 0 means NO READING, and the two callers below already read it that
 // way — ClockRateMeter::note ignores a speed <= 0 ("never observed", see
 // clock_rate.cpp:35) and the flush scheduler re-asserts the resting speed when
 // the current one does not match it, which is the right move under ignorance.
@@ -305,7 +305,7 @@ namespace {
 
 // The per-call payload record (PendingCall) and the drain correlation both
 // live in DrainRegistry now — engine-free, and therefore host-testable.
-// ck-6kvq.19: correlation used to be keyed by the client's OPTIONAL request_id,
+// Correlation used to be keyed by the client's OPTIONAL request_id,
 // so every call from a client that sent none executed and then never settled.
 
 struct Conductor {
@@ -328,7 +328,7 @@ struct Conductor {
     std::atomic<uint64_t> clock_drift_events{0};
     std::atomic<uint64_t> unclassified_total{0};
 
-    // ck-y6fp: WHO OPENED THE EPISODE. The clock release is a state transition
+    // WHO OPENED THE EPISODE. The clock release is a state transition
     // with no inverse on the failure path — a refusal after it left the
     // deploy-13 arm-C world running 601 game-days with no episode, driver or
     // agent. The inverse is re-arming the hold, and this is the thing whose
@@ -339,10 +339,10 @@ struct Conductor {
     // resume token survives and resume_by_token returns THE SAME session id
     // (driven in acceptance_session_identity). A deadman keyed on the
     // connection would fire on a transient drop and freeze a live episode at
-    // 0.0000 game-days/sec — ck-zen6's own failure, caused by the fix for it.
+    // 0.0000 game-days/sec — own failure, caused by the fix for it.
     std::mutex  episode_owner_mu;
     std::string episode_owner_session;
-    //: ck-tpvn: 0 = nobody is pending. Set when the owner is DESTROYED, which
+    //: 0 = nobody is pending. Set when the owner is DESTROYED, which
     //: is not by itself evidence the episode ended — the harness client
     //: reconnects in every mode. Cleared by a declaration arriving inside the
     //: window, or by the grace expiring and the hold going back on.
@@ -501,7 +501,7 @@ void pipeline_set_budget_exhausted(const char* session_id, bool exhausted) {
 void pipeline_episode_init_from_env() {
     episode_policy().init_from_env();
     const EpisodePolicy p = episode_policy().get();
-    // ck-2ngg: X is the RULE's answer for THIS episode's declared horizon, or
+    // X is the RULE's answer for THIS episode's declared horizon, or
     // UNARMED. The log says which, in words, because "X=0" read as a threshold
     // is exactly the misreading the armed bit exists to prevent.
     const std::string x_desc =
@@ -510,7 +510,7 @@ void pipeline_episode_init_from_env() {
             : ("UNARMED (" + p.unavail_exclusion_unarmed_reason + ")");
     unavailability().configure(p.unavail_anomaly_wall_s, p.unavail_exclusion_days,
                                p.unavail_exclusion_armed);
-    // ── ck-on4u: THE FLUSH PLANNER RESTS AT THE DECLARED SPEED ─────────────
+    // ── THE FLUSH PLANNER RESTS AT THE DECLARED SPEED ─────────────
     // Before this, `resting_speed` was a 3 in a header that nothing on the live
     // path could reach, and the plan's restore step asserted it over the
     // pre-registered pin of 2 — once, on the first flush that touched the
@@ -518,7 +518,7 @@ void pipeline_episode_init_from_env() {
     // to find. Here, and nowhere else, is where the declaration becomes the
     // bridge's behaviour. It runs BEFORE pipeline_start(), so the conductor
     // thread never observes the old value and no lock is needed.
-    // ── ck-zen6: THE CLOCK STARTS WHEN THE EPISODE STARTS ──────────────
+    // ── THE CLOCK STARTS WHEN THE EPISODE STARTS ──────────────
     // PIPELINE MODE ONLY, and the scoping is the whole safety of it: null mode
     // is E0's observer-only FREE RUN and does not take clock ownership, so
     // gating it on a declaration would freeze the baseline. Asked of the mode
@@ -559,7 +559,7 @@ void pipeline_episode_init_from_env() {
                   "the WALL-CLOCK anomaly gate is recorded as the GAME-DAYS it "
                   "spanned"
                 : "free play — Q5 orphan behaviour unchanged");
-        // ck-on4u: the speed the planner will rest at, and WHERE IT CAME FROM.
+        // The speed the planner will rest at, and WHERE IT CAME FROM.
         // "declared" and "the pre-registered default" are the same number today
         // and a different fact always; a log that prints only the number cannot
         // tell an operator which one they are looking at.
@@ -570,7 +570,7 @@ void pipeline_episode_init_from_env() {
                                   : "pre-registered default — nothing declared one",
             kGameSpeedEnv,
             p.game_speed_declared ? getenv(kGameSpeedEnv) : "(unset)");
-        // ck-aqio. KEYED ON present && !declared, NOT on a non-empty refusal:
+        // KEYED ON present && !declared, NOT on a non-empty refusal:
         // under the byte rule the empty string IS a refusal (set to nothing),
         // and a guard on `!refused.empty()` skips exactly that case.
         //
@@ -638,7 +638,7 @@ void pipeline_note_session_activity(const Session* session) {
     // EXPERIMENT MODE ONLY, tested FIRST and lock-free: §2.7's covariate is
     // per-EPISODE, free play has no episode, and this runs on the reader thread
     // for every envelope. In free play it is one relaxed atomic load — which is
-    // what keeps ck-6kvq.9's "legacy is indistinguishable, in cost too" true.
+    // what keeps "legacy is indistinguishable, in cost too" true.
     if (!episode_is_experiment()) return;
     // §2.7: "any submission OR read resets it". OBSERVER TRAFFIC NEVER COUNTS —
     // an observe session is never registered with the ledger, so this is
@@ -646,7 +646,7 @@ void pipeline_note_session_activity(const Session* session) {
     if (!session || !session->is_control()) return;
     const int64_t day = current_game_day();
     if (day == INT64_MIN) return;   // no world loaded: there is no game-day yet
-    // ck-ijfa: BOTH UNITS. The wall stamp turns each gap into a record with a
+    // BOTH UNITS. The wall stamp turns each gap into a record with a
     // game-day span AND a wall-second span, so the covariate's calibration can
     // be CHECKED instead of assumed. It changes no gate.
     unavailability().note_activity(session->session_id, day, mono_ms());
@@ -683,9 +683,9 @@ public:
         // The run below reinstalls the submitting session, so ownership /
         // observe-mode checks at the dispatch choke point see the SAME context
         // they would have seen on the reader thread, and publishes the applying
-        // flush to the handler (ck-6kvq.12: serve_one() has already called
+        // flush to the handler (serve_one has already called
         // mark_running(ticket, flush_id), so the ticket carries the
-        // authoritative id). L13 D1: a game-state read, or a game-thread write
+        // authoritative id).: a game-state read, or a game-thread write
         // the pre-registered routing still serves here (set_ai_personality),
         // runs on the GAME thread (the session-pass drain) and the conductor
         // waits for it; anything else served here (ANY-polarity calls) runs on
@@ -726,7 +726,7 @@ public:
     }
 
     bool enqueue_for_drain(const BufferedCall& call) override {
-        // ck-6kvq.19: the envelope carries the BRIDGE-MINTED TICKET, so the
+        // The envelope carries the BRIDGE-MINTED TICKET, so the
         // game thread can settle this call whether or not its client ever sent
         // a request_id, and two calls that share one request_id cannot
         // collide. The payload stays in the registry until the drain reports
@@ -746,7 +746,7 @@ public:
             std::lock_guard<std::mutex> lk(s->mutex);
             st.character_id = s->primary_character_id;
         }
-        // ck-jg2b: DO NOT BORROW g_controlled_primary.
+        // DO NOT BORROW g_controlled_primary.
         //
         // This used to fall back to the global controlled primary whenever the
         // acting session held nothing — stamping SOMEONE ELSE'S character onto
@@ -802,7 +802,7 @@ public:
     // experiences the call as slower, bounded by the flush period. The ticket
     // id rides along as an EXTRA field, which such a client ignores.
     //
-    // ck-6kvq.18: the frame is also TYPED, `"type":"result"`. It used to carry
+    // The frame is also TYPED, `"type":"result"`. It used to carry
     // no type at all, so a client that sent no request_id received a frame with
     // neither a type nor a key — literally unroutable, and impossible to
     // skip-list the way tick_start/observation/notification are skip-listed.
@@ -823,7 +823,7 @@ public:
         }
         frame += build_envelope_clock_fragment();
         // The unforgeable attribution spine (§2.8), minted by the bridge and
-        // never reported by the agent. ck-0lph moved the SHAPE into
+        // never reported by the agent. moved the SHAPE into
         // pipeline_frames.h so the drain's reply can mint the same one — this
         // was the only place it existed, which is why no game-thread verb ever
         // carried it. Byte-identical to what this emitted before.
@@ -851,7 +851,7 @@ namespace {
 
 // Refuse, typed, on the same envelope the client sent.
 //
-// ck-6kvq.18: `"type":"refused"`. Like the result frame this used to be
+// `"type":"refused"`. Like the result frame this used to be
 // untyped, so a client that sent no request_id could neither route it nor
 // skip-list it. It is built entirely here — nothing is spliced in — so the
 // type can sit at the head.
@@ -887,7 +887,7 @@ void emit_refusal(const std::string& request_id, const char* action,
 // resolve its future on the ACK instead of on the result. A ticket-aware
 // client correlates on `for_request_id`. THIS MUST NOT CHANGE.
 //
-// ck-6kvq.18 — WHAT THAT DOES AND DOES NOT BUY. The asymmetry protects exactly
+// WHAT THAT DOES AND DOES NOT BUY. The asymmetry protects exactly
 // one kind of client: one that routes STRICTLY by request_id and discards
 // anything else (mcp_server.py, ck3agent/server/harness_client.py,
 // scripts/overlay_poller.py:1079 — all verified clean). It does NOT protect a
@@ -982,7 +982,7 @@ void handle_check(const rapidjson::Value& inner, const std::string& request_id) 
         frame += "}";
     };
 
-    // ck-6kvq.15: the arguments may be flat or under "params" — a real client
+    // The arguments may be flat or under "params" — a real client
     // frames them. Reaching straight for inner["tickets"] is what made every
     // check answer success with an empty result set.
     const bool has_many = action_has(inner, "tickets");
@@ -1012,7 +1012,7 @@ void handle_check(const rapidjson::Value& inner, const std::string& request_id) 
 
 // ---- `cancel` (best-effort, before the flush that would run it) ------------
 void handle_cancel(const rapidjson::Value& inner, const std::string& request_id) {
-    // ck-6kvq.15: same params-fallback bug as `check` — every framed cancel
+    // Same params-fallback bug as `check` — every framed cancel
     // was answered unknown_ticket regardless of the ticket's real state.
     const rapidjson::Value& cargs = action_args(inner, "ticket");
     const char* tid = (cargs.HasMember("ticket") && cargs["ticket"].IsString())
@@ -1069,7 +1069,7 @@ bool pipeline_handle_envelope(const std::string& line, Session* session) {
     // LEGACY FAST EXIT. One relaxed atomic load, and the reader thread's ladder
     // runs with no extra JSON parse. `legacy` is the default (G11) and must be
     // indistinguishable from the pre-change bridge in cost as well as in
-    // behaviour. (L13 D6: the mode-independent `get_action_polarity`
+    // behaviour. (the mode-independent `get_action_polarity`
     // introspection verb that used to be answered here is deleted — its only
     // reader was the gateway's polarity table, and no pre-registered script
     // reads it.)
@@ -1206,7 +1206,7 @@ bool pipeline_handle_envelope(const std::string& line, Session* session) {
 // The drain hook — a ticket handed to the game thread is settled BY the game
 // thread, never by the mere fact of having been enqueued.
 // ============================================================================
-// ck-0lph. Build the attribution spine for a ticket the game-thread drain has
+// Build the attribution spine for a ticket the game-thread drain has
 // just settled, so the drain's OWN reply — the only reply such a call ever
 // gets — carries what every inline-serviced call already carried.
 //
@@ -1229,7 +1229,7 @@ void pipeline_note_drain_result(uint64_t envelope_ticket, const char* request_id
                                 const std::string& response_json) {
     if (!pipeline_active()) return;
 
-    // ck-6kvq.19: correlate by the bridge-minted ticket the conductor stamped
+    // Correlate by the bridge-minted ticket the conductor stamped
     // on the envelope. NOT by request_id — that field is optional on the wire
     // and not required to be unique, and keying on it is exactly why a call
     // from a request_id-less client ran and then never settled. `request_id`
@@ -1258,7 +1258,7 @@ void pipeline_note_drain_result(uint64_t envelope_ticket, const char* request_id
             s = g_session_registry.find(t.session_id);
             if (s) { std::lock_guard<std::mutex> lk(s->mutex); char_id = s->primary_character_id; }
         }
-        // ck-jg2b: the same borrow, on the drain-settled path. Same rule.
+        // The same borrow, on the drain-settled path. Same rule.
         std::string reason;
         if (char_id == 0)
             reason = (ticket_known && s) ? "claimless_session" : "session_gone";
@@ -1281,7 +1281,7 @@ void pipeline_declare_episode_observer(const char* session_id,
                                        const char* client_name,
                                        Session::Mode minted_mode) {
     if (!session_id || !*session_id) return;
-    // ck-m3n5: THE APPLIER HAS NO POLICY. The whole decision — mode floor first,
+    // THE APPLIER HAS NO POLICY. The whole decision — mode floor first,
     // then first-wins — is episode_observer_decision() in session.cpp, pure and
     // driven directly by a host probe. This function's only job is to act on it
     // and to say out loud which way it went.
@@ -1338,7 +1338,7 @@ std::string pipeline_episode_observer() {
 void pipeline_note_episode_open(const char* episode_id) {
     if (!episode_id || !*episode_id) return;   // a declaration with no episode
 
-    // STORE THE ID FIRST, AND BEFORE THE HOLD CHECK (ck-kc32). Two independent
+    // STORE THE ID FIRST, AND BEFORE THE HOLD CHECK. Two independent
     // things happen on a declaration: the bridge LEARNS WHICH EPISODE IT IS IN,
     // and — if the clock hold is armed — it RELEASES THE CLOCK. Only the second
     // is once-per-episode. Putting the store after the guard below would publish
@@ -1347,7 +1347,7 @@ void pipeline_note_episode_open(const char* episode_id) {
     // the id and discard it — the same defect this bead fixes, one branch over.
     episode_policy().set_episode_id(episode_id);
 
-    // ck-y6fp: REMEMBER WHO OPENED IT, from the dispatch context the choke point
+    // REMEMBER WHO OPENED IT, from the dispatch context the choke point
     // already installs (ipc_server.cpp and the flush path both wrap the handler
     // in a ClientContextGuard). No handler signature changes and no new
     // parameter threaded through the dispatch table: the acting session is
@@ -1356,12 +1356,12 @@ void pipeline_note_episode_open(const char* episode_id) {
     if (g_current_client_context && g_current_client_context->session) {
         std::lock_guard<std::mutex> lk(C().episode_owner_mu);
         C().episode_owner_session = g_current_client_context->session->session_id;
-        // ck-tpvn: A DECLARATION CANCELS A PENDING GRACE, BECAUSE IT
+        // A DECLARATION CANCELS A PENDING GRACE, BECAUSE IT
         // ESTABLISHES AN OWNER — which is the question the grace actually asks.
         // NOT "was the declaration ACCEPTED": the bridge is never told.
         // do_declare_save_identity computes rec.decision, writes it into the
         // REPLY, and calls this unconditionally, so a refused declaration is
-        // indistinguishable here from an accepted one (ck-9rto asked exactly
+        // indistinguishable here from an accepted one (asked exactly
         // this, and was right that it cannot be keyed on the decision).
         //
         // IT DOES NOT NEED TO BE, and the invariant is why: the cancel is a
@@ -1404,7 +1404,7 @@ void pipeline_note_session_open(const Session* session) {
     if (!session || !session->is_control()) return;   // observers never count
     const int64_t day = current_game_day();
     if (day == INT64_MIN) return;
-    unavailability().note_session(session->session_id, day, mono_ms());   // ck-ijfa
+    unavailability().note_session(session->session_id, day, mono_ms());
 }
 
 void pipeline_note_session_detached(const char* session_id) {
@@ -1418,7 +1418,7 @@ void pipeline_note_session_ended(const char* session_id) {
     pipeline_note_episode_owner_gone(session_id, "session_ended");
 }
 
-// ck-j6lk: THE NON-PARTICIPANT'S EXIT. Identical to the above in every respect but
+// THE NON-PARTICIPANT'S EXIT. Identical to the above in every respect but
 // ONE — the ledger FORGETS the record instead of marking it ended — because that one
 // difference is the entire defect shakedown 3 exposed. The bridge destroyed both
 // driver helpers there (its log says so twice) and unavailability_game_days still
@@ -1427,7 +1427,7 @@ void pipeline_note_session_ended(const char* session_id) {
 // THE OWNER-GONE NOTIFICATION IS KEPT, WITH THE SAME LITERAL. Not a new `why` value:
 // `session_lost` is a member of run_summary.schema.json's closed
 // termination.reason enum, so inventing `session_forgotten` would put a third value
-// into a vocabulary with a mirror to keep — ck-9rto's shakedown-1 trap, where the
+// into a vocabulary with a mirror to keep — shakedown-1 trap, where the
 // bridge emitted a reason the vocabulary lacked and the bundle sealed-refused. The
 // session genuinely did end; only the record's fate differs, and changing one
 // variable is the whole point of a forward fix.
@@ -1437,7 +1437,7 @@ void pipeline_forget_session(const char* session_id) {
     pipeline_note_episode_owner_gone(session_id, "session_ended");
 }
 
-// ck-y6fp: THE INVERSE OF THE RELEASE, ON THE ONE EVENT THAT MEANS THE EPISODE
+// THE INVERSE OF THE RELEASE, ON THE ONE EVENT THAT MEANS THE EPISODE
 // IS NOT COMING BACK.
 //
 // TWO CALLERS BECAUSE THE BRIDGE HAS TWO WAYS OF LOSING A SESSION, and covering
@@ -1456,13 +1456,13 @@ void pipeline_forget_session(const char* session_id) {
 //
 // AND THIS FIRES AT NORMAL EPISODE END TOO — the driver's client closes in its
 // `finally`, so an episode that ran to completion re-arms the hold. THAT IS
-// INTENDED, not a side effect: ck-y6fp's invariant is that the world is at the
+// INTENDED, not a side effect: invariant is that the world is at the
 // baseline unless an episode is OPEN, and a finished episode is not an open one.
 // The alternative — leaving the world running after the last episode — is the
 // same unbounded drift this bead exists to stop, arriving by the happy path.
 namespace {
 
-// ck-tpvn: HOW LONG WE WAIT FOR THE DRIVER TO COME BACK after its session was
+// HOW LONG WE WAIT FOR THE DRIVER TO COME BACK after its session was
 // DESTROYED, before pausing the world.
 //
 // DERIVED FROM RECONNECT LATENCY — a property of the HARNESS CLIENT, which
@@ -1473,7 +1473,7 @@ namespace {
 //
 // EQUAL TO kClockLeakMinSpanMs TODAY BY COINCIDENCE, NOT BY DEFINITION, and the
 // first cut of this line wrote `= kClockLeakMinSpanMs` on the argument that both
-// answer "how long may the world run unattended". ck-t5bc refused that and was
+// answer "how long may the world run unattended". refused that and was
 // right: the backstop does not STOP anything, it DETECTS; and this is not about
 // the world being unattended but about how long the DRIVER takes to return. Two
 // different physical quantities.
@@ -1508,7 +1508,7 @@ void rearm_hold_locked_free(const char* why, const char* session_id) {
 
 void pipeline_note_episode_owner_gone(const char* session_id, const char* why) {
     if (!session_id || !session_id[0]) return;
-    // ck-tpvn: WHICH WAY DID WE LOSE IT? The two are not the same event.
+    // WHICH WAY DID WE LOSE IT? The two are not the same event.
     //   session_lost  the detached sweep already waited out max_detach_s. The
     //                 bound has BEEN served, so re-arm now.
     //   session_ended the session was DESTROYED this instant. That is not
@@ -1560,12 +1560,12 @@ bool pipeline_tick_owner_grace(uint64_t now_ms) {
 // ============================================================================
 namespace {
 
-//: ck-epzs: carried across conductor ticks. Conductor-thread only, so no lock.
+//: Carried across conductor ticks. Conductor-thread only, so no lock.
 ClockLeakState g_clock_leak_state;
 
 void conductor_loop() {
-    bridge::register_thread(bridge::ThreadRole::PipelineConductor);   // ck-duv5
-    // ck-zen6: ONE SHOT, so a later legitimate unpause is not re-paused
+    bridge::register_thread(bridge::ThreadRole::PipelineConductor);
+    // ONE SHOT, so a later legitimate unpause is not re-paused
     // behind the episode's back.
     bool observer_gate_paused_once = false;
     bool observer_gate_started_once = false;
@@ -1596,13 +1596,13 @@ void conductor_loop() {
         // that there is no clock to own and no handler that can answer.
         if (get_session_state() != SessionState::ACTIVE) continue;
 
-        // ck-tpvn: close the owner grace if it has expired. Cheap, and it must
+        // Close the owner grace if it has expired. Cheap, and it must
         // run on the same cadence as the backstop below — a bound nobody ticks
         // is a bound that never fires.
         pipeline_tick_owner_grace(mono_ms());
 
-        // ── ck-epzs: THE CLOCK-LEAK BACKSTOP ──────────────────────────────
-        // ck-y6fp's trigger keys on the session that opened the episode, and is
+        // ── THE CLOCK-LEAK BACKSTOP ──────────────────────────────
+        // trigger keys on the session that opened the episode, and is
         // therefore gated on a declaration having been SEEN. This is not: it
         // keys on the flush counter, the one witness not conditioned on the
         // state being violated. It notices when the narrow trigger was never
@@ -1636,7 +1636,7 @@ void conductor_loop() {
             }
         }
 
-        // ── ck-zen6: THE CLOCK DOES NOT ADVANCE AT LOAD ────────────────
+        // ── THE CLOCK DOES NOT ADVANCE AT LOAD ────────────────
         // The planner rests the world PAUSED while no observer holds the
         // privilege, but a plan only touches the clock on a flush that has WORK
         // — an all-ANY heartbeat touches nothing, by an invariant the planner
@@ -1660,24 +1660,24 @@ void conductor_loop() {
             }
         }
 
-        // ── ck-zen6: THE DECLARATION DRIVES THE CLOCK ──────────────────────
+        // ── THE DECLARATION DRIVES THE CLOCK ──────────────────────
         // The mirror of the one-shot pause above. A plan only acts on a flush
         // that HAS WORK, and while an observer that declares is also an observer
         // that reads, the guarantee should not rest on that: the declaration
         // itself starts the world, at the DECLARED SPEED, from the conductor
         // thread that owns the clock.
         // RELEASED BY THE EPISODE OPENING, AND BY NOTHING ELSE. The observer
-        // release was retired (ck-8o5j): the only declarer in the tree is the
+        // release was retired: the only declarer in the tree is the
         // STANDALONE meter lane, which an operator can start before the driver
         // opens the episode, and its declaration then released the clock through
-        // preflight — ck-zen6's own defect by the other door.
+        // preflight — own defect by the other door.
         if (observer_gate_paused_once && !observer_gate_started_once &&
             !C().sched.config().hold_clock_until_observer) {
             observer_gate_started_once = true;
             // UNPAUSE ONLY. THE SPEED IS THE PLANNER'S, and deliberately not
             // written here: a direct game_set_speed() from this thread would be
             // a SECOND writer of the clock speed outside the plan, which is
-            // exactly what ck-on4u established must not exist — a second writer
+            // exactly what established must not exist — a second writer
             // has no "Action: set_speed" line to find and cannot be attributed.
             // acceptance_resting_speed's D2 row counts those writers and CAUGHT
             // my first version adding one.
@@ -1707,7 +1707,7 @@ void conductor_loop() {
         // All that is left at this site is the recording — one game-day read per
         // conductor iteration, which is what turns a static "last activity" into
         // a growing span while nobody is talking.
-        // ck-zffq: THE DAY IS READ ONCE AND THE TWO CONSUMERS ARE SCOPED
+        // THE DAY IS READ ONCE AND THE TWO CONSUMERS ARE SCOPED
         // SEPARATELY, because they are measuring different things.
         const int64_t day = current_game_day();
         if (day != INT64_MIN) {
@@ -1718,14 +1718,14 @@ void conductor_loop() {
             if (bk.note_unavailability)
                 unavailability().note_day(day, now);
 
-            // ck-ijfa: the clock rate, MEASURED in the condition the episode is
+            // The clock rate, MEASURED in the condition the episode is
             // actually running in — the conversion factor between the
             // covariate's unit (game-days) and the only unit an operator or a
             // reviewer can ask a question in (wall-clock). The condition travels
             // with the number; see clock_rate.h.
             //
-            // ck-zffq: AND IT IS NO LONGER GATED ON AN EPISODE EXISTING. It was,
-            // and ck-zgh4 measured the consequence: on a world that had run away
+            // AND IT IS NO LONGER GATED ON AN EPISODE EXISTING. It was,
+            // and measured the consequence: on a world that had run away
             // unattended the meter read measured=false, samples=0, game_days=0
             // WHILE THE CLOCK ADVANCED 3,351 GAME-DAYS. AN INSTRUMENT GATED ON
             // THE CONDITION IT WOULD DETECT CANNOT DETECT ITS VIOLATION — it
@@ -1738,12 +1738,12 @@ void conductor_loop() {
             // running, and `measured:false` is supposed to mean NOT MEASURED
             // rather than NOT MEASURABLE HERE.
             //
-            // COST, since E0 x8 runs on the node: one extra mutex-guarded
+            // COST, since E0 x8 runs on the test host: one extra mutex-guarded
             // bookkeeping call per conductor iteration in the modes that
             // previously skipped it. No engine call — `note` touches nothing but
             // its own fields, and the reads it is passed were already being
             // taken for the line above.
-            // UNCONDITIONAL ON PURPOSE (ck-zffq): the policy goes IN and the
+            // UNCONDITIONAL ON PURPOSE: the policy goes IN and the
             // meter honours it. There is no gate here for a later caller to
             // re-add, which is how the original defect got written.
             clock_rate().note(bk, day, now, current_game_speed(), is_paused());
@@ -1799,10 +1799,10 @@ void pipeline_emit_state(ResponseBuilder& r) {
     r.begin_object();
     r.key("mode"); r.value_string(pipeline_mode_name(pipeline_mode()));
     r.key("flush_id"); r.value_uint(C().sched.last_flush_id());
-    // ck-6kvq.9 left a choice open here; ck-6kvq.10 RESOLVES IT IN FAVOUR OF THE
+    // left a choice open here; RESOLVES IT IN FAVOUR OF THE
     // AGE. The field name implies a stamp, but (a) a monotonic stamp is
     // meaningless to any reader outside this process, (b) G9's liveness probe
-    // wants the age, and (c) ck-6kvq.1's shipped abort ladder ALREADY reads
+    // wants the age, and (c) shipped abort ladder ALREADY reads
     // `last_flush_ms` as an age ("no flush for ${pl_flush_ms}ms", max 120000) —
     // emitting a boot-relative stamp there would abort a perfectly healthy
     // episode within two minutes of load. The consumer wins.
@@ -1821,7 +1821,7 @@ void pipeline_emit_state(ResponseBuilder& r) {
     r.key("buffer_depth"); r.value_uint(C().sched.buffer_depth());
     // ---- R3 as REVERSED: the gate's two fields, now CONSTANT (§2.7) -------
     // The checkpoint clock gate was withdrawn on 2026-09-12. `gate_state` and
-    // `waiting_on` stay on the wire because ck-6kvq.1's SHIPPED abort ladder
+    // `waiting_on` stay on the wire because SHIPPED abort ladder
     // reads them and keys its hold timer on "$gate_state|$waiting_on"; removing
     // the keys would change that ladder's behaviour on a bridge it was not
     // rebuilt against, for no gain. "inert" is never in its held set, so the
@@ -1835,15 +1835,15 @@ void pipeline_emit_state(ResponseBuilder& r) {
     r.key("episode_mode"); r.value_string(episode_mode_name(ep.mode));
     r.key("pins_claims"); r.value_bool(episode_pins_claims());
 
-    //: ck-j6lk: HOW MANY SESSIONS DECLARED `episode_seat`, as THIS OBSERVER saw it,
+    //: HOW MANY SESSIONS DECLARED `episode_seat`, as THIS OBSERVER saw it,
     //: so the validator can cross-check it against the roster's own count and name a
     //: mismatch (`seat_declaration_mismatch`) instead of inferring one.
     //:
     //: NAMED `episode_seat_sessions`, NOT `declared_seats`, and the name is the point.
-    //: scripts/agent_activity.py has published `declared_seats` since ck-gp1g — the
+    //: scripts/agent_activity.py has published `declared_seats` since — the
     //: DRIVER's count, `len(rows)` off the roster. Those two numbers are the two
     //: operands of this very comparison, and a check whose entire value is that they
-    //: are produced independently must not name them with one word. ck-9rto caught
+    //: are produced independently must not name them with one word. caught
     //: that we had both chosen it; the pre-existing key keeps it and the newcomer
     //: yields. This spelling says which FIELD is counted (`episode_seat`) and in what
     //: unit (sessions), so neither operand can be mistaken for the other in a bundle.
@@ -1898,27 +1898,27 @@ void pipeline_emit_state(ResponseBuilder& r) {
         r.key("current_day"); r.value_int(unavailability().current_day());
         r.key("current_game_date");
         r.value_string(game_date_for_day(unavailability().current_day()).c_str());
-        // ck-ijfa: the GATE is in WALL-SECONDS (agent punctuality), X is in
+        // The GATE is in WALL-SECONDS (agent punctuality), X is in
         // GAME-DAYS (experimental cost). `min_span_days` is RETIRED — the
         // game-day gate it named could not tell "the agent was late" from "the
         // world ran fast". Both numbers are PUBLISHED so a bundle always says
         // which it ran under.
         r.key("anomaly_wall_seconds"); r.value_int(ep.unavail_anomaly_wall_s);
 
-        // ── ck-2ngg: X IS A RULE, AND IT SHOWS ITS WORKING ─────────────────
+        // ── X IS A RULE, AND IT SHOWS ITS WORKING ─────────────────
         // `exclusion_days` stays the field every consumer already reads, but it
         // is now COMPUTED for THIS episode's declared horizon rather than the
         // constant 365 (which is the rule's answer at the registered 20-year
         // horizon and at no other). Everything needed to re-derive it offline
         // travels beside it — the fraction and the horizon it was measured over
-        // — which is ck-ijfa's property applied to X.
+        // — which is property applied to X.
         //
         // `exclusion_armed` is the REQUIRED companion: false means no horizon
         // was declared, so nothing was judged. A consumer reading
         // `episode_invalid:false` alone cannot tell an unjudged episode from a
         // clean one.
         r.key("exclusion_days"); r.value_int(ep.unavail_exclusion_days);
-        // ── ck-029l: ARMED IS A CLAIM ABOUT A MEASUREMENT, SO IT NEEDS ONE ─────
+        // ── ARMED IS A CLAIM ABOUT A MEASUREMENT, SO IT NEEDS ONE ─────
         //
         // unavail_exclusion_armed is resolved ONCE at episode open from the
         // declared horizon (episode_policy.cpp:134, from env only) and republished
@@ -1938,7 +1938,7 @@ void pipeline_emit_state(ResponseBuilder& r) {
         // tick_bookkeeping(episode_is_experiment()).note_unavailability, which is
         // CORRECT — §2.7's covariate is episode-scoped and "what an agent's
         // silence costs THE EXPERIMENT" is meaningless without an experiment. The
-        // gate was closed because set28 ran free_play, and that is ck-tt91's root
+        // gate was closed because set28 ran free_play, and that is root
         // cause (CK3_EPISODE_MODE never exported), one criterion over from the
         // claim pin. Making the feed run in free play would record a covariate
         // outside the only condition that gives it meaning.
@@ -2002,7 +2002,7 @@ void pipeline_emit_state(ResponseBuilder& r) {
         if (ep.refused_exclusion_fraction_env.empty()) r.value_null();
         else r.value_string(ep.refused_exclusion_fraction_env.c_str());
 
-        // ck-ijfa: THE RATE, MEASURED, WITH ITS CONDITION. Both pre-registered
+        // THE RATE, MEASURED, WITH ITS CONDITION. Both pre-registered
         // thresholds above are in GAME-DAYS and every question anyone asks about
         // them is in WALL-CLOCK; this object is the only honest bridge between
         // the two, and `measured:false` means NOT MEASURED — a consumer must say
@@ -2024,7 +2024,7 @@ void pipeline_emit_state(ResponseBuilder& r) {
                 r.key("game_days_per_wall_second"); r.value_null();
                 r.key("game_years_per_wall_hour");  r.value_null();
             }
-            // THE CONDITION. A rate without one is not evidence (ck-ijfa).
+            // THE CONDITION. A rate without one is not evidence.
             r.key("condition");
             r.begin_object();
             r.key("episode_mode"); r.value_string(episode_mode_name(ep.mode));
@@ -2069,7 +2069,7 @@ void pipeline_emit_state(ResponseBuilder& r) {
             r.key("wall_measured"); r.value_bool(u.wall_measured);
             r.key("unjudged_gap_count"); r.value_uint(u.unjudged_gap_count);
             r.key("spans_truncated"); r.value_bool(u.spans_truncated);
-            // ck-48lf: EXACT extrema over every gap, beside the truncated
+            // EXACT extrema over every gap, beside the truncated
             // itemisation, so a reader never derives a maximum from `spans`.
             r.key("max_span_wall_seconds"); r.value_double(u.max_span_wall_seconds);
             r.key("max_span_game_days"); r.value_int(u.max_span_game_days);
@@ -2086,7 +2086,7 @@ void pipeline_emit_state(ResponseBuilder& r) {
                 r.key("start_game_date"); r.value_string(game_date_for_day(sp.start_day).c_str());
                 r.key("end_game_date"); r.value_string(game_date_for_day(sp.end_day).c_str());
                 r.key("open"); r.value_bool(sp.open);
-                // ck-ijfa: EVERY GAP IN BOTH UNITS. `wall_measured:false` means
+                // EVERY GAP IN BOTH UNITS. `wall_measured:false` means
                 // the endpoints carried no stamp, so the duration is UNKNOWN —
                 // never a game-day figure converted at an assumed rate.
                 r.key("wall_measured"); r.value_bool(sp.wall_measured);
@@ -2110,9 +2110,9 @@ void pipeline_emit_state(ResponseBuilder& r) {
         r.end_array();
     }
 
-    // ---- R1c: the pulse ledger (ck-6kvq.10, §2.9) -------------------------
+    // ---- R1c: the pulse ledger (§2.9) -------------------------
     // NULL while clean, an OBJECT once latched — and NEVER an empty object.
-    // ck-6kvq.1 treats any non-empty, non-"0", non-"false" value of this key as
+    // treats any non-empty, non-"0", non-"false" value of this key as
     // the `pulse_leak` abort, so `{}` on a healthy run would be a false abort.
     // The verdict is LATCHED: a later clean flush must not erase the evidence
     // that the episode's condition silently changed.
@@ -2133,9 +2133,9 @@ void pipeline_emit_state(ResponseBuilder& r) {
     // THE EPISODE THE BRIDGE BELIEVES IT IS IN. Never omitted, so the lanes
     // coding against this shape keep a stable key set.
     //
-    // ck-kc32 CORRECTS WHAT USED TO BE THIS COMMENT. It said ck-6kvq.2 owned
+    // CORRECTS WHAT USED TO BE THIS COMMENT. It said owned
     // minting this and that "until it lands" the bridge published whatever
-    // CK3_EPISODE_ID it was handed. ck-6kvq.2 CLOSED on 2026-09-12 having
+    // CK3_EPISODE_ID it was handed. CLOSED on 2026-09-12 having
     // shipped its harness half and not this one, so the sentence pointed at a
     // landing that had already happened and described a wait that was never
     // going to end. Two seats read it and concluded the field was still
@@ -2149,7 +2149,7 @@ void pipeline_emit_state(ResponseBuilder& r) {
     r.key("clock_drift_events"); r.value_uint(C().clock_drift_events.load(std::memory_order_relaxed));
     r.key("unclassified_calls"); r.value_uint(C().unclassified_total.load(std::memory_order_relaxed));
     r.key("flush_period_ms"); r.value_uint(C().sched.config().period_ms);
-    // ck-43u3: THE TRIGGER, OBSERVED RATHER THAN INFERRED FROM A LATENCY.
+    // THE TRIGGER, OBSERVED RATHER THAN INFERRED FROM A LATENCY.
     // `flush_trigger_last` is the snapshot; `flush_triggers` is the one that
     // answers the question, because "are my reads served early" is a
     // distribution and not an event. A reader comparing cadence against
@@ -2164,8 +2164,8 @@ void pipeline_emit_state(ResponseBuilder& r) {
         r.value_uint(C().sched.trigger_count(ft));
     }
     r.end_object();
-    // ck-on4u: THE SPEED THE PLANNER RESTS AT, OBSERVED RATHER THAN DECLARED.
-    // The same argument ck-ock8 made for the flush period: the harness's own
+    // THE SPEED THE PLANNER RESTS AT, OBSERVED RATHER THAN DECLARED.
+    // The same argument made for the flush period: the harness's own
     // declaration cannot witness whether the bridge received it, and this
     // scheduler is the SECOND writer of the game speed — the one with no
     // "Action: set_speed" line behind it. `resting_speed_declared` separates
@@ -2175,19 +2175,19 @@ void pipeline_emit_state(ResponseBuilder& r) {
     r.key("resting_speed"); r.value_int(C().sched.config().resting_speed);
     r.key("resting_speed_declared"); r.value_bool(ep.game_speed_declared);
     r.key("resting_speed_env"); r.value_string(kGameSpeedEnv);
-    // ck-h6nx (D'): WHO DROVE THE CADENCE. Recorded so it is auditable after
+    // WHO DROVE THE CADENCE. Recorded so it is auditable after
     // the fact rather than inferred from who happened to be plugged in. EMPTY
     // MEANS NOBODY DECLARED — the arms then behave exactly as before this bead,
     // which is the honest reading of an absent declaration and not a silent
     // default to some session the bridge picked for itself.
     r.key("episode_observer"); r.value_string(pipeline_episode_observer().c_str());
 
-    // ── ck-8o5j: THE CLOCK-START HOLD, AS ITS OWN FIELD ────────────────────
+    // ── THE CLOCK-START HOLD, AS ITS OWN FIELD ────────────────────
     // A reader needs to distinguish "the hold is armed and the world is frozen"
     // from "the episode is running", and NOTHING ON THE WIRE SAID SO. `gate_state`
     // is NOT that field: it is the WITHDRAWN checkpoint clock gate, hardcoded to
     // "inert" a few lines above, constant in every mode on every healthy bridge
-    // — it stays only because ck-6kvq.1's shipped abort ladder keys a hold timer
+    // — it stays only because shipped abort ladder keys a hold timer
     // on it. Anything reading `gate_state` for the clock-start hold reads a
     // constant and learns nothing about this.
     //
@@ -2197,7 +2197,7 @@ void pipeline_emit_state(ResponseBuilder& r) {
     //   clock_hold_mode    which mode's rule is in force, so "false" can be read
     //                      as "released" rather than "never armed"
     //
-    // ck-9rto's launch cross-check needs exactly this: an id that landed is
+    // launch cross-check needs exactly this: an id that landed is
     // NECESSARY AND NOT SUFFICIENT, because a bridge can agree the episode is
     // open and still be holding the clock — the same silent stall, one field
     // over.

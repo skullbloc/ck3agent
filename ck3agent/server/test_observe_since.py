@@ -1,4 +1,4 @@
-"""ck-s8vr — `since` is about the seat, and says what it withheld.
+"""`since` is about the seat, and says what it withheld.
 
 HOST ONLY. Pure shape over a gateway reply; no bridge, no game.
 
@@ -9,7 +9,7 @@ because the old string delta fell back to `str(rec)` when a record carried no
 `summary` or `name`, which the bridge's war and scheme records never do.
 
 TWO FIXES, AND THE SECOND IS THE ONE THAT MATTERS. Read RECORDS so the thing
-can be filtered at all; then SAY WHAT WAS DROPPED. ck-zgh4 put the second one
+can be filtered at all; then SAY WHAT WAS DROPPED. put the second one
 best: a filter that reports "4,312 withheld" states a fact, while one that
 silently returns 14 asserts that 14 was all there was.
 
@@ -152,7 +152,7 @@ class ObserveSince(unittest.TestCase):
         self.assertEqual(delta, s["mine"])
         self.assertEqual(len(delta), 1)
 
-    # ── ck-s8vr / (C)1: the widened reach ───────────────────────────────────
+    # ── / (C)1: the widened reach ───────────────────────────────────
     # The six rows above all PASSED UNCHANGED after the filter was widened
     # from the character to the realm, because the harness fed no vassal and
     # no liege. A lane that cannot fail on the change is not evidence about it.
@@ -189,7 +189,7 @@ class ObserveSince(unittest.TestCase):
 
     def test_S10_CONTROL_the_four_reach_states_are_not_one_bucket(self):
         """liege_id==0 is an ANSWER (independent); top_liege_id==0 is a WALK
-        THAT FAILED (ck-6kvq.27, query_handlers.cpp:793). Reporting both as
+        THAT FAILED (query_handlers.cpp:793). Reporting both as
         "unreachable" would tell every independent ruler its filter was blind.
         """
         absent, _ = _since([MINE])

@@ -170,7 +170,7 @@ def test_setup_writes_play_dir_and_config(install, supported, tmp_path, capsys):
     argv = cli.exe_argv()
     mcp = json.loads((play / ".mcp.json").read_text())["mcpServers"]["ck3"]
     assert [mcp["command"], *mcp["args"]] == argv + ["serve"]
-    assert mcp["alwaysLoad"] is True          # the 13 schemas load with the session (L18-C)
+    assert mcp["alwaysLoad"] is True          # the 13 schemas load with the session
     settings = json.loads((play / ".claude/settings.json").read_text())
     hook = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
     assert hook.split() == argv + ["hook-state"]
@@ -332,7 +332,7 @@ def test_doctor_ready_without_a_game(install, supported, tmp_path, capsys):
 
 def test_doctor_never_reads_a_play_dir_it_was_not_told(install, supported, hermetic, tmp_path,
                                                          monkeypatch, capsys):
-    """smoke17: with fresh XDG dirs and no setup record, doctor read the host's
+    """With fresh XDG dirs and no setup record, doctor read the host's
     ~/ck3agent-play/.mcp.json (another install's, its command gone) and failed rc 1."""
     ck3, so = install
     monkeypatch.setenv("CK3_BINARY", str(ck3))
@@ -358,7 +358,7 @@ def test_doctor_never_reads_a_play_dir_it_was_not_told(install, supported, herme
 
 def test_doctor_reads_claude_codes_trust_record_for_the_play_dir(install, supported, hermetic, tmp_path,
                                                                   monkeypatch, capsys):
-    """smoke17: every `claude -p` in a fresh play dir printed "Ignoring 1 permissions.allow
+    """Every `claude -p` in a fresh play dir printed "Ignoring 1 permissions.allow
     entry ... this workspace has not been trusted". Doctor and setup now say so, from
     Claude Code's own record (read only); nothing writes it."""
     ck3, _ = install
@@ -491,7 +491,7 @@ def _launch(monkeypatch, *args):
 
 def test_launch_gives_the_game_its_own_userdir_and_never_writes_the_users_tree(
         install, supported, owner_tree, tmp_path, monkeypatch):
-    """smoke17: the launched game's autosave rotated the owner's save games/autosave.ck3.
+    """The launched game's autosave rotated the owner's save games/autosave.ck3.
     The game now runs with -userdir=<XDG_STATE_HOME>/ck3agent/game, and the user's
     tree (saves, continue_game.json, settings) is byte-identical after a launch."""
     ck3, so = install
@@ -544,7 +544,7 @@ CK3_POINTER_KEYS = ("title", "desc", "date")
 
 
 def test_launch_save_writes_a_pointer_ck3_can_read(install, supported, owner_tree, tmp_path, monkeypatch):
-    """smoke18: 2026.12.1 wrote {"title": ...} alone into a new game directory and
+    """2026.12.1 wrote {"title": ...} alone into a new game directory and
     CK3 SIGSEGVed in every launch, ~17 s after loading history (desc missing)."""
     ck3, so = install
     monkeypatch.setenv("CK3_BINARY", str(ck3))
@@ -602,7 +602,7 @@ class _Exited(_Popen):
 
 
 def test_launch_waits_longer_on_a_first_start(install, supported, owner_tree, monkeypatch, capsys):
-    """smoke18: a new game directory has no shader cache; the first load ran past
+    """A new game directory has no shader cache; the first load ran past
     the 120 s default and the warning blamed a click on Continue."""
     ck3, so = install
     monkeypatch.setenv("CK3_BINARY", str(ck3))
@@ -695,7 +695,7 @@ def test_launch_socket_not_up_says_what_the_game_is_doing(args, want, never, ins
 
 
 def test_a_plain_launch_waits_like_the_others():
-    """L22 (smoke19): a plain `launch` returned at once (wait 0)."""
+    """A plain `launch` returned at once (wait 0)."""
     assert cli.launch_wait(False, None, first_load=True) == cli.FIRST_LOAD_WAIT
     assert cli.launch_wait(False, None, first_load=False) == cli.CONTINUE_WAIT
     assert cli.launch_wait(True, None, first_load=True) == 0
@@ -703,13 +703,13 @@ def test_a_plain_launch_waits_like_the_others():
 
 
 @pytest.mark.parametrize("log_text, rc, want, never", [
-    # smoke19: the headless node sat after "End loading of history" with no idler
+    # The headless node sat after "End loading of history" with no idler
     (_HISTORY, cli.EXIT_TIMEOUT, ["game not at its main menu", "CK3 is still loading"], "game at its main menu"),
     (_HISTORY + _IDLER_LINE.format("Frontend"), 0, ["game at its main menu"], "not at its main menu"),
 ])
 def test_a_plain_launch_says_whether_the_game_reached_its_main_menu(
         log_text, rc, want, never, install, supported, owner_tree, monkeypatch, capsys):
-    """L22 (smoke19): with the socket up, a plain launch returned 0 and said
+    """With the socket up, a plain launch returned 0 and said
     nothing while the game never reached the menu. It now waits for the log's
     main-menu screen and, when the wait runs out, names the stage the log shows."""
     ck3, so = install
@@ -726,7 +726,7 @@ def test_a_plain_launch_says_whether_the_game_reached_its_main_menu(
 
 
 def test_launch_busy_socket_names_the_holder(install, supported, monkeypatch, capsys):
-    """smoke18: a crashed game's CrashReporter inherited the socket and kept it
+    """A crashed game's CrashReporter inherited the socket and kept it
     answering; the refusal said "another CK3 ... is running" while none ran."""
     ck3, so = install
     monkeypatch.setenv("CK3_BINARY", str(ck3))
@@ -1043,7 +1043,7 @@ def server_rc(tmp_path: Path) -> int:
 
 
 ARMED = "release on exit armed"           # mcp_server logs it once a signal starts the release
-LAST = {"42": cli.LAST_CLAIM}             # the bridge refuses to empty a control session (ck-cwal)
+LAST = {"42": cli.LAST_CLAIM}             # the bridge refuses to empty a control session
 GONE_OK = {"step": "release", "ok": True, "detail": "no ruler bound"}
 
 
@@ -1090,7 +1090,7 @@ def test_run_records_the_session(play, tmp_path, monkeypatch):
 
 
 def test_run_gives_the_hook_this_seats_session_and_loads_the_tools_eagerly(play, tmp_path):
-    """L18-C: the live-state hook (claude's child) reads its ruler from the seat's
+    """The live-state hook (claude's child) reads its ruler from the seat's
     own session record, so claude carries CK3_SESSION_OUT; and the run's ck3 entry
     says alwaysLoad, so the 13 schemas are not deferred behind ToolSearch."""
     assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "2"]) == 0
@@ -1100,14 +1100,14 @@ def test_run_gives_the_hook_this_seats_session_and_loads_the_tools_eagerly(play,
     assert env["CK3_SESSION_OUT"] == str(play / "runs" / f"{stamp}.session.json")
     srv = json.loads((play / "runs" / f"{stamp}.mcp.json").read_text())["mcpServers"]["ck3"]
     assert srv["alwaysLoad"] is True and srv["env"]["CK3_SESSION_OUT"] == env["CK3_SESSION_OUT"]
-    # The fake transcript makes no ck3 call: zero cycles, said, never absent (smoke16).
+    # The fake transcript makes no ck3 call: zero cycles, said, never absent.
     assert m["cycles_completed"] == 0 and m["cycles_met"] is False and m["cycles"] == 2
     assert m["cycle_definition"] == cli.CYCLE_DEFINITION and m["ended_on"] is None
     assert m["total_cost_usd_source"].startswith("claude result event")
 
 
 def test_the_run_stops_itself_at_its_cycle_count(play, monkeypatch):
-    """L18 round 2 (owner ruling): the run prompt names no cycle count; the run
+    """The run prompt names no cycle count; the run
     counts cycles from the transcript and ends the session at --cycles. The fake
     plays two cycles and then would play on (it ignores nothing, writes its result
     on SIGINT); --wall-seconds is only the backstop that ends the base tree's run."""
@@ -1121,7 +1121,7 @@ def test_the_run_stops_itself_at_its_cycle_count(play, monkeypatch):
 
 
 def test_the_manifests_count_is_the_counter_the_stop_read(play, monkeypatch):
-    """L18 round 3 (witness item 2): one counter. The stop read the live
+    """One counter. The stop read the live
     CycleCounter at 2 closed cycles and froze it; the fake then writes one more
     `observe` before its result (a call in flight when SIGINT landed). The
     manifest's `cycles_completed` is the counter's reading at the stop, 2; the
@@ -1574,7 +1574,7 @@ def _results(*rows):
 def test_a_resumed_sessions_cost_is_its_last_cumulative_value_not_the_sum():
     """seat-review.md problem 15: summary.json showed resumed seats at 20-30x their
     cost because every result event's CUMULATIVE total_cost_usd was summed. The
-    numbers are seat K of the sealed v3reg2-flat_hom-s3 bundle (one session
+    numbers are seat K of the sealed-flat_hom-s3 bundle (one session
     0649e4ae, two processes: 0.8999130 then 1.6094637; turns 71 then 46); the
     bundle's summary recorded K at 2.5093767, their sum. Red on 8cef520a: 2.5093767."""
     m = cli.summarize_stream(_results(("0649e4ae", 0.8999129999999997, 71), ("0649e4ae", 1.6094637, 46)))
@@ -1600,7 +1600,7 @@ def test_mcp_server_imports_and_registers_tools():
 
 
 def test_the_run_stops_itself_when_its_server_says_the_horizon_is_reached(play, monkeypatch):
-    """2026.12.4 (PLAN §P decision 4): under a cell the stop is the server's
+    """2026.12.4: under a cell the stop is the server's
     `horizon_reached`, not --until-date: a `session` reply of the run's ck3 server
     carrying `horizon_reached: true` stops the run (stop_reason "horizon", exit 0).
     The fake would play on; --wall-seconds is only the backstop that ends the base
@@ -1690,7 +1690,7 @@ def _resumes(tmp_path: Path) -> list[str]:
 
 
 def test_a_cell_seat_that_ends_its_session_early_is_resumed(play, tmp_path, monkeypatch):
-    """Free running (owner ruling; L23 witness item 2): the dry cell's dukes ended
+    """Free running: the dry cell's dukes ended
     their sessions (`end_turn` after a cycle summary) at 867.04, and the run
     recorded them as finished. Under a cell the run now resumes the session
     (`claude --resume <id>`, the same flags, the continuation text); here the
@@ -1723,7 +1723,7 @@ def _turns(play: Path) -> list[dict]:
 
 
 def test_every_turns_prompt_is_recorded_beside_the_transcript(play, tmp_path, monkeypatch):
-    """Lane v4sees (seat review problem 11: the seat review could not see what a
+    """ (seat review problem 11: the seat review could not see what a
     resumed seat was told). Turn 0 is the run's prompt, turn k the k-th
     continuation's, each verbatim with its sha256, game date and cycle; the
     manifest names the file and counts its rows. Red on 8cef520a: no
@@ -1747,7 +1747,7 @@ def test_every_turns_prompt_is_recorded_beside_the_transcript(play, tmp_path, mo
 
 
 def test_a_resumed_turn_carries_the_seats_pending_messages_once(play, tmp_path, monkeypatch):
-    """Lane v4sees (seat review problem 9: messages reached a seat only inside
+    """ (seat review problem 9: messages reached a seat only inside
     observe; s6 D1 read one 530 days late). A resumed turn's prompt carries the
     seat's pending messages after the continuation text, through the channel's
     one delivery function, which stamps the receipt (via resume_prompt, the
@@ -1901,7 +1901,7 @@ def test_a_cell_seat_that_ends_right_after_the_horizon_reply_is_not_resumed(play
 
 @pytest.mark.parametrize("how", ["wall_seconds", "cap"])
 def test_a_cell_run_that_stops_without_a_resume_keeps_its_rulers_record(play, tmp_path, monkeypatch, how):
-    """L23 witness r3 item 1: the resume loop consumed the old server's release
+    """The resume loop consumed the old server's release
     and session records BEFORE deciding not to resume, so a wall stop or an
     exhausted cap in a cell recorded held_at_stop [] (and waited 5 s). The
     records are consumed only when a resume is certain. Red on 685cb506: []."""
@@ -2090,7 +2090,7 @@ _PRCTL_FAILS = ("import ctypes\n"
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux")
 @pytest.mark.parametrize("case", ["ok", "no_ctypes_in_the_shim", "prctl_fails"])
 def test_the_shim_starts_claude_and_says_when_it_cannot_tie_it_to_the_run(case):
-    """r3 witness item 3. The shim ignored prctl's return (a failure fell back
+    """r3. The shim ignored prctl's return (a failure fell back
     silently) and a Python without ctypes never started claude (rc 1). Now
     claude starts in every case, and a failure is one stderr line naming the
     step and the errno or exception class. Red on 5e42c229: no_ctypes (rc 1)
@@ -2108,7 +2108,7 @@ def test_the_shim_starts_claude_and_says_when_it_cannot_tie_it_to_the_run(case):
 
 
 def test_a_python_without_ctypes_spawns_claude_directly(monkeypatch):
-    """r3 witness item 3: with no ctypes the run does not wrap claude at all,
+    """r3: with no ctypes the run does not wrap claude at all,
     and the manifest's `claude_dies_with_run` says why."""
     import importlib.util
     real = importlib.util.find_spec

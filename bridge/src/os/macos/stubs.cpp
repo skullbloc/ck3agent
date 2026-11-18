@@ -167,7 +167,7 @@ Result watchdog_disarm(bool* fired) {
     return not_written("macos: SIGALRM as Linux (ADR 0001; deferred)");
 }
 
-// The session pass (L14): refused on macOS. There is no hook to install, so
+// The session pass: refused on macOS. There is no hook to install, so
 // there is none to remove and none live; the bridge has no macOS binary and so
 // no session layout to swap a slot in (ADR 0001 M2).
 constexpr const char kNoSessionPass[] =

@@ -1,8 +1,8 @@
-// test_reader_fairness.cpp — wave 13 lane METER: the REAL reader thread does not
+// test_reader_fairness.cpp — wave 13: the REAL reader thread does not
 // hold one client's get_tick_info behind another client's burst of game-thread
 // reads.
 //
-// THE DEFECT (docs/cleanup-2026.11/evidence/v4meter13/README.md). The bridge has
+// THE DEFECT. The bridge has
 // ONE reader thread for every client. It used to serve every complete line of a
 // slot's read() chunk before it looked at any other slot, and a Tier-2 read
 // blocks that thread until the game-thread drain has run it. A seated episode's

@@ -1,4 +1,4 @@
-// acceptance_resting_speed.cpp — ck-on4u, the C++ half.
+// acceptance_resting_speed.cpp —, the C++ half.
 //
 // ONE QUESTION, asked of whichever tree it is compiled against:
 //

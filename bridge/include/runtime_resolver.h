@@ -155,7 +155,7 @@ struct RipAnchor {
     const char* label;
 };
 
-// ck-nkyc leg (e). OBSERVE the loaded binary's ELF BuildID and publish it (with
+// leg (e). OBSERVE the loaded binary's ELF BuildID and publish it (with
 // the process's effective CK3_STRICT_BUILD_ID) into bridge::build_id_witness().
 //
 // SEPARATE FROM run_resolver() ON PURPOSE, and the reason is a finding rather

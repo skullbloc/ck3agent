@@ -1,4 +1,4 @@
-"""ck-zgh4 deploy-51 item (3) — `do` never says "applied" for a queued action.
+""" deploy-51 item (3) — `do` never says "applied" for a queued action.
 
 THE BRIDGE WAS THE HONEST PARTY. `do_send_interaction`'s enqueue path replies
 (action_handlers.cpp:531-535):
@@ -55,7 +55,7 @@ class Gateway:
         return [{} for _ in specs]
 
     async def write(self, action, params=None):
-        # Lane v4act: this write goes through the script layer first; these rows
+        # This write goes through the script layer first; these rows
         # grade the path it falls back to (a character with no title to name him by).
         if action == "script_action":
             return {"success": False, "action": "script_action", "reason": "target_not_script_addressable", "detail": "target_id"}
@@ -120,7 +120,7 @@ def test_an_EXPLICIT_failure_is_still_rejected():
     assert (env or {}).get("ok") is False
 
 
-# ── L13 amendment 3: "later" is the NEXT PASS, and the server reads it ────────
+# ── amendment 3: "later" is the NEXT PASS, and the server reads it ────────
 
 class DrainGateway(Gateway):
     """The bridge drains the queued intent on the next pass, paused or running:
@@ -167,7 +167,7 @@ def _drain_do(rows, monkeypatch, interaction="befriend_interaction", purses=None
 
 
 def test_a_queued_write_the_drain_RAN_is_SENT_and_pending_never_applied(monkeypatch):
-    """FF2 ruling (witness R2): `applied` needs an effect the server read back.
+    """ ruling: `applied` needs an effect the server read back.
     The drain's "success" says it was SENT; LEVERS has no readback for befriend,
     so it is pending until the clock advances, result.sent true, with what to
     check. The round-1 server answered applied on the bare dispatch success."""
@@ -216,7 +216,7 @@ def test_a_queued_write_whose_verdict_is_never_read_is_pending_NEXT_PASS(monkeyp
     assert gw.dispatch_reads == 1 + len(redesign.DRAIN_SCHEDULE_S)
 
 
-# ── FF3 ruling (witness X2): a stage-1 lever is applied once its effect is read ─
+# ── ruling: a stage-1 lever is applied once its effect is read ─
 
 D = "0867.03.01"
 
@@ -225,7 +225,7 @@ def test_a_GIFT_whose_exact_amount_moved_on_the_pass_is_APPLIED(monkeypatch):
     """gift_interaction is an "on_execute" lever: the drain ran it, and the
     sender's purse fell by exactly what the recipient's rose, with no game day
     between the readings: applied, with the amount. The do() tail takes no clock
-    reading for it, so the answer is the same paused or running. FF2 answered
+    reading for it, so the answer is the same paused or running. answered
     pending clock_advances."""
     gw, env = _drain_do([{"status": "success"}], monkeypatch, interaction="gift_interaction",
                         purses=[(100.0, 10.0, D), (60.0, 50.0, D)])
@@ -254,12 +254,12 @@ def test_the_DRAIN_REFUSAL_outranks_a_readback_that_would_resolve(monkeypatch):
 
 
 def test_a_GIFT_reading_across_a_daily_tick_is_PENDING_READBACK_never_rejected(monkeypatch):
-    """Witness r4 m1 and r5 G1 (FF5 ruling). Running, a daily tick between the
+    """Witness r4 m1 and r5 G1 (ruling). Running, a daily tick between the
     readings pays income or takes an expense, so the transfer cannot be told
     from it: the reading is not made (never applied on a wrong amount), and a
     gift the drain RAN is never rejected for a reading the server could not
     make: pending, drains_when "readback", ok:true, result.sent, raw_reason
-    write_unconfirmed. FF4 answered ok:false rejected write_unconfirmed, which the
+    write_unconfirmed. answered ok:false rejected write_unconfirmed, which the
     player could read as "not sent" and gift twice."""
     gw, env = _drain_do([{"status": "success"}], monkeypatch, interaction="gift_interaction",
                         purses=[(100.0, 10.0, D), (60.0 + 7.0, 50.0, "0867.03.02")])

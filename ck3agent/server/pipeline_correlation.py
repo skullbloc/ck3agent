@@ -1,6 +1,6 @@
 """pipeline_correlation.py — THE shared client path for pipeline-mode replies.
 
-ck-6kvq.18 / ck-6kvq.19. One module, imported by every NDJSON client that sends
+One module, imported by every NDJSON client that sends
 an action and waits for its answer, because the three clients that got this
 wrong got it wrong three different ways and a fourth copy would have been a
 fourth way.
@@ -26,7 +26,7 @@ strict routers. Each returned the ACK as the answer — which has no success, no
 gold, no dynasty_id — and then ran one frame out of phase forever. Silent: no
 exception, no timeout, no non-zero exit.
 
-LIVE EVIDENCE, 2026-09-13 (ck-zgh4, on the node, on a main-based bridge). The
+LIVE EVIDENCE, 2026-09-13 (on the test host, on a main-based bridge). The
 node's READINESS PROBE read that first frame as the result of query_character,
 found no dynasty_id, and reported "the character DB is not live" — a CONFIDENT
 WRONG ANSWER ABOUT THE WORLD, and indistinguishable from a dead world. The
@@ -41,7 +41,7 @@ THE TWO WAYS A RESULT ARRIVES, and why both are needed:
      request_id.
   2. THE CHECK. `check` is ANY-polarity, is served inline, never waits for a
      flush, and returns the ticket's stored `result` once it is terminal
-     (pipeline.cpp handle_check). This is the path the node probe eventually
+     (pipeline.cpp handle_check). This is the path a test probe eventually
      used, and it is the only path available to a client whose push was missed
      — a reconnect between the ack and the flush, a recv budget shorter than
      flush_eta_ms, or a hook that cannot hold the socket open for ten seconds.
@@ -71,7 +71,7 @@ import time
 import uuid
 
 # Frames the bridge emits without being asked. A skip list can only be
-# exhaustive over frames that can be NAMED, which is why ck-6kvq.18 also gave
+# exhaustive over frames that can be NAMED, which is why also gave
 # `type` to the pipeline result ("result") and refusal ("refused") frames — they
 # had none, so for a client that also sent no request_id they carried neither a
 # type nor a key and were literally unroutable.
@@ -99,7 +99,7 @@ PUSH_GRACE_S = 0.5
 # ...but never blind for longer than this. A flush period is seconds (the node
 # saw flush_eta_ms 9999), and a client that simply waits it out is a client that
 # cannot tell "not flushed yet" from "my push was lost" — which is the state the
-# ck-zgh4 readiness probe was in when it declared a live world dead. So ask
+# readiness probe was in when it declared a live world dead. So ask
 # early, once. The check reply carries the ticket's OWN remaining flush_eta_ms,
 # so the poll interval corrects itself to the real flush period immediately
 # afterwards: two round trips in the worst case, not a poll storm.
@@ -153,7 +153,7 @@ def is_our_ack(msg, request_id):
     entire point of §8.2. A client that sent no request_id gets no
     `for_request_id` back either; in that case, single-flight, the only ack on
     the wire is ours. That case is not hypothetical: ~20 shipped callers omit
-    request_id (see ck-6kvq.19).
+    request_id.
     """
     if not isinstance(msg, dict) or msg.get("type") != "accepted":
         return False
@@ -186,7 +186,7 @@ def build_check_envelope(ticket, request_id=None):
     """The envelope that asks the bridge to settle one ticket.
 
     Flat `ticket`, which handle_check reads via action_args and therefore
-    accepts flat or under params (ck-6kvq.15). A check is ANY-polarity: it is
+    accepts flat or under params. A check is ANY-polarity: it is
     served inline and never waits for a flush, so it cannot deadlock behind the
     very flush we are waiting on.
     """

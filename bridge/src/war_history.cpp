@@ -1,4 +1,4 @@
-// war_history.cpp — pure half of the ended-war ledger (ck-sd4d).
+// war_history.cpp — pure half of the ended-war ledger.
 //
 // No engine reads, no globals from the game, no offsets header: everything
 // here is testable by bridge/test/test_war_history.cpp with no CK3 process.

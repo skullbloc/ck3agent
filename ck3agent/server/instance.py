@@ -1,6 +1,6 @@
 """instance.py — THE naming authority for a CK3 instance's private paths.
 
-Bead **ck-qn03** (R12), epic ck-6kvq. Design of record:
+Bead **** (R12), epic. Design of record:
 `docs/design/event-pipeline-conductor.md`; runbook `docs/multi-instance.md`.
 
 WHY THIS FILE EXISTS
@@ -27,7 +27,7 @@ paths) — and ``scripts/test_multi_instance.py`` pins all three against each
 other. A fourth, private copy of the naming is the failure this design is
 guarding against; do not add one.
 
-TWO LAYOUTS (rc2 B1)
+TWO LAYOUTS
 ====================
 ``CK3_INSTANCE_LAYOUT`` selects where the default instance lives:
 
@@ -103,7 +103,7 @@ ENV_CONTROL_DIR = "CK3_CONTROL_DIR"
 ENV_LAYOUT = "CK3_INSTANCE_LAYOUT"
 
 
-#: rc2 B1: the whitespace stripped from `CK3_INSTANCE_LAYOUT` and
+#: The whitespace stripped from `CK3_INSTANCE_LAYOUT` and
 #: `CK3_INSTANCE_ID`, leading and trailing only. ASCII, spelled out rather than
 #: `str.strip()`'s Unicode set, because instance_paths.cpp (`is_ws`) and
 #: ck3_instance.sh strip exactly these six. If the three disagree, one side
@@ -294,7 +294,7 @@ class InstancePaths:
     wayland_name: str
     #: ``XDG_DATA_HOME`` for the game process, or None to inherit the user's.
     #:
-    #: ⚠ ck-wfz1: THIS DOES NOT WORK FOR THE GAME'S USER-DATA DIRECTORY, and the
+    #: ⚠: THIS DOES NOT WORK FOR THE GAME'S USER-DATA DIRECTORY, and the
     #: comment that used to stand here was an inference from a string rather than
     #: a measurement. It said: "CK3 reads $XDG_DATA_HOME before $HOME/.local/share
     #: (the binary carries the string 'neither XDG_DATA_HOME nor HOME environment
@@ -303,20 +303,20 @@ class InstancePaths:
     #:
     #: THE STRING IS REALLY IN THE BINARY. So is
     #: ``/.local/share/Paradox Interactive/launcher/session`` one line away, which
-    #: is the likelier consumer. MEASURED on a live game (ck-9rto, 2026-09-17):
+    #: is the likelier consumer. MEASURED on a live game (2026-09-17):
     #: with ``XDG_DATA_HOME`` set to the instance tree in ``/proc/<pid>/environ``,
     #: the process held FIFTEEN open write descriptors on
     #: ``$HOME/.local/share/Paradox Interactive/Crusader Kings III/logs/`` and the
     #: instance's own ``save games`` directory was never written or read. A STRING
-    #: IN A BINARY IS NOT A CODE PATH THAT RUNS (ck-nkyc's caller-less
-    #: ``run_resolver``, ck-fvms.1's ``DISPATCH_TIMEOUT_SECS``, and now this).
+    #: IN A BINARY IS NOT A CODE PATH THAT RUNS (caller-less
+    #: ``run_resolver``, ``DISPATCH_TIMEOUT_SECS``, and now this).
     #:
     #: The variable is still exported — it costs nothing and something does read
     #: it — but the SIXTH SINGLETON in docs/multi-instance.md's table is NOT
     #: namespaced, and two concurrent games would share one user-data tree.
     #: ``scripts/instance_write_witness.py`` is the check; it FAILS today.
     #:
-    #: L20-C (2026-11-04): the "no command-line switch" half of the quote above is
+    #: The "no command-line switch" half of the quote above is
     #: wrong too. The binary checks ``-userdir=<path>`` through the same argument
     #: table as ``-continuelastsave`` and uses the path as the whole user-data
     #: tree (re/findings/re_userdir.md, static; the public ``ck3agent launch``

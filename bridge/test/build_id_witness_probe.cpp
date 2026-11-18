@@ -1,4 +1,4 @@
-// build_id_witness_probe.cpp — the ck-nkyc leg (e) fixture GENERATOR.
+// build_id_witness_probe.cpp — the leg (e) fixture GENERATOR.
 //
 // The strictness half of leg (e) is a claim about what the GAME PROCESS held in
 // its environment. A python model of that claim would prove the model
@@ -7,7 +7,7 @@
 // src/build_id_witness.cpp and prints the witness it produces, as JSON, for the
 // environment the probe was started with.
 //
-// TWO TARGETS FROM ONE SOURCE, the ck-k57a / speed_read_probe pattern:
+// TWO TARGETS FROM ONE SOURCE, the / speed_read_probe pattern:
 //
 //   build_id_witness_probe                 — the shipped rule.
 //   build_id_witness_probe_prefix_control  — compiled with

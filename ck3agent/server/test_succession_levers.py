@@ -1,4 +1,4 @@
-"""Lane l4 (cleanup 2026.11, F6/F7): the succession levers a CK3 player relies on.
+"""The succession levers a CK3 player relies on.
 
 Driven through the real redesign/tools functions with a scripted gateway, so a row
 reds on what do() SENDS (the bridge action and its parameters) and RETURNS, never on
@@ -74,7 +74,7 @@ class FamilyGateway:
         return r(p) if callable(r) else r
 
     async def clock(self):
-        """Paused: a days lever with a readback (the grant, L14) reads once and waits."""
+        """Paused: a days lever with a readback (the grant) reads once and waits."""
         return {"paused": True, "date": "867.1.1"}
 
     async def write(self, action, params=None):
@@ -243,7 +243,7 @@ def test_title_law_queued_is_pending_not_applied():
 
 
 def test_title_law_names_its_intent_and_reads_back_as_applied():
-    """L13 FF2 (witness m-15) and the FF3 ruling (X1): set_title_law's reply names
+    """ and the ruling (X1): set_title_law's reply names
     its verdict's intent, so the do() tail reads the drain's verdict back, and a
     title law is a stage-1 lever (LEVERS: the command runs on the next pass) whose
     readback is the title's own laws: the drain's success with the law listed is

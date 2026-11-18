@@ -16,7 +16,7 @@ Layout (one top directory, ck3agent-<v>-windows-x86_64/):
   SHA256SUMS       every other file, checked by install.ps1 before anything else
 
 Signing (P7): version.dll must be Authenticode-signed before it is zipped. That
-needs the owner's code-signing certificate and is not done here: --require-signed
+needs a maintainer's code-signing certificate and is not done here: --require-signed
 refuses an unsigned DLL (a PE with no certificate table) so a release run cannot
 ship one by accident.
 """

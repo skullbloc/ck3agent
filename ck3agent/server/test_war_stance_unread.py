@@ -88,7 +88,7 @@ def test_each_unread_step_has_its_own_reason(native, reason):
 
 
 def test_a_read_stance_is_still_the_engines_word():
-    """Control: walk armed and matched (smoke21: 88/88, attacker_offensive)."""
+    """Control: walk armed and matched (88/88, attacker_offensive)."""
     native = _bridge(walk_enabled=True, walk_ran=True, rows=[_bridge_row(
         stance="attacker_offensive", stance_known=True, will_siege=True,
         advice="wait_mobilize")])

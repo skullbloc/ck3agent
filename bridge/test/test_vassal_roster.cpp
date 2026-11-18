@@ -1,4 +1,4 @@
-// test_vassal_roster.cpp — lane l6 (cleanup 2026.11). NO GAME. The direct-vassal
+// test_vassal_roster.cpp —. NO GAME. The direct-vassal
 // read the bridge's realm queries call (vassal_roster.h), driven over a fake memory
 // laid out as dumps ivar867 / 1097 show a ruler's contracts: the ruler's
 // title_realm VASSAL_CONTRACT_ARRAY holds contract refs; each contract carries its
@@ -118,7 +118,7 @@ int main() {
           "contract_with: the first of two contracts with one subject");
     check(contract_with(m, tr, KING, 777) == 0, "contract_with: another liege's vassal has none");
     check(contract_with(m, tr, OTHER, 12829) == 0, "contract_with: not the liege, no contract");
-    // Control (witness #2): a contract keyed where the pre-fix walk looked it up
+    // Control: a contract keyed where the pre-fix walk looked it up
     // (+0x10) is not found, so the test tells the two lookups apart.
     {
         FakeMem k;

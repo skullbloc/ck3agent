@@ -1,4 +1,4 @@
-// ck-otj9 — does rotation KEEP the previous window, and say so when it cannot?
+// Does rotation KEEP the previous window, and say so when it cannot?
 //
 // The old code called freopen(path, "w") on the live FILE*: same inode,
 // truncated, nothing retained. A test could only have grepped for that, and a
@@ -77,7 +77,7 @@ int main() {
     row("live_log_is_empty_after_rotation", slurp(path) == "",
         "writing continues into a fresh file");
 
-    // 2b. rc2 B1: the fresh file is 0600 whatever the umask (freopen took the
+    // 2b.: the fresh file is 0600 whatever the umask (freopen took the
     //     umask: 0666 here), the FILE* other threads hold is the same object,
     //     and writes land in the NEW file, not the archive.
     {
@@ -126,7 +126,7 @@ int main() {
         exists(path + ".3") && !exists(path + ".4"),
         "3 archives kept, the eldest falls off");
 
-    // 4b. ck-zgh4 — THE RING'S OWN TAIL LOSS MUST BE LEGIBLE. A full set of
+    // 4b. — THE RING'S OWN TAIL LOSS MUST BE LEGIBLE. A full set of
     //     archives whose oldest does not begin at tick 1 reads exactly like
     //     complete coverage. The count of files cannot tell you; only a
     //     recorded start marker can.
@@ -179,7 +179,7 @@ int main() {
 
     // 5. A FAILED ARCHIVE MUST SAY SO. If rename cannot run, the caller has
     //    truncated without keeping anything — and must not report success, or a
-    //    destroyed window looks like a retained one (the ck-duv5 rule).
+    //    destroyed window looks like a retained one (the rule).
     fclose(fp);
     const std::string rodir = std::string(dir) + "/ro";
     mkdir(rodir.c_str(), 0755);

@@ -9,19 +9,19 @@
 #include "decision_eval_plan.h"   // the decision eval plan and the typed skip list
 #include "pause_alarm.h"
 #include "action_args.h"
-#include "diag_dtor.h"   // L20-D: the diag record dtor, witnessed from the engine's call
-#include "scope_slot_policy.h"   // ck-zgh4: the scope latch
+#include "diag_dtor.h"   // The diag record dtor, witnessed from the engine's call
+#include "scope_slot_policy.h"   // The scope latch
 #include "engine_text.h"               // war names are rendered text: one cleaner
-#include "instance_paths.h"  // ck-qn03
+#include "instance_paths.h"
 #include "action_dispatch_internal.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "game_date.h"
 #include "line_watch.h"   // METERLINE: query_character(played_line=1)
-#include "speed_read.h"    // ck-k57a: a faulted speed read is an ABSENCE, not a 1
+#include "speed_read.h"    // A faulted speed read is an ABSENCE, not a 1
 #include "pipeline.h"
 #include "budget_ledger.h"
-#include "siege_attribution.h"   // lane l5: which war a siege belongs to
-#include "liege_walk.h"          // L15 A2: an unfinished liege walk is 0, never self
+#include "siege_attribution.h"   // Which war a siege belongs to
+#include "liege_walk.h"          // An unfinished liege walk is 0, never self
 #include "war_side.h"            // which side of a war a character is on: the one definition
 #include "scheme_engine.h"   // l3-schemes: scheme_emit_state
 
@@ -42,8 +42,8 @@ namespace bridge {
 // Runtime flag arming the do_query_war_stance AI-mgr coordinator record walk.
 // DEFAULT ON (WSTANCE, 2026-11-10). It was OFF while the record<->war-id match
 // key (rec+0x18) was unprobed live. It has since matched live on at-war records
-// (node smokes 17/19/21: 30, 54, 30/56 and 88/88 matched; smoke21 read
-// attacker_offensive on war 21), and the hang it was once suspected of (ck-26fm)
+// (node smokes 17/19/21: 30, 54, 30/56 and 88/88 matched; read
+// attacker_offensive on war 21), and the hang it was once suspected of
 // was the SIGSEGV-handler livelock (7ef1039d), which recurred with it disarmed.
 // OFF, nothing armed it outside the ops scripts: the v3 pilots' 8/8
 // inspect(war_stance) reads came back stance "unavailable" because the walk
@@ -78,13 +78,13 @@ struct DefenderState {
 // or garbage pointer never blocks a legitimate war — same posture as the write
 // path. Mirrors intent_dispatch.cpp:1478 (independence) and
 // query_handlers.cpp:124-130 (imprisonment, the AUTHORITATIVE signal — NOT the
-// IS_IMPRISONED predicate which L7 found is an independence check).
+// IS_IMPRISONED predicate which found is an independence check).
 static DefenderState probe_defender_state(uintptr_t holder_addr) {
     DefenderState st;
     if (!holder_addr || !is_mapped(holder_addr)) return st;
     // Independence — authoritative liege resolution (get_liege_id_from_addr
     // normalizes the 0xFFFFFF "no-liege" sentinel; raw title_realm+0x448 is
-    // unreliable and false-rejects independent rulers — L22).
+    // unreliable and false-rejects independent rulers —).
     uint32_t dl = get_liege_id_from_addr(holder_addr) & 0xFFFFFF;
     if (dl != 0xFFFFFF && dl != 0) {
         st.independent = false;
@@ -116,7 +116,7 @@ static bool attacker_has_pressed_claim_on(uintptr_t attacker_addr, uint32_t defe
     if (!data || !is_mapped(data)) return false;
     for (int32_t j = 0; j < cnt; j++) {
         uintptr_t entry = data + j * ck3::claim_entry::ENTRY_SIZE;
-        // lane integ11 (claim_rule.h): the ACTOR's own claim counts pressed or not
+        // The ACTOR's own claim counts pressed or not
         if (!claim_rule::claim_usable(true, safe_read<uint8_t>(entry + ck3::claim_entry::PRESSED) != 0,
                                       /*claimant_is_actor=*/true)) continue;
         uint32_t tid = safe_read<uint32_t>(entry + ck3::claim_entry::TITLE_ID) & 0xFFFFFF;
@@ -146,7 +146,7 @@ static uint32_t resolve_pressed_claim_title(uintptr_t actor_addr, uint32_t defen
     if (!data || !is_mapped(data)) return 0;
     for (int32_t j = 0; j < cnt; j++) {
         uintptr_t entry = data + j * ck3::claim_entry::ENTRY_SIZE;
-        // lane integ11 (claim_rule.h): the ACTOR's own claim counts pressed or not
+        // The ACTOR's own claim counts pressed or not
         if (!claim_rule::claim_usable(true, safe_read<uint8_t>(entry + ck3::claim_entry::PRESSED) != 0,
                                       /*claimant_is_actor=*/true)) continue;
         uint32_t tid = safe_read<uint32_t>(entry + ck3::claim_entry::TITLE_ID) & 0xFFFFFF;
@@ -313,7 +313,7 @@ static bool probe_truce_expiry(void* actor_char, uint32_t target_id,
         if (current_date_raw > 0 && expiry > 0 && expiry < current_date_raw) continue;  // expired
         out_end_date_raw = expiry;
         if (out_end_date_str && str_sz) {
-            ck3::game_date::format_raw(expiry, out_end_date_str, str_sz);  // ck-05mg
+            ck3::game_date::format_raw(expiry, out_end_date_str, str_sz);
         }
         return true;
     }
@@ -403,7 +403,7 @@ static uint32_t char_dynasty_id(uintptr_t char_addr);
 
 // Every trait a character holds, in its array order: fn(trait id, its trait
 // entry or 0 when the id does not resolve). The one reader of the trait array
-// (the profile's traits and search_characters' verbose row, L14 S4).
+// (the profile's traits and search_characters' verbose row).
 template <typename Fn>
 static void for_each_trait(uintptr_t c, Fn&& fn) {
     const uintptr_t arr = safe_read<uintptr_t>(c + ck3::character::TRAIT_ARRAY);
@@ -426,7 +426,7 @@ static uint32_t char_house_id(uintptr_t char_addr);
 static bool is_kin_of(uintptr_t target, uint32_t ref_house, uint32_t ref_dyn);
 static bool family_array_contains(uintptr_t family_ptr, size_t arr_off, uint32_t cid);
 
-// Lane l4 (re/findings/re_interactions.md §4): the engine's matrilinear_marriage reading
+// The engine's matrilinear_marriage reading
 // of two spouses. FUN_04fd7c00 orders the couple husband first by character::IS_FEMALE,
 // GetActiveRelation(husband, wife) binary-searches the husband's relation list, and the
 // marriage is matrilineal when that relation exists and its MATRILINEAL_MARRIAGE byte is
@@ -451,7 +451,7 @@ bool marriage_is_matrilineal(uintptr_t char_a, uintptr_t char_b) {
     }
     return false;
 }
-// ck-6kvq.27: the authoritative top-liege walk (defined below, ~:2100) is
+// The authoritative top-liege walk (defined below, ~:2100) is
 // needed by the character emitter, which sits above its definition.
 static uint32_t get_top_realm_ruler_id(uintptr_t char_addr);
 
@@ -484,7 +484,7 @@ static bool char_is_ai_controlled(uintptr_t c) {
 
 // Helper: build character basic profile into a ResponseBuilder
 //
-// ck-86ue.2: All derived-pointer hops are now guarded with is_mapped() in
+// All derived-pointer hops are now guarded with is_mapped in
 // addition to the safe_read<T>() reads. safe_read returns 0 on unmapped
 // addresses, so the guards never gated previously-valid pointers — they
 // only stop subsequent reads from a derived pointer that is plausibly
@@ -528,7 +528,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
         // Health: int64 fixed-point at core_data + 0x2F0 (VPS MEMORY.md CONFIRMED)
         int64_t health_raw = safe_read<int64_t>(realm_data + ck3::character_vitals::HEALTH);
         r.key("health");   r.value_float(static_cast<double>(health_raw) / 100000.0);
-        // Merit: int64 fixed-point at core_data + 0x170 (CORE_MERIT). L15 A3: this was
+        // Merit: int64 fixed-point at core_data + 0x170 (CORE_MERIT).: this was
         // emitted as `monthly_income`; it is the merit stock (loc key TOTAL_MERIT), 0 for
         // every ruler without merit. The monthly gold income is income_breakdown.total_monthly.
         r.key("merit"); r.value_float(static_cast<double>(safe_read<int64_t>(realm_data + ck3::core_data::CORE_MERIT)) / 100000.0);
@@ -574,7 +574,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
             if (g_logfile) { fprintf(g_logfile, "[CK3-Bridge] build_char_profile: fn_age crashed (sig=%d)\n", sig); fflush(g_logfile); }
         }
         r.key("age"); r.value_int(age);
-        // Lane l4: the sex byte the engine orders a couple by (character::IS_FEMALE).
+        // The sex byte the engine orders a couple by (character::IS_FEMALE).
         r.key("is_female"); r.value_bool(safe_read<uint8_t>(c + ck3::character::IS_FEMALE) != 0);
 
         // Birth date index (raw int16 at char+0x6C)
@@ -583,7 +583,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
     }
 
     // Imprisonment status.
-    // L7 note: do NOT call ck3::funcs::IS_IMPRISONED (0x0664adf0) — that is
+    // note: do NOT call ck3::funcs::IS_IMPRISONED (0x0664adf0) — that is
     // maybe_realm_predicate_inverted (independence predicate), NOT an
     // imprisonment check (flagged ~25% of landed chars as "imprisoned").
     // Authoritative signal (HIGH, verified live pid 680049 vs engine predicate
@@ -748,7 +748,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
         uintptr_t core_data_p = safe_read<uintptr_t>(c + ck3::character::REALM_DATA);
         uintptr_t personality_ptr_p = (core_data_p && is_mapped(core_data_p))
             ? safe_read<uintptr_t>(core_data_p + ck3::core_data::PERSONALITY_PTR) : 0;
-        // ck-86ue.2: replaced inline bounds check with is_mapped() — equivalent
+        // Replaced inline bounds check with is_mapped — equivalent
         // low-bound rejection plus confirmation of /proc/self/maps coverage.
         if (personality_ptr_p && is_mapped(personality_ptr_p)) {
             // Check personality locks — report locked values (what AI actually sees)
@@ -770,7 +770,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
     // Family data: spouse, children, father, mother (safe memory reads only)
     if (verbose && g_logfile) { fprintf(g_logfile, "[CK3-Bridge] .. family\n"); fflush(g_logfile); }
     uintptr_t family_ptr = safe_read<uintptr_t>(c + ck3::character::FAMILY_DATA);
-    // ck-86ue.2: gate family_ptr once at the head — every downstream reader
+    // Gate family_ptr once at the head — every downstream reader
     // (spouses, parents, children) depends on it. Replaces ad-hoc safe_ptr()
     // on spouse_data and silent truthy checks on parent/child readers below.
     bool family_ok = family_ptr && is_mapped(family_ptr);
@@ -798,7 +798,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
                     r.begin_object();
                     r.key("id"); r.value_uint(spouse_id);
                     r.key("alive"); r.value_bool(alive);
-                    // Lane l4: the engine's matrilinear_marriage reading of this couple.
+                    // The engine's matrilinear_marriage reading of this couple.
                     if (spouse_char && alive) {
                         r.key("matrilineal");
                         r.value_bool(marriage_is_matrilineal(c, reinterpret_cast<uintptr_t>(spouse_char)));
@@ -813,7 +813,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
         }
         r.end_array();
 
-        // Lane l4: the betrothed (family::BETROTHED_ID) and whether the betrothal is
+        // The betrothed (family::BETROTHED_ID) and whether the betrothal is
         // matrilineal (the matrilinear_betrothal trigger reads the same relation flag).
         r.key("betrothed");
         {
@@ -872,7 +872,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
 
     if (verbose && g_logfile) { fprintf(g_logfile, "[CK3-Bridge] .. realm\n"); fflush(g_logfile); }
     r.key("liege_id");  r.value_uint(get_liege_id_from_addr(c));
-    // Lane l4: the ruler's designated heir, where set_designated_heir keeps it
+    // The ruler's designated heir, where set_designated_heir keeps it
     // (GetDesignatedHeirRef FUN_0674a380: *(char+0x1B8)+0x1B4); null when none.
     {
         const uintptr_t realm = safe_read<uintptr_t>(c + ck3::character::TITLE_REALM_DATA);
@@ -881,9 +881,9 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
         r.key("designated_heir_id");
         if (dh != 0xFFFFFFFFu && (dh & 0xFFFFFF)) r.value_uint(dh & 0xFFFFFF); else r.value_null();
     }
-    // ck-6kvq.27. The INDEPENDENT ruler at the head of this character's liege
+    // The INDEPENDENT ruler at the head of this character's liege
     // chain — an independent character walks to their OWN id, and 0 means the
-    // walk could not be made (get_top_realm_ruler_id, liege_walk.h; L15 A2: an
+    // walk could not be made (get_top_realm_ruler_id, liege_walk.h; an
     // unresolved liege is 0, no longer the character's own id). `liege_id` alone is one hop and a
     // sub-vassal's one hop is not a side; english_side_v1 keys on the TOP.
     r.key("top_liege_id"); r.value_uint(get_top_realm_ruler_id(c));
@@ -893,8 +893,8 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
     bool is_ruler = (title_data != 0);
 
     r.key("has_realm"); r.value_bool(is_ruler);
-    // ck-86ue.2: title_data is already validated by resolve_title_realm()
-    // (which carries is_mapped() from ck-86ue.1). Downstream DB-traversal
+    // Title_data is already validated by resolve_title_realm
+    // (which carries is_mapped from). Downstream DB-traversal
     // pointers below pick up the same is_mapped() pattern.
     if (title_data) {
         // domain_size = number of directly held counties (tier == 2 only)
@@ -938,7 +938,7 @@ static void build_char_profile(ResponseBuilder& r, void* character) {
         if (title_arr_ptr && is_mapped(title_arr_ptr) && title_arr_count > 0) {
             uint32_t primary_tid = safe_read<uint32_t>(title_arr_ptr);
             r.key("primary_title_id"); r.value_uint(primary_tid & 0xFFFFFF);
-            // lookup_title_obj already carries is_mapped() guards (ck-86ue.1).
+            // lookup_title_obj already carries is_mapped guards.
             uintptr_t tobj = lookup_title_obj(primary_tid);
             if (tobj) {
                 auto display_name = ad_read_std_string(tobj + ck3::title_obj::TITLE_DISPLAY_NAME);
@@ -996,7 +996,7 @@ static void emit_played_line(ResponseBuilder& r, uint32_t start_id) {
         if (w.status == played_line::WatchStatus::SuccessorPending) {
             r.key("pending_reason"); r.value_string(played_line::pending_name(w.reason));
         }
-        // owner ruling 2026-11-12: the line's END is the bridge's observed
+        // The line's END is the bridge's observed
         // decision (line_watch.h line_ended), dated, and terminal.
         if (w.status == played_line::WatchStatus::LineEnded) {
             r.key("ended_date"); r.value_string(w.ended_date.c_str(), w.ended_date.size());
@@ -1009,7 +1009,7 @@ static void emit_played_line(ResponseBuilder& r, uint32_t start_id) {
 }
 
 bool do_query_character(const char* params_json, std::string* out) {
-    FaultScope fault_scope("query_character", out);   // L14 S4 (audit 3(iii)): nests; a caller's fault record survives this handler
+    FaultScope fault_scope("query_character", out);   // (audit 3(iii)): nests; a caller's fault record survives this handler
     void* character = resolve_character(params_json);
     if (!character || is_sentinel(character)) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] query_character: character not found\n");
@@ -1114,7 +1114,7 @@ bool do_query_opinion_breakdown(const char* params_json, std::string* out) {
     }
     auto format_date = [](int32_t raw_date, char* buf, size_t bufsz) {
         if (raw_date <= 0) { snprintf(buf, bufsz, "none"); return; }
-        ck3::game_date::format_raw(raw_date, buf, bufsz);  // ck-05mg
+        ck3::game_date::format_raw(raw_date, buf, bufsz);
     };
 
     uintptr_t actor_ptr = reinterpret_cast<uintptr_t>(actor);
@@ -1460,11 +1460,11 @@ static int count_realm_counties(uintptr_t ruler_addr, uint32_t ruler_id, int* un
 
 // query_realm: realm structure for a character
 bool do_query_realm(const char* params_json, std::string* out) {
-    // ck-86ue.2: All derived-pointer hops now guarded with is_mapped().
+    // All derived-pointer hops now guarded with is_mapped.
     // resolve_title_realm/lookup_title_obj/lookup_character carry their own
-    // is_mapped() guards from ck-86ue.1; the body adds is_mapped() at every
+    // is_mapped guards from; the body adds is_mapped at every
     // intermediate hop (rd/core_data, title_data sub-arrays, vassal data).
-    FaultScope fault_scope("query_realm", out);   // L14 S4 (audit 3(iii)): nests; a caller's fault record survives this handler
+    FaultScope fault_scope("query_realm", out);   // (audit 3(iii)): nests; a caller's fault record survives this handler
     void* character = resolve_character(params_json);
     if (!character || is_sentinel(character)) {
         return false;
@@ -1537,7 +1537,7 @@ bool do_query_realm(const char* params_json, std::string* out) {
     // realm_size: DIRECTLY-held title count (all tiers). NOTE: this is NOT a
     // realm-growth proxy — it stays flat when a vassal conquers more land, since
     // the vassal's titles never enter THIS ruler's held-title array. For "total
-    // land under authority" use realm_total_counties below (ck-realmsize).
+    // land under authority" use realm_total_counties below.
     r.key("realm_size");       r.value_int(title_data ? safe_read<int32_t>(title_data + ck3::title_realm::TITLE_ARRAY_COUNT) : 0);
     r.key("held_title_count"); r.value_int(title_data ? safe_read<int32_t>(title_data + ck3::title_realm::TITLE_ARRAY_COUNT) : 0);
     // realm_total_counties: TRUE vassal-inclusive realm size — every county under
@@ -1548,7 +1548,7 @@ bool do_query_realm(const char* params_json, std::string* out) {
         uint32_t ruler_id = char_get_id(character) & 0xFFFFFF;
         int unresolved = 0;
         r.key("realm_total_counties"); r.value_int(count_realm_counties(c_ptr, ruler_id, &unresolved));
-        // L15 A2: county holders whose liege walk could not be made are in no
+        // County holders whose liege walk could not be made are in no
         // realm's count; when there are any, the total is a lower bound.
         if (unresolved > 0) { r.key("realm_total_counties_unresolved"); r.value_int(unresolved); }
     }
@@ -1575,7 +1575,7 @@ bool do_query_realm(const char* params_json, std::string* out) {
             r.key("primary_title_id"); r.value_uint(masked_tid);
 
             // Look up title in DB to get name, tier, and display name
-            // lookup_title_obj already carries is_mapped() guards (ck-86ue.1).
+            // lookup_title_obj already carries is_mapped guards.
             uintptr_t title_obj = lookup_title_obj(primary_tid);
             if (title_obj) {
                 // Title display name — custom/localized name at title+0x58 (std::string, GCC SSO)
@@ -1645,7 +1645,7 @@ bool do_query_realm(const char* params_json, std::string* out) {
         r.key("war_count"); r.value_int(0);
     }
 
-    // Income from core_data. L15 A3: `accumulated` (core_data+0x2E8) is gone: that
+    // Income from core_data.: `accumulated` (core_data+0x2E8) is gone: that
     // field is BASE_HEALTH, not money (ck3_offsets.h).
     r.key("income"); r.begin_object();
     r.key("monthly");     r.value_float(static_cast<float>(safe_read<int64_t>(rd + ck3::core_data::MONTHLY_INCOME)) / 100000.0f);
@@ -1866,7 +1866,7 @@ bool do_query_succession(const char* params_json, std::string* out) {
         uint8_t faith_req = eff.faith;
 
         // The key is on the title's TYPE (TITLE_TYPE_PTR -> NAME_KEY); the
-        // instance's +0x10 is its TITLE_ID (L14 FB, M-1).
+        // instance's +0x10 is its TITLE_ID (M-1).
         const uintptr_t best_type = safe_read<uintptr_t>(best_title_ptr + ck3::title_obj::TITLE_TYPE_PTR);
         std::string tname = (best_type && is_mapped(best_type))
             ? ad_read_std_string(best_type + ck3::db_object::NAME_KEY) : std::string();
@@ -2263,7 +2263,7 @@ bool do_query_title_succession_map(const char* params_json, std::string* out) {
 // ruler with no liege is reached — that ruler IS the independent top-liege. A
 // holder who is already independent returns its own id (get_liege_id_from_addr→0).
 //
-// L15 A2: a walk that cannot finish (a liege that does not look up, a liege
+// A walk that cannot finish (a liege that does not look up, a liege
 // loop, 30 hops) returns 0 = "the walk could not be made" (liege_walk.h). It
 // used to return the id reached so far: the character's OWN id when its first
 // liege did not resolve, so a vassal read as independent. Every caller below
@@ -2282,7 +2282,7 @@ static uint32_t get_top_realm_ruler_id(uintptr_t char_addr) {
 
 // The top liege of a character by id (0: does not look up, or the walk could
 // not be made). The handoff's realm guard reads it (bridge_init.cpp
-// succession_target_realm, owner ruling 2026-11-12).
+// succession_target_realm).
 uint32_t top_liege_id_of(uint32_t cid) {
     void* c = lookup_character(cid & 0xFFFFFF);
     if (!c || is_sentinel(c)) return 0;
@@ -2325,7 +2325,7 @@ static int count_demesne_counties(uintptr_t char_addr) {
 // Helper: TRUE total realm size = every county under a ruler's authority,
 // recursively (own demesne + every direct/indirect vassal's held counties).
 //
-// ROOT CAUSE this fixes (ck-realmsize): `realm_size` had been emitted as
+// ROOT CAUSE this fixes: `realm_size` had been emitted as
 // title_realm+0x1EC (TITLE_ARRAY_COUNT) — the count of titles the ruler holds
 // DIRECTLY (all tiers, incl. duchies/baronies). That number is flat when a
 // vassal conquers more land (the vassal's titles never enter the ruler's own
@@ -2429,7 +2429,7 @@ static void build_realm_county_index(std::unordered_map<uint32_t, int>& index) {
 //     the same LANDED_TITLE_DB + NAME_KEY iteration create_title's title_key path
 //     uses.
 //   - the count: dejure_share (intent_dispatch.cpp), the one function the #131
-//     create_title de-jure gate also counts through (L14 FB m-2). total is
+//     create_title de-jure gate also counts through. total is
 //     collect_dejure_counties' SUB_TITLE_ARRAY(0x258)/SUB_TITLE_COUNT(0x264)
 //     recursive walk; held is a county whose HOLDER_CHAR_ID's liege chain
 //     reaches the ruler (char_in_realm_of: the ruler or a vassal at any depth).
@@ -2498,7 +2498,7 @@ bool do_query_dejure_progress(const char* params_json, std::string* out) {
     // same walk; default (no verbose) keeps the lean {held,total,fraction} shape.
     bool verbose = json_get_int(params_json, "verbose") != 0;
 
-    // L13 D1: this read runs on the game thread, inside the session-pass drain,
+    // This read runs on the game thread, inside the session-pass drain,
     // under the session's command mutex: no engine command and no daily tick can
     // run while it does, so the de-jure children vector cannot be half rebuilt
     // under it. The settle-until-stable loop that re-collected for up to ~2 s
@@ -2506,7 +2506,7 @@ bool do_query_dejure_progress(const char* params_json, std::string* out) {
     // clear-then-repopulate window from the IPC thread) is deleted with that
     // race; it would now stall the session thread for >= 100 ms per kingdom.
     // The count is dejure_share's (intent_dispatch.cpp), the one the #131
-    // create_title gate uses (L14 FB m-2): a county is held when its holder's
+    // create_title gate uses: a county is held when its holder's
     // liege chain reaches the ruler (the ruler or a vassal at any depth). Before
     // m-2 the meter counted holders whose TOP liege was the ruler, so a ruler who
     // is himself a vassal read 0 here while the gate counted his realm.
@@ -2516,7 +2516,7 @@ bool do_query_dejure_progress(const char* params_json, std::string* out) {
     const int held  = share.held;
     if (verbose) r.key("counties"), r.begin_array();
     for (const DejureCounty& row : rows) {
-        // ck-6kvq.27. The INDEPENDENT ruler at the head of this holder's liege
+        // The INDEPENDENT ruler at the head of this holder's liege
         // chain, the field the paper's english_side_v1 predicate keys on.
         // Without it a per-county record carries only a holder_id, and a
         // holder_id says nothing about which SIDE holds the county: over a
@@ -2558,7 +2558,7 @@ bool do_query_dejure_progress(const char* params_json, std::string* out) {
 // Monthly telemetry emitter (TASK B)
 //
 // Appends ONE compact JSONL line per game-MONTH for the controlled ruler to
-// <telemetry>/gen_current.jsonl (per-instance since ck-qn03). Called from on_tick.
+// <telemetry>/gen_current.jsonl (per-instance since). Called from on_tick.
 // Design constraints: cheap, crash-safe, never blocks the tick.
 //  - Off the hot path: returns immediately unless the game MONTH changed since
 //    the last emission (tracked in a file-static), so the body runs ~12x/game-yr.
@@ -2571,7 +2571,7 @@ bool do_query_dejure_progress(const char* params_json, std::string* out) {
 void emit_monthly_telemetry(int32_t raw_date) {
     // --- Month-rollover gate (keeps this off the hot path) ---
     // raw_date is sub-day ticks (24/day) since DATE_EPOCH. Convert to an absolute
-    // year*12+month index so we emit exactly once per game month. ck-05mg: via
+    // year*12+month index so we emit exactly once per game month.: via
     // the shared real-calendar helper — with 30-day months the rollover fired on
     // the wrong day and a phantom 13th month fired a 13th time per year.
     int32_t month_index = ck3::game_date::raw_to_month_index(raw_date);
@@ -2650,7 +2650,7 @@ void emit_monthly_telemetry(int32_t raw_date) {
     r.key("date");                  r.value_string(date_str);
     r.key("controlled_id");         r.value_uint(controlled_id);
     r.key("realm_total_counties");  r.value_int(realm_total_counties);
-    if (realm_counties_unresolved > 0) {   // L15 A2: the total is then a lower bound
+    if (realm_counties_unresolved > 0) {   // The total is then a lower bound
         r.key("realm_total_counties_unresolved"); r.value_int(realm_counties_unresolved);
     }
     r.key("realm_size");            r.value_int(realm_size);
@@ -2668,9 +2668,9 @@ void emit_monthly_telemetry(int32_t raw_date) {
     std::string line = r.take();
 
     // --- Append to the JSONL file (best-effort; create the dir if needed) ---
-    ::mkdir(bridge::instance_telemetry_dir(), bridge::instance_dir_mode());   // ck-qn03: per-instance
+    ::mkdir(bridge::instance_telemetry_dir(), bridge::instance_dir_mode());   // Per-instance
     std::string gen_path = std::string(bridge::instance_telemetry_dir()) + "/gen_current.jsonl";
-    FILE* f = bridge::instance_fopen_private(gen_path.c_str(), "a");   // rc2 B1: 0600, O_NOFOLLOW
+    FILE* f = bridge::instance_fopen_private(gen_path.c_str(), "a");   // 0600, O_NOFOLLOW
     if (f) {
         ::fputs(line.c_str(), f);
         ::fputc('\n', f);
@@ -2809,7 +2809,7 @@ bool do_query_claims(const char* params_json, std::string* out) {
                 r.key("holder_in_alliance"); r.value_bool(in_alliance);
                 r.key("holder_in_truce"); r.value_bool(in_truce);
                 r.key("already_at_war_opposing"); r.value_bool(opp);
-                // lane integ11 (claim_rule.h): these are the character's OWN claims
+                // These are the character's OWN claims
                 const bool usable = claim_rule::claim_usable(true, pressed != 0, /*claimant_is_actor=*/true);
                 bool declarable = usable && !is_self && ds.independent
                                   && !ds.imprisoned && !in_alliance && !in_truce && !opp;
@@ -2957,7 +2957,7 @@ bool do_query_claims(const char* params_json, std::string* out) {
 // query_de_jure: de jure hierarchy for a title — IMPLEMENTED + crash-hardened.
 //   Title DB: ck3::globals::LANDED_TITLE_DB (== TITLE_DB == 0x0bed2700). Lookup
 //   via lookup_title_obj() (dispatch_router.cpp): DB ptr through safe_read_offset,
-//   is_mapped() on table+entry, ID-verify on the resolved object (ck-86ue.1).
+//   is_mapped on table+entry, ID-verify on the resolved object.
 //   Walk: DE_JURE_PARENT (title_obj+0x250, CORRECTED #116 — was the de-facto
 //   field 0x230) upward (depth<5), SUB_TITLE_ARRAY/SUB_TITLE_COUNT for children
 //   (sub_cnt clamped 0..500). Every read in do_query_de_jure goes through
@@ -3055,7 +3055,7 @@ static void emit_title_info(ResponseBuilder& r, uintptr_t tobj) {
     }
 }
 
-// L16 (ruling R9): a title array whose count reads outside [0, 500] is not a
+// A title array whose count reads outside [0, 500] is not a
 // list the handler can walk; it used to be zeroed into an empty array, which
 // read as a successful "holds none". The reply is now an error naming the raw
 // count and the field it came from, with no list.
@@ -3158,7 +3158,7 @@ bool do_query_title_hierarchy(const char* params_json, std::string* out) {
             return false;
         }
 
-        // L16 (R9): every held title resolves before anything is emitted. A
+        // Every held title resolves before anything is emitted. A
         // title whose lookup fails (or whose sub-title count is out of range)
         // makes the reply an error naming it: the list would otherwise be
         // shorter than the realm's count and read as complete.
@@ -3423,13 +3423,13 @@ bool do_query_county_details(const char* params_json, std::string* out) {
         emit_faith_fields(r, ruler_faith_id, "ruler_faith", "ruler_faith_key");
     }
 
-    // ck-86ue.3: every derived-pointer hop now carries is_mapped() in addition
+    // Every derived-pointer hop now carries is_mapped in addition
     // to the safe_read<T>() reads. safe_read returns 0 on unmapped addresses,
     // so the guards never gate previously-valid pointers — they stop subsequent
     // reads from a non-null-but-unmapped derived pointer (sentinel 0x1, freed-
     // and-reused, half-constructed object) from leaking garbage into the JSON.
 
-    // Core data (char+0x1a8): gold, piety, prestige. L15 A3: no `monthly_income`: it
+    // Core data (char+0x1a8): gold, piety, prestige.: no `monthly_income`: it
     // read core_data+0x2E8, which is BASE_HEALTH (ck3_offsets.h), not income.
     uintptr_t core = safe_read<uintptr_t>(c + ck3::character::REALM_DATA);
     if (core && is_mapped(core)) {
@@ -3600,14 +3600,14 @@ bool do_query_county_details(const char* params_json, std::string* out) {
                     r.key("matches_ruler"); r.value_bool(matches_faith && matches_culture);
                 }
 
-                // Development progress toward next level (ck-3nzw)
+                // Development progress toward next level
                 int64_t dev_prog_fp = safe_read<int64_t>(county_data + ck3::county::DEV_PROGRESS);
                 double dev_prog_pct = static_cast<double>(dev_prog_fp) / 10000000.0 * 100.0;
                 if (dev_prog_pct >= 0.0 && dev_prog_pct <= 100.0) {
                     r.key("dev_progress_pct"); r.value_float(dev_prog_pct);
                 }
 
-                // Average neighbor development level (ck-3nzw)
+                // Average neighbor development level
                 uintptr_t nbr_arr = safe_read<uintptr_t>(county_data + ck3::county::NEIGHBOR_ARRAY);
                 int32_t nbr_cnt = safe_read<int32_t>(county_data + ck3::county::NEIGHBOR_COUNT);
                 if (nbr_cnt < 0 || nbr_cnt > 100) nbr_cnt = 0;
@@ -3762,10 +3762,10 @@ bool do_query_county_details(const char* params_json, std::string* out) {
     return true;
 }
 
-// Helper: navigate county title_id → CCountyData pointer (ck-3nzw)
+// Helper: navigate county title_id → CCountyData pointer
 // Returns 0 if navigation fails at any step.
 //
-// ck-86ue.3: migrated to safe_read<T> + is_mapped() at every derived-pointer
+// Migrated to safe_read<T> + is_mapped at every derived-pointer
 // hop. Shared by do_query_development_growth (Tier-2 inline-safe gated) —
 // the previous raw safe_read<>() chain could SIGSEGV if any link was unmapped
 // (sentinel 0x1, freed-and-reused, half-constructed object).
@@ -3804,7 +3804,7 @@ static uintptr_t resolve_county_data(uint32_t title_id) {
     return county_data;
 }
 
-// query_development_growth: estimate monthly development growth for counties (ck-3nzw)
+// query_development_growth: estimate monthly development growth for counties
 // If title_id is provided, queries that specific county. Otherwise queries all counties
 // of the specified character (like query_county_details).
 bool do_query_development_growth(const char* params_json, std::string* out) {
@@ -3957,7 +3957,7 @@ bool do_query_development_growth(const char* params_json, std::string* out) {
     return true;
 }
 
-// query_province_adjacency: true geographic adjacency via province template SAdjacency data (ck-s1eb)
+// query_province_adjacency: true geographic adjacency via province template SAdjacency data
 // Walks province_template adjacency arrays to find physically bordering provinces/counties,
 // independent of de jure hierarchy. Returns per-province adjacency with type, distance, and
 // the owning county/holder for each neighbor.
@@ -4253,7 +4253,7 @@ static uint32_t nb_county_holder(uint32_t county_tid) {
     return (h == 0xFFFFFF) ? 0 : h;
 }
 
-// query_county_neighbors: list neighboring counties with dev/faith/culture (ck-3nzw)
+// query_county_neighbors: list neighboring counties with dev/faith/culture
 //
 // lane-query item 4: title_id is no longer required. With title_id=0 the
 // character (character_id, 0 = the controlled ruler) is resolved instead:
@@ -4332,7 +4332,7 @@ bool do_query_county_neighbors(const char* params_json, std::string* out) {
                     void* hc = lookup_character(holder);
                     uint32_t top = (hc && !is_sentinel(hc))
                         ? get_top_realm_ruler_id(reinterpret_cast<uintptr_t>(hc)) & 0xFFFFFF : 0;
-                    // L15 A2: an unfinished liege walk is not a ruler id 0
+                    // An unfinished liege walk is not a ruler id 0
                     if (top) { r.key("realm_ruler_id"); r.value_uint(top); }
                     else     { r.key("realm_ruler_unresolved"); r.value_bool(true); }
                 }
@@ -4415,7 +4415,7 @@ bool do_query_county_neighbors(const char* params_json, std::string* out) {
                 uintptr_t hcp = reinterpret_cast<uintptr_t>(hc);
                 if (nb_in_realm_of(hcp, root_id)) continue;   // held inside after all
                 uint32_t top = get_top_realm_ruler_id(hcp) & 0xFFFFFF;
-                if (!top) { ruler_unresolved++; continue; }   // L15 A2: not a realm "0"
+                if (!top) { ruler_unresolved++; continue; }   // Not a realm "0"
                 by_ruler[top]++;
             }
         }
@@ -4725,8 +4725,8 @@ static void emit_war_entry(ResponseBuilder& r, uintptr_t war_ptr,
             r.end_object();
         }
     } else {
-        // Cache MISS or STALE entry (hook refreshes are being rejected —
-        // ck-xwlg): clamp the estimated (battle+ticking) score to [-100, 100]
+        // Cache MISS or STALE entry (hook refreshes are being rejected)
+        // clamp the estimated (battle+ticking) score to [-100, 100]
         // rather than emitting the fossil 0.
         WarScoreBreakdown stale_probe{};
         bool had_stale = query_war_score_breakdown(war_id, &stale_probe);
@@ -4759,7 +4759,7 @@ static void emit_war_entry(ResponseBuilder& r, uintptr_t war_ptr,
 }
 
 // Enumerate every active war in WAR_DB. Used when the caller does not scope
-// query_wars to a specific character (ck-fbij: no-args path previously returned
+// query_wars to a specific character (no-args path previously returned
 // success=false instead of surfacing the full active-war set).
 static bool query_wars_all_active(std::string* out, bool verbose = false) {
     uintptr_t war_db = safe_read<uintptr_t>(g_base_addr + ck3::globals::WAR_DB);
@@ -4807,7 +4807,7 @@ static bool query_wars_all_active(std::string* out, bool verbose = false) {
 }
 
 // =============================================================================
-// L6: get_active_wars — unpaused-safe MINIMAL active-wars brief.
+// Get_active_wars — unpaused-safe MINIMAL active-wars brief.
 //
 // The full per-turn report only surfaced war info in the paused-gated Tier-2
 // block, so in an unpaused human-vs-agent game the agent never learned it was
@@ -4907,7 +4907,7 @@ bool do_get_active_wars(const char* params_json, std::string* out) {
             r.key("defender_id"); r.value_uint(def);
 
             // cb_type: the war's CB, so declare_war's idempotency check can
-            // match target AND CB (L15-D, witness r4 NIT-3); absent when unread.
+            // match target AND CB (NIT-3); absent when unread.
             {
                 std::string cb_name = war_cb_type_name(war_ptr);
                 if (!cb_name.empty()) {
@@ -4918,7 +4918,7 @@ bool do_get_active_wars(const char* params_json, std::string* out) {
             // through read_war_target_titles, the read query_wars and the war
             // hooks make. declare_war matches its cb_title_id against it, so a
             // declaration for ANOTHER title against a target already at war is a
-            // new war, not `already_at_war` (L15 witness m7).
+            // new war, not `already_at_war` .
             {
                 uint32_t tt[20];
                 const int tn = read_war_target_titles(war_ptr, tt, 20);
@@ -4948,7 +4948,7 @@ bool do_get_active_wars(const char* params_json, std::string* out) {
             }
 
             // war_score + favored_side ONLY if the breakdown cache has a FRESH
-            // entry. A stale entry (hook refreshes rejected — ck-xwlg) is a
+            // entry. A stale entry (hook refreshes rejected —) is a
             // fossil, typically the all-zero day-one breakdown; flag it instead
             // of reporting it as truth (this compact path has no live estimate).
             WarScoreBreakdown wbd{};
@@ -4975,7 +4975,7 @@ bool do_get_active_wars(const char* params_json, std::string* out) {
 }
 
 bool do_query_wars(const char* params_json, std::string* out) {
-    // No-args path (ck-fbij): enumerate the global WAR_DB when the caller
+    // No-args path: enumerate the global WAR_DB when the caller
     // neither passed character_id nor set a controlled character. Previously
     // this returned success=false with no payload.
     safe_read_clear();
@@ -4993,7 +4993,7 @@ bool do_query_wars(const char* params_json, std::string* out) {
     void* character = resolve_character(params_json);
     if (!character || is_sentinel(character)) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] query_wars: character not found\n");
-        // ck-09q4u.8: emit a structured failure so callers can distinguish
+        // Emit a structured failure so callers can distinguish
         // "actor not resolvable" from "actor has 0 wars". Previously the
         // handler returned false with no payload, the dispatch wrapper
         // synthesized {"success":false,"action":"query_wars"}, and callers
@@ -5249,7 +5249,7 @@ bool do_query_war_score_breakdown(const char* params_json, std::string* out) {
     r.begin_object();
 
     // Parse optional war_id: absent (-1) and 0 both mean every cached war
-    // (war_scope.h; L20-A: absent used to read as war 0xFFFFFFFF).
+    // (war_scope.h; absent used to read as war 0xFFFFFFFF).
     uint32_t war_id = bridge::war_scope::from_param(json_get_int(params_json, "war_id"));
 
     auto emit_breakdown = [&](uint32_t wid, const WarScoreBreakdown& bd) {
@@ -5307,7 +5307,7 @@ bool do_query_war_score_breakdown(const char* params_json, std::string* out) {
         WarScoreBreakdown bd{};
         WarScoreRejectReason wrej = WarScoreRejectReason::None;
         bool fresh = query_war_score_breakdown_fresh(war_id, &bd, &wrej);
-        // A stale entry (hook refreshes rejected — ck-xwlg) no longer counts as
+        // A stale entry (hook refreshes rejected —) no longer counts as
         // engine truth for total/favored_side, but its components are still
         // shown below as the last-known values.
         bool cached_raw = fresh || query_war_score_breakdown(war_id, &bd);
@@ -5446,7 +5446,7 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
     int actor_id = json_get_int(params_json, "character_id");
     if (actor_id <= 0) actor_id = json_get_int(params_json, "attacker_id");
     if (actor_id <= 0) {
-        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // The one resolver (actor_resolve.h). This site's
         // historical chain, kept for a session that declared no seat, is
         // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
         // a typed no_actor refusal, never another seat's ruler.
@@ -5457,7 +5457,7 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
         return false;
     }
     uint32_t my_id = static_cast<uint32_t>(actor_id) & 0xFFFFFF;
-    // The optional war scope (war_scope.h). L20-A / smoke17 A3: read as a plain
+    // The optional war scope (war_scope.h).: read as a plain
     // cast, an absent war_id (-1) was the scope 0xFFFFFFFF and dropped every row.
     const uint32_t want_war = bridge::war_scope::from_param(json_get_int(params_json, "war_id"));
     const bool walk_enabled =
@@ -5485,7 +5485,7 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
     r.key("stance_db_resolved"); r.value_bool(stance_db_ok && stance_rev.size() == 7);
     r.key("record_walk_enabled"); r.value_bool(walk_enabled);
 
-    // ---- Per-char AI controller state (ck-xwlg P2 instrumentation) ------------
+    // ---- Per-char AI controller state (P2 instrumentation) ------------
     // ai_ctrl+0x28 gates the ENTIRE per-char AI tick (CAIManager_MainTick) —
     // when 0 the war coordinator never re-plans and armies park (the old
     // M-003 class). Surfacing it here makes "is the char's AI even running"
@@ -5517,7 +5517,7 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
 
     // ---- Layer 2 (flag-gated): AI-mgr coordinator record walk -----------------
     // Build {war slot → both sides' records}: the manager holds one record per
-    // war PER SIDE (war_stance_record.h; L22 smoke19 A3: one slot per war let the
+    // war PER SIDE (war_stance_record.h; one slot per war let the
     // record walked last decide both the row's side and its stance).
     // Only when the runtime flag is armed AND the live ai_manager is captured.
     std::map<uint32_t, bridge::war_stance_record::WarRecs> rec_stance;   // war slot → records
@@ -5619,7 +5619,7 @@ bool do_query_war_stance(const char* params_json, std::string* out) {
 
             r.begin_object();
             // The full handle (generation byte and slot), as every other war read
-            // emits it (L12): the slot index alone named a different war once the
+            // emits it: the slot index alone named a different war once the
             // slot was reused, and redesign's war_stance join keys on war_id.
             r.key("war_id"); r.value_uint(stored);
             std::string wname = clean_engine_text(ad_read_std_string(war_ptr + ck3::war_obj::NAME_DATA_PTR));  // the rendered name, as words
@@ -6382,7 +6382,7 @@ bool do_query_maa_types(const char* params_json, std::string* out) {
     if (actor && is_sentinel(actor)) actor = nullptr;
 
     std::map<std::string, int> fielded;
-    // L12: the arrays' own lengths and how many refs the walk could not name, so
+    // The arrays' own lengths and how many refs the walk could not name, so
     // a reader that lost a regiment (refs counted, none typed) and a realm that
     // lost one (fewer refs) are told apart by the reply itself.
     int32_t refs_personal = -1, refs_title = -1;
@@ -7420,7 +7420,7 @@ bool do_query_interaction_acceptance(const char* params_json, std::string* out) 
     // Resolve actor_id (defaults to controlled character)
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id <= 0) {
-        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // The one resolver (actor_resolve.h). This site's
         // historical chain, kept for a session that declared no seat, is
         // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
         // a typed no_actor refusal, never another seat's ruler.
@@ -7566,7 +7566,7 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
     uintptr_t gs = safe_read_offset<uintptr_t>(ck3::globals::GAME_STATE_ROOT);
     if (gs) {
         int32_t raw_date = safe_read<int32_t>(gs + ck3::game_state::GAME_DATE);
-        // Raw date is in sub-day ticks (24 per day) since DATE_EPOCH. ck-05mg:
+        // Raw date is in sub-day ticks (24 per day) since DATE_EPOCH.:
         // rendered through the shared real-calendar helper — this is the field
         // the meter lane copies verbatim as the paper's time axis.
         int year = 0, month = 0, day = 0;
@@ -7577,7 +7577,7 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
         r.key("game_year"); r.value_int(year);
 
         // Game speed from game_state + GAME_SPEED (0-indexed: 0-4 stored, 1-5
-        // display). ck-k57a: the `+ 1` is applied ONLY on a read that actually
+        // display).: the `+ 1` is applied ONLY on a read that actually
         // happened. `safe_read` returns 0 on a fault, so the old
         // `value_int(speed_raw + 1)` reported a memory fault as a legal
         // "speed 1" — see bridge/include/speed_read.h for the full shape.
@@ -7591,7 +7591,7 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
         r.key("game_date"); r.value_string("unknown");
         r.key("game_year"); r.value_int(0);
         // Root unreadable: still a typed ABSENCE, not the integer 0. The 0 that
-        // consumers have routed to abstain since ck-u2e6 is preserved on
+        // consumers have routed to abstain since is preserved on
         // `game_speed_legacy` for anything that predates `speed_read_status`.
         bridge::speed::emit(r, bridge::speed::classify(false, false, 0));
     }
@@ -7599,7 +7599,7 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
     // Pause state — delegate to is_paused() (event_handler.cpp) which uses get_idler()
     r.key("paused"); r.value_bool(is_paused());
 
-    // L13 D4: every bridge clock write, counted by origin (clock_write,
+    // Every bridge clock write, counted by origin (clock_write,
     // event_handler.cpp). All four keys are always present, integers; a client
     // that sees one move across a call that is not a session clock verb has
     // caught the bridge changing the clock.
@@ -7614,7 +7614,7 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
         r.end_object();
     }
 
-    // L20-A: the game-day pause alarm (pause_alarm.h), always present: state
+    // The game-day pause alarm (pause_alarm.h), always present: state
     // "none" until the first unpause_game {"pause_at"}; "armed" with its target;
     // "fired" with the date the drain paused at; "cleared" with what cleared it.
     {
@@ -7650,7 +7650,7 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
     // Controlled character info
     uint32_t ctrl_id = g_controlled_primary.load(std::memory_order_relaxed);
     r.key("controlled_character_id"); r.value_uint(ctrl_id);
-    // rc2 B6: why no ruler is bound, when the bridge itself unbound one
+    // Why no ruler is bound, when the bridge itself unbound one
     // ("heir_is_player": the human inherited the seat's ruler). "" otherwise.
     {
         const std::string why = ctrl_id == 0 ? g_session_registry.first_unbound_reason()
@@ -7666,7 +7666,7 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
     // profile (tier-2) is only read while PAUSED — so when the game runs
     // unpaused (speed 5) the death goes unnoticed and the agent steers a
     // corpse. Surface liveness here (tier-1, always available paused OR
-    // unpaused) so the alert fires regardless of pause state. (live-run L25.)
+    // unpaused) so the alert fires regardless of pause state. (live-run.)
     if (ctrl_id != 0 && g_char_is_alive) {
         void* cc = lookup_character(ctrl_id);
         if (cc && !is_sentinel(cc)) {
@@ -7690,13 +7690,13 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
     uint32_t heir_id = g_controlled_heir.load(std::memory_order_relaxed);
     r.key("controlled_heir_id"); r.value_uint(heir_id);
 
-    // Bridge toggles needed for per-scenario isolation (ck-fysa.5).
+    // Bridge toggles needed for per-scenario isolation.
     // No symmetric getter exists for toggle_all_ai; exposing it here keeps the
     // harness on a single snapshot endpoint.
     uint8_t ai_toggle = safe_read<uint8_t>(g_base_addr + ck3::globals::AI_GLOBAL_TOGGLE);
     r.key("all_ai_enabled"); r.value_bool(ai_toggle != 0);
 
-    // ck-6kvq.9 / §2.10: pipeline state is published HERE and nowhere else.
+    // / §2.10: pipeline state is published HERE and nowhere else.
     // get_tick_info is Tier-1, always safe, and already the universal liveness
     // endpoint — so the self-heal ladder, the overlay poller, the harness and
     // the agent all learn the pipeline for free. Always emitted, including in
@@ -7704,12 +7704,12 @@ bool do_get_tick_info(const char* /*params_json*/, std::string* out) {
     // be able to tell which mode it is talking to without a second call.
     bridge::pipeline_emit_state(r);
 
-    // ck-6kvq.13 / R6: the decision budget rides along on the same Tier-1
+    // / R6: the decision budget rides along on the same Tier-1
     // endpoint, for the same reason — every watchdog, the harness and the
     // agent learn whether a session is spent without a second call.
     bridge::budget_emit_state(r);
 
-    // ck-9fc3 / R7: the save/world IDENTITY and the personality-lock restore
+    // / R7: the save/world IDENTITY and the personality-lock restore
     // decision, published HERE for the same reason the pipeline state is —
     // get_tick_info is Tier-1, always safe, and already the universal liveness
     // endpoint. `save_identity.resume_gap` is what a harness samples to record
@@ -7748,7 +7748,7 @@ static bool mc_capital_xy(uintptr_t c, int32_t& out_x, int32_t& out_y);
 
 bool do_get_ai_evaluations(const char* params_json, std::string* out) {
     FaultScope fault_scope("get_ai_evaluations", out);
-    // ck-86ue.2: All derived-pointer hops guarded with is_mapped() in addition
+    // All derived-pointer hops guarded with is_mapped in addition
     // to the safe_read<T>() reads. Previous inline bounds checks
     // (`ptr > 0x10000 && ptr < 0x7FFFFFFFFFFF`) were equivalent low-bound
     // rejection but did not consult /proc/self/maps; is_mapped() does.
@@ -7815,7 +7815,7 @@ bool do_get_ai_evaluations(const char* params_json, std::string* out) {
     r.key("gold"); r.value_float(gold);
     r.key("prestige"); r.value_float(prestige);
     r.key("piety"); r.value_float(piety);
-    // L15 A3: no `monthly_income`: it read core_data+0x2E8 = BASE_HEALTH, not income.
+    // No `monthly_income`: it read core_data+0x2E8 = BASE_HEALTH, not income.
     r.key("stress"); r.value_uint(stress);
 
     // -------------------------------------------------------------------------
@@ -7831,7 +7831,7 @@ bool do_get_ai_evaluations(const char* params_json, std::string* out) {
 
     // -------------------------------------------------------------------------
     // 4. AI Controller: the per-character AI switch. (tick_counters was deleted
-    // in cleanup 2026.11, lane l6, F10: it read ai_ctrl+0x268, but the counters
+    // in, F10: it read ai_ctrl+0x268, but the counters
     // live in the extended state behind ai_ctrl::EXT_STATE_PTR; the first two
     // "counters" were the two halves of a pointer and differed every launch.)
     // -------------------------------------------------------------------------
@@ -8172,7 +8172,7 @@ std::string enumerate_interactions() {
 }
 
 // =============================================================================
-// Decision validity / requirements evaluation (ck-decision-validity)
+// Decision validity / requirements evaluation
 // =============================================================================
 //
 // Evaluates a single decision's is_shown / is_valid / cost trigger blocks
@@ -8262,7 +8262,7 @@ bool dv_eval_block(uintptr_t trigger_block, uintptr_t scope_ctx, bool* crashed) 
 
 // Harvest the requirement loc-key from the loud-failure diag record for a
 // failing trigger block. Mirrors loud_extract_slot_key. On any failure leaves
-// out_key empty and returns false. L20 integration: *dtor_unwitnessed is set
+// out_key empty and returns false. integration: *dtor_unwitnessed is set
 // when the extraction was refused because resolve_diag_dtor() could not witness
 // the destructor (the row then says so; it is not a requirement-less "no").
 bool dv_extract_failure_key(uintptr_t trigger_block, uintptr_t scope_ctx,
@@ -8275,7 +8275,7 @@ bool dv_extract_failure_key(uintptr_t trigger_block, uintptr_t scope_ctx,
     typedef void (*fn_diag_dtor)(void*);
     auto fn_populate = reinterpret_cast<fn_eval_with_failures>(
         g_base_addr + ck3::trigger_eval_funcs::EVAL_WITH_FAILURES);
-    // L20-D: destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
+    // Destroy with the function the engine's own EVAL_WITH_FAILURES calls, or
     // refuse the extraction (diag_dtor.h); never jump to an unwitnessed address.
     const uintptr_t dtor_addr = bridge::resolve_diag_dtor(g_base_addr, is_mapped_range);
     if (!dtor_addr) {
@@ -8403,7 +8403,7 @@ void dv_evaluate(uintptr_t decision, uintptr_t scope_ctx, DvFields& f) {
 
     f.valid = dv_eval_block(decision + ck3::decision_type::IS_VALID, scope_ctx, &crashed);
     if (crashed) { f.eval_error = true; return; }
-    // L22 (smoke19 D1): the diagnostic pass only for a shown decision
+    // The diagnostic pass only for a shown decision
     // (decision_eval_plan.h: it faulted 3x on not-shown candidates).
     if (bridge::decision_eval::extract_failure_key(f.shown, f.valid)) {
         dv_extract_failure_key(decision + ck3::decision_type::IS_VALID, scope_ctx,
@@ -8431,7 +8431,7 @@ void dv_evaluate(uintptr_t decision, uintptr_t scope_ctx, DvFields& f) {
 // it; on the NEXT bridge start (after the monitor relaunches the frozen game) we promote
 // the stranded in-flight hash into the persistent skip file. Each culprit freezes at
 // most ONCE, then is skipped forever. (re_resolution_decisions64.md)
-// rc2 B1: in the instance state dir (/tmp in legacy layout, else private),
+// In the instance state dir (/tmp in legacy layout, else private),
 // opened through the verified state-dir fd (O_NOFOLLOW), never by path.
 static constexpr const char* kDecisionInflight = "ck3-decision-inflight";
 static constexpr const char* kDecisionSkip     = "ck3-decision-skip";
@@ -8475,7 +8475,7 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
     g_in_protected_region = false;
 
     // The character was resolved by the caller, submit_decision_eval, on the
-    // requesting thread (lane ACTOR: actor_resolve.h needs the request's session,
+    // requesting thread (actor_resolve.h needs the request's session,
     // which the game thread that runs this does not carry).
     uint32_t use_id = char_id & 0xFFFFFF;
     void* character = (use_id != 0) ? lookup_character(use_id) : nullptr;
@@ -8531,7 +8531,7 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
 
     // Arm the fake RNG scope around the whole eval loop (trigger leaves advance
     // the RNG; null RandomScopeManager+0x20 on this thread would null-deref).
-    // ck-zgh4 scope latch. This one is a READ — discover(decisions) — so it
+    // scope latch. This one is a READ — discover(decisions) — so it
     // refuses with read wording: telling a seat its "action is unavailable"
     // when it asked for a listing would misdescribe what it lost. The latch
     // costs the agent a planning read as well as its arming verbs, which is a
@@ -8569,10 +8569,10 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
     volatile int considered = 0;
     auto t_start = std::chrono::steady_clock::now();
     // Time budget: this runs on the game thread holding the session mutex, so it
-    // stops at kGameThreadEvalBudgetMs (L13 FF2, witness R6; was 4 s) and says so
+    // stops at kGameThreadEvalBudgetMs (was 4 s) and says so
     // (partial:true, the count it considered).
     volatile bool budget_hit = false;
-    // L20-B: which requested decisions a DB entry matched (list mode); the rest
+    // Which requested decisions a DB entry matched (list mode); the rest
     // are emitted as `unmatched` after the loop.
     std::vector<std::string> matched_names;
     std::vector<uint32_t>    matched_hashes;
@@ -8600,11 +8600,11 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
 
                 // #64 LIST-MODE: when specific decisions were requested, evaluate ONLY those
                 // (bounded → fast + freeze-safe). Match by name-hash or by decision key name.
-                // L20-B: the decision's own key, read BEFORE any engine eval (a
+                // The decision's own key, read BEFORE any engine eval (a
                 // safe read of the DB object), so a row whose eval faults or is
                 // skip-listed still names the decision asked for. The hash-only
                 // table (resolve_decision_name) knows a handful of decisions;
-                // smoke17 B3's visit_local_shrine_decision faulted, was emitted
+                // visit_local_shrine_decision faulted, was emitted
                 // with a hash and no name, and the reader could not match it.
                 std::string key_name;
                 {
@@ -8642,7 +8642,7 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
                     rb.key("hash"); rb.value_uint((uint32_t)hash);
                     rb.key("eval_error"); rb.value_bool(true);
                     rb.key("eval_skipped"); rb.value_bool(true);
-                    // L22: which kind of entry (decision_eval_plan.h): a seed names
+                    // Which kind of entry (decision_eval_plan.h): a seed names
                     // what was observed; a learned hash is a stranded in-flight
                     // marker from a freeze in an earlier run on this host.
                     const auto* seed = bridge::decision_eval::seed_for((uint32_t)hash);
@@ -8751,7 +8751,7 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
                     if (!f.cost_ok && f.fail_cost[0]) rb.value_string(f.fail_cost);
                     if (!afford_ok) rb.value_string("cannot_afford_decision");
                     rb.end_array();
-                    // L20 integration: a failed block whose key could not be read because
+                    // integration: a failed block whose key could not be read because
                     // the diag dtor was not witnessed (diag_dtor.h) says so on the row.
                     if (f.dtor_unwitnessed) {
                         rb.key("failure_key_unwitnessed"); rb.value_bool(true);
@@ -8780,7 +8780,7 @@ std::string enumerate_decisions_annotated(uint32_t char_id, bool valid_only,
     rb.key("eval_errors"); rb.value_int(eval_errors);
     rb.key("valid_only"); rb.value_bool(valid_only);
     if (list_mode) {
-        // L20-B: requested decisions no DB entry matched. With partial:true the
+        // Requested decisions no DB entry matched. With partial:true the
         // walk stopped early, so an entry here may be one it never reached.
         rb.key("unmatched"); rb.begin_array();
         for (const std::string& u : bridge::decision_unmatched(req_names, req_hashes,
@@ -8829,7 +8829,7 @@ static bool submit_decision_eval(const char* params_json, bool valid_only, std::
     // culprit decision) — serve the light name+hash list instead (the safe default).
     std::vector<uint32_t>    req_hashes;
     std::vector<std::string> req_names;
-    // L18-B: framed ({"params":{"decisions":[...]}}) or flat, through action_args.
+    // Framed ({"params":{"decisions":[...]}}) or flat, through action_args.
     bridge::decision_request(params_json, &req_hashes, &req_names);
     if (req_hashes.empty() && req_names.empty()) {
         // No specific decisions requested → safe light list (name+hash, no engine eval).
@@ -8840,7 +8840,7 @@ static bool submit_decision_eval(const char* params_json, bool valid_only, std::
     int st = g_decision_eval_query.state.load(std::memory_order_acquire);
     if (st == 1 || st == 4) { *out = R"({"error":"decision_eval_busy","hint":"Another decisions query is pending; retry shortly."})"; return true; }
     if (st == 2 || st == 3) g_decision_eval_query.state.store(0, std::memory_order_release);
-    // lane ACTOR: resolved HERE, where the request's session is installed (the
+    // Resolved HERE, where the request's session is installed (the
     // eval runs on the game thread). Historical chain: global mirror, then
     // PLAYER_CHAR_ID; a seat gets its own primary or a typed no_actor refusal.
     const uint32_t eval_char = resolve_actor_id(cid > 0 ? static_cast<uint32_t>(cid) : 0,
@@ -8938,7 +8938,7 @@ std::string enumerate_decisions() {
 }
 
 // =============================================================================
-// ck-ul5i: engine-source truce partner enumeration.
+// Engine-source truce partner enumeration.
 //
 // The verify-round3 live probe caught do_query_relations returning truces:[]
 // for a live scripted truce that the ENGINE pair-probe sees and enforces
@@ -9030,11 +9030,11 @@ bool do_query_relations(const char* params_json, std::string* out) {
 
     // Helper lambda: convert raw CK3 date to "YYYY.MM.DD" string
     auto format_date = [](int32_t raw_date, char* buf, size_t bufsz) {
-        ck3::game_date::format_raw(raw_date, buf, bufsz);  // ck-05mg
+        ck3::game_date::format_raw(raw_date, buf, bufsz);
     };
 
     // ---- 1. Truces ----
-    // ck-ul5i: the ENGINE truce list is the authoritative membership source —
+    // The ENGINE truce list is the authoritative membership source —
     // GET_TRUCE_LIST(char), the exact list the strict CB validator's
     // target_state.in_truce probe SIMD-searches and the engine's own truce
     // culls consult. The legacy CDiplomaticRelation walk (diplomatic_data
@@ -9111,7 +9111,7 @@ bool do_query_relations(const char* params_json, std::string* out) {
                         continue;
                     }
 
-                    // ck-ul5i: already emitted from the engine list above.
+                    // Already emitted from the engine list above.
                     if (std::find(engine_truce_ids.begin(), engine_truce_ids.end(),
                                   target_id) != engine_truce_ids.end()) continue;
 
@@ -9153,7 +9153,7 @@ bool do_query_relations(const char* params_json, std::string* out) {
     r.end_array();
     r.key("truce_count"); r.value_int(truce_count);
     r.key("engine_truce_count"); r.value_int(engine_truce_count);
-    // Honesty flag (ck-ul5i): "unavailable" = the GET_TRUCE_LIST read could not
+    // Honesty flag: "unavailable" = the GET_TRUCE_LIST read could not
     // run (getter/list unmapped or faulted) — engine truces may be missing from
     // truces[] and in_truce enforcement can still refuse a war this reply does
     // not predict. Never silently empty.
@@ -9253,7 +9253,7 @@ bool do_query_hooks(const char* params_json, std::string* out) {
     }
 
     auto format_date = [](int32_t raw_date, char* buf, size_t bufsz) {
-        ck3::game_date::format_raw(raw_date, buf, bufsz);  // ck-05mg
+        ck3::game_date::format_raw(raw_date, buf, bufsz);
     };
 
     r.key("hooks"); r.begin_array();
@@ -9615,7 +9615,7 @@ bool do_query_valid_cbs(const char* params_json, std::string* out) {
     // Resolve actor_id (defaults to controlled character)
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id <= 0) {
-        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // The one resolver (actor_resolve.h). This site's
         // historical chain, kept for a session that declared no seat, is
         // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
         // a typed no_actor refusal, never another seat's ruler.
@@ -9785,7 +9785,7 @@ bool do_query_valid_cbs(const char* params_json, std::string* out) {
     r.key("deferred"); r.value_bool(true);
     r.key("status"); r.value_string("timeout");
 
-    // ck-wc9w instrumentation: classify race / hang / empty
+    // instrumentation: classify race / hang / empty
     r.key("diagnostic"); r.begin_object();
     r.key("final_state"); r.value_int(final_state);
     r.key("classification"); r.value_string(classification);
@@ -9817,7 +9817,7 @@ bool do_query_valid_cbs(const char* params_json, std::string* out) {
 }
 
 // =============================================================================
-// query_cb_validity_strict — per-CB outer/inner verdict surface (ck-5qpg)
+// query_cb_validity_strict — per-CB outer/inner verdict surface
 // =============================================================================
 //
 // Mirrors the spec wire format in re/specs/casus-belli/bridge-tools-proposed.md.
@@ -10071,7 +10071,7 @@ bool do_query_cb_validity_strict(const char* params_json, std::string* out) {
     FaultScope fault_scope("query_cb_validity_strict", out);
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id <= 0) {
-        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // The one resolver (actor_resolve.h). This site's
         // historical chain, kept for a session that declared no seat, is
         // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
         // a typed no_actor refusal, never another seat's ruler.
@@ -10107,15 +10107,15 @@ bool do_query_cb_validity_strict(const char* params_json, std::string* out) {
     r.key("target_id"); r.value_uint(static_cast<uint32_t>(target_id) & 0xFFFFFF);
 
     // Document which spec gates this implementation actually evaluates so
-    // agents do not over-trust the verdict. ck-laf5 added per-CB
+    // agents do not over-trust the verdict. added per-CB
     // allowed_for_character via SCRIPT_TRIGGER_EVALUATOR on the actor-bound
-    // scope_buf from ck-p3wn.
+    // scope_buf from.
     r.key("gates_evaluated"); r.begin_array();
     r.value_string("stage1_bilateral");
     r.value_string("stage2_group_flags");
-    r.value_string("stage2_group_is_valid_trigger");      // ck-p3wn
-    r.value_string("stage3_kind_relation_mode");          // ck-it6e
-    r.value_string("per_cb_allowed_for_character");       // ck-laf5
+    r.value_string("stage2_group_is_valid_trigger");
+    r.value_string("stage3_kind_relation_mode");
+    r.value_string("per_cb_allowed_for_character");
     r.value_string("inner_cb_validity_check");
     // read-side declarability honesty (war_validity_discovery): mirrors the
     // steered-write gates into the per-CB `declarable` field for claim CBs.
@@ -10153,7 +10153,7 @@ bool do_query_cb_validity_strict(const char* params_json, std::string* out) {
     r.key("candidates_post_outer"); r.value_int(summary.candidates_post_outer);
     r.key("inner_valid");           r.value_int(summary.inner_valid);
     r.key("inner_invalid");         r.value_int(summary.inner_invalid);
-    // ck-9fbs: ENABLED_FLAG enumeration of the per-install CB DB. Lets the
+    // ENABLED_FLAG enumeration of the per-install CB DB. Lets the
     // agent deterministically identify the DLC-disabled / has_game_rule
     // subset (e.g. the 16-CB delta on BuildID e61ff264… cycle 2-38) without
     // heuristic name-prefix matching.
@@ -10657,7 +10657,7 @@ bool do_query_cbs_for_target(const char* params_json, std::string* out) {
     int actor_id = json_get_int(params_json, "attacker_id");
     if (actor_id <= 0) actor_id = json_get_int(params_json, "character_id");
     if (actor_id <= 0) {
-        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // The one resolver (actor_resolve.h). This site's
         // historical chain, kept for a session that declared no seat, is
         // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
         // a typed no_actor refusal, never another seat's ruler.
@@ -10725,7 +10725,7 @@ bool do_query_cbs_for_targets(const char* params_json, std::string* out) {
     int actor_id = json_get_int(params_json, "attacker_id");
     if (actor_id <= 0) actor_id = json_get_int(params_json, "character_id");
     if (actor_id <= 0) {
-        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // The one resolver (actor_resolve.h). This site's
         // historical chain, kept for a session that declared no seat, is
         // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
         // a typed no_actor refusal, never another seat's ruler.
@@ -10801,7 +10801,7 @@ bool do_query_cbs_for_targets(const char* params_json, std::string* out) {
     r.key("batched"); r.value_bool(true);  // one drain window for all targets
 
     int ok_count = 0, busy_count = 0;
-    // L13 FF2 (witness R6): on the game thread, holding the session mutex: stop
+    // On the game thread, holding the session mutex: stop
     // at kGameThreadEvalBudgetMs and name the targets not reached (partial).
     const auto budget_start = std::chrono::steady_clock::now();
     std::vector<uint32_t> unprocessed;
@@ -11109,7 +11109,7 @@ bool do_query_call_to_arms(const char* params_json, std::string* out) {
             bool is_offensive = on_atk;  // attacking on a war we did not start
 
             r.begin_object();
-            r.key("war_id"); r.value_uint(stored);   // the full handle (L12), as query_wars
+            r.key("war_id"); r.value_uint(stored);   // the full handle, as query_wars
             std::string wname = clean_engine_text(ad_read_std_string(war_ptr + ck3::war_obj::NAME_DATA_PTR));  // the rendered name, as words
             if (!wname.empty()) { r.key("war_name"); r.value_string(wname.c_str()); }
             r.key("called_by_ally"); r.value_uint(called_by);
@@ -11147,7 +11147,7 @@ bool do_query_call_to_arms(const char* params_json, std::string* out) {
 // returns per-CB index/name/target_mode plus enabled_count/disabled_count and
 // disabled_cb_names in the summary. This handler stays in the bridge for
 // scripts/tests that need the static catalog without an actor+target pair
-// (re/findings/re_test_suite_audit.md §3; ck-xoj6x).
+// (re/findings/re_test_suite_audit.md §3).
 // =============================================================================
 
 // Cache: populated on first call, returned verbatim afterwards
@@ -11383,7 +11383,7 @@ bool do_search_characters(const char* params_json, std::string* out) {
     // GET_AGE call are NOT consumed by any agent path (digestor.py / prompts.py
     // read only id/name/military/gold/realm_size/tier). Emit them only on opt-in.
     bool verbose           = json_get_bool(params_json, "verbose", false);
-    // L14 S4 (surface-eval minor 10): female=true|false keeps one sex
+    // Female=true|false keeps one sex
     // (character::IS_FEMALE); absent = both. A present non-boolean is refused.
     int want_female = -1;
     if (json_has_key(params_json, "female")) {
@@ -11399,7 +11399,7 @@ bool do_search_characters(const char* params_json, std::string* out) {
     if (!filter_str || !filter_str[0]) filter_str = "alive";
     if (!sort_str || !sort_str[0])     sort_str   = "military";
     if (!order_str || !order_str[0])   order_str  = "desc";
-    // ck-bd4w: clamp out-of-range values rather than resetting to default.
+    // Clamp out-of-range values rather than resetting to default.
     // L1b: lean default lowers the row count (25) and clamp ceiling (500) to
     // keep payloads small; verbose callers retain the wider 5000 ceiling for
     // bulk pool enumeration (16B per Candidate -> ~80 KB worst case).
@@ -11431,7 +11431,7 @@ bool do_search_characters(const char* params_json, std::string* out) {
 
     // Filter flags
     bool filter_alive       = true;   // always filter dead unless filter=all or filter=dead
-    bool filter_dead_only   = false;  // ck-a1fw: filter=dead → only dead characters
+    bool filter_dead_only   = false;  // Filter=dead → only dead characters
     bool filter_ruler       = false;
     bool filter_independent = false;
     bool filter_ai          = false;
@@ -11488,7 +11488,7 @@ bool do_search_characters(const char* params_json, std::string* out) {
         // Alive/dead filter: read DEAD_FLAG byte directly (faster than function call for bulk scan)
         // filter=alive (default)    → skip dead
         // filter=all                → keep both
-        // filter=dead  (ck-a1fw)    → skip alive
+        // filter=dead     → skip alive
         uint8_t dead_flag_byte = safe_read<uint8_t>(c + ck3::character::DEAD_FLAG);
         if (filter_alive) {
             if (dead_flag_byte != 0) continue;
@@ -11607,10 +11607,10 @@ bool do_search_characters(const char* params_json, std::string* out) {
         // localizes it (lane-namekey).
         emit_char_name(r, c);
 
-        // ck-a1fw: is_dead exposed so harness can consume filter=dead/all results.
+        // Is_dead exposed so harness can consume filter=dead/all results.
         uint8_t dead_byte = safe_read<uint8_t>(c + ck3::character::DEAD_FLAG);
         r.key("is_dead"); r.value_bool(dead_byte != 0);
-        // L14 S4: who a court holds, in one read (HIGH character::IS_FEMALE; the
+        // Who a court holds, in one read (HIGH character::IS_FEMALE; the
         // dynasty through char_dynasty_name, the one reader; absent when none).
         r.key("is_female"); r.value_bool(safe_read<uint8_t>(c + ck3::character::IS_FEMALE) != 0);
         {
@@ -11670,7 +11670,7 @@ bool do_search_characters(const char* params_json, std::string* out) {
         }
         r.key("tier"); r.value_int(tier);
 
-        // Government type (ck-51, 20260614): title_realm+0x3F0 → CGovernmentType*;
+        // Government type (20260614): title_realm+0x3F0 → CGovernmentType*;
         // key std::string at gov_obj+0x10. Lets callers filter feudal/clan/
         // administrative/tribal/mandala/etc. (the feudal-vs-admin distinction the
         // matrix flagged as missing). Empty for unlanded chars.
@@ -11702,7 +11702,7 @@ bool do_search_characters(const char* params_json, std::string* out) {
             r.key("prowess");     r.value_int(safe_read<int32_t>(c + ck3::character::SKILL_PROWESS));
             r.end_object();
 
-            // L14 S4: trait names (for_each_trait, the profile's reader). Per
+            // Trait names (for_each_trait, the profile's reader). Per
             // returned row only (never per scanned character): the array, then
             // a table slot and a name per trait.
             r.key("traits"); r.begin_array();
@@ -11737,7 +11737,7 @@ bool do_search_characters(const char* params_json, std::string* out) {
 // picking a candidate, gate the actual proposal with
 //   discover(what="acceptance", interaction_type="arrange_marriage_interaction").
 // Uses only HIGH-confidence offsets already exercised by do_search_characters
-// and do_query_diplomatic_range. (re_marriage_eligibility.md, ck-leg)
+// and do_query_diplomatic_range. (re_marriage_eligibility.md)
 // =============================================================================
 
 // Resolve a character's capital map coordinates (liege-walk for unlanded).
@@ -11801,7 +11801,7 @@ bool do_query_marriage_candidates(const char* params_json, std::string* out) {
     int actor_param = json_get_int(params_json, "character_id");
     if (actor_param < 0) actor_param = 0;
     uint32_t actor_id = static_cast<uint32_t>(actor_param) & 0xFFFFFF;
-    // lane ACTOR: the one resolver; historical chain the global mirror only.
+    // The one resolver; historical chain the global mirror only.
     if (actor_id == 0) actor_id = resolve_actor_id(0, LegacyChain::MirrorOnly).id & 0xFFFFFF;
 
     const char* sort_str = json_get_string(params_json, "sort");
@@ -12154,7 +12154,7 @@ bool do_query_title_claimants(const char* params_json, std::string* out) {
                     // (get_liege_id_from_addr normalizes the 0xFFFFFF "no-liege"
                     // sentinel and the junk economy-sentinel object the raw
                     // title_realm+0x448 LIEGE_PTR returns for an independent
-                    // ruler — L22 / dispatch_router.cpp:85). Returns 0 for a
+                    // ruler — / dispatch_router.cpp:85). Returns 0 for a
                     // landless courtier (no title_realm), so the courtier_data
                     // fallback below still runs.
                     uint32_t lid = get_liege_id_from_addr(c) & 0xFFFFFF;
@@ -12181,7 +12181,7 @@ bool do_query_title_claimants(const char* params_json, std::string* out) {
                                  (holder_state.independent && !holder_state.imprisoned
                                   && !holder_in_alliance && !holder_in_truce
                                   && !holder_already_at_war);
-                // lane integ11 (claim_rule.h): pressed, or the attacker's OWN claim
+                // Pressed, or the attacker's OWN claim
                 const bool usable = claim_rule::claim_usable(true, pressed, char_id == atk_id);
                 bool backable = usable && in_court && holder_ok;
                 r.key("backable_by_attacker"); r.value_bool(backable);
@@ -12413,7 +12413,7 @@ bool do_query_title_succession(const char* params_json, std::string* out) {
     uint8_t gender   = title_succ_rule(tobj).gender;
     uint8_t division = title_succ_rule(tobj).division;
     r.key("succession_order"); r.value_string(dec_order(order));
-    // Lane l4: the title's own succession laws (the title-scoped CLaw* vector; empty =
+    // The title's own succession laws (the title-scoped CLaw* vector; empty =
     // the holder's realm law applies). The read set_title_law is checked against.
     {
         r.key("title_laws"); r.begin_array();
@@ -12631,7 +12631,7 @@ bool do_query_valid_war_targets(const char* params_json, std::string* out) {
             r.key("target_in_alliance"); r.value_bool(t_in_alliance);
             r.key("target_in_truce"); r.value_bool(t_in_truce);
             r.key("already_at_war_opposing"); r.value_bool(t_opp);
-            // lane integ11 (claim_rule.h): the actor's OWN claim
+            // The actor's OWN claim
             const bool usable = claim_rule::claim_usable(true, pressed != 0, /*claimant_is_actor=*/true);
             bool declarable = usable && ds.independent && !ds.imprisoned
                               && !t_in_alliance && !t_in_truce && !t_opp;
@@ -12659,7 +12659,7 @@ bool do_query_valid_war_targets(const char* params_json, std::string* out) {
     // economy/sentinel object whose char-id reads 0xFFFFFF, which the old code
     // emitted as a bogus independence row against character 16777215 — a doomed
     // war the engine culls. The resolver returns 0 for an independent actor, so
-    // no row is emitted. (L22 / dispatch_router.cpp:85.)
+    // no row is emitted. (/ dispatch_router.cpp:85.)
     {
         uint32_t liege_id = get_liege_id_from_addr(ac) & 0xFFFFFF;
         if (liege_id != 0 && liege_id != 0xFFFFFF && liege_id != actor_id && target_count < 50) {
@@ -12737,7 +12737,7 @@ bool do_query_valid_war_targets(const char* params_json, std::string* out) {
     bool include_conquest_cbs = true;
     if (json_has_key(params_json, "include_conquest_cbs"))
         include_conquest_cbs = json_get_bool(params_json, "include_conquest_cbs");
-    // L15 A2: the actor's own realm is excluded by its top liege; when that walk
+    // The actor's own realm is excluded by its top liege; when that walk
     // cannot be made the conquest rows are UNMEASURED (named at the top), never
     // listed against a realm we cannot tell from our own. A holder whose walk
     // cannot be made is counted, not listed as its own top liege.
@@ -12988,7 +12988,7 @@ bool do_query_valid_war_targets(const char* params_json, std::string* out) {
 }
 
 // =============================================================================
-// query_conquest_targets (#110, lane l5 F8) — conquest targeting by de-jure duchy.
+// query_conquest_targets (#110, F8) — conquest targeting by de-jure duchy.
 //
 // Enumerates the counties a ruler could conquer, rolled up by de-jure duchy, so a
 // player can pick the duchy closest to completion and declare on its holder.
@@ -13021,7 +13021,7 @@ bool do_query_valid_war_targets(const char* params_json, std::string* out) {
 //      wedged/paused game thread degrades to the heuristic (never hangs).
 // =============================================================================
 
-// A dynasty id is only a dynasty id if DYNASTY_DB agrees it is one (ck-vvqu).
+// A dynasty id is only a dynasty id if DYNASTY_DB agrees it is one.
 //
 // WHY THIS EXISTS. char_dynasty_id trusted any non-sentinel value it found and
 // returned it as a dynasty. The bridge-verification seat measured what that
@@ -13056,7 +13056,7 @@ static bool dynasty_id_resolves(uint32_t id) {
 // FIX I12 (#dynasty_fallback): family+0x10 is 0/0xFFFFFFFF for landed rulers, so
 // derive dynasty_id from the house (char+0x150 -> HOUSE_DB -> +0x24) as a fallback.
 //
-// FIX ck-vvqu: THE I12 COMMENT ABOVE IS FALSE AS A GENERALISATION AND IS KEPT
+// FIX: THE I12 COMMENT ABOVE IS FALSE AS A GENERALISATION AND IS KEPT
 // SO A READER CAN SEE WHAT WAS BELIEVED. family+0x10 is NOT uniformly sentinel
 // for landed rulers -- the struct populates later, at runtime, per game state,
 // which is why three episodes read right and five read wrong at the same world
@@ -13069,7 +13069,7 @@ static bool dynasty_id_resolves(uint32_t id) {
 // to the dynasty we failed to read. A wrong-but-plausible id gets no such
 // treatment, which is exactly why returning one is worse than returning none.
 //
-// Lane l4 (re/findings/re_interactions.md §4b): the phantom above is now explained.
+// The phantom above is now explained.
 // family+0x10 is the BETROTHED character's id, set when a betrothal exists, which is
 // why it "populated at runtime" and resolved as a living character. The dynasty is
 // read from the house only.
@@ -13119,7 +13119,7 @@ static bool family_array_contains(uintptr_t family_ptr, size_t arr_off, uint32_t
 }
 
 bool do_query_conquest_targets(const char* params_json, std::string* out) {
-    // L13: a game-thread read (is_game_state_query) like the other graph walks,
+    // A game-thread read (is_game_state_query) like the other graph walks,
     // so its safe_read faults answer degraded, never a silent 0.
     FaultScope fault_scope("query_conquest_targets", out);
     // Resolve ruler (actor_id / character_id / controlled default).
@@ -13148,7 +13148,7 @@ bool do_query_conquest_targets(const char* params_json, std::string* out) {
     // (conquerable_now_source="heuristic" / block_reason="not_adjacent_unverified") —
     // a documented, non-fatal degradation; the agent re-queries a specific target via
     // query_cbs_for_target for the authoritative verdict, or raises max_engine_checks
-    // (clamped at 16) when it has budgeted for a longer call. L13 D1: the handler
+    // (clamped at 16) when it has budgeted for a longer call.: the handler
     // runs on the game thread in either clock state, and each engine check runs
     // there directly (cb_query_strict_full_sync services the slot inline on the
     // game thread), so no check waits on a slot nobody services (the heuristic-
@@ -13338,7 +13338,7 @@ bool do_query_conquest_targets(const char* params_json, std::string* out) {
         bool independent = true, is_kin = false, is_allied = false, is_truced = false;
         bool already_at_war = false;
         uint32_t top_liege = 0;
-        // L15 A2: false when the holder or its liege walk did not read (top_liege
+        // False when the holder or its liege walk did not read (top_liege
         // 0); the sub-vassal gate is then UNMEASURED and the heuristic never passes.
         bool top_liege_measured = false;
         bool top_liege_independent = false;
@@ -13657,7 +13657,7 @@ bool do_query_conquest_targets(const char* params_json, std::string* out) {
     // actionable duchies.
     // A named `toward` title goes first (pass 0, adjacent or not): the player asked
     // about those holders, and the engine is the one that knows whether they reach.
-    // L13 FF2 (witness R6): the checks run on the game thread holding the
+    // The checks run on the game thread holding the
     // session mutex, so they stop at kGameThreadEvalBudgetMs; the holders a check
     // would have reached past the budget are listed (engine_checks_remaining) and
     // their rows keep the heuristic verdict.
@@ -13846,7 +13846,7 @@ bool do_query_conquest_targets(const char* params_json, std::string* out) {
     // query_cbs_for_target for the authoritative verdict on those.
     r.key("engine_checks_truncated"); r.value_bool(engine_checks_done >= max_engine_checks ||
                                                    budget_stopped);
-    // L13 FF2 (witness R6): stopped by the game-thread time budget, and the
+    // Stopped by the game-thread time budget, and the
     // holders it did not reach.
     r.key("engine_checks_budget_ms"); r.value_int(kGameThreadEvalBudgetMs);
     r.key("engine_checks_stopped_by_budget"); r.value_bool(budget_stopped);
@@ -13890,7 +13890,7 @@ bool do_query_conquest_targets(const char* params_json, std::string* out) {
 // same Stage 1+2 outer filter plus the engine's inner CB_VALIDITY_CHECK without
 // the BUILD_SEND/PopulateOptions reentry cost. This handler stays for
 // diagnostic cross-validation against the engine's own option population path
-// (re/findings/re_test_suite_audit.md §3; ck-xoj6x).
+// (re/findings/re_test_suite_audit.md §3).
 // =============================================================================
 
 // CB flag_key hash → human-readable name lookup table
@@ -13925,7 +13925,7 @@ bool do_query_cb_options(const char* params_json, std::string* out) {
     // --- Parse parameters ---
     int actor_id_param = json_get_int(params_json, "actor_id");
     if (actor_id_param <= 0) {
-        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // The one resolver (actor_resolve.h). This site's
         // historical chain, kept for a session that declared no seat, is
         // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
         // a typed no_actor refusal, never another seat's ruler.
@@ -13975,7 +13975,7 @@ bool do_query_cb_options(const char* params_json, std::string* out) {
         option_count <= 0 || option_count > 100) {
         if (out) {
             char buf[256];
-            // rc2 B2: no option_array_ptr (a process VA) in the reply.
+            // No option_array_ptr (a process VA) in the reply.
             snprintf(buf, sizeof(buf),
                      R"({"error":"no_cb_options","option_count":%d})", option_count);
             *out = buf;
@@ -14150,7 +14150,7 @@ bool do_query_cb_options(const char* params_json, std::string* out) {
     return true;
 }
 
-#ifdef CK3_BRIDGE_DEBUG_VERBS  // rc2 B2: raw memory reads (memory_probe, resolve_global) are compiled out of release builds
+#ifdef CK3_BRIDGE_DEBUG_VERBS  // Raw memory reads (memory_probe, resolve_global) are compiled out of release builds
 
 // =============================================================================
 // memory_probe — General-purpose hex dump for RE validation
@@ -14558,7 +14558,7 @@ bool do_query_resolve_global(const char* params_json, std::string* out) {
     *out = r.take();
     return true;
 }
-#endif  // CK3_BRIDGE_DEBUG_VERBS (rc2 B2)
+#endif  // CK3_BRIDGE_DEBUG_VERBS
 
 // =============================================================================
 // query_trait_db — Enumerate all traits in the trait database with full metadata
@@ -15537,7 +15537,7 @@ bool do_query_dynasty(const char* params_json, std::string* out) {
     r.key("dynasty_id"); r.value_uint(id);
 
     // The name through dynasty_name (the one reader: HAS_CUSTOM_NAME picks
-    // CUSTOM_NAME, else NAME); absent when it does not read (L14 S4).
+    // CUSTOM_NAME, else NAME); absent when it does not read.
     {
         const std::string name = dynasty_name(dynasty);
         if (!name.empty()) { r.key("name"); r.value_string(name.c_str(), name.size()); }
@@ -16124,7 +16124,7 @@ bool do_query_partition_preview(const char* params_json, std::string* out) {
 
 
 // =============================================================================
-// query_innovation_progress — Read innovation spread progress for a culture (ck-sdy2)
+// query_innovation_progress — Read innovation spread progress for a culture
 // Takes culture_id (from character's culture) or character_id (resolves culture).
 // Returns per-innovation progress array with name, progress %, and known status.
 // =============================================================================
@@ -16376,7 +16376,7 @@ bool do_query_innovation_progress(const char* params_json, std::string* out) {
 }
 
 // =============================================================================
-// query_fascination_progress — Read fascination/era progress for a culture (ck-sdy2)
+// query_fascination_progress — Read fascination/era progress for a culture
 // Returns current fascination innovation and per-era fascination progress.
 // =============================================================================
 bool do_query_fascination_progress(const char* params_json, std::string* out) {
@@ -16547,7 +16547,7 @@ bool do_query_fascination_progress(const char* params_json, std::string* out) {
 }
 
 // =============================================================================
-// query_research_speed — Read research speed modifiers for a culture (ck-sdy2)
+// query_research_speed — Read research speed modifiers for a culture
 // Returns culture's research speed modifier and global speed multipliers.
 // =============================================================================
 bool do_query_research_speed(const char* params_json, std::string* out) {
@@ -17077,7 +17077,7 @@ bool do_query_trigger_result(const char* params_json, std::string* out) {
 
     int actor_id = json_get_int(params_json, "actor_id");
     if (actor_id <= 0) {
-        // lane ACTOR: the one resolver (actor_resolve.h). This site's
+        // The one resolver (actor_resolve.h). This site's
         // historical chain, kept for a session that declared no seat, is
         // global mirror then PLAYER_CHAR_ID; a seat gets its own primary or
         // a typed no_actor refusal, never another seat's ruler.
@@ -17256,7 +17256,7 @@ bool do_query_trigger_result(const char* params_json, std::string* out) {
 }
 
 // =============================================================================
-// Query: Trigger Slot Inspector (ck-vqth)
+// Query: Trigger Slot Inspector
 // Reads interaction trigger slot structure from memory. IPC-thread safe.
 // Returns per-slot: RTTI class name, children count, child types, label string.
 // Complements do_query_trigger_result (which evaluates pass/fail on game thread).
@@ -17280,10 +17280,10 @@ static std::string read_rtti_name(uintptr_t vtable_ptr) {
 // They also match the Python schema in ck3agent/server/tools.py (the
 // `trigger_slot` enum and `_INTERACTION_HARD_GATE_SLOTS = (0, 1, 4)` indexing).
 //
-// NOTE: this naming scheme pre-dates ck-angk and is NOT the canonical slot map
+// NOTE: this naming scheme pre-dates and is NOT the canonical slot map
 // in re/findings/re_interaction_slot_layout_corrected.md — see ck3_offsets.h
 // CANONICAL CORRECTED NAMES block. A separate sweep is required to migrate
-// both tables (and the Python contract) to ck-angk canonical names.
+// both tables (and the Python contract) to canonical names.
 struct TriggerSlotDesc {
     const char* name;
     uint32_t    offset;
@@ -17332,7 +17332,7 @@ bool do_query_trigger_slots(const char* params_json, std::string* out) {
     r.begin_object();
     r.key("success"); r.value_bool(true);
     r.key("interaction"); r.value_string(itype);
-#ifdef CK3_BRIDGE_DEBUG_VERBS   // rc2 B2: a process VA defeats ASLR; debug builds only
+#ifdef CK3_BRIDGE_DEBUG_VERBS   // A process VA defeats ASLR; debug builds only
     {
         char hex[20]; snprintf(hex, sizeof(hex), "0x%lx", (unsigned long)idef);
         r.key("interaction_addr"); r.value_string(hex);
@@ -17483,7 +17483,7 @@ bool do_query_debug_flags(const char* /*params_json*/, std::string* out) {
 // =============================================================================
 bool do_query_character_memories(const char* params_json, std::string* out) {
     if (!out) return false;
-    FaultScope fault_scope("query_character_memories", out);   // L14 S4 (audit 3(iii)): nests; a caller's fault record survives this handler
+    FaultScope fault_scope("query_character_memories", out);   // (audit 3(iii)): nests; a caller's fault record survives this handler
 
     void* character = resolve_character(params_json);
     if (!character || is_sentinel(character)) {
@@ -17502,7 +17502,7 @@ bool do_query_character_memories(const char* params_json, std::string* out) {
     // Mirrors do_query_opinion_breakdown's formatter. raw<=0 => "none".
     auto format_date = [](int32_t raw_date, char* buf, size_t bufsz) {
         if (raw_date <= 0) { snprintf(buf, bufsz, "none"); return; }
-        ck3::game_date::format_raw(raw_date, buf, bufsz);  // ck-05mg
+        ck3::game_date::format_raw(raw_date, buf, bufsz);
     };
 
     // Resolve the per-character memory ref-id vector. It lives on landed_data

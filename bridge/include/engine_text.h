@@ -1,4 +1,4 @@
-// engine_text.h — the game's rendered tooltip text, made readable (cleanup 2026.11, F16).
+// engine_text.h — the game's rendered tooltip text, made readable (F16).
 //
 // The engine's reason strings (FACTION_CAN_CREATE and its siblings append them to a
 // std::string; re/findings/re_factions.md §1) are RENDERED text with the game's
@@ -12,7 +12,7 @@
 //
 // clean_engine_text keeps the words, turns each line break (indent_newline, and
 // the "\n" the game puts before each appended reason) into "; " and drops
-// the rest. Two rules on the lines (L12, read on the node's 867 save):
+// the rest. Two rules on the lines (read on the test host's 867 save):
 //   - a compound header ("All of these:", any line ending in ':') is kept only
 //     when a deeper line follows it. The game renders a compound trigger's
 //     failing children through the trigger's own tooltip key (FUN_0763e6b0); a

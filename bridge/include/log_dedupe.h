@@ -1,4 +1,4 @@
-// log_dedupe.h — ck-os50: a log line that fires per OCCURRENCE becomes the log.
+// log_dedupe.h —: a log line that fires per OCCURRENCE becomes the log.
 //
 // THE DEFECT THIS CLOSES. `resolve_title_realm` emitted one line per failed
 // resolve, with no dedupe, counter or rate limit. Measured share of each run's
@@ -13,10 +13,10 @@
 // It is NOT a crash precursor — that is how it was first noticed, and the
 // cross-run rates refuted it: it starts around line 600 of every run, runs to
 // the last line written, appears in both arms, and fires in runs that reached
-// the horizon and sealed valid. ck-zgh4 confirmed the d50 faulting stack
+// the horizon and sealed valid. confirmed the d50 faulting stack
 // carries no bridge frames at all.
 //
-// WHY IT STILL MATTERS. ck-otj9 rotates the log at 64MB keeping three windows,
+// WHY IT STILL MATTERS. rotates the log at 64MB keeping three windows,
 // and rotation is what makes `coverage_is_floor` true and starts costing
 // SEALED EVIDENCE. No run has rotated yet (0 rotation banners, 0 gaps across
 // seven coverage files) but d43 reached 23.13MB with 85% of it one line, so

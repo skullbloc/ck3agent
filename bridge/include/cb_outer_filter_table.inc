@@ -1,6 +1,6 @@
 // AUTO-GENERATED from re/findings/re_a1_67cb_rejection_classification_2026-04-25.md
-// 83 AI-eligible CBs classified into 8 outer-rejection classes (ck-iyhl).
-// Bead: ck-laf5. Regenerate via:
+// 83 AI-eligible CBs classified into 8 outer-rejection classes.
+// Regenerate via:
 //   python3 re/specs/casus-belli/gen_outer_filter_table.py > bridge/include/cb_outer_filter_table.inc
 //
 // Each entry maps CB name -> outer_reason tag emitted when the per-CB

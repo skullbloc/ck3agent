@@ -1,4 +1,4 @@
-// acceptance_exclusion_fraction.cpp — THE ck-2ngg ACCEPTANCE, product lane.
+// acceptance_exclusion_fraction.cpp — THE ACCEPTANCE, product lane.
 // Host only: no CK3, no game, no engine.
 //
 // THE CLAIM: the unavailability exclusion threshold X is a RULE — 5% of the
@@ -7,7 +7,7 @@
 // other.
 //
 // Driven by scripts/acceptance_exclusion_fraction.py, which also runs the
-// NEGATIVE CONTROL: the same four lanes over the REAL pre-ck-2ngg bytes pulled
+// NEGATIVE CONTROL: the same four lanes over the REAL earlier bytes pulled
 // out of git history (scripts/fixtures/exclusion_rule/pre_2ngg/), which must
 // FAIL lanes B and D — it judges the smoke horizon at 365 and passes an episode
 // the rule excludes at 78.
@@ -20,7 +20,7 @@
 //
 // Each lane prints `LANE <id> <PASS|FAIL> <detail>` so the driver can assert on
 // the failing SET rather than on a count — a control that drifts into failing
-// something else must not read as a control doing its job (ck-ijfa L1).
+// something else must not read as a control doing its job.
 
 #include "unavailability.h"
 #include "episode_policy.h"
@@ -45,7 +45,7 @@ static void lane(const char* id, bool ok, const std::string& detail) {
 
 // The episode every lane models: 1066.09.15, twelve months of nothing, a gap of
 // `unsteered` game-days that is 400 WALL-seconds long (over the 360 s anomaly
-// gate, so it is genuinely anomalous under the shipped ck-ijfa rule).
+// gate, so it is genuinely anomalous under the shipped rule).
 static const int64_t D0 = 1066 * 365 + 243 + 14;
 static const uint64_t W0 = 1'000'000;
 
@@ -67,7 +67,7 @@ static bool episode_with_gap_is_invalid(int64_t x_days, bool armed,
 }
 
 // Resolve X the way the BRIDGE does, from the environment the harness sets.
-// Under the control this is the pre-ck-2ngg path, which reads no horizon at all
+// Under the control this is the earlier path, which reads no horizon at all
 // and keeps its stored constant — which is precisely what is being measured.
 static void resolve_from_env(const char* start, const char* end) {
     setenv("CK3_EPISODE_MODE", "experiment", 1);
@@ -99,7 +99,7 @@ int main() {
 
     // ── B. THE SMOKE HORIZON: where the constant was 4.7x too permissive ────
     // 1066.09.15 -> 1071.01.01 is 1568 game-days on the ENGINE's calendar
-    // (ck3::game_date, ck-05mg's real month lengths). 1568 x 0.05 = 78.4, and
+    // (ck3::game_date, real month lengths). 1568 x 0.05 = 78.4, and
     // the rounding rule is round-half-away-from-zero, so X = 78.
     resolve_from_env("1066.09.15", "1071.01.01");
     p = episode_policy().get();

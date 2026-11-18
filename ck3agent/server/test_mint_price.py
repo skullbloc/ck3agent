@@ -1,12 +1,12 @@
-"""L14 S3 (surface-eval finding 14): a mint the player cannot pay for is refused,
+"""A mint the player cannot pay for is refused,
 and an applied mint carries one verdict.
 
 The field case: Murchad of Munster (31762, 1066 save) called
 do(intent="mint_title", args={"title_key": "k_ireland"}) at 1071.10.15; the kingdom
 was created and the reply said verdict "applied" beside raw.success false. His gold
 was read 17.85 at 1071.06.23 (the last reading before the mint) and -302.21 at
-1072.09.22; no reading exists at the mint itself (docs/cleanup-2026.11/evidence/l14/
-murchad-1066.md). 320.06 below is a FIXTURE VALUE, not a measured price: it is
+1072.09.22; no reading exists at the mint itself
+(murchad-1066.md). 320.06 below is a FIXTURE VALUE, not a measured price: it is
 17.85 - (-302.21), the difference of two readings 15 months apart ("about 320,
 back-solved, not measured"). The rows only need a price above the gold held. The
 price block is query_create_title_cost's reply shape (bridge/src/action_handlers.cpp
@@ -33,7 +33,7 @@ DEJURE = {"character_id": MURCHAD, "title_key": KEY, "title_id": 461,
 #: The bridge's first reply to that create_title: the transcript's ids and date, in the
 #: shape the bridge sends today (status queued, no_poll_on_game_thread). The field reply
 #: said dispatched_pending / not_confirmed_within_12s, a poll the bridge no longer runs
-#: and a reason it no longer sends (L14 FB m-5).
+#: and a reason it no longer sends.
 MURCHAD_RAW = {"request_id": "32f3bf08-6a6e-43ba-892b-c8662bdf3f0a", "tick": 1855,
                "game_date": "1071.10.15", "success": False, "action": "create_title",
                "actor_id": MURCHAD, "title_id": 461, "title_key": KEY,
@@ -218,7 +218,7 @@ def test_applied_result_drops_only_a_raw_that_did_not_say_success():
 
 
 def test_a_refused_mint_by_a_ruler_with_full_dejure_control_is_not_applied():
-    """L14 FF1 B-1 (the witness's run 1): the game refuses the mint of a ruler who
+    """ B-1: the game refuses the mint of a ruler who
     holds every de-jure county. Full de-jure control is the mint's precondition,
     not its product, so it never reads back as applied: the reply's own refusal
     is the verdict."""
@@ -238,7 +238,7 @@ FAULT = {"error": "memory_access_fault"}
 
 
 def test_a_faulted_mint_with_the_title_in_the_realm_is_not_applied():
-    """L14 FF2 N-MAJ-1 (the witness's run 3): create_title answers the fault and
+    """Create_title answers the fault and
     query_realm lists the key. The reply's own refusal outranks the readback.
     RED on b84e3634 (applied)."""
     gw = Gateway(price_reply(cost=10.0, have=400.0), raw=dict(FAULT), held_after=True)
@@ -317,7 +317,7 @@ def test_a_kings_new_duchy_is_read_off_the_title_not_the_realms_primary():
 
 
 def test_the_51_percent_rule_is_one_statement_and_mirrors_the_bridge():
-    """L14 FF1 m-2: the warning, the formable_titles rows and the mint pre-check
+    """The warning, the formable_titles rows and the mint pre-check
     apply the #131 bar at the bridge's tiers (>= 4) and fraction, read from one
     place; the bridge's constants are checked here."""
     import re
@@ -356,7 +356,7 @@ def test_control_a_kingdom_short_of_51_percent_is_refused_before_sending():
 
 
 def test_an_unpriced_duchy_is_refused_not_left_to_isvalid():
-    """L14 FF1 m-3: the game's check skips the cost leg for a duchy in one case,
+    """The game's check skips the cost leg for a duchy in one case,
     so an unread price with IsValid yes is mint_cost_unverified for a duchy; a
     kingdom (the control) still falls back to IsValid."""
     duchy = dict(DEJURE, title_key="d_munster", held=4, total=4, fraction=1.0)
@@ -372,7 +372,7 @@ def test_an_unpriced_duchy_is_refused_not_left_to_isvalid():
 
 
 def test_the_levers_header_names_every_synchronous_row():
-    """L14 FF1 m-9: the header said synchronous handlers are not rows while
+    """The header said synchronous handlers are not rows while
     ("steer", "") is one; the text names it."""
     import inspect
     src = inspect.getsource(redesign)

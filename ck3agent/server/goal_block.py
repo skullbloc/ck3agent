@@ -1,4 +1,4 @@
-"""goal_block.py — what an experiment seat's `observe` says about the goal (v4 §6, lane v4sees).
+"""goal_block.py — what an experiment seat's `observe` says about the goal (v4 §6).
 
 THE DEFECT (seat review of set v3-registered-2, problem 5). The goal was not
 operational in anything a seat could observe: no score, no end date, no cycle
@@ -140,8 +140,8 @@ def grade_realm(reply: Any) -> RealmRead:
 
 
 def grade_line_realm(reply: Any, character_id: int) -> RealmRead:
-    """MIRROR of scripts/meter_lane.py `grade_line_realm` (owner ruling
-    2026-11-11: alive, readable and landless is a real zero)."""
+    """MIRROR of scripts/meter_lane.py `grade_line_realm`
+    (2026-11-11: alive, readable and landless is a real zero)."""
     if _refusal(reply) is None and reply.get("has_realm") is False:
         rid = reply.get("character_id")
         if not isinstance(rid, int) or isinstance(rid, bool):

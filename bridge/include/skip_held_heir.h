@@ -1,4 +1,4 @@
-// ck-7rk6 — count every skip-held-heir firing, and say zero out loud.
+// Count every skip-held-heir firing, and say zero out loud.
 //
 // THE RULE (progenitor, "i approve with recommended option"; relayed by bt-bbd):
 // on a succession collision — the game's heir for a controlled character is
@@ -8,7 +8,7 @@
 // is not held by anyone. Seat count stays six, so the instrument does not change
 // across arms and there is no post-treatment variable to split on.
 //
-// WHY THIS COUNTER IS REQUIRED AND NOT OPTIONAL (ck-m1u1's correction of an
+// WHY THIS COUNTER IS REQUIRED AND NOT OPTIONAL (correction of an
 // overclaim): the rule is applied IDENTICALLY to every arm, but it FIRES at each
 // arm's own collision rate, which is UNMEASURED — one instance so far. So the
 // residual asymmetry is bounded and declared, and it must be COUNTED rather than
@@ -39,7 +39,7 @@ inline std::atomic<uint64_t> g_skip_held_heir_fired{0};
 // for the episode, and folding it into the firing count would report a seat
 // that survived where one did not.
 inline std::atomic<uint64_t> g_skip_held_heir_exhausted{0};
-// ck-handoff-swap: the cap-full SUBSET of the exhausted count. Two causes that
+// The cap-full SUBSET of the exhausted count. Two causes that
 // need different fixes must be two numbers, or a bundle records their sum and no
 // reader can recover either. A census reads this instead of parsing the message.
 inline std::atomic<uint64_t> g_skip_held_heir_exhausted_cap_full{0};
@@ -49,7 +49,7 @@ inline std::atomic<uint64_t> g_skip_held_heir_exhausted_cap_full{0};
 // in the game's own succession order.
 //
 // `received` is also what the caller must write into session->heir_character_id.
-// ck-9rto drove their predicate on both options: recording the REDIRECTED heir
+// drove their predicate on both options: recording the REDIRECTED heir
 // grades as succession; recording the PRIMARY heir while claiming the redirect
 // grades as `change` and INVALIDATES the episode. The invariant their witness
 // reads is `heir_character_id == the character actually claimed`, so the
@@ -73,7 +73,7 @@ inline void record_skip_held_heir(const char* session_id, uint32_t dead,
 // invented — bt-bbd's explicit instruction, and the alternative (handing the
 // session someone outside the game's succession order) would make the bridge the
 // author of a succession the game did not perform.
-// ck-handoff-swap: THE REASON IS A PARAMETER, because the old message asserted a
+// THE REASON IS A PARAMETER, because the old message asserted a
 // cause it could not know. It said the succession order held no unheld heir —
 // true when the refusal is owned_by_other, FALSE when it is watchlist_full, and
 // at a full roster watchlist_full was the whole population. One counter and one
@@ -104,7 +104,7 @@ inline void record_skip_held_heir_exhausted(const char* session_id, uint32_t dea
 // Extracted so the synthetic fixture can DRIVE it. Written inline in the tick
 // loop this was a condition a test could only grep for, and a grep cannot tell
 // a live condition from a defeated one — the lesson that cost two lanes on
-// ck-1v1t. arma6 does NOT exercise the release-before-death path (its release
+// Arma6 does NOT exercise the release-before-death path (its release
 // follows the death by 624 failed handoff attempts), so a synthetic fixture is
 // the ONLY thing that can cover it.
 //
@@ -116,7 +116,7 @@ inline void record_skip_held_heir_exhausted(const char* session_id, uint32_t dea
 //                                    character the agent deliberately dropped.
 //   primary == 0, last is DEAD    -> the agent released its own corpse and
 //                                    blinded the handoff. Recover it.
-//: ck-7yrp: WAS THE RELEASED SUBJECT ALIVE OR DEAD **AT RELEASE**?
+//: WAS THE RELEASED SUBJECT ALIVE OR DEAD **AT RELEASE**?
 //:
 //: handoff_subject's own documentation draws the distinction on the state AT
 //: RELEASE — "the agent chose to stop steering a LIVING character. NOT a
@@ -140,32 +140,32 @@ enum class ReleaseSubjectState : uint8_t {
     Alive   = 1,   //: a deliberate drop of a living character — do NOT recover
     Corpse  = 2,   //: the seat released its own corpse — recovery is correct
 
-    //: ck-qv51: A CLAIM BEING ROLLED BACK, which is not a release at all.
+    //: A CLAIM BEING ROLLED BACK, which is not a release at all.
     //:
     //: do_set_controlled_character claims a character, then checks the roster; if the
     //: roster diverged it calls release_character to undo the claim. The seat NEVER
-    //: STEERED that character. ck-3ru8's census found this path reaching the handoff
+    //: STEERED that character. census found this path reaching the handoff
     //: with Unknown — but the worse half is that it also overwrote
     //: last_steered_character_id with the undone id, and that field is set only on the
     //: way out of primary and never cleared, so a genuine earlier value was destroyed
     //: and a later real succession could be blinded.
     //:
-    //: SEVERITY IS BOUNDED AT "SEAT STAYS EMPTY", measured by ck-zgh4: the id and the
+    //: SEVERITY IS BOUNDED AT "SEAT STAYS EMPTY", measured: the id and the
     //: state are written as a pair inside one session->mutex and one
     //: `primary_character_id == char_id` guard, so they cannot be torn. A blinded
     //: handoff returns 0; it can never recover the WRONG character. That ceiling is
-    //: what ck-qv51 and ck-cwal are negotiating over.
+    //: what are negotiating over.
     //:
     //: So this state means: update the primary, because the claim really is gone, but
     //: record NOTHING about a release that did not happen.
     UndoneClaim = 3,
 
-    //: rc2 B6: the ruler died and its heir is the HUMAN PLAYER, so the handoff
+    //: The ruler died and its heir is the HUMAN PLAYER, so the handoff
     //: unbound the seat. Not Corpse, so handoff_subject never recovers it and
     //: the handoff does not retry the player every tick.
     HeirIsPlayer = 4,
 
-    //: owner ruling 2026-11-12 (v3reg2 s3 D1 moved onto Carloman): the ruler
+    //: The ruler
     //: died and the succession's target is OUTSIDE the seat's registered realm
     //: (played_line.h succession_realm_check), so the handoff unbound the seat
     //: instead of moving it. Not Corpse: never recovered, never retried.
@@ -185,7 +185,7 @@ inline const char* release_subject_state_name(ReleaseSubjectState s) {
     }
 }
 
-//: ck-7yrp: THE STATE AT RELEASE, NOT THE STATE NOW.
+//: THE STATE AT RELEASE, NOT THE STATE NOW.
 //:
 //: The old signature took `bool last_steered_is_dead`, which the caller evaluated
 //: at HANDOFF time — so a character released ALIVE and dying later looked exactly
@@ -206,7 +206,7 @@ inline uint32_t handoff_subject(uint32_t primary_character_id,
                : 0;
 }
 
-// ── ck-handoff-swap: THE PER-TICK WALK BUDGET, EXTRACTED SO A FIXTURE CAN DRIVE IT
+// ── THE PER-TICK WALK BUDGET, EXTRACTED SO A FIXTURE CAN DRIVE IT
 //
 // The 64-candidate walk answers a COLLISION question, and the answer does not
 // change between adjacent ticks: same corpse, same heir, same holders, same
@@ -218,7 +218,7 @@ inline uint32_t handoff_subject(uint32_t primary_character_id,
 // releasing a character frees a candidate. A permanent skip would wedge a
 // handoff that becomes resolvable, which is a worse defect than the noise.
 //
-// Extracted for the reason ck-7rk6 extracted handoff_subject: written inline in
+// Extracted for the reason extracted handoff_subject: written inline in
 // the tick loop this is a condition a test can only grep for, and a grep cannot
 // tell a live condition from a defeated one.
 struct HandoffBackoff {
@@ -236,9 +236,9 @@ inline constexpr uint32_t kHandoffBackoffMax = 1024u;
 //: True when this tick should SKIP the candidate walk. Consumes one skip. A
 //: state CHANGE (different corpse or different heir) never skips — a real
 //: succession is never delayed by a stale entry.
-//: ck-48z8: DOES THE HEIR'S NATIVE AI GET DISABLED AT A HANDOFF?
+//: DOES THE HEIR'S NATIVE AI GET DISABLED AT A HANDOFF?
 //:
-//: Extracted for the reason ck-7rk6 extracted handoff_subject: written inline in
+//: Extracted for the reason extracted handoff_subject: written inline in
 //: the tick loop this is a condition a test can only GREP for, and a grep cannot
 //: tell a live condition from a defeated one.
 //:

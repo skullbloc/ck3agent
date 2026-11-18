@@ -1,4 +1,4 @@
-// test/test_drain_registry.cpp — regression tests for ck-6kvq.19.
+// test/test_drain_registry.cpp — regression tests for.
 //
 // THE BUG. A tick-polarity call is handed to the game thread and settled when
 // the game thread reports back. The correlation was keyed by the client's

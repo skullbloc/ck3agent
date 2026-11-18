@@ -26,7 +26,7 @@ QUERY_DOMAIN_MAP = {
     # do(intent='scheme', args={action: start, scheme: murder, target_id: N}) when is_kin==false
     # (kinslayer trait → catastrophic stress). (#is_kin)
     "character":            ("query_character",            lambda p: {"character_id": p.get("character_id", 0)}),
-    # ck-leg: character browser — scan CHARACTER_DB (≈103k chars) with filter+sort,
+    # Character browser — scan CHARACTER_DB (≈103k chars) with filter+sort,
     # bounded top-N. filter ∈ all|alive|dead|ruler|independent|ai_controlled;
     # sort ∈ military|gold|realm_size|tier|age|<skill>. The first real way to find
     # strong independent rulers (e.g. marriage-alliance prospects) by name+stats.
@@ -35,7 +35,7 @@ QUERY_DOMAIN_MAP = {
     # + education_focus_skill are REAL; guardian_id/_martial are always null (no read
     # locates a ward's guardian, re_heir_guardian_RE.md §1b).
     "heir_education":        ("query_heir_education",        lambda p: {"character_id": p.get("character_id", 0)}),
-    # ck-leg: marriage-market browser — landed unmarried rulers in diplomatic range
+    # Marriage-market browser — landed unmarried rulers in diplomatic range
     # of character_id, top-N by `sort` (military default), annotated age/distance.
     # The precise "who can I marry" surface (vs the generic `characters` browser).
     # Pass require_in_range=0 (via max_results/sort params path) to browse globally.
@@ -123,7 +123,7 @@ QUERY_DOMAIN_MAP = {
     "law_groups":           ("query_law_groups",           lambda p: {}),
     "law_options":          ("query_available_law_changes", lambda p: {"character_id": p.get("character_id", 0)}),
     "relations":            ("query_relations",            lambda p: {"character_id": p.get("character_id", 0)}),
-    # ck-leg: who holds claims on a title (pressed/unpressed, alive, is_ruler) —
+    # Who holds claims on a title (pressed/unpressed, alive, is_ruler) —
     # the "who do I back as claimant" surface for claim wars. Pair with
     # discover(what="war_targets") and query(domain="claims").
     "claimants":            ("query_title_claimants",      lambda p: {"title_id": p.get("title_id", 0), **({"actor_id": p["character_id"]} if p.get("character_id") else {})}),
@@ -135,10 +135,10 @@ QUERY_DOMAIN_MAP = {
     # ORDERED heir line (who inherits next, and after) + designated heir; for elective
     # titles call domain="election" for vote tallies. Params: title_id.
     "title_succession":     ("query_title_succession",     lambda p: {"title_id": p.get("title_id", 0)}),
-    # ck-leg: per-modifier breakdown of why target's opinion of actor is what it
+    # Per-modifier breakdown of why target's opinion of actor is what it
     # is (decaying modifiers, start/end dates). character_id = actor, target_id = subject.
     "opinion_breakdown":    ("query_opinion_breakdown",    lambda p: {"actor_id": p.get("character_id", 0), "target_id": p.get("target_id", 0)}),
-    # ck-xoj6x: 'available_cbs' deprecated — strictly inferior to
+    # 'available_cbs' deprecated — strictly inferior to
     # discover(what="valid_cbs_strict"). The bridge handler do_query_available_cbs
     # remains for legacy scripts (war_dispatch_lab, bridge_test_suite) and the
     # inline-safety regression suite; it just isn't exposed at the MCP layer.
@@ -158,7 +158,7 @@ QUERY_DOMAIN_MAP = {
     "research_speed":       ("query_research_speed",       lambda p: {"culture_id": p.get("culture_id", 0), "character_id": p.get("character_id", 0)}),
     "levy_readiness":       ("query_levy_readiness",       lambda p: {"character_id": p.get("character_id", 0)}),
     "diplomatic_range":     ("query_diplomatic_range",     lambda p: {"character_id_a": p.get("character_id", 0), "character_id_b": p.get("target_id", 0)}),
-    # ck-leg: real alliance handler (own/ally military strength + why each
+    # Real alliance handler (own/ally military strength + why each
     # alliance exists). Previously aliased to query_relations, which hid the
     # actual strength data the agent needs to judge whether allies are useful.
     "alliances":            ("query_alliances",            lambda p: {"character_id": p.get("character_id", 0)}),
@@ -236,7 +236,7 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
         }
         if params.get("skip_pre_validate"):
             result["skip_pre_validate"] = True
-        # ck-j3vb0: force_player_path bypasses the AI war pipeline and
+        # Force_player_path bypasses the AI war pipeline and
         # routes through WAR_CREATE_CORE direct. Required when set: the
         # CB name string (casus_belli). Use discover(what='valid_cbs_strict')
         # to enumerate valid CB names for an (actor, target) pair.
@@ -314,7 +314,7 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
             args["culture_id"] = params.get("culture_id")
         return "set_character_culture", args
     elif act_type == "lifestyle":
-        # ck-leg: set the actor's lifestyle focus by name (e.g.
+        # Set the actor's lifestyle focus by name (e.g.
         # "stewardship_domain_focus"). Resolved native SET_FOCUS_APPLY call.
         return "set_lifestyle_focus", {
             "actor_id": actor_id,
@@ -417,7 +417,7 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
             out["title_key"] = tkey
         return "create_title", out
     elif act_type == "appoint":
-        # Seat a courtier in a council position (L29 — fill the vacant Court Chaplain
+        # Seat a courtier in a council position (— fill the vacant Court Chaplain
         # seat so fabrication can run). position_id from query(domain="council").
         return "appoint_councillor", {
             "actor_id": actor_id,
@@ -515,7 +515,7 @@ def _clause(key: str, label: str, ok, *, requirement: str,
             measured=None, fix: str = "", unmeasured: str = "") -> dict:
     """One decision-gate clause verdict. `ok` is True or False when the reads
     established it; a clause no read can establish is UNMEASURED: pass None and
-    `unmeasured` says why, never a pass by default (L15, witness r4 N4-1)."""
+    `unmeasured` says why, never a pass by default (N4-1)."""
     if unmeasured:
         c = {"clause": key, "label": label, "pass": None, "requirement": requirement,
              "unmeasured": unmeasured}
@@ -710,7 +710,7 @@ def shield_decision_why_blocked(decision: str, *, realm: dict, character: dict,
 #: scheme_types / scheme_targets: redesign.scheme_types_impl / scheme_targets_impl.
 _DISCOVER_COMPOSED = ("targets", "decision_why_blocked", "scheme_types", "scheme_targets")
 
-#: Enumerations `do(action_class=...)` owns (cleanup 2026.11 L14, finding 8): the
+#: Enumerations `do(action_class=...)` owns (finding 8): the
 #: discover names they had, and the do door each became. discover answers one of
 #: these names with a refusal whose `next` is that door; nothing is read.
 DISCOVER_MOVED_TO_DO = {
@@ -719,7 +719,7 @@ DISCOVER_MOVED_TO_DO = {
     "joinable_factions": "factions_to_join",
 }
 
-#: L18-B: query(domain="conquest_targets") without verbose. The pilots' replies were
+#: Query(domain="conquest_targets") without verbose. The pilots' replies were
 #: 187-190K characters for Cui 13191 (94 duchies, 388 counties, most of them his own
 #: vassals') and 59-63K for Charles and Bhoja: over the CLI's tool-result cap every
 #: time, read back with jq. What the seats read out of them (every jq/python line
@@ -730,11 +730,11 @@ DISCOVER_MOVED_TO_DO = {
 #: The compact reply keeps those, drops counties inside the ruler's own realm
 #: (holder_top_liege_id == ruler_id: no war is declared on them), lists conquerable
 #: counties first and caps the rows; verbose=True is the bridge's reply unchanged.
-#: L18 round 2 (witness item 5) kept `engine_valid_cbs` on every row (the game's own
+#: kept `engine_valid_cbs` on every row (the game's own
 #: list behind `conquerable_now`, written only when the engine ran for that holder,
 #: query_handlers.cpp do_query_conquest_targets r.key("engine_valid_cbs")); it is now
 #: a count on the default row and the list under detail="full" (README says so).
-#: L20-B (smoke17 B4): the compact reply for Cui 13191 was still 38,481 characters
+#: The compact reply for Cui 13191 was still 38,481 characters
 #: at 25 rows (the tool-result text, indented): ~1,500 a row, 70% of it the two
 #: declare blocks, plus the bridge's 1,500-character note. The default is now 10
 #: rows of what a seat decides on: the county and its holder, the holder's realm
@@ -748,7 +748,7 @@ CONQUEST_TARGETS_DEFAULT_ROWS = 10
 #: the row keys of detail="full": every key do_query_conquest_targets writes on a
 #: remaining_counties row and on a duchy row (bridge/src/query_handlers.cpp, the
 #: r.key lines inside `r.key("duchies")`; test_conquest_targets_size reads them off
-#: the emitter). L20 r3 (witness item 4): the county list lacked is_kin,
+#: the emitter).: the county list lacked is_kin,
 #: already_at_war_opposing and holder_top_liege_unresolved/_independent, which the
 #: lean row shows when set, so "full" dropped the kin flag.
 _CONQUEST_COUNTY_KEYS = ("county_id", "county_key", "county_name", "holder_id", "holder_name",
@@ -906,7 +906,7 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
             "target_id": params.get("target_id", 0),
         }
     elif what == "valid_cbs_strict":
-        # ck-5qpg: per-CB outer/inner verdict surface with reason strings.
+        # Per-CB outer/inner verdict surface with reason strings.
         # Mirrors AI_CB_EVALUATE_ALL Stage 1 (bilateral) + Stage 2 (group flags)
         # outer filter. Per-CB outer triggers (allowed_for_character /
         # allowed_against_character / valid_to_start) are not evaluated.
@@ -946,7 +946,7 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
             out["slot"] = params["slot"]
         return "construction_check", out
     elif what == "war_targets":
-        # ck-leg: enumerate every (target, title, CB) the actor can declare war
+        # Enumerate every (target, title, CB) the actor can declare war
         # on right now — the "who can I attack and with what" surface. Each entry
         # carries cb_type, pressed (claim already pressed?), tier, title. Feed a
         # chosen entry into declare_war(target_id=..., cb=..., cb_title_id=...).
@@ -954,7 +954,7 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
             "actor_id": params.get("actor_id", 0),
         }
     elif what == "imprisonment":
-        # ck-leg: the grounds the game gives the actor against the target (the
+        # The grounds the game gives the actor against the target (the
         # reason modifiers + has_imprisonment_reason). Not the game's verdict on
         # an imprisonment: that is the send check, do(action_class=
         # 'imprison_targets') / discover(what='targets', action='imprison').
@@ -967,17 +967,17 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
             "interaction_type": params.get("interaction_type", ""),
         }
     elif what == "interaction_validity":
-        # ck-fo7x.5: evaluate the full 6-gate cascade for an interaction
+        # Evaluate the full 6-gate cascade for an interaction
         # by name. For declare_war we delegate to query_cb_validity_strict
-        # (the 6-gate CB pipeline — ck-5qpg). For other interactions we
+        # (the 6-gate CB pipeline —). For other interactions we
         # delegate to query_trigger_result (slot=-1 ⇒ all hard-gate slots).
         # The bridge response is post-processed by
         # shape_interaction_validity_response into a unified
-        # {valid, reason, ...} verdict; see ADR-0001 §ck-fo7x.5.
+        # {valid, reason, ...} verdict; see ADR-0001 §.
         # ADR-0001 row 5 + commit ab00e35 refer to this as
         # `query_interaction_validity`; shipped as `interaction_validity`
         # to match the existing what= naming (valid_cbs, war_validity,
-        # trigger_result). Tracked in ck-zwzba.
+        # trigger_result). Tracked in.
         interaction = (
             params.get("interaction")
             or params.get("interaction_type")
@@ -1273,7 +1273,7 @@ def shape_discover_response(params: dict, response):
     return response
 
 
-#: ck-ycim: THE DISCOVER VOCABULARY, AND IT IS NOT THE INTENT VOCABULARY.
+#: THE DISCOVER VOCABULARY, AND IT IS NOT THE INTENT VOCABULARY.
 #:
 #: ONE SOURCE, here rather than in redesign.py, because redesign imports THIS
 #: module and not the reverse — so this is the only place both the schema an
@@ -1281,7 +1281,7 @@ def shape_discover_response(params: dict, response):
 #:
 #: They had drifted. The schema's enum carried NINE of these and the runtime
 #: accepted TEN: `formable_titles` was enumerable and no agent could learn it
-#: existed. That is ck-ycim's defect with the sign reversed — the surface had a
+#: existed. That is defect with the sign reversed — the surface had a
 #: capability its description withheld — and it is the same fault as an agent
 #: calling a name the surface lacks: a list restated in two places.
 #:

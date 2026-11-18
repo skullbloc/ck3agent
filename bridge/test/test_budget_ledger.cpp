@@ -1,5 +1,5 @@
 // test/test_budget_ledger.cpp — acceptance for R6, the decision-budget
-// governor's enforcing half (ck-6kvq.13).
+// governor's enforcing half.
 //
 // Standalone: compiles budget_ledger.cpp with NO engine, NO game, NO CK3
 // binary and not even a stub global, because enforcement is a pure rule and

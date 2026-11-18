@@ -1,4 +1,4 @@
-"""ck-w4tq, cleanup 2026.11 — the war reaches the seat on the path it takes, and
+"""The war reaches the seat on the path it takes, and
 the row says only what the reply read.
 
 HOST ONLY. Pure shape over a reply; no bridge, no game.
@@ -13,10 +13,10 @@ England:
   d49 earl-kent 16:36:33Z     "war_id 1 read 0-0, 'even' at every check."
 
 WHY THEY COULD NOT SEE IT. 93% of observe calls are `brief` (539 of 582 over
-d45-d50), and the war reached the brief path as ONE BOOLEAN. ck-w4tq put the
+d45-d50), and the war reached the brief path as ONE BOOLEAN. put the
 war rows on that path.
 
-WHAT THIS FILE NOW GUARDS (cleanup 2026.11). Those rows came from
+WHAT THIS FILE NOW GUARDS. Those rows came from
 get_active_wars (query_handlers.cpp do_get_active_wars), which never reads a
 war's breakdown, and the row filled the unread fields in: war_score_source
 None, battle_score 0, ticking_score 0, sieges_in_progress 0. Because the
@@ -206,8 +206,8 @@ class ObserveWarRowKeys(unittest.TestCase):
 
     def test_the_fixture_has_the_emitters_keys(self):
         """war_score_stale is emitted only when the cache holds an old entry; no
-        captured reply has one. cb_type was added to the emitter by L15-D (NIT-3)
-        after these replies were captured, and target_titles by L15 ff1 (m7).
+        captured reply has one. cb_type was added to the emitter (NIT-3)
+        after these replies were captured, and target_titles (m7).
         Those are the keys the fixtures lack."""
         seen = set()
         for w in REAL_REPLY_DUKE["wars"] + REAL_REPLY_ZERO["wars"] + [REAL_ROW_NO_SCORE]:
@@ -217,13 +217,13 @@ class ObserveWarRowKeys(unittest.TestCase):
 
     def test_the_reply_names_each_wars_cb(self):
         """NIT-3: declare_war's idempotency matches target AND CB on these rows,
-        and (L15 m7) the CB title against target_titles."""
+        and the CB title against target_titles."""
         self.assertIn("cb_type", _emitted_war_keys())
         self.assertIn("target_titles", _emitted_war_keys())
 
 
 class ObserveMySide(unittest.TestCase):
-    """L12 witness: observe's wars.active[].my_side was null on every war,
+    """ witness: observe's wars.active[].my_side was null on every war,
     because get_active_wars emits is_attacker and no my_side/side key."""
 
     def test_the_reply_carries_is_attacker_and_no_side_key(self):

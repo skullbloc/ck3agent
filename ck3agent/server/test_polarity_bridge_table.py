@@ -1,6 +1,6 @@
 """The bridge's thread classes, computed from the bridge's own code.
 
-After L13 the only routing question is "game thread or IPC thread" (contract
+After the only routing question is "game thread or IPC thread" (contract
 D1): every handler that reads or mutates game objects runs on the game thread,
 the IPC thread serves bridge state. The classifiers that answer it keep their
 names. This test does NOT re-type them: it lifts the real functions out of the
@@ -10,11 +10,11 @@ program and reads one row per registered action. A classifier edited in the
 bridge changes these rows with no edit here.
 
 What it pins:
-  * the PIPELINE mode's polarity table (pre-registered vocabulary, L13 D3):
+  * the PIPELINE mode's polarity table (pre-registered vocabulary):
     pipeline.cpp's classify_polarity, action_routes_to_drain and
     flush_scheduler.cpp's polarity_name, lifted with every classifier they call,
     answer exactly pipeline_polarity_expected.txt (the 439ab5a6 answers), one
-    row per registered action; a changed answer fails by name (witness W4);
+    row per registered action; a changed answer fails by name;
   * no read of any kind stores a write verdict in the completed ring, and every
     game-thread write stores exactly one (drain_write_verdict.h's seam);
   * the game-thread reads are construction_check, query_fabricate_targets and
@@ -39,7 +39,7 @@ REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "bridge" / "src"
 INC = REPO / "bridge" / "include"
 
-# L13 FF3 (witness X4): the one C++ tokenizer (bridge/scripts/cpp_strip.py).
+# The one C++ tokenizer (bridge/scripts/cpp_strip.py).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "scripts"))
 import cpp_strip  # noqa: E402
 
@@ -151,7 +151,7 @@ def _reads(rows: dict) -> dict:
 
 
 def test_no_read_of_any_kind_stores_a_verdict(bridge_rows):
-    """L12 item 7: every registered READ stores nothing in the completed ring
+    """Every registered READ stores nothing in the completed ring
     when drained, so the ring holds writes only and a read never takes a slot
     from a write's verdict. The control: the game-thread writes are not all
     zero, so the seam is live."""
@@ -175,7 +175,7 @@ def test_the_thread_classes_do_not_overlap(bridge_rows):
     assert not {n for n, r in bridge_rows.items() if r["game_state"] and r["game_thread"]}
 
 
-#: The reads the bridge serves on the game thread (lane l6, witness #3).
+#: The reads the bridge serves on the game thread.
 GAME_THREAD_READS = ("construction_check", "query_fabricate_targets", "query_create_title_cost")
 
 
@@ -246,7 +246,7 @@ def test_the_gateway_commands_are_bridge_internal(bridge_rows):
         assert bridge_rows[n]["bridge_internal"], n
 
 
-# ── the pipeline mode's polarity table (pre-registered; witness W4) ───────────
+# ── the pipeline mode's polarity table (pre-registered) ───────────
 
 #: (file, head) of everything classify_polarity / action_routes_to_drain /
 #: polarity_name call, lifted as they stand. Polarity comes from the real
@@ -338,7 +338,7 @@ def debug_pipeline_rows() -> dict[str, tuple[str, int]]:
 
 
 def test_the_debug_verbs_polarity_rows_are_pinned(debug_pipeline_rows):
-    """L13 FF2 (witness m-8): the -DCK3_BRIDGE_DEBUG_VERBS build (the host's
+    """The -DCK3_BRIDGE_DEBUG_VERBS build (the host's
     build) answers the release rows unchanged, and each debug verb answers its
     `debug` row in pipeline_polarity_expected.txt (439ab5a6's answers). The
     debug set is the registry's #ifdef block, so a verb added there without a
@@ -370,7 +370,7 @@ def test_the_pipeline_polarity_table_is_the_pre_registered_one(pipeline_rows):
 
 def test_the_pipeline_table_covers_the_registry_and_every_polarity(pipeline_rows):
     """One row per release-registered action, and the table is not degenerate:
-    the four L13 pinned rows read what they published before L13."""
+    the four pinned rows read what they published before."""
     assert list(pipeline_rows) == _registry_names()
     assert {p for p, _ in pipeline_rows.values()} == {"any", "paused", "tick_read", "tick_write"}
     assert pipeline_rows["query_conquest_targets"] == ("tick_read", 1)

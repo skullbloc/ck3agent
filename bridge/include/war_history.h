@@ -1,4 +1,4 @@
-// war_history.h — the record of wars that have ENDED (bead ck-sd4d).
+// war_history.h — the record of wars that have ENDED.
 //
 // ── Why this exists ────────────────────────────────────────────────────────
 //
@@ -143,7 +143,7 @@ public:
     size_t size() const;
     uint64_t total_recorded() const;   // includes records dropped by the bound
 
-    // ck-yifp. A WAR_END_CORE entry the hook saw but could NOT copy out — the
+    // A WAR_END_CORE entry the hook saw but could NOT copy out — the
     // CWar pointer was unmapped, carried another vtable, or had a freed slot's
     // id. Counted separately because otherwise such a termination is
     // indistinguishable from one that never happened: the ledger is short a

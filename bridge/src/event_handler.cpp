@@ -6,7 +6,7 @@
 // no-agent fallback: releases the game's own event pause so the simulation is
 // not held on a popup).
 //
-// L16 (ruling R3): the bridge no longer answers an event on request. The
+// The bridge no longer answers an event on request. The
 // respond_event action (which dispatched CSelectEventOptionCommand), the
 // query_event_probabilities / event_probabilities read and the
 // set_auto_respond_events switch had no caller outside their own tests and are
@@ -19,9 +19,9 @@
 #include "pause_alarm.h"
 #include "game_date.h"
 #include "bridge.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "ck3_offsets.h"
-#include "world_epoch.h"   // ck-hxh7
+#include "world_epoch.h"
 
 #include <cstdio>
 #include <cstring>
@@ -86,7 +86,7 @@ void clear_all_sent_events() {
     g_sent_event_instance_ids.clear();
 }
 
-// ck-hxh7: this set is keyed by EVENT INSTANCE ID, which is reused across saves.
+// This set is keyed by EVENT INSTANCE ID, which is reused across saves.
 // Its lifetime is the loaded WORLD, not the process — a reused instance id in a
 // newly loaded save was permanently suppressed and never forwarded to the agent,
 // because clear_all_sent_events() had no caller anywhere. Register it with the
@@ -118,11 +118,11 @@ typedef void (*pause_set_fn)(void* idler, int pause_val, int player_id);
 // Delayed unpause using PAUSE_SET for proper state propagation after game load.
 // Uses a flag checked in on_tick (game thread safe) instead of calling from a timer thread.
 static std::atomic<int> g_delayed_unpause_ticks{0};
-// L13 (witness m1): the deferred PAUSE_SET(0) repeat runs on the game thread
+// The deferred PAUSE_SET(0) repeat runs on the game thread
 // every pass while clock_write runs on whichever thread asked. One mutex over
 // both, so a pause issued between the repeat's check and its call cannot be
 // undone by the repeat: the pause cancels it under the same lock.
-// FAULT-SAFE (witness FF2 m-3): both holders install their OWN recovery point
+// FAULT-SAFE (witness): both holders install their OWN recovery point
 // around the primitives (ClockFaultGuard), so a fault inside a primitive returns
 // into the holder's frame and the lock is released there; the caller's
 // g_recovery_point / g_in_protected_region are saved and put back, so the
@@ -152,7 +152,7 @@ static void pause_primitive() {
     // address or id from a faulted read is not one. The fault stays counted
     // (never cleared here), so the handler that asked answers
     // memory_access_fault (dispatch_router.cpp case_pause_game), and the
-    // refusal changed nothing (witness #10: the deferred-unpause store used to
+    // refusal changed nothing (the deferred-unpause store used to
     // come first).
     const int faults = safe_read_fault_count();
     void* idler = get_idler();
@@ -271,7 +271,7 @@ static void unpause_primitive() {
 }
 
 // Called from the game-thread drain: the deferred PAUSE_SET(0) repeat that
-// unpause_primitive queued is part of that ONE unpause write (L13 amendment 2:
+// unpause_primitive queued is part of that ONE unpause write (amendment 2:
 // it counts nothing).
 void check_delayed_unpause() {
     std::unique_lock<std::timed_mutex> clock_lock(g_clock_mutex, std::try_to_lock);
@@ -346,7 +346,7 @@ int game_get_speed() {
 }
 
 // =============================================================================
-// L13 D4: THE ONE CLOCK WRITE.
+// THE ONE CLOCK WRITE.
 //
 // Every bridge write to the pause flag, PAUSE_SET or the game speed goes through
 // clock_write, which names who asked. The three primitives above are static to
@@ -354,7 +354,7 @@ int game_get_speed() {
 // PAUSE_SET(0) an unpause queued, as part of that same write);
 // bridge/scripts/inline_safety_static.py fails a row on any other site.
 //
-// Counting (L13 amendment 2): ONE count per logical clock operation that
+// Counting (amendment 2): ONE count per logical clock operation that
 // reaches this function, whether or not the game state changed (a pause of a
 // paused game counts 1) and whatever the primitive did after a faulted read
 // (the caller answers the fault). Internal repeats are not counts: the deferred
@@ -374,7 +374,7 @@ static const char* clock_origin_name(ClockOrigin o) {
 }
 
 void clock_write(ClockWrite kind, ClockOrigin origin, int speed) {
-    // L20-A: any pause disarms an armed game-day alarm (pause_alarm.h). The
+    // Any pause disarms an armed game-day alarm (pause_alarm.h). The
     // alarm's own pause comes after take_due disarmed it, so it clears nothing.
     if (kind == ClockWrite::Pause) bridge::pause_alarm::clear("pause");
     std::unique_lock<std::timed_mutex> clock_lock(g_clock_mutex, std::defer_lock);
@@ -412,7 +412,7 @@ void clock_write(ClockWrite kind, ClockOrigin origin, int speed) {
     }
 }
 
-// L20-A: the game-day pause alarm's drain step (pause_alarm.h for the rule).
+// The game-day pause alarm's drain step (pause_alarm.h for the rule).
 void pause_alarm_drain_check() {
     if (!bridge::pause_alarm::armed()) return;
     const int faults = safe_read_fault_count();
@@ -745,7 +745,7 @@ int poll_and_notify_events() {
         }
     }
 
-    // L13 D3: the bridge no longer pauses on a notification. The engine's own
+    // The bridge no longer pauses on a notification. The engine's own
     // event pause (event_pause_count) holds the game where an event demands it;
     // any other pause is the player's call (session).
     return new_count;
@@ -757,12 +757,12 @@ int poll_and_notify_events() {
 //
 // HOOK TARGET: FUN_05f4d570 (ck3::event_sys::AI_EVENT_OPTION_EVAL)
 //
-// SUPERSEDED (ck-x5ha): never installed. The agent was to answer through
+// SUPERSEDED: never installed. The agent was to answer through
 // CSelectEventOptionCommand, bypassing the AI evaluator; that path (respond_event)
-// is itself deleted (L16).
+// is itself deleted.
 //
 // The notes below are kept as RE provenance. The placeholder body has been
-// removed; recover it from git history (event_handler.cpp pre ck-x5ha) if the
+// removed; recover it from git history (event_handler.cpp pre) if the
 // hook is ever needed again.
 //
 // CONFIRMED SIGNATURE (Round 3 decompilation):
@@ -815,17 +815,17 @@ int auto_respond_pending_events() {
 
     // Clear the event-pause count in game state so the game unpauses
     // (events remain in queue for the agent to respond to properly).
-    // L13 D3 (kept, flagged to the owner): the unpause is the bridge's
+    // The unpause is the bridge's
     // no-agent auto-respond fallback acting on the GAME's OWN event pause, so it
     // runs only when that pause was holding the game at this moment
     // (event_pause_count > 0); a pause the player or a tool made is left alone.
     // The unpause clears the event-pause count itself (unpause_primitive), so
-    // the count is written only through clock_write, and counted (witness W10).
+    // the count is written only through clock_write, and counted.
     void* gs = get_game_state_root();
     const int32_t event_pauses = gs ? safe_read<int32_t>(
         reinterpret_cast<uintptr_t>(gs) + ck3::game_state::EVENT_PAUSE_COUNT) : 0;
     // Both: the game's own event pause is pending AND the game is paused
-    // (witness FF2 m-1: without is_paused a running game logged a counted
+    // (witness: without is_paused a running game logged a counted
     // auto_respond unpause that changed nothing).
     if (event_pauses > 0 && is_paused()) {
         clock_write(ClockWrite::Unpause, ClockOrigin::AutoRespond);
@@ -884,7 +884,7 @@ void init_event_handler() {
         }
     }
 
-    // AI_EVENT_OPTION_EVAL hook is intentionally NOT installed (ck-x5ha). The
+    // AI_EVENT_OPTION_EVAL hook is intentionally NOT installed. The
     // offsets are logged for diagnostics only.
     if (!(has_event_eval && has_event_mgr)) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Event hook offsets unmapped (informational; nothing installs the hook)\n");

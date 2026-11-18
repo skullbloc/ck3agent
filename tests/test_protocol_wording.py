@@ -43,7 +43,7 @@ def test_no_protocol_file_instructs_releasing_the_ruler_to_stop():
 
 def test_the_several_rulers_section_says_the_five_rules():
     """lane-multi: add, pin character_id, one posture each (writing that ruler
-    only: L14, no phase arms the process-wide veto), one clock, and that only a
+    only:, no phase arms the process-wide veto), one clock, and that only a
     non-last ruler can be released."""
     for name in ("CLAUDE.md", "CLAUDE-desktop.md"):
         sec = " ".join(_section((PROTOCOL / name).read_text(encoding="utf-8"),
@@ -83,7 +83,7 @@ def test_protocol_waits_through_the_server_not_bash_sleep():
 
 
 def test_no_shipped_boot_text_names_a_run_budget():
-    """L18 round 3: the model has no budget to spend. `ck3agent run` counts the
+    """The model has no budget to spend. `ck3agent run` counts the
     cycles and ends the session itself (CHANGELOG 2026.12.0); the interactive
     play dir stops when the human says so. The three protocol files are the
     boot texts `setup` and `run` write into a play dir, so none may name a

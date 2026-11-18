@@ -6,7 +6,7 @@
 //     t.barony_id = static_cast<uint32_t>(json_get_int(params, "location_id")) & 0xFFFFFF;
 //
 // so a call without it carried the id 0xFFFFFF and missing_location_id never
-// fired (L20-A, the A3 class; witness r1 item 8: the fix had no test). The rule:
+// fired (the A3 class; the fix had no test). The rule:
 // absent, negative or 0 -> 0 (the caller's "missing" refusal), anything else ->
 // its low 24 bits (a full handle's generation byte is ignored).
 // Header-only and engine-free: bridge/test/test_optional_id.cpp compiles it.

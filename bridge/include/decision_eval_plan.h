@@ -2,7 +2,7 @@
 // and the typed skip list: one definition, engine-free (ctest:
 // bridge/test/test_decision_eval_plan.cpp).
 //
-// L22 (smoke19 D1): `do(action_class="decisions", candidates=[five], character_id
+// `do(action_class="decisions", candidates=[five], character_id
 // =11329)` made the SIGSEGV safety net fire 3x on the game thread at rip_off
 // 0x745aea0 (Ghidra FUN_0755ac50 +0x250): `movups (%rbx),%xmm0` with rbx = 0 —
 // a CPdxArray<16-byte> insert-range copying from a NULL source whose count read
@@ -90,7 +90,7 @@ inline uint32_t murmur3_32(const char* data, uint32_t len) {
 inline bool extract_failure_key(bool shown, bool block_passed) {
 #ifdef DECISION_EVAL_PLAN_PREFIX_CONTROL
     (void)shown;
-    return !block_passed;                 // pre-L22: every failing block
+    return !block_passed;                 // earlier: every failing block
 #else
     return shown && !block_passed;
 #endif

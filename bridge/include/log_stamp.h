@@ -1,12 +1,12 @@
-// ck-55dx — ONE spelling of the bridge log's wall-clock prefix.
+// ONE spelling of the bridge log's wall-clock prefix.
 //
-// WHY THIS EXISTS. ck-zgh4 tried to measure per-action bridge latency from
+// WHY THIS EXISTS. tried to measure per-action bridge latency from
 // arma7 and could not, then tried from arma8's 204MB of preserved trace and
 // still could not. The reason is structural: blog() (bridge_init.cpp) stamps
 // CLOCK_MONOTONIC as "[%5ld.%03ld] " and is declared `static`, so ONLY that
 // translation unit can call it. Every other log path — the BT_TRACE
 // dispatch_done and send_observation records, the Action: lines, the
-// backpressure line, the ck-jh76 reply records — uses raw fprintf with no
+// backpressure line, the reply records — uses raw fprintf with no
 // timestamp at all.
 //
 // So the sparse "[37162.342]" stamps in a bridge log are not a sampling

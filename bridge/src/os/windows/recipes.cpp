@@ -158,7 +158,7 @@ bool recipe_ARMY_IN_COMBAT(uintptr_t army) {
 // (0xDFE59F, 0xDFE6D5; AI_NULL_CONTROLLER when there is no core data), as the
 // Linux enable loop calls this function (ck3_offsets_win.h struct_layout::
 // AI_CTRL_AI_ENABLED). A store, as on Linux: the caller (do_set_character_ai)
-// probes the field readable first (ck-bl15). P6.
+// probes the field readable first. P6.
 void recipe_AI_CHAR_TOGGLE(void* ctrl, uint8_t enabled) {
     *reinterpret_cast<volatile uint8_t*>(reinterpret_cast<uintptr_t>(ctrl) + ck3::ai_ctrl::AI_ENABLED) = enabled;
 }

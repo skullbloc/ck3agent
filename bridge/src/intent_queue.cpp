@@ -1,7 +1,7 @@
-// intent_queue.cpp — IntentQueue's members (L13 FF2: split out of
+// intent_queue.cpp — IntentQueue's members (split out of
 // intent_dispatch.cpp). Engine-free: the queue is a mutex-protected vector and
 // a completed ring, so bridge/test/test_intent_lookup.cpp links this TU and
-// drives the real lookup across a claim, a finish and a store. L13 FF3: no
+// drives the real lookup across a claim, a finish and a store.: no
 // pointer into intents_ leaves this file (claim/finish copy under the lock).
 
 #include "bridge.h"
@@ -127,7 +127,7 @@ void IntentQueue::tick_maintenance(uint64_t current_tick,
 
     // Collect completed + expired intents
     for (auto& intent : intents_) {
-        // L13 FF3: maintenance runs on the drain's thread after the drain
+        // Maintenance runs on the drain's thread after the drain
         // returned, so an intent still in flight here is one whose execution
         // the crash recovery jumped out of: its verdict is that crash.
         if (intent.in_flight) {
@@ -157,7 +157,7 @@ void IntentQueue::tick_maintenance(uint64_t current_tick,
         }
     }
 
-    // L13 FF2 (witness R3): the move to the completed ring happens HERE, under
+    // The move to the completed ring happens HERE, under
     // the same lock as the erase, so a reader (lookup_dispatch) sees every
     // consumed intent in exactly one of the two places, never in neither.
     for (const auto& c : completed_out) store_completed_locked(c);
@@ -222,7 +222,7 @@ void IntentQueue::store_completed(const Intent& intent) {
 }
 
 void IntentQueue::store_completed_locked(const Intent& intent) {
-    // L14 (finding 3): a read's verdict is its asker's only; it never takes a
+    // A read's verdict is its asker's only; it never takes a
     // slot in, or is listed from, the writes' ring.
     std::vector<Intent>& ring = intent_is_read(intent) ? reads_ : completed_;
     const size_t cap = intent_is_read(intent) ? MAX_READS : MAX_COMPLETED;

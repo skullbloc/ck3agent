@@ -2,12 +2,12 @@
 //
 // Two responsibilities, one function-entry hook on AI_CB_SELECTOR (0x04d980d0):
 //
-// 1. OBSERVATION (ck-2x2z): when g_in_bridge_war_intent is set by
+// 1. OBSERVATION: when g_in_bridge_war_intent is set by
 //    intent_dispatch.cpp, log the S1 verdict (cb_ref / titles / target / score)
 //    that the engine wrote to the caller-owned result buffer. Replaces the
-//    ck-2x8w replay probe which crashed CK3 (see ck-10f5).
+//    replay probe which crashed CK3.
 //
-// 2. PATH B' OVERRIDE (ck-8weg): if a global override slot is armed AND the
+// 2. PATH B' OVERRIDE: if a global override slot is armed AND the
 //    g_in_bridge_war_intent gate is set on this thread, OVERWRITE the
 //    result-struct fields after the engine's writes. This rescues the
 //    NO_VIABLE_PAIR / score≤0 cases by injecting a bridge-vouched
@@ -103,7 +103,7 @@ struct CBSelectorOverride {
     int32_t  score;
     uint8_t  extra_roll;
     // Titles CDynArray payload (result+0x20). REQUIRED for war materialisation:
-    // ck-6h1v showed the override-only-gate path dispatches an EMPTY title list,
+    // showed the override-only-gate path dispatches an EMPTY title list,
     // so WAR_CREATE_CORE produces no CWar. When titles_count > 0 the hook writes
     // {data, cap, count} at +0x20/+0x28/+0x2c AND repoints the +0x30 allocator
     // holder at a fake no-op-free allocator (the epilog frees +0x20 via that
@@ -239,7 +239,7 @@ static bool apply_cb_override(uintptr_t rb, const CBSelectorOverride& ov) {
     *p_score      = ov.score;          // post_decl gate: score > 0
     *p_extra_roll = ov.extra_roll;     // 0 = skip the CB-level RNG gate
 
-    // Titles CDynArray at +0x20 (ck-6h1v): without this the dispatched war
+    // Titles CDynArray at +0x20: without this the dispatched war
     // command carries an empty title list and WAR_CREATE_CORE makes no CWar.
     // The engine's NO_VIABLE_PAIR init left {data=null, cap=0, count=0} here.
     // We write our bridge-owned u32 title array AND repoint the +0x30 allocator
@@ -330,7 +330,7 @@ static void on_ai_cb_selector(void* result_buf, void* ai_ctrl, int rng) {
           (unsigned long)cb_ref, (unsigned long)cb_titles,
           (unsigned long)target_ref, sentinel, score, extra_roll, verdict);
 
-    // Capture for execute_war_intent's epilogue (ck-l8ge): last verdict wins
+    // Capture for execute_war_intent's epilogue: last verdict wins
     // if multiple AI_CB_SELECTOR calls fire while gated, which matches the
     // engine semantics — only the last result-buf state feeds AI_WAR_POST_DECL.
     g_last_cb_verdict.captured   = true;
@@ -369,7 +369,7 @@ static void on_ai_cb_selector(void* result_buf, void* ai_ctrl, int rng) {
 // slot — Path B' is single-character-per-call by design.
 // =============================================================================
 
-// rc2 B2: the IPC verb takes three raw 64-bit pointers from the client and
+// The IPC verb takes three raw 64-bit pointers from the client and
 // the engine later calls vtable[0x10] through them (re_ai_cb_selector_consumer.md),
 // so it is a debug verb: compiled in only with CK3_BRIDGE_DEBUG_VERBS. The
 // in-process arming in intent_dispatch.cpp (engine-resolved pointers) stays.

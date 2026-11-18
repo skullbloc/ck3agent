@@ -1,4 +1,4 @@
-// claim_event_log.h — EVERY CLAIM-SET EVENT, STAMPED (ck-jij9)
+// claim_event_log.h — EVERY CLAIM-SET EVENT, STAMPED
 //
 // THE DEFECT. The claim-set events were emitted three different ways:
 //
@@ -11,18 +11,18 @@
 // and ep-02's vacancies ARE 50 ticks. The measurement floor equalled the phenomenon,
 // which means the log could not corroborate a vacancy at all.
 //
-// THE LEDGER REMAINS THE PRIMARY EXACT SOURCE (bridge_record.tick_executed, ck-324r,
-// now actually reaching the observer after ck-h4pn). This makes the log a full
+// THE LEDGER REMAINS THE PRIMARY EXACT SOURCE (bridge_record.tick_executed,
+// now actually reaching the observer after). This makes the log a full
 // CORROBORATOR rather than a second-best substitute: two independent artefacts that
 // can disagree, which is the whole point of a corroborator.
 //
 // ABSENCE IS ITS OWN STATE. If the game state is not loaded the date cannot be read,
 // and this prints `game_date=unread` — never a zero, never a stale value, never a
-// plausible-looking date nobody measured. That is the same rule as ck-6xi6's
-// `heir_ai_enabled=unobserved` and ck-7yrp's `Unknown`: a value that was not observed
+// plausible-looking date nobody measured. That is the same rule as
+// `heir_ai_enabled=unobserved` and `Unknown`: a value that was not observed
 // must not be formatted like one that was.
 //
-// AND THE LITERALS ARE ASCII. ck-cwal's log line contains a section sign, which
+// AND THE LITERALS ARE ASCII. log line contains a section sign, which
 // TRUNCATES `strings` output and made the bead's own witness unusable — the full
 // literal read 0 while its ASCII prefix read 1. Every literal here is ASCII so the
 // blind-rebuild witness list can key on the whole token.

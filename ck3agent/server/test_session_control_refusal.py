@@ -1,4 +1,4 @@
-"""ck-switch / Ruling Three — a refused control call must SAY it was refused.
+""" / Ruling Three — a refused control call must SAY it was refused.
 
 The old branch inspected the bridge's reply for exactly one condition,
 `cannot_act_as_player`, and never read `success`. So every other refusal — the
@@ -19,7 +19,7 @@ Three things are asserted here:
      says nothing gets an explicit UNWITNESSED warning rather than a confident
      echo.
 
-The nine come from the node seat's enumeration of deploy-27's source, not from a
+The nine come from a test seat's enumeration of deploy-27's source, not from a
 grep: `ownership_divergence` is a ternary at dispatch_router.cpp:807-808 rather
 than a string literal, so a literal search does not find it and a COUNT does not
 notice it missing.
@@ -157,9 +157,9 @@ def test_an_UNWITNESSED_success_still_applies_but_warns_in_so_many_words():
 # ── 3. the enumeration itself ────────────────────────────────────────────────
 
 def test_the_nine_are_exactly_nine_and_exactly_these():
-    """Pinned by hand against the node seat's enumeration, because the source
+    """Pinned by hand against a test seat's enumeration, because the source
     cannot be grepped for them: `ownership_divergence` is a ternary, not a
-    literal. ck-760i's own list had nine entries too — and double-counted
+    literal. own list had nine entries too — and double-counted
     `observe_mode` (reachable from both gates under one spelling) while missing
     `ownership_divergence`, so a COUNT agreed while the SET did not."""
     assert redesign.CONTROL_REFUSAL_REASONS == THE_NINE
@@ -243,7 +243,7 @@ def test_an_UNDETERMINABLE_holding_is_labelled_as_the_request_not_presented_as_f
 THE_FOUR = {"missing_character_id", "not_in_roster", "not_owned_by_session",
             "observe_mode"}
 
-# ck-cwal added a FIFTH, and this file's exact-set assertion is what caught it
+# added a FIFTH, and this file's exact-set assertion is what caught it
 # — which is the assertion doing its job, not a reason to loosen it to `>=`.
 # THE_FOUR stays spelled as the four because it names what the per-call-site
 # audit found; the new member is listed apart so a later reader can still see
@@ -288,7 +288,7 @@ def test_release_has_its_OWN_vocabulary_not_controls():
     The set is pinned EXACTLY, so adding a member reds this row on purpose:
     the point is that each addition is a deliberate widening of what this
     client will accept from the bridge, reviewed once rather than absorbed.
-    ck-cwal's `last_claim_of_control_session` is the first such widening.
+    `last_claim_of_control_session` is the first such widening.
     """
     assert redesign.RELEASE_REFUSAL_REASONS == RELEASE_REASONS
     assert RELEASE_REASONS & redesign.CONTROL_REFUSAL_REASONS == {"observe_mode"}
@@ -296,7 +296,7 @@ def test_release_has_its_OWN_vocabulary_not_controls():
     for reason in RELEASE_REASONS:
         assert redesign.RELEASE_REFUSAL_SUMMARIES.get(reason), reason
         assert redesign.why_blocked(reason)["class"] != "unknown", reason
-        # THE FLAG THE AGENT ACTS ON, and the one that caught ck-cwal: a
+        # THE FLAG THE AGENT ACTS ON, and the one that caught: a
         # summary can be perfect while the reason has no GATE_TABLE row, and
         # the fallback says retryable TRUE. Not one of the five is won by
         # trying again, so a True here is a loop, not a retry.

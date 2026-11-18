@@ -5,7 +5,7 @@
 //
 // WHAT THIS IS TODAY: ONE CELL IN THE LINUX BRIDGE. libck3_bridge.so does not
 // link this layer; it compiles one cell of it, the session pass
-// (src/os/session_pass.cpp, shared with Windows since L14 m-16). Otherwise bridge_init.cpp,
+// (src/os/session_pass.cpp, shared with Windows since). Otherwise bridge_init.cpp,
 // runtime_resolver.cpp, ipc_server.cpp, launcher_bypass.cpp and
 // action_handlers.cpp still call their own Linux code directly, exactly as
 // before. Routing the bridge through it is the rest of P2, one call site at a
@@ -329,7 +329,7 @@ Result watchdog_arm(std::uint32_t ms, WatchdogFn fn, void* ctx);
 // disarm returns, the callback is not running and will not run.
 Result watchdog_disarm(bool* fired);
 
-// ── session-pass hook (L14; re/findings/windows/re_session_pass_hook_win.md) ─
+// ── session-pass hook (re/findings/windows/re_session_pass_hook_win.md) ─
 //
 // The game runs every engine command on one SESSION thread, whose run loop
 // calls the function pointer in a data slot of the session object on every

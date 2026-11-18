@@ -1,12 +1,12 @@
 // test_instance_paths.cpp — the bridge's instance naming, host-compiled.
 //
-// Bead ck-qn03 (R12). Two jobs:
+// Two jobs:
 //
 //   1. SELF-CHECK (default invocation): assert the rules directly — legacy
 //      layout is the old host byte for byte, the default layout is the private
 //      per-user dir, a named instance moves every path under the instance dir,
 //      an explicit override beats the id, a non-slug id is REFUSED rather than
-//      sanitised, peers and private dirs are checked (rc2 B1), a malformed
+//      sanitised, peers and private dirs are checked, a malformed
 //      layout or id binds nothing, ancestors of the private dir are checked,
 //      and state files go through the verified dir fd (section 10).
 //
@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
                     bridge::instance_config_was_refused() ? "true" : "false", boot);
         return 0;
     }
-    // rc2 B1: does the boot log open in this env? Writes one line if so.
+    // Does the boot log open in this env? Writes one line if so.
     if (argc > 1 && std::strcmp(argv[1], "--bootlog") == 0) {
         const int fd = bridge::instance_open_boot_log();
         if (fd >= 0) { (void)!write(fd, "boot\n", 5); close(fd); }
@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
                     bridge::instance_private_dir_error());
         return 0;
     }
-    // rc2 B1: state files go through the verified dir fd. Writes "probe",
+    // State files go through the verified dir fd. Writes "probe",
     // then tries to read "link" (the caller planted a symlink there).
     if (argc > 1 && std::strcmp(argv[1], "--statefile") == 0) {
         bridge::instance_make_dirs();
@@ -242,7 +242,7 @@ int main(int argc, char** argv) {
         check_eq("over-long id falls back", field(d, "instance_id"), "default");
     }
 
-    // 7. Peer admission (rc2 B1). A foreign uid needs root to produce, so the
+    // 7. Peer admission. A foreign uid needs root to produce, so the
     //    rule is checked directly and SO_PEERCRED is checked on a socketpair.
     {
         check_true("same uid admitted", bridge::instance_peer_admitted(true, 1000, 1000, false));
@@ -315,7 +315,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 10. rc2 B1: a malformed layout or id binds NOTHING (instance.py raises on
+    // 10.: a malformed layout or id binds NOTHING (instance.py raises on
     //     both, so neither side settles on a path), and the chain above a
     //     named instance's root is checked, not just the leaf.
     {
@@ -395,7 +395,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 11. rc2 B1: leading/trailing ASCII whitespace in the layout and the id
+    // 11.: leading/trailing ASCII whitespace in the layout and the id
     //     is stripped, exactly as instance.py (_WS) and ck3_instance.sh do.
     //     Before: "legacy " was refused here and accepted by the client, which
     //     then dialled /tmp/ck3-agent.sock with its owner/peer checks off.
@@ -438,7 +438,7 @@ int main(int argc, char** argv) {
         check_true("blank id not refused", d.find("\"refused\":false") != std::string::npos);
     }
 
-    // 12. rc2 B1: the boot log is written only with CK3_BRIDGE_BOOT_LOG=1 (any
+    // 12.: the boot log is written only with CK3_BRIDGE_BOOT_LOG=1 (any
     //     build, any layout), and its base is the resolver's base.
     {
         const char* env[] = {"PATH=/usr/bin:/bin", "CK3_INSTANCE_LAYOUT=legacy", nullptr};
@@ -475,7 +475,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 13. rc2 B1: instance_fopen_private, the by-path open behind every other
+    // 13.: instance_fopen_private, the by-path open behind every other
     //     bridge-written file (gen_current.jsonl, session stamp).
     {
         char tmpl[] = "/tmp/ck3-ipt-XXXXXX";

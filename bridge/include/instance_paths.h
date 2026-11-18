@@ -1,6 +1,6 @@
 // instance_paths.h — the bridge's own copy of the instance naming rules.
 //
-// Bead ck-qn03 (R12). The authority is `ck3agent/server/instance.py`; this is
+// The authority is `ck3agent/server/instance.py`; this is
 // the third transcription (the second is `scripts/ck3_instance.sh`), and all
 // three are pinned against each other by `scripts/test_multi_instance.py`.
 //
@@ -10,7 +10,7 @@
 // any client exists to tell it. The ONLY channel is the process environment,
 // so the rules are re-stated here rather than passed in.
 //
-// TWO LAYOUTS (rc2 B1). CK3_INSTANCE_LAYOUT selects:
+// TWO LAYOUTS. CK3_INSTANCE_LAYOUT selects:
 //   unset / "user"  per-user private dir: $XDG_RUNTIME_DIR/ck3agent, else
 //                   /run/user/<euid>/ck3agent, else ~/.local/state/ck3agent.
 //                   Created 0700 and verified (dir, owned by euid, no g/o
@@ -43,7 +43,7 @@ const char* instance_id();           // "default" or the validated slug
 const char* instance_socket_path();  // <base>/agent.sock | <dir>/agent.sock
 const char* instance_telemetry_dir(); // <base>/telemetry | <dir>/telemetry
 const char* instance_bridge_log();   // <base>/bridge.log | <dir>/bridge.log
-// ck-bwz1: where retired log windows are archived. EMPTY when not configured —
+// Where retired log windows are archived. EMPTY when not configured —
 // archiving is opt-in, because an unbounded archive in /tmp would trade the
 // known loss the ring causes for an unknown one.
 const char* instance_log_archive_dir();
@@ -54,8 +54,8 @@ bool instance_layout_is_legacy();
 // True when CK3_INSTANCE_LAYOUT held an unknown value (fell back to "user").
 bool instance_layout_was_refused();
 
-// Directory for the bridge's flag and lock files (ck-enabled-writes,
-// ck3-decision-*, ck3-personality-locks.json). Legacy: "/tmp". User: the
+// Directory for the bridge's flag and lock files
+// (ck3-decision-*, ck3-personality-locks.json). Legacy: "/tmp". User: the
 // instance's private dir.
 const char* instance_state_dir();
 
@@ -80,7 +80,7 @@ bool instance_config_was_refused();
 // (0644 legacy). mode is "r", "w" (truncate) or "a". nullptr (errno set) when
 // the dir was refused or never verified.
 FILE* instance_state_fopen(const char* name, const char* mode);
-// rc2 B1: the same open by PATH, for bridge-written files outside the state
+// The same open by PATH, for bridge-written files outside the state
 // dir fd (telemetry, session detach stamp): O_NOFOLLOW|
 // O_CLOEXEC, regular files only, created instance_file_mode(); a write open
 // tightens an existing file to that mode. nullptr (errno set) on failure.

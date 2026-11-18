@@ -1,4 +1,4 @@
-"""plan_war's empty_reason names what actually excluded the rows (L14 finding 2).
+"""plan_war's empty_reason names what actually excluded the rows (finding 2).
 
 The evaluator's two empty plans (eval_b_play, both clock modes) answered
 `empty_reason.gate: "target_allied"`, "allied/truced ... re-check next reign",

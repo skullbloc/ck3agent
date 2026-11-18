@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// init_order.h — THE .init_array CONTRACT (ck-22n3, after ck-xqol)
+// init_order.h — THE .init_array CONTRACT (after)
 //
 // libck3_bridge.so has an __attribute__((constructor)): `dll_init` in
 // bridge_init.cpp. A plain constructor attribute carries NO priority, so the
@@ -23,7 +23,7 @@
 //      built by validate_offsets() was emptied microseconds later, so is_mapped()
 //      answered `false` for every address until the next refresh.)
 //   2. A THREAD READS RAW .bss. Zeroed storage is not a constructed object, and
-//      zero is a plausible-looking value — which is how ck-xqol's reader thread
+//      zero is a plausible-looking value — which is how reader thread
 //      polled fd 0 (stdin) out of an unconstructed slot table and SIGSEGV'd
 //      clearing a std::string that had never been constructed.
 //
@@ -49,14 +49,14 @@
 // (the world-reset registrars), the holder became a class type so it could
 // carry the priority: see WorldResetRegistrar in world_epoch.h.
 //
-// ck-xqol's ipc_server.cpp globals predate this header; they spelled the
-// attribute out inline until the MSVC fix (lane win12) moved them onto
+// ipc_server.cpp globals predate this header; they spelled the
+// attribute out inline until the MSVC fix moved them onto
 // CK3_EARLY_INIT: the same lever at the same priority.
 //
 // IF test_init_order FAILS ON YOUR BRANCH, IT IS TELLING YOU SOMETHING TRUE.
 // It names the translation unit. Add CK3_EARLY_INIT to that TU's namespace-scope
 // globals (and this include) — that is the whole fix. It has already happened
-// once: ck-9fc3's world_identity.cpp and personality_persist.cpp were written in
+// once: world_identity.cpp and personality_persist.cpp were written in
 // parallel with this header and landed on main without it, putting g_declared /
 // g_quarantine_identity / g_ledger / g_path / g_id after dll_init. get_tick_info
 // reads the first two, and the bridge starts the IPC server early SO THAT

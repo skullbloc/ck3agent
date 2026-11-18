@@ -1,4 +1,4 @@
-// test/test_flush_scheduler.cpp — unit tests for the R1a flush scheduler (ck-6kvq.8).
+// test/test_flush_scheduler.cpp — unit tests for the R1a flush scheduler.
 //
 // Standalone: compiles flush_scheduler.cpp with NO engine, NO game, NO CK3
 // binary and — unlike test_session_registry.cpp — not even a stub global,
@@ -278,7 +278,7 @@ static void test_one_span_and_ordering() {
     // not touched at all ("ensure unpaused" is a no-op when it already is, and
     // so is "restore the resting speed" when it already is that).
     //
-    // ck-on4u: THE SPEED HERE IS LOAD-BEARING AND USED TO BE A COINCIDENCE. It
+    // THE SPEED HERE IS LOAD-BEARING AND USED TO BE A COINCIDENCE. It
     // was the literal 3, which happened to equal the planner's hard-coded
     // resting speed, so the restore step found nothing to do. That hard-coded 3
     // is the defect this bead removed — it was a second home for a
@@ -396,7 +396,7 @@ static void test_tick_read_before_tick_write() {
     {
         FlushScheduler s;
         submit_n(s, "s1", "query_conquest_targets", Polarity::TICK_READ, 2, 0);
-        // ck-on4u: at the RESTING speed, so "an already-running clock is not
+        // At the RESTING speed, so "an already-running clock is not
         // touched" is about the pause and not about a literal that used to
         // agree with a hard-coded resting speed by accident.
         FlushPlan p = s.plan_flush(10000, ClockReading{false, kRegisteredGameSpeed},

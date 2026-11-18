@@ -32,7 +32,7 @@ import redesign  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE_SRC = ROOT / "bridge" / "src"
 
-# L13 FF3 (witness X4): the one C++ tokenizer (bridge/scripts/cpp_strip.py).
+# The one C++ tokenizer (bridge/scripts/cpp_strip.py).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "scripts"))
 import cpp_strip  # noqa: E402
 
@@ -302,7 +302,7 @@ def test_a_faction_write_with_no_character_id_dispatches_the_bound_ruler():
 
 
 def test_faction_action_is_on_by_default_since_its_live_validation():
-    """2026-10-21, lane l10-factions: create / join / leave / press_demand and the
+    """2026-10-21, create / join / leave / press_demand and the
     liege's demand answer proven on the 867 save from both seats."""
     assert "faction_action" not in redesign.EXPERIMENTAL_WRITES
     assert "faction_action" not in _gate_list_from_bridge()

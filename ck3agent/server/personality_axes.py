@@ -9,7 +9,7 @@ scripts/bridge_test_suite.py and re/coredump/bridge_emulator.py.
 
 The bridge's table has a tenth name, dominance, with no engine byte and no
 getter hook (personality.cpp): the game's AI never reads it. It is not an axis
-here, so no tool accepts or writes it (L14 finding 5; neither the
+here, so no tool accepts or writes it (finding 5; neither the
 pre-registration nor docs/pre-registration-conditions.md declares an axis list).
 """
 

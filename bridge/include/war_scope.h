@@ -1,6 +1,6 @@
 // war_scope.h — the optional `war_id` scope of a war read, in ONE place.
 //
-// L20-A (smoke17 row A3): `query_war_stance {"character_id":12015}` listed
+// `query_war_stance {"character_id":12015}` listed
 // `wars []` at 0867.03.01 while war 13, which 12015 declared, was active and the
 // record walk matched 30 records. The handler read the scope as
 //
@@ -49,7 +49,7 @@ inline bool in_scope(uint32_t scope, uint32_t slot) {
 }
 
 // query_war_score_breakdown's branch: every cached war, or the one war `scope`
-// names (witness r1 item 8: the documented `{}` had no test).
+// names (the documented `{}` had no test).
 inline bool all_wars(uint32_t scope) {
     return scope == kAllWars;
 }

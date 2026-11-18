@@ -10,7 +10,7 @@
 
 #include "name_tables.h"
 #include "decision_eval_plan.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 #include "bridge.h"
 #include "ck3_offsets.h"
 #include "world_epoch.h"
@@ -927,7 +927,7 @@ static std::mutex g_name_cache_mutex;
 static std::unordered_map<uint32_t, std::string> g_name_cache CK3_EARLY_INIT;
 static std::set<uint32_t> g_needs_resolution CK3_EARLY_INIT;
 
-// ck-hxh7: this cache is keyed by CHARACTER ID, and character ids are REUSED
+// This cache is keyed by CHARACTER ID, and character ids are REUSED
 // across saves. Its lifetime is therefore the loaded WORLD, not the process.
 // Register its clear function with the world-epoch detector so a save loaded
 // into a live process drops it. (Before this, clear_name_cache() had no caller
@@ -937,7 +937,7 @@ static std::set<uint32_t> g_needs_resolution CK3_EARLY_INIT;
     register_world_reset("character_name_cache", &clear_name_cache);
 });
 
-// Test seam (ck-hxh7 regression test). When non-null, populate_name_cache()
+// Test seam (regression test). When non-null, populate_name_cache
 // resolves through this instead of the engine, so the cache's WORLD-LIFETIME
 // behaviour can be exercised host-side with no game attached. Always null in a
 // deployed bridge; the engine path below is untouched.

@@ -40,7 +40,7 @@ def test_teardown_waits_for_the_owner_to_release(bridge):
 
 
 def test_teardown_leaves_another_runs_ruler_alone_and_names_it(bridge):
-    """L20-B (smoke17: consolidate's teardown warned "13902 still held by session
+    """ (consolidate's teardown warned "13902 still held by session
     ...14: not_owned_by_session", expand's ruler). Two sessions hold one ruler
     each; the teardown of the run whose session is s1 releases nothing of s2's,
     asks the bridge for nothing of s2's, and does not warn."""
@@ -67,7 +67,7 @@ def test_teardown_releases_its_own_ruler_beside_another_runs(bridge):
 
 
 def test_teardown_without_a_session_record_releases_nothing_and_is_not_clean(bridge):
-    """L20 r3, witness item 2: with no session record (`sessions` empty) every
+    """With no session record (`sessions` empty) every
     claim read as another run's, and the teardown returned ("release", True,
     "no ruler of this run bound"). The record is the only attribution: nothing
     is released, the step is not clean, and the claims seen are unattributed."""
@@ -300,7 +300,7 @@ def test_watch_stops_a_real_process_that_never_exits(bridge, monkeypatch):
         proc.kill()
 
 
-# 2026.12.5 (draft smoke, smoke5 row 2): the teardown read a pinned, detached
+# 2026.12.5 (draft smoke, row 2): the teardown read a pinned, detached
 # session as gone ("already closed, nothing held") while it held the ruler. A
 # get_bridge_state reply with no session list (the bridge's fault reply here)
 # was read as an empty registry. Red on e8411492: rows 1 and 3.
@@ -359,7 +359,7 @@ def test_unreadable_session_state_is_never_none_held(bridge):
 
 
 def test_owner_labels_an_unread_holder_and_an_unlisted_one_apart(bridge):
-    """r3 witness item 4: `_owner` read a list-less reply as "an unknown session",
+    """r3: `_owner` read a list-less reply as "an unknown session",
     the same words as a list that names no holder. Now the label says which:
     unread, or no session listed. (_claims, which had no caller and the same
     misreading, is deleted.) Red on 5e42c229: both read "an unknown session"."""

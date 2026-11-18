@@ -1,4 +1,4 @@
-// action_log_row.h — what one action-log row says about the action (L18-A).
+// action_log_row.h — what one action-log row says about the action.
 //
 // THE DEFECT. The action log (<telemetry>/action_log.jsonl, dispatch_router.cpp
 // emit_action_log) splices the handler's reply in as `result` at dispatch time.
@@ -61,7 +61,7 @@ inline ActionLogVerdict action_log_verdict_of(const char* result_json) {
     if (strcmp(reason, "no_poll_on_game_thread") == 0) poll = "skipped_on_game_thread";
     else if (strcmp(status, "timeout") == 0 ||
              strcmp(reason, "intent_not_completed_within_5s") == 0 ||
-             // L18 round 2: the faction and scheme handlers' own wait ran out and
+             // The faction and scheme handlers' own wait ran out and
              // nothing retired the intent (factions.cpp faction_action; the scheme
              // handler after a retire that found it claimed), so the drain may
              // still apply it: pending, decided by the outcome row. A scheme

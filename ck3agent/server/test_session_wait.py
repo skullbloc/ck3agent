@@ -117,7 +117,7 @@ def test_unpause_reply_is_honest_when_the_bridge_never_settles(no_sleep, monkeyp
                         lambda g, want, timeout_s=3.0: redesign._fresh_tick(g))
     out = run(redesign.session_impl(gw, "unpause"))
     assert out["result"] == {"paused": True, "settled": False}
-    # L14 FF1 M-5: a state never read back is pending, never applied.
+    # A state never read back is pending, never applied.
     assert out["verdict"] == "pending" and out["applied"] is False, out
     assert out["pending"]["drains_when"] == "next_pass", out["pending"]
 
@@ -127,7 +127,7 @@ class Refusing(Gw):
     sends: MEMORY_ACCESS_FAULT_REPLY = {"error":"memory_access_fault"}
     (bridge/include/bridge.h), from answer_memory_access_fault in case_set_speed /
     case_pause_game / case_unpause_game (bridge/src/dispatch_router.cpp). It
-    carries no `success`. (FF1's fixture said {"success": false, ...}, a shape
+    carries no `success`. (fixture said {"success": false, ...}, a shape
     the bridge never sends, and so could not see N-MAJ-1.) The state does not
     move: the clock reads what it read before the write."""
 
@@ -138,7 +138,7 @@ class Refusing(Gw):
 
 @pytest.mark.parametrize("action,kw", [("speed", {"speed": 2}), ("pause", {}), ("unpause", {})])
 def test_a_refused_clock_write_is_rejected_not_applied(no_sleep, action, kw):
-    """L14 FF2 N-MAJ-1 (the witness's run 2): the bridge's fault reply is
+    """The bridge's fault reply is
     write_blocked, verdict rejected, with the bridge's reason. RED on b84e3634
     for speed (answered applied)."""
     gw = Refusing(paused=(action == "unpause"))
@@ -150,7 +150,7 @@ def test_a_refused_clock_write_is_rejected_not_applied(no_sleep, action, kw):
 
 
 def test_speed_reads_the_speed_back(no_sleep):
-    """L14 FF2 M-5: speed settles like pause/unpause; the reply is the reading."""
+    """Speed settles like pause/unpause; the reply is the reading."""
     gw = Gw(paused=True)
     out = run(redesign.session_impl(gw, "speed", speed=2))
     assert out["verdict"] == "applied" and out["result"]["settled"] is True, out
@@ -186,7 +186,7 @@ def test_a_wait_whose_closing_pause_never_reads_paused_is_pending(no_sleep, monk
 
 
 def test_a_wait_whose_closing_pause_is_REFUSED_is_rejected_not_pending(no_sleep):
-    """L14 FF3 N3-2: the closing pause answered with the bridge's fault reply
+    """The closing pause answered with the bridge's fault reply
     (MEMORY_ACCESS_FAULT_REPLY, bridge/include/bridge.h, from
     answer_memory_access_fault in case_pause_game, dispatch_router.cpp), the clock
     still running. Nothing will drain: rejected, gate bridge_fault, never ok:true

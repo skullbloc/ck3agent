@@ -45,7 +45,7 @@ void ActorDispatchScope::annotate(std::string* reply, bool handler_ok) const {
     r += "\",\"actor_rule\":\"";
     r += refused_rule;
     r += "\"";
-    // rule 0 (lane ACTORKEY): which key the verb reads, which key it was given.
+    // rule 0: which key the verb reads, which key it was given.
     if (refused_key_read && refused_key_got) {
         r += ",\"actor_key_read\":\""; r += refused_key_read;
         r += "\",\"actor_key_got\":\""; r += refused_key_got; r += "\"";

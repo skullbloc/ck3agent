@@ -1,4 +1,4 @@
-// council_suppress_hook.cpp — the per-seat council-task pin (lane COUNCILRE).
+// council_suppress_hook.cpp — the per-seat council-task pin.
 //
 // The native AI re-scores each council seat of an AI ruler on that ruler's
 // bucket-3 pass (every 180 days for a duke and up) and switches the task when
@@ -26,7 +26,7 @@
 
 #include "action_dispatch_internal.h"
 #include "council_pin.h"
-#include "init_order.h"   // ck-22n3: CK3_EARLY_INIT
+#include "init_order.h"   // CK3_EARLY_INIT
 
 #include <algorithm>
 #include <atomic>

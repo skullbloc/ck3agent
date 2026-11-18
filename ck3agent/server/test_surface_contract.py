@@ -1,4 +1,4 @@
-"""cleanup 2026.11 L1: the tool surface, its vocabularies and its refusals, checked
+"""The tool surface, its vocabularies and its refusals, checked
 against the code that answers them.
 
 THE SURFACE IS WHAT FASTMCP REGISTERS. Every row below reads
@@ -106,7 +106,7 @@ NOTEPAD_DECLARED = {"CK3_NOTEPAD_PRIVATE_MAX_BYTES": "4096", "CK3_NOTEPAD_COUNCI
 
 
 def test_the_notepad_tools_are_registered_exactly_when_the_arm_declares_a_pad():
-    """v4 draft §5/§7 (lane v4note): the 13, msg_send where a topology is
+    """v4 draft §5/§7: the 13, msg_send where a topology is
     declared, and note_read/note_write where pads are declared, each a
     declared per-arm addition; absent (not present-and-refused) otherwise."""
     both = {"note_read", "note_write"}
@@ -141,7 +141,7 @@ def test_no_retired_tool_or_handler_is_left_in_the_server():
 GATEWAY_SURFACE = ("read", "read_many", "write", "confirmed_write",
                    "delta_records_since_last", "actor_gate", "game", "health", "clock")
 
-#: L13 deleted these: the gateway never changes the clock, so it has no scope to
+#: deleted these: the gateway never changes the clock, so it has no scope to
 #: open, no polarity to look up and no tick to wait for.
 GATEWAY_DELETED = ("read_unpaused", "read_inline", "unpaused_window", "_scoped_pause",
                    "_await_tick_advance", "sync_polarity_table", "_polarity",
@@ -564,7 +564,7 @@ def test_discover_error_paths(wired, kw, gate):
 def test_steer_write_the_bridge_did_not_confirm_is_named(wired):
     wired.replies["set_ai_personality"] = {"status": "sent_no_confirmation"}
     env = run(ms.steer(personality={"boldness": 10}))
-    # L14 finding 5: the write envelope; not confirmed and not read back is pending
+    # finding 5: the write envelope; not confirmed and not read back is pending
     assert env.get("verdict") == "pending" and env["pending"]["drains_when"] == "next_pass", env
 
 
@@ -588,7 +588,7 @@ def test_every_tool_names_a_lost_bridge(monkeypatch):
         assert env["tool"] == name
 
 
-# ── NIT-3 (L14 witness r4): the idempotency CB match is real ─────────────────
+# ── NIT-3: the idempotency CB match is real ─────────────────
 # get_active_wars rows carry cb_type (query_handlers.cpp do_get_active_wars,
 # war_cb_type_name; test_observe_war_truth pins the emitted key).
 
@@ -627,7 +627,7 @@ def test_NIT3_the_readback_does_not_take_a_pre_existing_war_under_another_cb():
     assert env.get("verdict") != "applied" or env["result"]["war_id"] != 77, env
 
 
-# ── m7 (L15 witness): the idempotency keys on the CB title; a failed pre-read refuses ──
+# ── m7 (witness): the idempotency keys on the CB title; a failed pre-read refuses ──
 # get_active_wars rows carry target_titles (query_handlers.cpp do_get_active_wars,
 # read_war_target_titles over war_obj::CB_TITLE_ARRAY, the read query_wars makes).
 
@@ -661,7 +661,7 @@ def test_m7_a_war_for_another_or_an_unread_title_is_not_already_at_war(titles):
 
 @pytest.mark.parametrize("cb", ["tribal_subjugation_cb", "vassalization_cb", "make_tributary_cb"])
 def test_m7_a_mode0_cb_names_no_title_and_matches_on_the_cb(cb):
-    """L15 witness n5: make_tributary_cb is mode 0 too (target_mode 0, live rows
+    """Make_tributary_cb is mode 0 too (target_mode 0, live rows
     target_titles []); RED on 16dd7f14 for it: a nonzero cb_title_id could never
     match its war, and the declaration was dispatched again."""
     gw = Gw({"get_active_wars": {"wars": [_titled([], cb=cb)]}})

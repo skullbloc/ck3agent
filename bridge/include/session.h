@@ -10,11 +10,11 @@
 
 #pragma once
 
-// ck-6kvq.5: the resume decision is taken with ck-9fc3's identity rule, NOT a
+// The resume decision is taken with identity rule, NOT a
 // second copy of it.  world_identity.h says so explicitly ("one identity, two
 // consumers ... do not fork it"): this is the CLAIMS consumer, and the steering
 // consumer is `declare_save_identity`.
-#include "skip_held_heir.h"   //: ck-7yrp ReleaseSubjectState
+#include "skip_held_heir.h"   //: ReleaseSubjectState
 #include "world_identity.h"
 
 #include <atomic>
@@ -38,11 +38,11 @@ struct ClientSlot;
 // fits comfortably.  It lives here (rather than privately in dispatch_router.cpp)
 // because the registry is the single enforcement point: a claim that would push
 // the derived watchlist past the cap is REFUSED, so the ownership table and the
-// watchlist can never silently disagree (ck-6kvq.11, design §1.5).
+// watchlist can never silently disagree (design §1.5).
 constexpr size_t MAX_CONTROLLED_WATCHLIST = 10;
 
 // Upper bound on the client-supplied handshake name a session will store.
-// client_name is taken VERBATIM from the client's frame, and since ck-6kvq.11
+// client_name is taken VERBATIM from the client's frame, and since
 // every session's name is echoed in every get_bridge_state reply — so an
 // oversized name would be paid for by every client on every state read, not
 // just by the one that sent it.  Truncated, never refused: the name is a label,
@@ -59,7 +59,7 @@ public:
         OBSERVE,   // read-only: queries + state reads, no writes
     };
 
-    // ── Session lifetime is DECOUPLED FROM THE SOCKET (ck-6kvq.5, §6.2/§7.1) ──
+    // ── Session lifetime is DECOUPLED FROM THE SOCKET (§6.2/§7.1) ──
     // M1's session lifetime WAS the socket's: a drop destroyed the session and
     // freed its claims (§1.4 defect 1).  In an experiment episode that is an
     // uncontrolled change to the frozen arm, caused by a network event.
@@ -83,7 +83,7 @@ public:
     Mode mode = Mode::CONTROL;
     uint64_t created_at_ms = 0;
 
-    // ── Resume (ck-6kvq.5) ──────────────────────────────────────────────────
+    // ── Resume ──────────────────────────────────────────────────
     // SERVER-MINTED, like session_id.  §7's "nothing client-supplied is
     // identity" bites HARDER here than it does for session_id, because this
     // token is an AUTHORISATION OVER A CLAIM SET: if the client chose it, any
@@ -103,7 +103,7 @@ public:
     uint32_t bound_slot_gen = 0;
 
     // The save/world this session's claims were taken against (declared, never
-    // derived — world_identity.h), and ck-hxh7's world epoch at attach time
+    // derived — world_identity.h), and world epoch at attach time
     // (0 = "the detector never spoke", the seam's unavailable sentinel).
     WorldIdentity world;
     uint64_t attach_epoch = 0;
@@ -111,7 +111,7 @@ public:
     // Per-session mutable state (protected by mutex).
     mutable std::mutex mutex;
     uint32_t primary_character_id = 0;      // "my main actor"
-    // ck-7rk6: the last character this session STEERED, never cleared by a
+    // The last character this session STEERED, never cleared by a
     // release. The succession handoff keys on primary_character_id, and
     // release_character() zeroes that when the claim set empties — so an
     // agent releasing its own CORPSE blinded the handoff entirely: the loop
@@ -121,7 +121,7 @@ public:
     // failed handoff attempts there, so that episode is not the bad case — but
     // the path is real). This field lets the handoff still see the death.
     uint32_t last_steered_character_id = 0;
-    // ck-7yrp: WAS THE RELEASED SUBJECT ALIVE OR DEAD **AT RELEASE**?
+    // WAS THE RELEASED SUBJECT ALIVE OR DEAD **AT RELEASE**?
     //
     // last_steered_character_id alone cannot answer it: release_character sets
     // that unconditionally, alive or dead, so nothing downstream could tell a
@@ -131,7 +131,7 @@ public:
     // RECOVERY — see skip_held_heir.h for why absence must not look like an answer.
     ReleaseSubjectState last_release_state = ReleaseSubjectState::Unknown;
 
-    // ck-48z8: WHAT THE CLAIM ASKED FOR, so a handoff can preserve it.
+    // WHAT THE CLAIM ASKED FOR, so a handoff can preserve it.
     //
     // The succession handoff used to disable the heir's native AI whenever
     // g_agent_mode was true — and g_agent_mode is rebuilt as `primary != 0`, so it
@@ -148,13 +148,13 @@ public:
     uint32_t heir_character_id = 0;         // cached primary-title heir
     uint32_t primary_title_id = 0;          // cached highest-tier title of primary
     std::set<uint32_t> claimed_character_ids;
-    //: rc2 B6: why the bridge itself took this seat's ruler away, "" when it did
+    //: Why the bridge itself took this seat's ruler away, "" when it did
     //: not. "heir_is_player": the ruler died and the human player inherited, so
     //: the handoff unbound the seat instead of binding the player. Cleared by
     //: the next successful claim. Published in sessions_json and get_tick_info.
     std::string unbound_reason;
     uint32_t    unbound_heir_id = 0;
-    //: owner ruling 2026-11-12: the seat's REGISTERED REALM ROOT, the top liege
+    //: The seat's REGISTERED REALM ROOT, the top liege
     //: of the seat's ruler as the handoff first read him alive (latched once,
     //: only when the bridge's line watch could be armed on it, so the realm can
     //: be followed through the root's own succession). 0 = none registered: no
@@ -173,7 +173,7 @@ public:
     // by SessionRegistry::mutex_, NOT by Session::mutex.
     uint64_t claim_seq = 0;
 
-    //: ck-j6lk: HAS THIS SESSION EVER HELD A CLAIM — monotonic, never cleared.
+    //: HAS THIS SESSION EVER HELD A CLAIM — monotonic, never cleared.
     //:
     //: It exists because nothing else could answer that question. claim_seq is
     //: RESET to 0 by note_session_release_locked the moment the claimed set
@@ -185,7 +185,7 @@ public:
     //: and R3's claim pin has to separate exactly those two.
     //:
     //: last_steered_character_id survives a release but is NOT a substitute: it is
-    //: set only when primary_character_id == char_id at release, and ck-qv51
+    //: set only when primary_character_id == char_id at release, and
     //: deliberately leaves it alone for an UndoneClaim. A session that released a
     //: non-primary claim, or whose claim was rolled back, reads 0 there — so
     //: keying on it would classify a REAL SEAT as never-claimed and destroy it,
@@ -204,10 +204,10 @@ public:
     //: atomic makes the read safe without inventing a lock order between them.
     std::atomic<uint64_t> claims_ever{0};
 
-    //: ck-j6lk state (b): THE SESSION DECLARED ITSELF A SEAT, at handshake, by
+    //: state (b): THE SESSION DECLARED ITSELF A SEAT, at handshake, by
     //: sending `"episode_seat": true`. DECLARED, never inferred.
     //:
-    //: It exists for ck-3ru8's window: the world loads ~17s after the first
+    //: It exists for window: the world loads ~17s after the first
     //: connection, so a real agent has a stretch in which claims_ever is still 0.
     //: Keying the pin on claims alone would destroy such a seat if it died there,
     //: and a genuine agent failure would leave NO unavailability behind — the
@@ -329,14 +329,14 @@ public:
 
     // Release ownership from a session.  Returns false if the session did not
     // own the character.
-    //: ck-7yrp: the state DEFAULTS to Unknown rather than being required, because
+    //: The state DEFAULTS to Unknown rather than being required, because
     //: the registry cannot see aliveness and most callers (tests, internal paths)
     //: genuinely do not know. Unknown means NO RECOVERY, so a caller that omits it
     //: gets the conservative answer instead of a plausible-looking wrong one.
     bool release_character(Session* session, uint32_t char_id,
                            ReleaseSubjectState state_at_release
                                = ReleaseSubjectState::Unknown);
-    //: ck-swap: move a claim from `from` to `to` in ONE step. Net zero against
+    //: Move a claim from `from` to `to` in ONE step. Net zero against
     //: MAX_CONTROLLED_WATCHLIST when `from` is held, so the cap cannot refuse a
     //: switch; claim_seq is never touched, so §7.3i never sees a move. When
     //: `from` is NOT held this is a net +1 and delegates to claim_character so
@@ -350,7 +350,7 @@ public:
     // Rebuild the legacy global mirrors (g_controlled_primary, g_controlled_chars,
     // g_controlled_heir).  Called after any claim/release/primary change.
     //
-    // The global primary is chosen DETERMINISTICALLY (ck-6kvq.11, design §1.4
+    // The global primary is chosen DETERMINISTICALLY (design §1.4
     // defect 2 / §7 item 2):
     //   1. the episode-manifest designation, if one is set and still resolvable;
     //   2. otherwise the control session with the lowest nonzero claim_seq
@@ -359,7 +359,7 @@ public:
     //
     // Takes mutex_ itself.  (It used to require the caller to already hold it,
     // while three external call sites — dispatch_router.cpp and bridge_init.cpp
-    // — called it unlocked and raced sessions_.  ck-6kvq.11.)
+    // — called it unlocked and raced sessions_. .)
     void rebuild_legacy_mirrors();
 
     // --- Episode-manifest designation of the global primary (design §7 item 2) ---
@@ -387,7 +387,7 @@ public:
     // Number of distinct characters claimed across all CONTROL sessions — i.e.
     // the size the derived watchlist will have.
     size_t controlled_claim_count() const;
-    //: ck-bzcw: caller holds mutex_. THE cap computation — claim_character
+    //: Caller holds mutex_. THE cap computation — claim_character
     //: and get_bridge_state both reach it through here, so the number the
     //: driver records is the number that refuses.
     size_t controlled_claim_count_locked() const;
@@ -405,7 +405,7 @@ public:
     std::vector<std::string> ids() const;
 
     // ========================================================================
-    // DETACH / RESUME (ck-6kvq.5, design §6.2)
+    // DETACH / RESUME (design §6.2)
     // ========================================================================
     // The through line of every function below: A DETACHED SESSION IS STILL A
     // SESSION.  It holds its claims, it holds its ownership entries, it keeps
@@ -451,7 +451,7 @@ public:
     // Rebind a detached session to a new slot, presenting its resume_token.
     //
     // `presented` is the identity the client vouches for (empty = vouched for
-    // nothing); `current_epoch` is ck-hxh7's world_epoch() (0 = the detector is
+    // nothing); `current_epoch` is world_epoch (0 = the detector is
     // unavailable).  The rule, in full, is in resume_identity_verdict():
     //
     //   * same world epoch as at attach  -> ALLOW.  The world never changed, so
@@ -459,7 +459,7 @@ public:
     //   * the world changed and a declaration PROVES the same save -> ALLOW.
     //   * the world changed and nobody vouched -> DISCARD.  §6.2: "an UNVOUCHED
     //     world change must discard" — the bias here is the opposite of
-    //     ck-hxh7's, because a false negative rewrites a stranger's personality
+    //     Because a false negative rewrites a stranger's personality
     //     for the rest of the episode and a false positive costs one reconnect.
     //
     // On DISCARD the claims are released, the steering-purge hook is fired, the
@@ -467,7 +467,7 @@ public:
     // fresh.  The erase is not tidiness: a claimless orphan left in the registry
     // is a phantom English agent whose unavailability span grows to the horizon
     // and invalidates the episode against X (§2.7, §6.2) — 5% of the declared
-    // horizon, ck-2ngg; 365 at the registered one — for a client that
+    // horizon, 365 at the registered one — for a client that
     // has already been told to start over.
     ResumeOutcome resume_by_token(const std::string& token,
                                   const WorldIdentity& presented,
@@ -482,7 +482,7 @@ public:
 
     // THE SECOND ENTRY POINT.  A resume can be presented BEFORE the harness has
     // declared (the client may declare_save_identity as a separate call, which
-    // is the shape ck-9fc3 shipped and the observer lane needs).  In that case
+    // is the shape shipped and the observer lane needs).  In that case
     // the resume abstains, and this is where the answer lands when it arrives:
     // called from `declare_save_identity` with the identity now declared, it
     // discards every session whose RECORDED world the declaration refutes.
@@ -497,7 +497,7 @@ public:
             const WorldIdentity& declared, uint64_t current_epoch,
             std::vector<uint32_t>* discarded_out);
 
-    // max_detach_s (design §6.2, ck-6kvq.1's abort ladder).  Promote every
+    // max_detach_s (design §6.2, abort ladder).  Promote every
     // DETACHED session detached longer than `max_detach_ms` to LOST, and return
     // their ids ONCE — on the sweep that promotes them, not on every sweep
     // after.  `max_detach_ms == 0` disables the bound.
@@ -514,7 +514,7 @@ public:
 
     // Fired when a resume or a reconciliation discards a session, with the
     // character ids whose per-character steering state must go with it — today
-    // g_personality_locks (ck-9fc3), keyed by character id, which would
+    // g_personality_locks, keyed by character id, which would
     // otherwise be reapplied 3x/tick to whoever now holds that id.
     //
     // Invoked with mutex_ NOT held, after ownership has been erased, so the
@@ -524,7 +524,7 @@ public:
                            const std::vector<uint32_t>& char_ids)>;
     void set_steering_purge_hook(SteeringPurgeHook hook);
 
-    //: rc2 B6: the human player's character id (0 / 0xFFFFFF = no human, as in
+    //: The human player's character id (0 / 0xFFFFFF = no human, as in
     //: an observer save). When set, claim_character and swap_character REFUSE
     //: it with reason "character_is_player", so no bind path — control,
     //: handoff, skip-held-heir walk, resume — can give a seat the player.
@@ -538,16 +538,16 @@ public:
     //: primary ("" when none). get_tick_info publishes it beside the global
     //: controlled_character_id the hook reads.
     std::string first_unbound_reason() const;
-    //: lane ACTOR: whether ANY live session declared `episode_seat`. When one
+    //: Whether ANY live session declared `episode_seat`. When one
     //: has, the global primary mirror is a seat's ruler, so a write that names
     //: no actor and arrives with no session cannot take it (actor_resolve.h).
     bool any_seat_declared() const;
-    //: rc2 B6: the succession handoff's player guard. `dead` died and its heir
+    //: The succession handoff's player guard. `dead` died and its heir
     //: is the human player: release `dead` from `session` (state HeirIsPlayer:
     //: never recovered, never retried) and set unbound_reason="heir_is_player",
     //: unbound_heir_id=heir. Returns whether `dead` was held.
     bool unbind_for_player_heir(Session* session, uint32_t dead, uint32_t heir);
-    //: owner ruling 2026-11-12: the succession's target is outside the seat's
+    //: The succession's target is outside the seat's
     //: registered realm. Release `dead` (state HeirOutsideRealm: never recovered,
     //: never retried) and set unbound_reason="heir_outside_realm",
     //: unbound_heir_id=heir. Returns whether `dead` was held.
@@ -593,9 +593,9 @@ private:
 extern SessionRegistry g_session_registry;
 
 // ============================================================================
-// THE ABORT LADDER'S DETACH REPORT (ck-6kvq.1 <-> ck-6kvq.5)
+// THE ABORT LADDER'S DETACH REPORT (<->)
 // ============================================================================
-// ck-6kvq.1 shipped the `session_lost` rung and its READER, and the producer
+// shipped the `session_lost` rung and its READER, and the producer
 // was never written — its fixtures fake the file by hand.  This is the producer,
 // and it conforms to that shipped reader exactly rather than inventing a name
 // (scripts/episode_abort.sh, DETACH_F):
@@ -614,12 +614,12 @@ extern SessionRegistry g_session_registry;
 //             behind would abort a HEALTHY episode `session_lost` once
 //             max_detach_s elapsed, which is the exact failure the rung exists
 //             to catch, arriving as a false positive.
-//   scope     CONTROL SESSIONS ONLY (ck-bw1s).  See below.
+//   scope     CONTROL SESSIONS ONLY.  See below.
 //
 // It reports the EARLIEST outstanding detach, because the rung asks "has anyone
 // been gone too long", not "has the most recent drop been long".
 //
-// CONTROL SESSIONS ONLY (ck-bw1s).  An OBSERVE session may still DETACH — the
+// CONTROL SESSIONS ONLY.  An OBSERVE session may still DETACH — the
 // registry state is how get_bridge_state stays honest about a socket that went
 // away — but its detach is NOT a verdict and never reaches this file.  An
 // observer is not a participant in the arm: no claims, no row in the
@@ -629,11 +629,11 @@ extern SessionRegistry g_session_registry;
 // same false positive as a stale timestamp, through a different door.
 //
 // THE OPERATOR RULE THIS REPLACES, kept because it explains the predicate
-// (ck-zgh4, ck-bw1s): "any observe session in an experiment episode must be
+//: "any observe session in an experiment episode must be
 // long-lived — a per-read observer manufactures one detach event per probe."
 // THE CAREFUL THING TO DO WAS THE THING THAT BROKE IT: an author opens a fresh
 // observe session per probe precisely so as not to hold state, and that is what
-// triggered it.  The meter lane (ck-6kvq.7) is an observer by design.
+// triggered it.  The meter lane is an observer by design.
 //
 // No-op unless the episode directory already EXISTS: no episode directory means
 // no episode, and a free-play bridge must not start creating files for a ladder
@@ -671,7 +671,7 @@ bool require_dispatch_context(const char* action_type, std::string* reason);
 // that should be refused while the caller is in OBSERVE mode.
 bool action_is_mutation(const char* action_type);
 
-// ── ck-obsv: MAY THIS SESSION DECLARE ITSELF THE EPISODE OBSERVER? ──────────
+// ── MAY THIS SESSION DECLARE ITSELF THE EPISODE OBSERVER? ──────────
 // A CONTROL session never may: the episode observer is THE READER, and the
 // meter lane handshakes observe by design.
 //
@@ -704,13 +704,13 @@ bool episode_observer_may_declare(Session::Mode minted_mode);
 std::string episode_observer_winner(const std::string& current,
                                     const std::string& candidate);
 
-// ── ck-m3n5: THE WHOLE DECISION, IN ONE PURE FUNCTION ──────────────────────
+// ── THE WHOLE DECISION, IN ONE PURE FUNCTION ──────────────────────
 // The two policies above answer halves; this answers the question the bridge
 // actually asks — SHOULD THIS DECLARATION CONFER THE PRIVILEGE, and if not, WHY
 // — so that the applier in pipeline.cpp has no policy of its own to get wrong.
 //
 // WHY IT EXISTS. The mode floor used to be a branch at the ipc_server call site,
-// which made the guarantee a property of ONE CALLER. ck-t5bc measured the cost:
+// which made the guarantee a property of ONE CALLER. measured the cost:
 // deleting the call redded the lane, but KEEPING THE SPELLING AND DECLARING
 // ANYWAY passed 9/9 — a build that logged REFUSED and then handed the read-lane
 // trigger to a control session, which is the exact defect the floor exists to

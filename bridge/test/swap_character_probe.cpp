@@ -1,7 +1,7 @@
-// ck-swap — the switch must work AT the cap, and must not become a way past it.
+// The switch must work AT the cap, and must not become a way past it.
 //
 // Drives the REAL SessionRegistry in-process, which is the only place these
-// assertions are honest: ck-zgh4 established that a refusal count read from a
+// assertions are honest: established that a refusal count read from a
 // sealed bundle returns 0 both when the fix works and when the evidence has
 // rotated away, so the grading cannot live in a log.
 #include "bridge.h"

@@ -1,6 +1,5 @@
-# RE: ck3_offsets.h Address Convention Sweep (ck-e58l.20, AUDIT-A)
+# RE: ck3_offsets.h Address Convention Sweep
 
-**Bead:** ck-e58l.20
 **Date:** 2026-04-21
 **Confidence:** HIGH (Ghidra function.at cross-ref + core-dump probes)
 **Binary BuildID:** `e61ff2642f07094defd140fcc98e078d42541275`
@@ -14,7 +13,7 @@ Systematically audited every `constexpr uintptr_t` entry in
 Added a canonical address-convention comment block at the top of the
 header. Ran a full post-fix validation probe — **0 remaining suspects**.
 
-Prior to this bead the header silently mixed two conventions (raw and
+Before this sweep the header silently mixed two conventions (raw and
 Ghidra VA), which could cause the bridge to read from wrong addresses
 and manifest as silent data corruption or crashes. All known leaks are
 now corrected and the header's convention is documented in-source.
@@ -104,7 +103,7 @@ regression checks.
 
 ### CStartWarEffect collision resolved
 
-The bead specifically called out:
+The sweep was asked to settle this pair:
 
 ```
 START_WAR_EFFECT_EXECUTE_V23 = 0x052a11a0    // "== START_WAR_EFFECT_CREATE_WAR"
@@ -116,14 +115,14 @@ Both entries now resolve to the same raw offset (as they refer to the
 same function, CStartWarEffect vtable[23]). Added a plate comment at
 the `EXECUTE_V23` site documenting the equivalence and the audit fix.
 
-### Stress entries (ck-e58l.16 regression check)
+### Stress entries (regression check of an earlier fix)
 
 `STRESS_PER_LEVEL = 0x0c2a92d0` → reads 100 via core-dump ✓
 `MAX_STRESS_LEVEL = 0x0c2a92b8` → reads 3 via core-dump ✓
 
 Both match the documented defines. The earlier Ghidra-VA values
 (`0x0c3a92d0`, `0x0c3a92b8`) are not present in the header and the
-ck-e58l.16 fix is still correct.
+earlier fix is still correct.
 
 ## Header-top convention block
 
@@ -131,7 +130,7 @@ Added a canonical explanation:
 
 ```cpp
 // ═══════════════════════════════════════════════════════════════════════════
-// ADDRESS CONVENTION (canonical — audited ck-e58l.20, 2026-04-21)
+// ADDRESS CONVENTION (canonical — audited 2026-04-21)
 // ═══════════════════════════════════════════════════════════════════════════
 // All uintptr_t values in this header are RAW (ASLR-base-relative /
 // file-offset-relative), NOT Ghidra virtual addresses. Ghidra's image base
@@ -159,11 +158,11 @@ in-source reference.
   server's `func_at` in `re/scripts/ghidra/ghserver.py`; same classes,
   exit 2 when the server cannot answer)
 
-## Success criteria (ck-e58l.20)
+## Success criteria
 
 | Criterion | Status |
 |-----------|:------:|
-| ck-e58l.16 stress fix still verified correct | ✓ |
+| Earlier stress-entry fix still verified correct | ✓ |
 | CStartWarEffect collision resolved | ✓ |
 | All Ghidra-VA-masquerading-as-raw entries converted | ✓ |
 | Header-top comment block added | ✓ |
@@ -172,19 +171,19 @@ in-source reference.
 
 ## Cross-reference — touching work
 
-- `ck-e58l.16` — fixed the stress entries; that fix is preserved.
-- `ck-e58l.18` — rename-log pass; the 21 rename-log-entry bugs it
-  implicitly flagged are all included in this audit's 181 code fixes.
-- `ck-e58l.21` — follow-up "reconcile rename log with header" audit;
-  this pass should shrink its remaining delta significantly.
+- An earlier fix of the stress entries; that fix is preserved.
+- A rename-log pass; the 21 rename-log-entry bugs it implicitly flagged
+  are all included in this audit's 181 code fixes.
+- A follow-up audit reconciling the rename log with the header; this pass
+  should shrink its remaining delta significantly.
 
-## Non-scope (per bead design)
+## Non-scope
 
-- No function renames (ck-e58l.18 owns that side).
+- No function renames (the rename-log pass owns that side).
 - No confidence-tag changes — only numeric offset corrections.
 - No new offsets added.
 - Rename-log cross-ref against findings docs outside `ck3_offsets.h` —
-  that is a ck-e58l.21 concern.
+  that is the follow-up audit's concern.
 
 ## Follow-ups
 

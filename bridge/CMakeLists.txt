@@ -63,7 +63,7 @@ set(CK3_BRIDGE_SOURCES
     src/action_handlers.cpp
     src/personality.cpp
     src/personality_world_reset.cpp
-    # ck-9fc3 — the save/world IDENTITY and the cross-process lock carrier.
+    # The save/world IDENTITY and the cross-process lock carrier.
     # Both ENGINE-FREE, so bridge/test/acceptance_save_identity links them
     # verbatim and proves the negative control with no CK3 running.
     src/personality_persist.cpp
@@ -73,18 +73,18 @@ set(CK3_BRIDGE_SOURCES
     src/name_tables.cpp
     src/world_epoch.cpp
     src/runtime_resolver.cpp
-    src/build_id_witness.cpp      # ck-nkyc leg (e): the observed BuildID + strictness witness
+    src/build_id_witness.cpp      # leg (e): the observed BuildID + strictness witness
     src/sig_scanner.cpp
     src/intent_dispatch.cpp
-    src/intent_queue.cpp          # L13 FF2: IntentQueue members, engine-free (test_intent_lookup)
+    src/intent_queue.cpp          # IntentQueue members, engine-free (test_intent_lookup)
     src/factions.cpp              # F16: faction management, both seats (re_factions.md)
     src/snapshot.cpp
     src/session.cpp
-    src/actor_resolve.cpp         # lane ACTOR: the one resolver of an unnamed actor
+    src/actor_resolve.cpp         # The one resolver of an unnamed actor
     src/deferred_drain.cpp
     src/war_score_hook.cpp
     src/war_declaration_hook.cpp
-    # ck-sd4d — the ended-war ledger: a PURE half (war_history.cpp, compiled
+    # The ended-war ledger: a PURE half (war_history.cpp, compiled
     # standalone by test_war_history) and the WAR_END_CORE hook + IPC handler.
     src/war_history.cpp
     src/war_history_hook.cpp
@@ -100,53 +100,53 @@ set(CK3_BRIDGE_SOURCES
     src/launcher_bypass.cpp
     src/lobby_view_hook.cpp
     src/map_graph.cpp
-    # ck-6kvq.8/.9 — the event pipeline: a PURE scheduler + a PURE
+    # The event pipeline: a PURE scheduler + a PURE
     # ticket/apply layer + the engine-facing conductor. The first three
     # are also compiled standalone by test_pipeline (no CK3 binary).
     src/flush_scheduler.cpp
     src/ticket_table.cpp
     src/flush_apply.cpp
     src/pipeline.cpp
-    # ck-6kvq.4 / ck-1ek9 — the mode policy table. PURE; compiled standalone by
+    # The mode policy table. PURE; compiled standalone by
     # test_pipeline_mode. NOTE FOR HOST TARGETS: dispatch_router.cpp and
     # ipc_server.cpp both call into this TU, so any test target that compiles
     # either of them must list src/pipeline_mode.cpp too or it will not link
-    # (this is how ck-1ek9 broke test_release_handler, which was added after it
+    # (this is how broke test_release_handler, which was added after it
     # cut its branch — a CLEAN git merge, a semantic collision only the build
     # could see).
     src/pipeline_mode.cpp
-    # ck-p2sb — the deferred lock's refusal count. A LEAF TU for the same
+    # The deferred lock's refusal count. A LEAF TU for the same
     # reason pipeline_mode.cpp is one: dispatch_router.cpp reports them, so every
     # host target that compiles dispatch_router.cpp needs this too. They are NOT
     # in deferred_drain.cpp, which needs bridge.h and the bridge log.
     src/clock_leak_backstop.cpp
     src/deferred_counters.cpp
-    # ck-6kvq.13 — R6: the decision-budget ledger. PURE; compiled standalone
+    # R6: the decision-budget ledger. PURE; compiled standalone
     # by test_budget_ledger.
     src/budget_ledger.cpp
     src/action_args.cpp
-    # ck-6kvq.19 — the conductor's payload store + drain correlation, keyed by
+    # The conductor's payload store + drain correlation, keyed by
     # the BRIDGE-MINTED ticket. PURE (rapidjson only); compiled standalone by
     # test_drain_registry.
     src/drain_registry.cpp
-    # ck-6kvq.10 — R1c: the pulse ledger; R3-as-reversed: the episode policy
+    # R1c: the pulse ledger; R3-as-reversed: the episode policy
     # and the unavailability ledger. All PURE (no engine deps) and compiled
     # standalone by their own tests.
     src/pulse_ledger.cpp
     src/episode_policy.cpp
     src/unavailability.cpp
-    # ck-ijfa: the MEASURED game-days-per-wall-second of the running condition —
+    # The MEASURED game-days-per-wall-second of the running condition —
     # the only honest conversion between the covariate's unit and the unit every
     # question about it is asked in. PURE, host-tested by test_clock_rate.
     src/clock_rate.cpp
-    # ck-qn03 (R12): the instance naming rules — which socket to bind, which
+    # The instance naming rules — which socket to bind, which
     # telemetry dir to append to, which log to open. PURE (libc only) and
     # compiled standalone by test_instance_paths.
     src/instance_paths.cpp
     src/log_archive.cpp
-    # L20-A: the game-day pause alarm's state. PURE; host-tested by test_pause_alarm.
+    # The game-day pause alarm's state. PURE; host-tested by test_pause_alarm.
     src/pause_alarm.cpp
-    # L21 (node smoke18): the socket lives only in the game process: close-on-exec
+    # The socket lives only in the game process: close-on-exec
     # descriptors, and a non-game process closes a listener it inherited.
     # PURE (libc only); host-tested by test_listener_fd.
     src/listener_fd.cpp
@@ -207,10 +207,10 @@ endif()
 #                                     refusal the cell no longer gives
 # Every os.h entry point not covered by a cell stays a typed refusal in
 # src/os/windows/stubs.cpp, which Linux keeps compiling as strict C++17.
-# One exception, session_pass: ONE cell for both platforms (L14 m-16),
+# One exception, session_pass: ONE cell for both platforms,
 # src/os/session_pass.cpp, tested by src/os/test/test_os_session_pass.cpp
 # (ctest test_os_win_session_pass here, test_os_linux_session_pass on linux).
-# game_logs (lane WINRE): the game's debug.log/error.log by its open handles, the
+# game_logs: the game's debug.log/error.log by its open handles, the
 # script action layer's read-back; its test is shared with linux too
 # (src/os/test/test_os_game_logs.cpp; test_os_linux_game_logs there).
 set(CK3_WIN_CELLS process entry image identity safe_read threads paths write_protected transport exec_alloc guarded watchdog session_pass game_logs)
@@ -295,7 +295,7 @@ elseif(CK3_PLATFORM STREQUAL "windows")
     #     P3 probe reports); ck3_offsets.h with Windows values is generated at build;
     #   public export: the two headers release/export.py GENERATED from those inputs
     #     (re/offsets/windows/ck3_offsets.generated.h and a ck3_offsets_win.h without
-    #     the research annotations; owner decision 2026-10-19), used as they are.
+    #     the research annotations), used as they are.
     # A tree with neither builds the P4 DLL: the identity gate and the forwards,
     # nothing started on match. Said at configure time, never silently.
     set(_win_core_inputs
@@ -459,7 +459,7 @@ if(BUILD_BRIDGE_TESTS)
         target_compile_definitions(test_os_linux_session_pass PRIVATE _GNU_SOURCE)
         target_compile_options(test_os_linux_session_pass PRIVATE ${CK3_OS_WARNINGS})
         add_test(NAME test_os_linux_session_pass COMMAND test_os_linux_session_pass)
-        # lane WINRE: the game-log finder, the same rows test_os_win_game_logs runs under wine.
+        # The game-log finder, the same rows test_os_win_game_logs runs under wine.
         add_executable(test_os_linux_game_logs src/os/test/test_os_game_logs.cpp
             src/os/game_logs.cpp src/os/linux/game_logs.cpp)
         target_include_directories(test_os_linux_game_logs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -613,7 +613,7 @@ add_library(ck3_bridge SHARED ${CK3_BRIDGE_SOURCES})
 # The session-pass cell (os::session_pass_*), shared with Windows, where it is
 # in ck3_os; libck3_bridge.so does not link ck3_os, so it compiles the cell.
 target_sources(ck3_bridge PRIVATE src/os/session_pass.cpp)
-# The game-log finder (lane WINRE; os/game_logs.h): the Linux cell is the v4act
+# The game-log finder (os/game_logs.h): the Linux cell is the
 # /proc/self/fd walk, moved; Windows builds src/os/windows/game_logs.cpp into ck3_os.
 target_sources(ck3_bridge PRIVATE src/os/game_logs.cpp src/os/linux/game_logs.cpp)
 
@@ -729,7 +729,7 @@ target_link_libraries(ck3_bridge PRIVATE rt)
 # Optimization: we want the hook functions to be fast
 target_compile_options(ck3_bridge PRIVATE -O2 -Wall -Wextra)
 
-# rc2 B2: debug verbs, compiled out unless ON: memory_probe, resolve_global,
+# Debug verbs, compiled out unless ON: memory_probe, resolve_global,
 # inject_mouse_click, select_observe_default, set_cb_selector_override
 # (their registry entries AND handler bodies), plus
 # every process VA in a reply. Default OFF; research builds pass
@@ -778,7 +778,7 @@ set_target_properties(ck3_bridge PROPERTIES
 install(TARGETS ck3_bridge LIBRARY DESTINATION lib)
 
 # -----------------------------------------------------------------------------
-# i386 no-op stub (ck-dq7ym.1)
+# i386 no-op stub
 #
 # A tiny 32-bit .so so one LD_PRELOAD list satisfies both Steam's 32-bit shims
 # and the 64-bit ck3 binary without ELFCLASS-mismatch warnings. One gcc -m32
@@ -820,7 +820,7 @@ if(CK3_BRIDGE_STUB)
 endif()
 
 # -----------------------------------------------------------------------------
-# Unit tests (opt-in). Currently covers ck-8xzy regression for json_get_string.
+# Unit tests (opt-in). Currently covers regression for json_get_string.
 # Enable with: cmake -DBUILD_BRIDGE_TESTS=ON ..
 # -----------------------------------------------------------------------------
 option(BUILD_BRIDGE_TESTS "Build standalone unit tests for bridge helpers" OFF)
@@ -834,14 +834,14 @@ if(BUILD_BRIDGE_TESTS)
     #                                     g_controlled_heir, g_agent_mode)
     #   linking world_epoch.cpp too    -> ALSO g_base_addr, g_valid_ranges and
     #                                     g_ranges_mutex, for its guarded reads
-    # Since ck-6kvq.5 the first implies the second, because session.cpp reaches
+    # Since then the first implies the second, because session.cpp reaches
     # world_identity.cpp and that reaches world_epoch.cpp. So adding this
     # variable to a target is only HALF the fix: without the second group the
     # error does not go away, it MOVES to `undefined reference to g_base_addr`.
     # Discoverable only by link failure, which is why it is written here.
     #
-    # ck-6kvq.5: EVERY host target that links src/session.cpp needs these.
-    # session.cpp takes the RESUME decision with ck-9fc3's judge_same_save()
+    # EVERY host target that links src/session.cpp needs these.
+    # session.cpp takes the RESUME decision with judge_same_save
     # (ONE identity rule, not a second copy of it), which pulls in the
     # engine-free TUs below. Named once so a new target cannot link session.cpp
     # and silently fail to link — or worse, so a NEGATIVE CONTROL cannot stop
@@ -868,7 +868,7 @@ if(BUILD_BRIDGE_TESTS)
         src/episode_policy.cpp
         src/action_args.cpp
     )
-    # ck-ijfa: the clock-rate meter. PURE — wall time is passed in, so a year of
+    # The clock-rate meter. PURE — wall time is passed in, so a year of
     # episode runs in a microsecond and no CK3 is needed.
     add_executable(test_clock_rate
         test/test_clock_rate.cpp
@@ -894,7 +894,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_json_helpers PRIVATE Threads::Threads)
     target_compile_options(test_json_helpers PRIVATE -O2 -Wall -Wextra)
 
-    # L20-A (smoke17 B5): a council task's seat clone, on the 867 dump's 72 types;
+    # A council task's seat clone, on the 867 dump's 72 types;
     # the prefix control is the pre-fix rule and must fail.
     foreach(_v test_council_task_family test_council_task_family_prefix_control)
         add_executable(${_v} test/test_council_task_family.cpp)
@@ -903,7 +903,7 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_council_task_family_prefix_control PRIVATE FAMILY_PREFIX_CONTROL)
 
-    # lane COUNCILRE: the per-seat council-task pin (council_pin.h) on the 867
+    # The per-seat council-task pin (council_pin.h) on the 867
     # dump's character 14859. The control is the pre-fix read (the id at the
     # CAIStrategy's +0x18) and exits 0 only when exactly its rows 1 and 7a fail.
     foreach(_v test_council_pin test_council_pin_dispatcher_arg_control)
@@ -914,7 +914,7 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_council_pin_dispatcher_arg_control PRIVATE COUNCIL_PIN_DISPATCHER_ARG_CONTROL)
 
-    # lane v4act: the script action layer's fixed templates (script_templates.h).
+    # The script action layer's fixed templates (script_templates.h).
     # The raw control is the probe's channel (the caller's text is the script)
     # and must fail (WILL_FAIL).
     foreach(_v test_script_templates test_script_templates_raw_control)
@@ -924,8 +924,8 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_script_templates_raw_control PRIVATE SCRIPT_TPL_RAW_CONTROL)
 
-    # L21 (node smoke18): CrashReporter inherited the listening socket and kept
-    # it answering. The control is the pre-L21 calls and must fail (WILL_FAIL).
+    # CrashReporter inherited the listening socket and kept
+    # it answering. The control is the earlier calls and must fail (WILL_FAIL).
     foreach(_v test_listener_fd test_listener_fd_legacy_control)
         add_executable(${_v} test/test_listener_fd.cpp src/listener_fd.cpp)
         target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -933,7 +933,7 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_listener_fd_legacy_control PRIVATE CK3_LISTENER_LEGACY)
 
-    # L20-A (smoke17 new item 1): the game-day pause alarm's rule, engine-free.
+    # The game-day pause alarm's rule, engine-free.
     add_executable(test_pause_alarm test/test_pause_alarm.cpp src/pause_alarm.cpp)
     target_include_directories(test_pause_alarm PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -941,7 +941,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_pause_alarm PRIVATE Threads::Threads)
     target_compile_options(test_pause_alarm PRIVATE -O2 -Wall -Wextra)
 
-    # L20-A (smoke17 A3): query_war_stance's war scope and row rule on a fixture
+    # Query_war_stance's war scope and row rule on a fixture
     # from the 867 dump, through the real json_get_int; the prefix control is
     # the pre-fix scope read and must fail.
     foreach(_v test_war_scope test_war_scope_prefix_control)
@@ -955,7 +955,7 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_war_scope_prefix_control PRIVATE WAR_SCOPE_PREFIX_CONTROL)
 
-    # L22 (smoke19 A3 stance half): the coordinator record a war_stance row reads
+    # The coordinator record a war_stance row reads
     # is its own side's, on a fixture from the 1097 dump; the prefix control is
     # the pre-fix last-record-wins map and must fail.
     foreach(_v test_war_stance_record test_war_stance_record_prefix_control)
@@ -965,7 +965,7 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_war_stance_record_prefix_control PRIVATE WAR_STANCE_RECORD_PREFIX_CONTROL)
 
-    # L22 (smoke19 D1): the failure-key pass runs only for a shown decision, and
+    # The failure-key pass runs only for a shown decision, and
     # the skip seeds are named by their hash; the prefix control is the pre-fix
     # "every failing block" rule and must fail.
     foreach(_v test_decision_eval_plan test_decision_eval_plan_prefix_control)
@@ -975,7 +975,7 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_decision_eval_plan_prefix_control PRIVATE DECISION_EVAL_PLAN_PREFIX_CONTROL)
 
-    # L20 r3 (witness item 8): construct_building's optional location_id through
+    # Construct_building's optional location_id through
     # the real json_get_int; the prefix control is the pre-fix read and must fail.
     foreach(_v test_optional_id test_optional_id_prefix_control)
         add_executable(${_v} test/test_optional_id.cpp src/json_helpers.cpp)
@@ -988,7 +988,7 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_optional_id_prefix_control PRIVATE OPTIONAL_ID_PREFIX_CONTROL)
 
-    # ck-qn03 (R12): the instance naming rules, compiled standalone. The test
+    # The instance naming rules, compiled standalone. The test
     # is a CROSS-CHECK, not a second opinion: `scripts/test_multi_instance.py`
     # runs this binary and compares its answers, key for key, against the
     # python authority and the shell helper. Three transcriptions that agree
@@ -1002,7 +1002,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_instance_paths PRIVATE -O2 -Wall -Wextra)
 
-    # Lane l6: a ruler's direct vassals read from its vassal contracts.
+    # A ruler's direct vassals read from its vassal contracts.
     add_executable(test_vassal_roster
         test/test_vassal_roster.cpp
     )
@@ -1023,7 +1023,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_log_redact PRIVATE -O2 -Wall -Wextra)
 
-    # ck-05mg: CK3's real calendar (no twelve-30-day-month rendering).
+    # CK3's real calendar (no twelve-30-day-month rendering).
     add_executable(test_game_date
         test/test_game_date.cpp
     )
@@ -1033,7 +1033,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_game_date PRIVATE -O2 -Wall -Wextra)
 
-    # lane l5 (F8): which war a siege belongs to (siege_attribution.h, header-only).
+    # Which war a siege belongs to (siege_attribution.h, header-only).
     add_executable(test_siege_attribution
         test/test_siege_attribution.cpp
     )
@@ -1042,7 +1042,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_siege_attribution PRIVATE -O2 -Wall -Wextra)
 
-    # L15 A2: a liege walk that cannot finish is 0, never the character's own id
+    # A liege walk that cannot finish is 0, never the character's own id
     # (liege_walk.h, header-only; get_top_realm_ruler_id runs it on the game).
     add_executable(test_liege_walk
         test/test_liege_walk.cpp
@@ -1083,7 +1083,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_frame_send PRIVATE -O2 -Wall -Wextra)
 
-    # cleanup 2026.11 F16: a faction's war as the game reads it (faction_war.h).
+    # F16: a faction's war as the game reads it (faction_war.h).
     # HEADER-ONLY and engine-free: WAR_DB is a stand-in, so the rule (the whole
     # handle decides; the id given out is the war's own) is checked on a host.
     add_executable(test_faction_war
@@ -1094,7 +1094,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_faction_war PRIVATE -O2 -Wall -Wextra)
 
-    # cleanup final fix (witness #8 minor 8): an unreadable death date is not
+    # cleanup final fix (minor 8): an unreadable death date is not
     # "alive" (game_state.cpp's char_is_alive, compiled into the test).
     add_executable(test_char_is_alive
         test/test_char_is_alive.cpp
@@ -1105,7 +1105,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_char_is_alive PRIVATE -O2 -Wall -Wextra)
 
-    # L14 S3 (surface-eval finding 14): a game function declared `bool` is read by
+    # A game function declared `bool` is read by
     # its AL only (engine_bool.h). The control reads the same stubs the pre-fix way
     # (all 64 bits of RAX) and must fail.
     add_executable(test_engine_bool
@@ -1124,7 +1124,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_definitions(test_engine_bool_prefix_control PRIVATE ENGINE_BOOL_PREFIX_CONTROL)
     target_compile_options(test_engine_bool_prefix_control PRIVATE -O2 -Wall -Wextra)
 
-    # ck-k57a: the typed speed read. HEADER-ONLY and engine-free, so the memory
+    # The typed speed read. HEADER-ONLY and engine-free, so the memory
     # fault that used to present as a legal "speed 1" is reachable host-side.
     add_executable(test_speed_read
         test/test_speed_read.cpp
@@ -1134,7 +1134,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_speed_read PRIVATE -O2 -Wall -Wextra)
 
-    # ck-k57a: the handler's OWN emission, on a host. `scripts/
+    # The handler's OWN emission, on a host. `scripts/
     # acceptance_speed_fault.py` runs this to build its fixtures, so the wire
     # bytes the acceptance judges are the bridge's rather than a python model
     # of them. Built TWICE — the second with the pre-fix arithmetic restored,
@@ -1157,7 +1157,7 @@ if(BUILD_BRIDGE_TESTS)
         CK3_SPEED_PREFIX_CONTROL=1)
     target_compile_options(speed_read_probe_prefix_control PRIVATE -O2 -Wall -Wextra)
 
-    # ck-nkyc leg (e). The strictness witness's fixtures come from the BRIDGE's
+    # leg (e). The strictness witness's fixtures come from the BRIDGE's
     # own code, not from a python model of it — and the negative control is the
     # PRE-FIX rule compiled from the same source, so a control that stops
     # failing is a control whose premise the shipped code has adopted.
@@ -1182,7 +1182,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_options(build_id_witness_probe_prefix_control PRIVATE -O2 -Wall -Wextra)
 
     # M1: session registry + ownership table.
-    # ck-6kvq.5: session.cpp now takes the RESUME decision with ck-9fc3's
+    # Session.cpp now takes the RESUME decision with
     # judge_same_save() — one identity rule, not a second copy of it — so the
     # host target links world_identity.cpp and the engine-free TUs it needs.
     add_executable(test_session_registry
@@ -1190,7 +1190,7 @@ if(BUILD_BRIDGE_TESTS)
         ${SESSION_HOST_SOURCES}
     )
 
-    # ck-swap: the cap-full row only exists with the roster FILLED, and a test
+    # The cap-full row only exists with the roster FILLED, and a test
     # that does not fill it never runs the code it grades.
     add_executable(swap_character_probe
         test/swap_character_probe.cpp
@@ -1218,7 +1218,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(add_claim_probe PRIVATE Threads::Threads)
     target_compile_options(add_claim_probe PRIVATE -O2 -Wall -Wextra)
 
-    # F12 (cleanup 2026.11): the TLS guard/context offsets the bridge reads are the
+    # F12: the TLS guard/context offsets the bridge reads are the
     # ones AI_INTERACTION_CORE's own prologue uses (tls_prologue_scan.h), and
     # ck3_offsets.h agrees with them. Decodes real bytes with the bridge's Zydis.
     add_executable(tls_prologue_scan_probe test/tls_prologue_scan_probe.cpp)
@@ -1235,7 +1235,7 @@ if(BUILD_BRIDGE_TESTS)
     endif()
     target_compile_options(tls_prologue_scan_probe PRIVATE -O2 -Wall -Wextra)
 
-    # lane l6 (witness #3): construction_check's list arms the fake random scope
+    # Construction_check's list arms the fake random scope
     # once per row; a row that trips the scope latch leaves the later rows unarmed.
     add_executable(latch_guarded_rows_probe test/latch_guarded_rows_probe.cpp)
     target_include_directories(latch_guarded_rows_probe PRIVATE
@@ -1243,18 +1243,18 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(latch_guarded_rows_probe PRIVATE -O2 -Wall -Wextra)
 
-    # ck-handoff-swap: the succession handoff at a full roster — the case that
+    # The succession handoff at a full roster — the case that
     # spun check_controlled_handoff 2,574 times because claim-then-release cannot
     # work while the corpse still occupies the slot it needs.
-    # ck-qv51: the roster-divergence rollback must not destroy a real last_steered.
+    # The roster-divergence rollback must not destroy a real last_steered.
     # Same source set as handoff_swap_probe — the registry plus its host deps — since
     # the claim/release/undo sequence under test is entirely registry-level.
-    # ck-j6lk: the claim pin must key on CLAIMS, not on being a control session.
+    # The claim pin must key on CLAIMS, not on being a control session.
     # Exercises claims_ever across claim, release and swap on the REAL registry, so
     # the "claimed then released" seat and the "never claimed" helper are separated
     # by the field rather than by a fixture's say-so. Same source set as
     # rollback_state_probe: the registry plus its host deps, no game.
-    # ck-j6lk second pass: GRADE THE LEDGER'S REPORT. The first pass proved the
+    # second pass: GRADE THE LEDGER'S REPORT. The first pass proved the
     # registry destroyed the non-participants and shakedown 3 still sealed invalid,
     # because unavailability's note_session_ended KEEPS the record accruing. Links the
     # REAL unavailability.cpp and reads snapshot() — the thing the bundle is built
@@ -1294,7 +1294,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(rollback_state_probe PRIVATE Threads::Threads)
     target_compile_options(rollback_state_probe PRIVATE -O2 -Wall -Wextra)
 
-    # ck-zs2x: the aiwatch ring DROPS on full rather than overwriting, so a wrap
+    # The aiwatch ring DROPS on full rather than overwriting, so a wrap
     # leaves no trace in the data and `dropped` is the only evidence. This probe
     # measures the real capacity (kSlots-1), the push at which loss begins, and
     # whether the loss is VISIBLE on a line of its own. Header-only: the watch is all
@@ -1328,7 +1328,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_session_registry PRIVATE Threads::Threads)
     target_compile_options(test_session_registry PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.11 (R2): the N=6 ownership ACCEPTANCE. Same real session.cpp as
+    # The N=6 ownership ACCEPTANCE. Same real session.cpp as
     # test_session_registry, but it reports every check instead of aborting on
     # the first, and emits --json so scripts/acceptance_n6_ownership.py can
     # compare the elected primary and the roster bytes ACROSS FRESH PROCESSES —
@@ -1345,7 +1345,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(acceptance_n6_ownership PRIVATE Threads::Threads)
     target_compile_options(acceptance_n6_ownership PRIVATE -O2 -Wall -Wextra)
 
-    # ck-xqol: IPC client-slot LIFECYCLE — release with an attached session,
+    # IPC client-slot LIFECYCLE — release with an attached session,
     # double release, release racing a handshake, and the never-constructed
     # slot table that produced the production SIGSEGV. Links the real session
     # registry, so a leaked or double-destroyed session is observable.
@@ -1362,7 +1362,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_client_slot PRIVATE Threads::Threads)
     target_compile_options(test_client_slot PRIVATE -O2 -Wall -Wextra)
 
-    # ck-xqol NEGATIVE CONTROL. Identical source, built with the pre-fix guard
+    # NEGATIVE CONTROL. Identical source, built with the pre-fix guard
     # restored (-DCK3_SLOT_LEGACY_FD_GUARD). It MUST fail: the never-constructed
     # slot SIGSEGVs in the same statement as the production core, and the
     # handshake race orphans a session. Never run as part of a green suite —
@@ -1382,7 +1382,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_client_slot_negative_control PRIVATE Threads::Threads)
     target_compile_options(test_client_slot_negative_control PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.8 (R1a): buffered, polarity-driven flush scheduler. Pure state
+    # Buffered, polarity-driven flush scheduler. Pure state
     # machine — no engine, no game, no stub globals needed.
     add_executable(test_flush_scheduler
         test/test_flush_scheduler.cpp
@@ -1394,11 +1394,11 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_flush_scheduler PRIVATE Threads::Threads)
     target_compile_options(test_flush_scheduler PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.15: the params-fallback resolver. Engine-free by design so the
+    # The params-fallback resolver. Engine-free by design so the
     # wire shapes a real client sends can be asserted on a host — the bug it
     # fixes was invisible to every existing test because they all framed their
     # arguments the one way the broken read happened to handle.
-    # ck-fvms.1: what the observer's meter read actually waits for. PURE —
+    # What the observer's meter read actually waits for. PURE —
     # wall time is passed in, so a whole episode's poll series runs in a
     # microsecond and no CK3 is needed.
     add_executable(meter_lane_latency_probe
@@ -1421,7 +1421,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_action_args PRIVATE -O2 -Wall -Wextra)
 
-    # L20-D: the diag record dtor the bridge calls is the one the engine's own
+    # The diag record dtor the bridge calls is the one the engine's own
     # EVAL_WITH_FAILURES calls (engine bytes from the binary; header vs engine).
     add_executable(test_diag_dtor
         test/test_diag_dtor.cpp
@@ -1432,7 +1432,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_diag_dtor PRIVATE -O2 -Wall -Wextra)
 
-    # lane WINRE: the console-handler ABI (console_call.h) under both std::string
+    # The console-handler ABI (console_call.h) under both std::string
     # layouts; the control lays the Windows argument out the pre-fix way and must
     # fail the MSVC rows.
     add_executable(test_console_call test/test_console_call.cpp)
@@ -1443,7 +1443,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_options(test_console_call_prefix_control PRIVATE -O2 -Wall -Wextra)
     target_compile_definitions(test_console_call_prefix_control PRIVATE CK3_CONSOLE_CALL_PREFIX)
 
-    # ck-6kvq.13 (R6): the decision-budget governor's ENFORCING half. Pure by
+    # The decision-budget governor's ENFORCING half. Pure by
     # construction — no engine, no game, no stub global — because "is this agent
     # out of budget" must be provable without a running game. Also carries the
     # --replay mode scripts/test_budget_enforcement.py drives a recorded transcript
@@ -1459,7 +1459,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_budget_ledger PRIVATE Threads::Threads)
     target_compile_options(test_budget_ledger PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.9 (R1b): the apply + ticket layer. Also engine-free — the plan is
+    # The apply + ticket layer. Also engine-free — the plan is
     # applied against a FAKE FlushEffects, which is the whole point of the
     # scheduler/apply split.
     add_executable(test_pipeline
@@ -1474,17 +1474,17 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_pipeline PRIVATE Threads::Threads)
     target_compile_options(test_pipeline PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.18: the pipeline egress frame assembly. Header-only and pure, so
+    # The pipeline egress frame assembly. Header-only and pure, so
     # the splice that rewrites EVERY pipeline reply can be parsed and proved on
     # a host WITHOUT pulling the rest of the pipeline in — which is why this
     # target exists and is still the right shape for it.
     #
-    # ck-1var CORRECTS WHAT USED TO BE THE REST OF THIS SENTENCE: pipeline.cpp DOES link on a host —
-    # measured by ck-1var, which drives the real pipeline_note_episode_open and
+    # CORRECTS WHAT USED TO BE THE REST OF THIS SENTENCE: pipeline.cpp DOES link on a host —
+    # measured, which drives the real pipeline_note_episode_open and
     # reads the real pipeline_emit_state against 21 ordinary host TUs, the
     # generated dispatch-handler stubs test_release_handler already uses, and a
     # small engine boundary (bridge/test/clock_release_probe.cpp). The sentence
-    # that used to stand here said it could not, and that belief is WHY ck-8o5j's
+    # that used to stand here said it could not, and that belief is WHY
     # clock release went unwitnessed through two beads: nobody tried, because the
     # build file said not to. A build file states TARGETS; a comment in it states
     # a BELIEF, and a reassurance is no more a control than a warning is.
@@ -1495,7 +1495,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_pipeline_frames PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.18 NEGATIVE CONTROL. Same source with
+    # NEGATIVE CONTROL. Same source with
     # -DCK3_PIPELINE_FRAME_UNTYPED=1: the frame closes with no `type`, as it
     # did before. It MUST fail — that untypeable frame is precisely what a
     # request_id-less client could neither route nor skip-list.
@@ -1510,10 +1510,10 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_options(test_pipeline_frames_negative_control PRIVATE
         -O2 -Wall -Wextra)
 
-    # ck-6kvq.4 / ck-1ek9: THE MODE POLICY TABLE. Pure — no engine, no globals,
+    # THE MODE POLICY TABLE. Pure — no engine, no globals,
     # no getenv — so the whole of what `null` MEANS is host-testable with no CK3
-    # binary. This is the half of ck-6kvq.4 that never merged (WIP 425c20b);
-    # ck-1ek9 recovered it.
+    # binary. This is the half of that never merged (WIP 425c20b);
+    # recovered it.
     add_executable(test_pipeline_mode
         test/test_pipeline_mode.cpp
         src/pipeline_mode.cpp
@@ -1525,7 +1525,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_pipeline_mode PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.4 NEGATIVE CONTROL. Same two sources with
+    # NEGATIVE CONTROL. Same two sources with
     # -DCK3_NULL_MODE_LEGACY_POLICY=1, which reverts the five predicates to the
     # policy the bridge ACTUALLY HAD before this bead: `pipeline_active()` was
     # `mode != Legacy`, and nothing consulted the mode about control sessions or
@@ -1545,7 +1545,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_options(test_pipeline_mode_negative_control PRIVATE
         -O2 -Wall -Wextra)
 
-    # ck-6kvq.19: the drain correlation. Engine-free so the hand-off/settle
+    # The drain correlation. Engine-free so the hand-off/settle
     # protocol can be driven on a host with no game — which is exactly where
     # the bug hid: the pre-fix correlation keyed on the client's OPTIONAL
     # request_id, and every existing test happened to send one.
@@ -1560,7 +1560,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_drain_registry PRIVATE Threads::Threads)
     target_compile_options(test_drain_registry PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.19 NEGATIVE CONTROL. Identical sources, built with
+    # NEGATIVE CONTROL. Identical sources, built with
     # -DCK3_DRAIN_LEGACY_RID_KEY=1: the drain envelope loses its bridge-minted
     # ticket tag and correlation goes back to the client's optional, non-unique
     # request_id. It MUST fail — a rid-less call never settles and leaks its
@@ -1579,7 +1579,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_drain_registry_negative_control PRIVATE Threads::Threads)
     target_compile_options(test_drain_registry_negative_control PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.10 (R1c): the pulse ledger. Engine-free — memory goes through an
+    # The pulse ledger. Engine-free — memory goes through an
     # abstract PulseMemory, so the crash path is reproduced with a real
     # siglongjmp and no CK3 binary.
     add_executable(test_pulse_ledger
@@ -1592,7 +1592,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_pulse_ledger PRIVATE Threads::Threads)
     target_compile_options(test_pulse_ledger PRIVATE -O2 -Wall -Wextra)
 
-    # ck-sozz: release_character's HANDLER ORDERING.
+    # Release_character's HANDLER ORDERING.
     #
     # The bug was a composition: two individually-correct guards in the wrong
     # order inside do_release_character, so every release of a session-owned
@@ -1627,19 +1627,19 @@ if(BUILD_BRIDGE_TESTS)
         src/json_helpers.cpp
         src/budget_ledger.cpp
         src/instance_paths.cpp
-        # ck-1ek9: dispatch_router.cpp's observe-mode gate now asks the mode
+        # Dispatch_router.cpp's observe-mode gate now asks the mode
         # policy whether a null-mode observer may issue a clock verb, so it
         # needs pipeline_mode()/mode_admits_observer_clock_verbs() at link time.
         # ANY host target that compiles dispatch_router.cpp needs this TU — see
         # the note beside src/pipeline_mode.cpp in the library list above.
         src/pipeline_mode.cpp
-        # ck-p2sb: dispatch_router.cpp's get_bridge_state reports the deferred
+        # Dispatch_router.cpp's get_bridge_state reports the deferred
         # coordinator's two refusal counts, so this target needs their leaf TU
         # at link time — the same rule, one symbol later.
         src/deferred_counters.cpp
-        # L20-A: dispatch_router.cpp's clock verbs clear the game-day pause alarm.
+        # Dispatch_router.cpp's clock verbs clear the game-day pause alarm.
         src/pause_alarm.cpp
-        # lane ACTOR: get_controlled_character and the dispatch scope ask it.
+        # Get_controlled_character and the dispatch scope ask it.
         src/actor_resolve.cpp
         ${DISPATCH_HANDLER_STUBS}
     )
@@ -1654,7 +1654,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_release_handler PRIVATE Threads::Threads)
     target_compile_options(test_release_handler PRIVATE -O2 -Wall -Wextra)
 
-    # ck-sozz NEGATIVE CONTROL. Identical source, with dispatch_router.cpp built
+    # NEGATIVE CONTROL. Identical source, with dispatch_router.cpp built
     # -DCK3_RELEASE_LEGACY_ORDER: the ownership release goes back above the
     # roster guard, and set_controlled_character's AI-disable goes back above
     # its own roster check. It MUST fail, reproducing the live 2026-09-10
@@ -1669,7 +1669,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_release_handler_negative_control PRIVATE Threads::Threads)
     target_compile_options(test_release_handler_negative_control PRIVATE -O2 -Wall -Wextra)
 
-    # rc2 B2: the debug verbs are compiled out and answer unavailable_in_release.
+    # The debug verbs are compiled out and answer unavailable_in_release.
     # Same sources as test_release_handler (the REAL dispatch_router.cpp). The
     # negative control builds it with CK3_BRIDGE_DEBUG_VERBS and MUST fail.
     set(DEBUG_VERBS_SOURCES ${RELEASE_HANDLER_SOURCES})
@@ -1687,7 +1687,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_debug_verbs_negative_control PRIVATE Threads::Threads)
     target_compile_options(test_debug_verbs_negative_control PRIVATE -O2 -Wall -Wextra)
 
-    # lane ACTOR: an unnamed actor resolves by ONE rule (actor_resolve.h): the
+    # An unnamed actor resolves by ONE rule (actor_resolve.h): the
     # pure table, and the same rule through the REAL dispatch_action of the REAL
     # dispatch_router.cpp (strong test handlers stand in for the engine-bound
     # ones). The negative control builds actor_resolve.cpp -DCK3_ACTOR_PRE_FIX
@@ -1749,7 +1749,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(name_pending_probe_negative_control PRIVATE Threads::Threads)
     target_compile_options(name_pending_probe_negative_control PRIVATE -O2 -Wall -Wextra)
 
-    # rc2 B1 + B9: the REAL ipc_server.cpp on a real socket — the peer-uid
+    # + B9: the REAL ipc_server.cpp on a real socket — the peer-uid
     # check is wired at accept(), the reader caps line length and nesting.
     # Inherits ck3_bridge's compile definitions, so it parses with the
     # library's RapidJSON default flags.
@@ -1779,7 +1779,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_ipc_wiring PRIVATE Threads::Threads)
     target_compile_options(test_ipc_wiring PRIVATE -O2 -Wall -Wextra)
 
-    # L13 (live proof l13f-gl10l-r): the SLOW REQUEST line's host PSI figures.
+    # The SLOW REQUEST line's host PSI figures.
     if(NOT WIN32)
         add_executable(test_host_pressure test/test_host_pressure.cpp)
         target_include_directories(test_host_pressure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1787,7 +1787,7 @@ if(BUILD_BRIDGE_TESTS)
         add_test(NAME test_host_pressure COMMAND test_host_pressure)
     endif()
 
-    # L13 FF2 (witness R3): the REAL IntentQueue — a reader never finds an
+    # The REAL IntentQueue — a reader never finds an
     # intent in neither the live queue nor the completed ring.
     add_executable(test_intent_lookup
         test/test_intent_lookup.cpp
@@ -1800,7 +1800,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_link_libraries(test_intent_lookup PRIVATE Threads::Threads)
     target_compile_options(test_intent_lookup PRIVATE -O2 -Wall -Wextra)
-    # L13 FF3 (witness X3): the same test under ThreadSanitizer and
+    # The same test under ThreadSanitizer and
     # AddressSanitizer (GCC/Clang on Linux). A race or a use-after-free the
     # sanitizer reports exits non-zero, so the ctest row reds. A toolchain
     # without the sanitizer runtime (libtsan / libasan not installed) gets the
@@ -1837,7 +1837,7 @@ if(BUILD_BRIDGE_TESTS)
             ENVIRONMENT "ASAN_OPTIONS=halt_on_error=1:detect_leaks=0")
     endif()
 
-    # L13 D1/D2: the REAL reader serves a game-state read through the
+    # /D2: the REAL reader serves a game-state read through the
     # game-thread drain (run_on_game_thread / run_game_thread_jobs) with the
     # same bytes paused or running, times out typed with no drain, and the
     # bridge goes ACTIVE on the first drain without a tick.
@@ -1866,7 +1866,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_game_thread_reads PRIVATE Threads::Threads)
     target_compile_options(test_game_thread_reads PRIVATE -O2 -Wall -Wextra)
 
-    # wave 13 lane METER: the REAL reader serves one line per client per round,
+    # wave 13: the REAL reader serves one line per client per round,
     # so a Tier-1 get_tick_info is not held behind another client's burst of
     # game-thread reads (the seated-run meter timeouts).
     add_executable(test_reader_fairness
@@ -1894,7 +1894,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_reader_fairness PRIVATE Threads::Threads)
     target_compile_options(test_reader_fairness PRIVATE -O2 -Wall -Wextra)
 
-    # rc2 B6: the succession handoff never binds the human player.
+    # The succession handoff never binds the human player.
     add_executable(test_handoff_player
         test/test_handoff_player.cpp
         ${SESSION_HOST_SOURCES}
@@ -1907,7 +1907,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_handoff_player PRIVATE Threads::Threads)
     target_compile_options(test_handoff_player PRIVATE -O2 -Wall -Wextra)
 
-    # ck-6kvq.10 (R3 as REVERSED): unavailability accounting + the episode
+    # Unavailability accounting + the episode
     # policy. Pure, no engine deps, no CK3 binary.
     add_executable(test_unavailability
         test/test_unavailability.cpp
@@ -1916,17 +1916,17 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_include_directories(test_unavailability PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        # ck-2ngg: exclusion_rule.h computes the horizon span through
-        # ck3::game_date (the ENGINE's calendar, ck-05mg), which lives beside
+        # Exclusion_rule.h computes the horizon span through
+        # ck3::game_date (the ENGINE's calendar), which lives beside
         # the offsets header. Still engine-FREE: constants only, no reads.
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
     )
     target_link_libraries(test_unavailability PRIVATE Threads::Threads)
     target_compile_options(test_unavailability PRIVATE -O2 -Wall -Wextra)
-    # ck-2ngg ACCEPTANCE: X is a RULE (5% of the DECLARED horizon), not the
-    # constant 365. Two targets from ONE source, the ck-3p1x/speed_read_probe
+    # ACCEPTANCE: X is a RULE (5% of the DECLARED horizon), not the
+    # constant 365. Two targets from ONE source, the/speed_read_probe
     # pattern: the product lane links the shipped modules; the NEGATIVE CONTROL
-    # links the REAL pre-ck-2ngg bytes pulled out of git history into
+    # links the REAL earlier bytes pulled out of git history into
     # scripts/fixtures/exclusion_rule/pre_2ngg/, and must FAIL lanes B and D.
     # Real bytes rather than a re-implementation, because a control that
     # re-implements the defect proves only that the re-implementation is wrong.
@@ -1965,7 +1965,7 @@ else()
     message(STATUS "fixture dir absent; skipping acceptance_exclusion_fraction_negative_control")
 endif()
 
-    # ck-on4u: THE RESTING SPEED IS THE PRE-REGISTERED PIN. The flush planner's
+    # THE RESTING SPEED IS THE PRE-REGISTERED PIN. The flush planner's
     # restore step is the SECOND writer of the game speed — it reaches
     # game_set_speed through the effects vtable, so a grep for the function name
     # finds one call site while two paths write, and it logs no "Action:
@@ -2011,7 +2011,7 @@ else()
     message(STATUS "fixture dir absent; skipping acceptance_resting_speed_negative_control")
 endif()
 
-    # ck-sd4d: the ended-war ledger and the war-IDENTITY rule. war_history.cpp
+    # The ended-war ledger and the war-IDENTITY rule. war_history.cpp
     # is engine-free by construction (no offsets header, no globals), so the
     # rule that keeps the two 1066 k_england wars apart is testable with no
     # CK3 process at all.
@@ -2025,7 +2025,7 @@ endif()
     target_link_libraries(test_war_history PRIVATE Threads::Threads)
     target_compile_options(test_war_history PRIVATE -O2 -Wall -Wextra)
 
-    # L18-A: the action log's verdict/poll fields and the drain's outcome row
+    # The action log's verdict/poll fields and the drain's outcome row
     # (include/action_log_row.h, header-only); the wiring half reads the
     # product sources, comment-stripped, from the source dir it is given.
     add_executable(test_action_log_row test/test_action_log_row.cpp)
@@ -2035,13 +2035,13 @@ endif()
     )
     target_compile_options(test_action_log_row PRIVATE -O2 -Wall -Wextra)
 
-    # lane integ11: when a claim may carry a claim war (include/claim_rule.h);
+    # When a claim may carry a claim war (include/claim_rule.h);
     # the wiring half reads the product sources, comment-stripped.
     add_executable(test_claim_rule test/test_claim_rule.cpp)
     target_include_directories(test_claim_rule PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_options(test_claim_rule PRIVATE -O2 -Wall -Wextra)
 
-    # ck-hxh7: world-reload detection + world-scoped cache invalidation.
+    # World-reload detection + world-scoped cache invalidation.
     # Compiles world_epoch.cpp and name_tables.cpp standalone; the engine name
     # resolver is replaced through set_character_name_resolver().
     add_executable(test_world_epoch
@@ -2057,7 +2057,7 @@ endif()
     target_link_libraries(test_world_epoch PRIVATE Threads::Threads)
     target_compile_options(test_world_epoch PRIVATE -O2 -Wall -Wextra)
 
-    # ck-hxh7 ACCEPTANCE: a save reload drops every world-scoped cache. Links the
+    # ACCEPTANCE: a save reload drops every world-scoped cache. Links the
     # REAL world_epoch.cpp / name_tables.cpp / war_history.cpp /
     # personality_world_reset.cpp. Driven by scripts/acceptance_world_reset.py,
     # which adds the structural lane for the three caches that live inside
@@ -2077,7 +2077,7 @@ endif()
     target_link_libraries(acceptance_world_reset PRIVATE Threads::Threads)
     target_compile_options(acceptance_world_reset PRIVATE -O2 -Wall -Wextra)
 
-    # ck-9fc3 ACCEPTANCE: quarantined agent steering is restored ONLY when the
+    # ACCEPTANCE: quarantined agent steering is restored ONLY when the
     # loaded world is PROVABLY the same save. Links the REAL world_identity.cpp,
     # personality_world_reset.cpp, personality_persist.cpp and world_epoch.cpp —
     # every one engine-free — so the negative control ("a DIFFERENT save must not
@@ -2100,7 +2100,7 @@ endif()
     target_link_libraries(acceptance_save_identity PRIVATE Threads::Threads)
     target_compile_options(acceptance_save_identity PRIVATE -O2 -Wall -Wextra)
 
-    # ck-22n3: the .init_array CONTRACT, asserted against the BUILT .so —
+    # The .init_array CONTRACT, asserted against the BUILT .so —
     # every C++ dynamic initializer runs BEFORE dll_init(). dll_init starts
     # threads (reader/server/conductor/game-ready poller) and writes globals
     # synchronously; without init_priority(101) all of that ran against raw
@@ -2116,7 +2116,7 @@ endif()
         CK3_BRIDGE_SO_PATH="$<TARGET_FILE:ck3_bridge>")
     target_compile_options(test_init_order PRIVATE -O2 -Wall -Wextra)
     add_dependencies(test_init_order ck3_bridge)
-    # ck-6kvq.5 ACCEPTANCE (R7c/R2a): a session survives a socket drop, resumes
+    # ACCEPTANCE (R7c/R2a): a session survives a socket drop, resumes
     # with its claims INTACT, gets its steering back on the same save and NOT on
     # a different one, and the unavailability span for the gap is RECORDED, not
     # reset. Links the REAL session.cpp, the REAL world_identity.cpp and the REAL
@@ -2138,7 +2138,7 @@ endif()
     target_compile_options(acceptance_session_resume PRIVATE -O2 -Wall -Wextra)
 
     # THE NEGATIVE CONTROL. Identical source, one macro: the resume identity
-    # clause always allows. The ck-9fc3 symptom comes straight back — a session
+    # clause always allows. The symptom comes straight back — a session
     # keeps claims (and therefore steering) over characters in a world it never
     # saw — and this binary MUST FAIL. An acceptance that cannot fail is not
     # evidence.
@@ -2152,13 +2152,13 @@ endif()
     target_compile_options(acceptance_session_resume_negative_control PRIVATE
         -O2 -Wall -Wextra -DCK3_RESUME_NO_IDENTITY_CHECK)
 
-    # ck-bw1s THE SECOND NEGATIVE CONTROL. Identical source, one macro: the
+    # THE SECOND NEGATIVE CONTROL. Identical source, one macro: the
     # detach report counts EVERY non-attached session — what it did before this
     # bead — so a dropped OBSERVE session publishes state/detached-since and the
     # abort ladder aborts a healthy arm episode reason=session_lost because an
     # observer blinked. This binary MUST FAIL, and must fail on the OBSERVER
     # lane specifically: a control that fails to COMPILE is a control doing
-    # nothing (ck-81su).
+    # nothing.
     add_executable(acceptance_session_resume_observer_negative_control
         ${RESUME_ACCEPTANCE_SOURCES})
     target_include_directories(acceptance_session_resume_observer_negative_control PRIVATE
@@ -2171,7 +2171,7 @@ endif()
     target_compile_options(acceptance_session_resume_observer_negative_control PRIVATE
         -O2 -Wall -Wextra -DCK3_DETACH_REPORT_COUNTS_OBSERVERS)
 
-    # ck-hxh7 grep gate: every world-scoped cache clear function must have a real
+    # grep gate: every world-scoped cache clear function must have a real
     # caller. The original bug was clear_name_cache() existing with ZERO callers.
     # Runs on every build of the test targets; a regression fails the build.
     add_custom_target(bridge_cache_invalidation_gate ALL
@@ -2190,16 +2190,16 @@ endif()
                test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_reader_fairness test_intent_lookup test_handoff_player
                add_claim_probe name_pending_probe tls_prologue_scan_probe
                latch_guarded_rows_probe
-               test_action_args    # L18-B: built since ck-6kvq.15, never run by ctest
-               test_war_scope test_pause_alarm test_council_task_family     # L20-A
+               test_action_args    # Built since, never run by ctest
+               test_war_scope test_pause_alarm test_council_task_family
                test_council_pin test_council_pin_dispatcher_arg_control   # COUNCILRE (the control exits 0 only on its exact rows)
-               test_script_templates   # lane v4act
-               test_war_stance_record   # L22: a stance row reads its own side's record
-               test_decision_eval_plan  # L22: no failure-key pass on a not-shown decision
-               test_diag_dtor      # L20-D: DIAG_OBJECT_DTOR is the engine's dtor
+               test_script_templates
+               test_war_stance_record   # A stance row reads its own side's record
+               test_decision_eval_plan  # No failure-key pass on a not-shown decision
+               test_diag_dtor      # DIAG_OBJECT_DTOR is the engine's dtor
                test_console_call   # WINRE: console-handler ABI, both std::string layouts
-               test_optional_id    # L20 r3: location_id absent -> missing_location_id
-               test_listener_fd    # L21: the socket lives only in the game process
+               test_optional_id    # Location_id absent -> missing_location_id
+               test_listener_fd    # The socket lives only in the game process
                test_log_redact)    # 2026.12.5: no token reaches the bridge log
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
@@ -2207,7 +2207,7 @@ endif()
     # test_listener_fd.cpp kLegacyFails): not WILL_FAIL, which any nonzero
     # exit passes (the mkdtemp early return, rc 2, did; a signal does not).
     add_test(NAME test_listener_fd_legacy_control COMMAND test_listener_fd_legacy_control)
-    # L18-A: the action-log row decision and its wiring; the world-reset
+    # The action-log row decision and its wiring; the world-reset
     # acceptance (incl. the first-write-before-first-tick lane) and its
     # structural half (the drain samples the world before any queued write).
     add_test(NAME test_action_log_row
@@ -2222,7 +2222,7 @@ endif()
                  COMMAND ${CK3_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/acceptance_world_reset.py
                          --structural-only)
     endif()
-    # rc2 B2: the ON build must fail the same assertions.
+    # The ON build must fail the same assertions.
     add_test(NAME test_debug_verbs_negative_control
              COMMAND test_debug_verbs_negative_control)
     set_tests_properties(test_debug_verbs_negative_control PROPERTIES WILL_FAIL TRUE)
@@ -2232,17 +2232,17 @@ endif()
     set_tests_properties(test_script_templates_raw_control PROPERTIES WILL_FAIL TRUE)
     add_test(NAME test_console_call_prefix_control COMMAND test_console_call_prefix_control)
     set_tests_properties(test_console_call_prefix_control PROPERTIES WILL_FAIL TRUE)
-    # L20-A: the pre-fix war scope read must fail the same rows.
+    # The pre-fix war scope read must fail the same rows.
     add_test(NAME test_war_scope_prefix_control COMMAND test_war_scope_prefix_control)
     set_tests_properties(test_war_scope_prefix_control PROPERTIES WILL_FAIL TRUE)
     add_test(NAME test_war_stance_record_prefix_control COMMAND test_war_stance_record_prefix_control)
     set_tests_properties(test_war_stance_record_prefix_control PROPERTIES WILL_FAIL TRUE)
     add_test(NAME test_decision_eval_plan_prefix_control COMMAND test_decision_eval_plan_prefix_control)
     set_tests_properties(test_decision_eval_plan_prefix_control PROPERTIES WILL_FAIL TRUE)
-    # L20 r3: the pre-fix location_id read must fail the absent rows.
+    # The pre-fix location_id read must fail the absent rows.
     add_test(NAME test_optional_id_prefix_control COMMAND test_optional_id_prefix_control)
     set_tests_properties(test_optional_id_prefix_control PROPERTIES WILL_FAIL TRUE)
-    # L14 S3: the pre-fix 64-bit read of a bool must fail the same checks.
+    # The pre-fix 64-bit read of a bool must fail the same checks.
     add_test(NAME test_engine_bool_prefix_control
              COMMAND test_engine_bool_prefix_control)
     set_tests_properties(test_engine_bool_prefix_control PROPERTIES WILL_FAIL TRUE)
@@ -2250,7 +2250,7 @@ endif()
     add_test(NAME name_pending_probe_negative_control
              COMMAND name_pending_probe_negative_control)
     set_tests_properties(name_pending_probe_negative_control PROPERTIES WILL_FAIL TRUE)
-    # rc2 B1/B2 source censuses (python, no build products). Each has a
+    # /B2 source censuses (python, no build products). Each has a
     # selftest (known-bad text MUST be flagged) and the B2 ones a control that
     # reads the tree as a debug build and MUST fail.
     # Each script is spelled out: release/export.py's bridge/test census
@@ -2258,7 +2258,7 @@ endif()
     set(_census_private_file_opens ${CMAKE_CURRENT_SOURCE_DIR}/test/check_private_file_opens.py)
     set(_census_raw_pointer_inputs ${CMAKE_CURRENT_SOURCE_DIR}/test/check_raw_pointer_inputs.py)
     set(_census_no_va_output       ${CMAKE_CURRENT_SOURCE_DIR}/test/check_no_va_output.py)
-    # lane ACTOR: no handler resolves an unnamed actor outside actor_resolve.h.
+    # No handler resolves an unnamed actor outside actor_resolve.h.
     set(_census_actor_resolution   ${CMAKE_CURRENT_SOURCE_DIR}/test/check_actor_resolution.py)
     foreach(_c private_file_opens raw_pointer_inputs no_va_output actor_resolution)
         add_test(NAME ${_c}
@@ -2266,7 +2266,7 @@ endif()
         add_test(NAME ${_c}_selftest
                  COMMAND ${CK3_PYTHON3} ${_census_${_c}} --selftest)
     endforeach()
-    # lane win12: no GNU-only construct in a file the Windows (cl.exe) build
+    # No GNU-only construct in a file the Windows (cl.exe) build
     # compiles; the files are read from this CMakeLists.txt's Windows branch.
     set(_census_msvc_portable ${CMAKE_CURRENT_SOURCE_DIR}/test/check_msvc_portable.py)
     add_test(NAME msvc_portable
@@ -2285,7 +2285,7 @@ endif()
         set_tests_properties(${_c}_debug_control PROPERTIES WILL_FAIL TRUE)
     endforeach()
 
-    # rc2 B1 (ck-otj9): log rotation reopens O_EXCL|O_NOFOLLOW at 0600. Was
+    # Log rotation reopens O_EXCL|O_NOFOLLOW at 0600. Was
     # run only by host acceptance_otj9.py. Exit 3 = cannot set up (skip).
     # EXISTS: release/manifest.toml still excludes the probe from the public
     # tree; drop that exclusion and the public ctest runs it too.
@@ -2299,7 +2299,7 @@ endif()
         set_tests_properties(log_rotate_probe PROPERTIES SKIP_RETURN_CODE 3)
     endif()
 
-    # rc2 B2: the shipped .so carries none of the debug handlers.
+    # The shipped .so carries none of the debug handlers.
     if(NOT CK3_BRIDGE_DEBUG_VERBS)
         add_test(NAME debug_verbs_not_linked
                  COMMAND ${CK3_PYTHON3}

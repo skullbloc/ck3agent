@@ -1,4 +1,4 @@
-// lobby_view_hook.h — ck-dq7ym.8
+// lobby_view_hook.h —
 //
 // Captures the live CJominiMultiplayerLobbyView singleton via an inline
 // constructor hook. See bridge/src/lobby_view_hook.cpp for the rationale.

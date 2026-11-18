@@ -1,8 +1,8 @@
-// test/test_pipeline.cpp — unit tests for the R1b apply + ticket layer (ck-6kvq.9).
+// test/test_pipeline.cpp — unit tests for the R1b apply + ticket layer.
 //
 // Standalone: compiles flush_scheduler.cpp + ticket_table.cpp + flush_apply.cpp
 // with NO engine, NO game and NO CK3 binary. The plan is applied against a FAKE
-// FlushEffects, which is precisely what the ck-6kvq.8 scheduler/apply split was
+// FlushEffects, which is precisely what the scheduler/apply split was
 // for — the wiring can be asserted on a host.
 //
 //   cmake -DBUILD_BRIDGE_TESTS=ON .. && make -j$(nproc) test_pipeline
