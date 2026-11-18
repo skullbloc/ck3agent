@@ -177,7 +177,7 @@ jobs:
           foreach ($f in 'installer/windows/install.ps1', 'installer/windows/uninstall.ps1') {
             $errs = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$null, [ref]$errs)
-            if ($errs) { $errs | ForEach-Object { Write-Error "$f: $_" }; exit 1 }
+            if ($errs) { $errs | ForEach-Object { Write-Error "${f}: $_" }; exit 1 }
           }
       - name: Installer scripts parse (Windows PowerShell 5.1)
         shell: powershell
@@ -185,7 +185,7 @@ jobs:
           foreach ($f in 'installer/windows/install.ps1', 'installer/windows/uninstall.ps1') {
             $errs = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$null, [ref]$errs)
-            if ($errs) { $errs | ForEach-Object { Write-Error "$f: $_" }; exit 1 }
+            if ($errs) { $errs | ForEach-Object { Write-Error "${f}: $_" }; exit 1 }
           }
       # The server suite has never run on Windows. It reports here and does not
       # gate (release.yml needs this workflow) until it is green on this OS;

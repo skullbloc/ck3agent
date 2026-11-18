@@ -179,10 +179,12 @@ endif()
 # expression in sigsetjmp, __atomic_* builtins). Under clang-cl, (1) the GNU
 # constructs that are not single tokens are errors, and (2) msvc_standin_lint
 # (below, after the targets) preprocesses every bridge translation unit and
-# fails on any GNU-only token left in a bridge file. Shared sources spell those
+# fails on any GNU-only token left in a bridge file, and reads clang's AST of
+# each unit for a reinterpret_cast from an integer to its own type (clang-cl
+# accepts it, cl.exe refuses it: C2440, the last error on 2026.12.10). Shared sources spell those
 # through include/ck3_compiler.h; test/check_msvc_portable.py (ctest, every
 # Linux build) reads the same rule off the source. What neither can see:
-# cl.exe's own front-end differences (two-phase lookup corners, constexpr
+# cl.exe's other front-end differences (two-phase lookup corners, constexpr
 # limits, overload resolution); only the public leg can.
 set(CK3_MSVC_STANDIN OFF)
 if(CK3_PLATFORM STREQUAL "windows" AND MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -554,7 +556,11 @@ if(BUILD_BRIDGE_TESTS)
         # (a POST_BUILD copy on the test exe would go stale: the exe does not
         # relink when only the DLL changes, and the test would grade the old DLL).
         set(_ph ${CMAKE_CURRENT_BINARY_DIR}/proxyhost)
-        set_target_properties(test_os_win_proxy_host PROPERTIES OUTPUT_NAME ck3 RUNTIME_OUTPUT_DIRECTORY ${_ph})
+        # $<1:...>: a multi-config generator (Visual Studio, the public
+        # windows-latest leg) appends <Config>/ to a plain directory, which put
+        # ck3.exe in proxyhost/Release/ away from proxyhost/version.dll
+        # (LoadLibraryW error 126); a generator expression stops the append.
+        set_target_properties(test_os_win_proxy_host PROPERTIES OUTPUT_NAME ck3 RUNTIME_OUTPUT_DIRECTORY $<1:${_ph}>)
         add_custom_command(OUTPUT ${_ph}/version.dll
             COMMAND ${CMAKE_COMMAND} -E make_directory ${_ph}
             COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:ck3_bridge_win> ${_ph}/version.dll
@@ -588,7 +594,7 @@ if(CK3_MSVC_STANDIN)
     add_custom_target(msvc_standin_lint ALL
         COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/cmake/msvc_standin_lint.py
             --compdb ${CMAKE_BINARY_DIR}/compile_commands.json --root ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "msvc_standin_lint: no GNU-only token in the preprocessed bridge sources"
+        COMMENT "msvc_standin_lint: no GNU-only token, no same-type reinterpret_cast in the bridge sources"
         VERBATIM)
     if(TARGET gen_win_offsets)
         add_dependencies(msvc_standin_lint gen_win_offsets gen_provenance_win)
@@ -2267,6 +2273,11 @@ endif()
              COMMAND ${CK3_PYTHON3} ${_census_msvc_portable} ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME msvc_portable_selftest
              COMMAND ${CK3_PYTHON3} ${_census_msvc_portable} --selftest)
+    # The stand-in lint itself runs only in a clang-cl Windows build; its AST
+    # reader (same-type reinterpret_cast, cl.exe C2440) is checked here on canned
+    # dump text so a Linux build reds when the reader breaks.
+    add_test(NAME msvc_standin_lint_selftest
+             COMMAND ${CK3_PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/msvc_standin_lint.py --selftest)
     foreach(_c raw_pointer_inputs no_va_output)
         add_test(NAME ${_c}_debug_control
                  COMMAND ${CK3_PYTHON3} ${_census_${_c}} --include-debug

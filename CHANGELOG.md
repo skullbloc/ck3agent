@@ -3,6 +3,22 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.11 — unreleased
+
+* **Windows: the last MSVC error fixed.** The one error real `cl.exe` gave
+  on 2026.12.10 (C2440 in `bridge/src/query_handlers.cpp`, a
+  `reinterpret_cast` from `uintptr_t` to `uintptr_t`, which clang-cl accepts)
+  is fixed. The clang-cl build's `msvc_standin_lint` now also reads clang's
+  AST of every Windows translation unit and fails on a `reinterpret_cast` from
+  an integer or enum to its own type; its reader is tested on every Linux
+  build (ctest `msvc_standin_lint_selftest`). Three Windows tests that only
+  real Windows with MSVC reds are corrected: the proxy-refusal host is built
+  beside its `version.dll` under the Visual Studio generator, the
+  guarded-region test's progress marker is `volatile`, and the game-log test
+  compares long path names. The CI's installer-parse step itself no longer
+  fails to parse (`"${f}: $_"`; PowerShell read `$f:` as a drive-qualified
+  variable). No behaviour change on Linux.
+
 ## 2026.12.10 — 2026-11-17
 
 From the v4 pilots on 2026.12.9: several seats in one game read and wrote as
