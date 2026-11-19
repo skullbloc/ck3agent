@@ -3,8 +3,51 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
-## 2026.12.11 — unreleased
+## 2026.12.11 — 2026-11-19
 
+From a 25-year seated pilot on 2026.12.10: a king's `observe` took about
+30 seconds and most of his vassals' realms came back unread, and from
+1088 on the game's log no longer carried the lines that confirm a scripted
+action ran. A king's vassals are now read in one bridge read; our script
+lines are written at INFO and the log channel is read, so a dark channel is
+named instead of reported as a write that did not apply. The Windows MSVC
+build is green and gates CI. The surface is still thirteen tools.
+
+* **A king's vassals in one read.** `query_realm` takes `character_ids`
+  (1 to 64 ids) and answers each id's own realm reply from one walk of the
+  game's character table (`bridge/include/realm_tally.h`), where each
+  vassal's read used to be its own walk of about 0.9 s. `observe` sends that
+  one read for every direct vassal (`pushed_warnings.vassal_read_request`).
+  On the 1066 save, paused, a king with 32 vassals observed in about 1.7 s
+  instead of about 13 s, with no vassal realm unread (`vassal_realms_unread`
+  was 16 of 32 before). A list that is not 1 to 64 positive ids is refused
+  whole (`too_many_character_ids`, `invalid_character_ids`,
+  `ambiguous_character_ids`); an unknown id answers `character_not_found`;
+  an id past the game-thread budget answers `not_reached`. **The bridge and
+  the server ship together:** a 2026.12.11 server on a 2026.12.10 bridge
+  reads no vassal realm, and says so (`vassal_realms_unread`, every vassal,
+  "a reply without a realms list"); it never falls back to one read per
+  vassal.
+* **The script log channel.** The game stops writing a log level once
+  100,000 messages of that level were logged in a session. The marker lines
+  that confirm a scripted action (gift, sway, council task, `declare_war`,
+  `set_policy`) ran, and the policy and proposal mods' lines, were DEBUG
+  and went dark in a long game; they are now INFO (`info_log`), and the
+  policy mod no longer logs a line each time it re-arms. `script_action` and
+  `query_script_log` carry `script_log_channel` (`open`, `closed` with
+  `closed_since`, or `unmeasured`, with the INFO and DEBUG counts and the
+  cap). A marker not seen while the channel is not read open is reported
+  `log_unreadable` (guard) and `script_log_unreadable` (pending), never
+  `write_not_applied`; an incoming-proposal list read from a closed channel
+  is `script_log_unreadable`. Not measured on Windows: the bridge answers
+  `unmeasured` there. In testing the cap was reached once naturally (on
+  2026.12.10's DEBUG lines, about 16 game-years with ten seats) and
+  otherwise by writing the game's counter; no natural 50-year run has been
+  made. Reinstall the policy and proposal mods
+  (`docs/standing-policies.md`, `docs/incoming-proposals.md`) to get the
+  INFO lines.
+* Still not seen in a running game: an AI white-peace offer held, and an
+  answer to a voided offer read back.
 * **Windows: the last MSVC error fixed.** The one error real `cl.exe` gave
   on 2026.12.10 (C2440 in `bridge/src/query_handlers.cpp`, a
   `reinterpret_cast` from `uintptr_t` to `uintptr_t`, which clang-cl accepts)

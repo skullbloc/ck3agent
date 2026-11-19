@@ -52,6 +52,10 @@ class Game:
         self.alliances = {}
         self.wars = []
         self.list_complete = True
+        # The bridge's script_log_channel (action_handlers.cpp
+        # emit_log_channel), on script_action and every query_script_log reply.
+        self.channel = {"state": "open", "level": "info", "cap": 100000, "info_messages": 10,
+                        "debug_messages": 500, "closed_since": None}
         self.answer_override = None
         self.primary = KING          # the ruler bound to the seat (a succession moves it)
 
@@ -102,7 +106,8 @@ class Game:
     def script(self, p):
         t, actor = p["template"], p.get("actor_id")
         base = {"success": True, "action": "script_action", "template": t, "token": f"SACT_{t}_{len(self.lines)}",
-                "guard": "ran", "errors": [], "debug_log_offset": 0, "error_log_offset": 0}
+                "guard": "ran" if self.channel["state"] == "open" else "unseen", "errors": [],
+                "debug_log_offset": 0, "error_log_offset": 0, "script_log_channel": dict(self.channel)}
         if t == P.T_SEAT:
             (self.markers.add if p["on"] else self.markers.discard)(actor)
             return base
@@ -155,7 +160,8 @@ class Gw:
         if action == "query_script_log":
             if params.get("proposal_lines"):
                 off = params.get("debug_log_offset", 0)
-                return {"success": True, "lines": g.lines[off:], "next_offset": len(g.lines)}
+                return {"success": True, "lines": g.lines[off:], "next_offset": len(g.lines),
+                        "script_log_channel": dict(g.channel)}
             if "character_id" in params:
                 return {"success": True, "character_id": params["character_id"], "mod_enabled": True,
                         "policies": {}, "proposal_mod_enabled": g.mod_enabled}
@@ -694,3 +700,31 @@ def test_a_line_about_an_offer_this_server_never_saw_is_still_left_out(monkeypat
     g._apply(pid, "decline", "rule", "class_policy:marriage=decline")
     observe(gw, KING)
     assert not [r for r in ledger(led) if r.get("proposal_id") == pid]
+
+
+# ── A closed script log channel is said, never read as no offers ──
+
+CLOSED = {"state": "closed", "level": "info", "cap": 100000, "info_messages": 100000,
+          "debug_messages": 100000, "closed_since": "1088.01.27"}
+
+
+def test_lines_from_a_closed_channel_are_unread_and_the_offset_holds():
+    g = Game()
+    g.lines = [{"word": P.WORD_HELD, "fields": ["1", "k", "c", "2", "3"], "date": "1088.1.1"}]
+    g.channel = dict(CLOSED)
+    st = P.SeatState()
+    why = run(P.read_lines(Gw(g), st, {KING}))
+    assert why == "script_log_unreadable: channel closed since 1088.01.27", why
+    assert st.offset == 0 and not st.held
+
+
+def test_a_list_cut_short_by_a_closed_channel_says_so_not_incomplete():
+    g = Game()
+    g.list_complete = False
+    g.channel = dict(CLOSED)
+    items, why, _ = run(P.list_offers(Gw(g), KING))
+    g2 = Game()
+    g2.list_complete = False
+    items2, why2, _ = run(P.list_offers(Gw(g2), KING))
+    assert items is None and why.startswith(P.U_LOG_UNREADABLE) and "closed since 1088.01.27" in why
+    assert items2 is None and why2 == P.U_LIST_INCOMPLETE, "an open channel's short list stays incomplete"

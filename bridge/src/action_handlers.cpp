@@ -7096,6 +7096,64 @@ std::string read_from(const std::string& p, long long offset, size_t cap = 512 *
     return bridge::os::game_log_read_from(p, offset, cap);
 }
 
+// The script log channel. The game keeps one session counter per
+// log level and drops every message of a level once LEVEL_MSG_CAP of that level
+// were logged (ck3::nlog; re/findings/re_log_level_cap.md). Our lines are INFO
+// (script_templates.h kLogEffect): the channel is open while the INFO counter is
+// under the cap. DEBUG is read beside it (the game's own busiest level; the
+// re-pilot's channel was DEBUG and died at 1088.01.27). A counter that cannot be
+// read (the RVA unmapped: Windows has no counterpart yet) is `unmeasured`, a
+// state of its own, never `open`.
+struct LogChannel {
+    const char* state = "unmeasured";       // open | closed | unmeasured
+    long long info = -1, debug = -1;
+};
+std::mutex g_log_channel_mu;
+std::string g_log_channel_closed_since;     // the game date the bridge first read it closed
+
+std::string game_date_now() {
+    const uintptr_t gs = safe_read_offset<uintptr_t>(ck3::globals::GAME_STATE_ROOT);
+    if (!gs) return {};
+    char ymd[16];
+    ck3::game_date::format_raw(safe_read<int32_t>(gs + ck3::game_state::GAME_DATE), ymd, sizeof(ymd));
+    return ymd;
+}
+
+LogChannel read_log_channel() {
+    LogChannel c;
+    const uintptr_t a = g_base_addr + ck3::nlog::LEVEL_MSG_COUNTERS;
+    if (!g_base_addr || !is_mapped(a) || !is_mapped(a + 4 * 6 - 1)) return c;
+    const int32_t info = safe_read<int32_t>(a + 4 * ck3::nlog::LEVEL_INFO);
+    const int32_t dbg = safe_read<int32_t>(a + 4 * ck3::nlog::LEVEL_DEBUG);
+    if (info < 0 || dbg < 0) return c;
+    c.info = info;
+    c.debug = dbg;
+    c.state = info >= ck3::nlog::LEVEL_MSG_CAP ? "closed" : "open";
+    if (info >= ck3::nlog::LEVEL_MSG_CAP) {
+        std::lock_guard<std::mutex> lk(g_log_channel_mu);
+        if (g_log_channel_closed_since.empty()) g_log_channel_closed_since = game_date_now();
+    }
+    return c;
+}
+
+void emit_log_channel(ResponseBuilder& r, const LogChannel& c) {
+    r.key("script_log_channel"); r.begin_object();
+    r.key("state"); r.value_string(c.state);
+    r.key("level"); r.value_string("info");
+    r.key("cap"); r.value_int(ck3::nlog::LEVEL_MSG_CAP);
+    r.key("info_messages");
+    if (c.info < 0) r.value_null(); else r.value_int(c.info);
+    r.key("debug_messages");
+    if (c.debug < 0) r.value_null(); else r.value_int(c.debug);
+    r.key("closed_since");
+    {
+        std::lock_guard<std::mutex> lk(g_log_channel_mu);
+        if (g_log_channel_closed_since.empty()) r.value_null();
+        else r.value_string(g_log_channel_closed_since.c_str());
+    }
+    r.end_object();
+}
+
 // A ruler's script reference: the key of his primary title, the title's holder
 // checked to be him. Empty (with WHY) when he holds no title, so he cannot be
 // addressed in script (character:<id> takes HISTORY ids, probe e12b).
@@ -7436,6 +7494,7 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         r.key("read_only"); r.value_bool(read_only);
         emit_errors(r, errs);
         r.key("logs_found"); r.value_bool(!logs.debug.empty() && !logs.error.empty());
+        emit_log_channel(r, read_log_channel());
         r.key("debug_log_offset"); r.value_int(dbg0);
         r.key("error_log_offset"); r.value_int(err0);
         if (!s.seat.empty()) { r.key("seat"); r.value_string(s.seat.c_str()); }
@@ -7454,10 +7513,14 @@ bool do_script_action(const char* params_json, std::string* response_out) {
 
 bool do_query_script_log(const char* params_json, std::string* response_out) {
     namespace st = bridge::script_tpl;
+    // The channel reading is two scalar .bss reads and the game
+    // date, through safe_read; a fault answers typed, never a silent 0.
+    FaultScope fault_scope("query_script_log", response_out);
     const GameLogs logs = find_game_logs();
     ResponseBuilder r; r.begin_object();
     r.key("action"); r.value_string("query_script_log");
     r.key("logs_found"); r.value_bool(!logs.debug.empty() && !logs.error.empty());
+    emit_log_channel(r, read_log_channel());
     const char* count = json_get_string(params_json, "count");
     if (count && count[0]) {
         // The policy mod's lines (CK3AGENT_POLICY_*) in the whole debug.log.

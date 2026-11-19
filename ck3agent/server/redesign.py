@@ -7825,21 +7825,47 @@ SCRIPT_POLL_S = 0.25
 SCRIPT_POLLS = 8
 
 
+#: The guard word when the marker was not read AND the bridge did
+#: not read the script log channel open (its `script_log_channel`: the game drops
+#: every message of a level after 100,000 of it in a session, and our lines' level
+#: may be full, or the counter unreadable): the game may have run the script and
+#: its marker cannot be read. Never `unseen` (the channel read open and the marker
+#: absent), never a reading that nothing happened.
+GUARD_LOG_UNREADABLE = "log_unreadable"
+
+
+def log_channel_of(reply: dict) -> dict:
+    """The bridge's reading of the script log channel (the game's message counter
+    of our lines' level against its cap), from a script_action / query_script_log
+    reply: {state: open|closed|unmeasured, info_messages, cap, closed_since, ...}.
+    A reply without one (an older bridge, a refusal) is `not_reported`: a state,
+    never `open`."""
+    ch = reply.get("script_log_channel") if isinstance(reply, dict) else None
+    if isinstance(ch, dict) and ch.get("state") in ("open", "closed", "unmeasured"):
+        return ch
+    return {"state": "not_reported"}
+
+
 async def _script_write(gw, template: str, params: dict) -> dict:
     """Send one script_action; when the bridge answered before the game's logger
     wrote the guard's marker, read it back with query_script_log. Returns
-    {raw, guard: ran|refused|unseen, errors: [the game's own error text], late}."""
+    {raw, guard: ran|refused|unseen|log_unreadable, errors: [the game's own error
+    text], late, channel}. `unseen` only when the bridge read the script log
+    route open; otherwise `log_unreadable` with the channel reading."""
     raw = _unwrap_reply(await gw.write("script_action", {**params, "template": template}))
     guard = raw.get("guard") or "unseen"
     errors = [e for e in (raw.get("errors") or []) if isinstance(e, str)]
     marks = [m for m in (raw.get("marks") or []) if isinstance(m, str)]
     late = False
+    channel = log_channel_of(raw)
     if raw.get("success") is True and guard == "unseen" and raw.get("token"):
         for _ in range(SCRIPT_POLLS):
             await _SLEEP(SCRIPT_POLL_S)
             q = _unwrap_reply(await gw.read("query_script_log", {
                 "token": raw["token"], "debug_log_offset": raw.get("debug_log_offset", 0),
                 "error_log_offset": raw.get("error_log_offset", 0)}))
+            if "script_log_channel" in q:
+                channel = log_channel_of(q)
             if q.get("guard") in ("ran", "refused"):
                 guard, late = q["guard"], True
                 # Read after the call, so a later script action's errors could be
@@ -7849,7 +7875,10 @@ async def _script_write(gw, template: str, params: dict) -> dict:
                 # script action writes them
                 marks = marks or [m for m in (q.get("marks") or []) if isinstance(m, str)]
                 break
-    return {"raw": raw, "guard": guard, "errors": errors, "late": late, "marks": marks}
+        if guard == "unseen" and channel["state"] != "open":
+            guard = GUARD_LOG_UNREADABLE
+    return {"raw": raw, "guard": guard, "errors": errors, "late": late, "marks": marks,
+            "channel": channel}
 
 
 def script_unaddressable(sent: dict) -> bool:
@@ -7864,7 +7893,8 @@ async def script_verdict(gw, sent: dict, *, landed, before, what: str,
     raw, guard, errors = sent["raw"], sent["guard"], sent["errors"]
     words = engine_text("\n".join(errors)) if errors else ""
     res = {"path": "script", "template": raw.get("template"), "token": raw.get("token"),
-           "guard": guard, "game_errors": [engine_text(e) for e in errors],
+           "guard": guard, "script_log_channel": sent.get("channel") or log_channel_of(raw),
+           "game_errors": [engine_text(e) for e in errors],
            "marker_read_late": sent.get("late", False), "raw": raw}
     # The game's words ride in blocked.detail (write_blocked reads engine_reason):
     # its error text when it wrote one; "" (NO_GAME_DETAIL) when the game's check
@@ -7899,6 +7929,20 @@ async def script_verdict(gw, sent: dict, *, landed, before, what: str,
         return {"verdict": "rejected", "result": res,
                 "blocked": write_blocked(gate=error_gate, raw_reason="script_error",
                                          summary=words or "the game logged a script error", raw=said)}
+    if guard == GUARD_LOG_UNREADABLE:
+        # The script log channel was not read
+        # open, so the guard cannot be read; the read-back did not show the change
+        # either. Not "not applied": the game ran the script and may have done it.
+        ch = res["script_log_channel"]
+        return {"verdict": "pending", "result": dict(res, sent=True),
+                "pending": write_pending("readback", game_date_at_submit=gw.game().get("date"),
+                                         expected_change=what, raw_reason="script_log_unreadable",
+                                         why_pending=("the game ran the script and its check's answer "
+                                                      "could not be read: the game's log is not carrying "
+                                                      f"script lines (channel {ch.get('state')}"
+                                                      + (f" since {ch['closed_since']}" if ch.get("closed_since")
+                                                         else "") + ")"),
+                                         verify_with=f"read {what} before sending it again")}
     if got is UNREAD:
         return {"verdict": "pending", "result": dict(res, sent=True),
                 "pending": write_pending("readback", game_date_at_submit=gw.game().get("date"),
@@ -8230,6 +8274,14 @@ async def _do_end_war(gw, a: dict, character_id: int, actor) -> dict:
             return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(), result=base,
                             blocked=write_blocked(reason, summary=f"{reason}: {raw.get('detail') or ''}"
                                                   .rstrip(": "), raw=raw),
+                            bridge_health=gw.health)
+        if raw.get("success") is True and sent["guard"] == GUARD_LOG_UNREADABLE:
+            return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
+                            result=dict(base, script_log_channel=sent.get("channel")),
+                            blocked=write_blocked(gate="read_timeout", raw_reason="script_log_unreadable",
+                                                  summary="the game's log is not carrying script lines, "
+                                                          "so the war's reading cannot be read; nothing was "
+                                                          "ended", raw=raw),
                             bridge_health=gw.health)
         if raw.get("success") is not True or sent["guard"] == "unseen":
             return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),

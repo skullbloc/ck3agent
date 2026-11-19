@@ -177,6 +177,10 @@ U_NOT_LOADED = R_NOT_LOADED
 U_LIST_FAILED = "proposal_list_failed"
 U_LIST_INCOMPLETE = "proposal_list_incomplete"
 U_LIST_INCONSISTENT = "proposal_list_inconsistent"
+#: The game's log is not carrying script lines (the bridge's
+#: script_log_channel reads closed, or could not be read), so the queue's lines
+#: and the list's window cannot be read: never an empty list, never "incomplete".
+U_LOG_UNREADABLE = "script_log_unreadable"
 
 #: Ledger row kinds: the design's offer events, then this lane's bookkeeping
 #: (what the next process of the same seat re-reads).
@@ -474,6 +478,11 @@ async def read_lines(gw, st: SeatState, actors: set) -> Optional[str]:
     lines = q.get("lines")
     if not isinstance(lines, list):
         return str(q.get("reason") or q.get("error") or "query_script_log carried no lines")
+    ch = R.log_channel_of(q)
+    if ch["state"] != "open":
+        # Lines read from a log that is not carrying them are not the
+        # queue's lines; nothing is folded and the offset does not move.
+        return _unreadable(ch)
     nxt = q.get("next_offset")
     for ln in lines:
         if not isinstance(ln, dict) or ln.get("word") not in WORDS:
@@ -515,6 +524,12 @@ async def read_lines(gw, st: SeatState, actors: set) -> Optional[str]:
     return None
 
 
+def _unreadable(channel: Optional[Mapping]) -> str:
+    ch = channel if isinstance(channel, Mapping) else {}
+    since = ch.get("closed_since")
+    return f"{U_LOG_UNREADABLE}: channel {ch.get('state') or 'not_reported'}" + (f" since {since}" if since else "")
+
+
 async def list_offers(gw, actor: int) -> tuple[Optional[list], Optional[str], Optional[str]]:
     """(items, None, token) or (None, why, token): the proposal_list template.
     `list_complete` false is a refusal, never an empty list; an item that is
@@ -524,6 +539,8 @@ async def list_offers(gw, actor: int) -> tuple[Optional[list], Optional[str], Op
     tok = raw.get("token")
     if raw.get("success") is not True:
         return None, f"{U_LIST_FAILED}: {raw.get('reason') or raw.get('error') or 'no reply'}", tok
+    if raw.get("list_complete") is not True and sent["guard"] == _r().GUARD_LOG_UNREADABLE:
+        return None, _unreadable(sent.get("channel")), tok
     if raw.get("list_complete") is not True:
         return None, U_LIST_INCOMPLETE, tok
     items = raw.get("proposals")

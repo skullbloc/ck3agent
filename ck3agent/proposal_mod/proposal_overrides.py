@@ -529,7 +529,7 @@ def _is_class(cls: str) -> str:
     return f"var:ck3agent_proposal_class = flag:{cls}"
 
 
-#: What a log line prints. Live runs i11p3-i11p9: a debug_log string sees the
+#: What a log line prints. Live runs i11p3-i11p9: a log line's string sees the
 #: saved scopes the CONTEXT began with (the interaction's actor and recipient in
 #: on_send: GetID printed the bridge's ids) and nothing the script saved during the
 #: run: SCOPE.ScriptValue('x') is a script value DEFINITION (printed 0), a variable
@@ -539,6 +539,10 @@ def _is_class(cls: str) -> str:
 #: values in the list (i11p9: DIAG|forms|1|36122). So each line first copies what it
 #: prints into global variables (named ck3a_*; set only while a marked seat's offer
 #: is logged) and prints those.
+#: The script effect every line is written with (INFO: the game drops
+#: every message of a level after 100,000 of that level in a session, and DEBUG
+#: fills in a long game; bridge/include/script_templates.h kLogEffect).
+LOG = "info_log"
 PRINTED_VALUES = ("ck3a_pid", "ck3a_answer", "ck3a_by", "ck3a_void", "ck3a_age", "ck3a_y", "ck3a_m", "ck3a_d")
 PRINTED_CHARACTERS = ("actor", "recipient", "secondary_actor", "secondary_recipient")
 
@@ -629,23 +633,23 @@ def kinds_files(lifted: dict[str, dict], kinds: dict[str, tuple[str, str]] = FIR
     effect("ck3agent_proposal_log_options_effect", [
         (_is_kind(k), "".join(
             f"\t\tif = {{ limit = {{ is_target_in_variable_list = {{ name = ck3agent_proposal_options "
-            f"target = flag:{fl} }} }} debug_log = \"CK3AGENT_PROPOSAL_ITEM_OPTION|{fl}\" }}\n"
+            f"target = flag:{fl} }} }} {LOG} = \"CK3AGENT_PROPOSAL_ITEM_OPTION|{fl}\" }}\n"
             for fl in lifted[k]["flags"]))
         for k in kinds if lifted[k]["flags"]])
     actor, recip = _ch("actor"), _ch("recipient")
     effect("ck3agent_proposal_log_held_effect", [
-        (_is_kind(k), _logged(f"\t\tdebug_log = \"CK3AGENT_PROPOSAL_HELD|{_sv('ck3a_pid')}|{k}|{c}|{actor}|{recip}|{DATE}\"\n")
-                      + "\t\tdebug_log_scopes = yes\n")
+        (_is_kind(k), _logged(f"\t\t{LOG} = \"CK3AGENT_PROPOSAL_HELD|{_sv('ck3a_pid')}|{k}|{c}|{actor}|{recip}|{DATE}\"\n")
+                      + f"\t\t{LOG}_scopes = yes\n")
         for k, (c, _f) in kinds.items()])
     effect("ck3agent_proposal_log_resolved_effect", [
-        (_is_kind(k), _logged(f"\t\tdebug_log = \"CK3AGENT_PROPOSAL_RESOLVED|{_sv('ck3a_pid')}|{_sv('ck3a_answer')}|"
+        (_is_kind(k), _logged(f"\t\t{LOG} = \"CK3AGENT_PROPOSAL_RESOLVED|{_sv('ck3a_pid')}|{_sv('ck3a_answer')}|"
                               f"{_sv('ck3a_by')}|{k}|{c}|{DATE}\"\n"))
         for k, (c, _f) in kinds.items()])
     effect("ck3agent_proposal_log_void_effect", [
-        (_is_kind(k), _logged(f"\t\tdebug_log = \"CK3AGENT_PROPOSAL_VOID|{_sv('ck3a_pid')}|{_sv('ck3a_void')}|{k}|{c}|{DATE}\"\n"))
+        (_is_kind(k), _logged(f"\t\t{LOG} = \"CK3AGENT_PROPOSAL_VOID|{_sv('ck3a_pid')}|{_sv('ck3a_void')}|{k}|{c}|{DATE}\"\n"))
         for k, (c, _f) in kinds.items()])
     effect("ck3agent_proposal_log_item_effect", [
-        (_is_kind(k), _logged(f"\t\tdebug_log = \"CK3AGENT_PROPOSAL_ITEM|{_sv('ck3a_pid')}|{k}|{c}|{actor}|{recip}|"
+        (_is_kind(k), _logged(f"\t\t{LOG} = \"CK3AGENT_PROPOSAL_ITEM|{_sv('ck3a_pid')}|{k}|{c}|{actor}|{recip}|"
                               f"{_sv('ck3a_age')}\"\n"))
         for k, (c, _f) in kinds.items()])
     # One effect per kind, called as the capture's FIRST
@@ -653,7 +657,7 @@ def kinds_files(lifted: dict[str, dict], kinds: dict[str, tuple[str, str]] = FIR
     # seated or not, so it leaves no state: the two globals it prints are removed
     # after the line (the save holds nothing of it; only debug.log does).
     for k, (c, _f) in kinds.items():
-        body = (_logged(f"\t\tdebug_log = \"CK3AGENT_PROPOSAL_SENT|{k}|{c}|{actor}|{recip}\"\n")
+        body = (_logged(f"\t\t{LOG} = \"CK3AGENT_PROPOSAL_SENT|{k}|{c}|{actor}|{recip}\"\n")
                 + "\t\tremove_global_variable = ck3a_c_actor\n\t\tremove_global_variable = ck3a_c_recipient\n"
                 if c in SENT_LOGGED_CLASSES else "")
         eff.append(f"ck3agent_proposal_k_{k}_sent_effect = {{\n{body}}}\n")

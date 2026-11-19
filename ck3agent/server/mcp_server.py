@@ -2835,9 +2835,10 @@ async def observe(
 async def _attach_pushed(gw, env: dict[str, Any], facts: dict) -> dict[str, Any]:
     """v4: `result.warnings`, after `goal`: the pushed warnings
     (pushed_warnings.compose), each from a trigger of its table and naming a
-    guide topic. The vassal reads (one query_realm per direct vassal) are
-    taken once per cycle. A read that fails leaves its trigger silent and a
-    diagnostic in the envelope's `warnings`, never an invented line."""
+    guide topic. The vassal reads (ONE batched query_realm for every direct
+    vassal, pushed_warnings.vassal_read_request) are taken once per cycle. A
+    read that fails leaves its trigger silent and a diagnostic in the
+    envelope's `warnings`, never an invented line."""
     res = env["result"]
     goal = res.get("goal") if isinstance(res.get("goal"), dict) else {}
     idx = (goal.get("cycle") or {}).get("index") if isinstance(goal.get("cycle"), dict) else None
@@ -2849,19 +2850,13 @@ async def _attach_pushed(gw, env: dict[str, Any], facts: dict) -> dict[str, Any]
     else:
         unread = None
         try:
-            replies = await gw.read_many([("query_realm", {"character_id": v}) for v in vids]) if vids else []
-            vassal_realms = dict(zip(vids, replies))
-            # read_many answers a read that raised with {} (pilot 2: the king's
-            # 32 reads ran past the read timeout and the trigger went silent).
-            missed = [v for v, r in vassal_realms.items() if not (isinstance(r, dict) and r)]
-            if missed:
-                unread = {"code": "vassal_realms_unread", "unread": len(missed), "of": len(vids),
-                          "vassal_ids": missed,
-                          "detail": f"{len(missed)} of {len(vids)} vassal realm reads returned nothing; "
-                                    "vassal_over_demesne was not evaluated for them this cycle"}
+            if vids:
+                vassal_realms, unread = _pw.vassal_realms_of(vids, await gw.read(*_pw.vassal_read_request(vids)))
+            else:
+                vassal_realms = {}
         except Exception as exc:                                # noqa: BLE001
             vassal_realms = {}
-            unread = {"code": "vassal_realms_unread", "unread": len(vids), "of": len(vids),
+            unread = {"code": _pw.W_VASSAL_REALMS_UNREAD, "unread": len(vids), "of": len(vids),
                       "vassal_ids": list(vids), "detail": f"{type(exc).__name__}: {exc}"}
         _PUSH_CACHE.update(key=key, vassal_realms=vassal_realms, unread=unread)
     if unread:
