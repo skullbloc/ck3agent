@@ -1044,6 +1044,17 @@ if(BUILD_BRIDGE_TESTS)
 
     # A liege walk that cannot finish is 0, never the character's own id
     # (liege_walk.h, header-only; get_top_realm_ruler_id runs it on the game).
+    # Realm county counts for many rulers from one walk (realm_tally.h,
+    # header-only) against the per-ruler loop it replaced; the batch's id parser.
+    add_executable(test_realm_tally
+        test/test_realm_tally.cpp
+    )
+    target_include_directories(test_realm_tally PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+    )
+    target_compile_options(test_realm_tally PRIVATE -O2 -Wall -Wextra)
+
     add_executable(test_liege_walk
         test/test_liege_walk.cpp
     )
@@ -2185,7 +2196,7 @@ endif()
     # Engine-free tests that run standalone and exit 0; `ctest` runs them.
     enable_testing()
     foreach(_t test_json_helpers test_instance_paths
-               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_liege_walk test_played_line test_line_watch test_frame_send test_engine_bool
+               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_liege_walk test_realm_tally test_played_line test_line_watch test_frame_send test_engine_bool
                test_flush_scheduler test_pipeline
                test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_reader_fairness test_intent_lookup test_handoff_player
                add_claim_probe name_pending_probe tls_prologue_scan_probe

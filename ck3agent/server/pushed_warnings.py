@@ -20,10 +20,11 @@ THE TRIGGERS, each with its input:
                            ADULT_AGE. Age 0 is not read as a minor: the
                            bridge writes 0 when its age call faults.
   vassal_over_demesne      a direct vassal (query_realm `vassals[].id`,
-                           query_handlers.cpp:1605) whose own
-                           query_realm `realm_total_counties` (:1540)
-                           exceeds the ruler's `domain_size` (:1526, the
-                           counties he holds himself)
+                           query_handlers.cpp realm_reply) whose own
+                           `realm_total_counties` (the batched query_realm,
+                           vassal_read_request; count_realm_counties)
+                           exceeds the ruler's `domain_size` (the counties
+                           he holds himself)
   refusal_repeated         the seat's last action (ACTION_TOOLS) was refused
                            and had the same tool and arguments as the one
                            before it (ActionMemory)
@@ -100,7 +101,10 @@ W_BRIEFING_UNREAD = "start_briefing_unread"
 #: The tools whose calls are actions (game writes the seat chooses).
 ACTION_TOOLS = ("declare_war", "do", "steer", "set_phase")
 #: How many direct vassals the vassal trigger reads (the imprison builder's cap).
+#: At most the bridge's batch bound (realm_tally.h kBatchMax; mirror checked).
 VASSAL_READ_CAP = 40
+#: The envelope diagnostic when vassal realms went unread.
+W_VASSAL_REALMS_UNREAD = "vassal_realms_unread"
 
 
 def item(trigger: str, *, topic: Optional[str] = None, **fields: Any) -> dict:
@@ -142,6 +146,54 @@ def vassal_ids(realm: Any) -> list[int]:
         return []
     rows = realm.get("vassals") if isinstance(realm.get("vassals"), list) else []
     return [v["id"] for v in rows if isinstance(v, Mapping) and _int(v.get("id")) is not None][:VASSAL_READ_CAP]
+
+
+def vassal_read_request(vids: list[int]) -> tuple[str, dict]:
+    """The ONE bridge read for every direct vassal's realm: query_realm
+    with `character_ids`, answered from one walk of the character table
+    (query_handlers.cpp query_realm_batch). It replaced one query_realm per vassal,
+    each its own ~0.9 s walk: the re-pilot king's 32 took ~30 s and most came back
+    unread."""
+    return "query_realm", {"character_ids": list(vids)}
+
+
+def vassal_realms_of(vids: list[int], reply: Any) -> tuple[dict, Optional[dict]]:
+    """The batched read's reply -> ({vassal id: its realm reply, {} when unread},
+    the `vassal_realms_unread` diagnostic or None). The emitter
+    (query_realm_batch) writes `realms` (one element per id, in order, each the
+    id's own query_realm reply with `character_id`, or {character_id, error}),
+    `count` and `served`. A reply with no `realms` list (a refusal, a timeout's
+    {}, a bridge that predates the batch and answered a single realm) leaves
+    EVERY vassal unread and says what came back: never a fallback that reads
+    something else in its place."""
+    rows = reply.get("realms") if isinstance(reply, Mapping) else None
+    if not isinstance(rows, list):
+        why = (f"bridge error {reply.get('error')}" if isinstance(reply, Mapping) and reply.get("error")
+               else "no reply" if not reply else "a reply without a realms list (a bridge without the batched read)")
+        return ({v: {} for v in vids},
+                {"code": W_VASSAL_REALMS_UNREAD, "unread": len(vids), "of": len(vids), "vassal_ids": list(vids),
+                 "detail": f"the batched vassal realm read returned {why}; vassal_over_demesne was not "
+                           "evaluated this cycle"})
+    by_id = {}
+    for r in rows:
+        if isinstance(r, Mapping) and _int(r.get("character_id")) is not None:
+            by_id.setdefault(r["character_id"], r)
+    realms, missed, reasons = {}, [], {}
+    for v in vids:
+        r = by_id.get(v)
+        if isinstance(r, Mapping) and r and not r.get("error"):
+            realms[v] = dict(r)
+            continue
+        realms[v] = {}
+        missed.append(v)
+        why = r.get("error") if isinstance(r, Mapping) and r.get("error") else "absent_from_reply"
+        reasons[why] = reasons.get(why, 0) + 1
+    if not missed:
+        return realms, None
+    return realms, {"code": W_VASSAL_REALMS_UNREAD, "unread": len(missed), "of": len(vids), "vassal_ids": missed,
+                    "reasons": reasons,
+                    "detail": f"{len(missed)} of {len(vids)} vassal realm reads returned nothing; "
+                              "vassal_over_demesne was not evaluated for them this cycle"}
 
 
 def vassal_items(realm: Any, vassal_realms: Mapping[int, Any]) -> list[dict]:

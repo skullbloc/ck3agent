@@ -269,6 +269,16 @@ inline Composed refuse(const char* why) {
 
 //: The debug.log lines the guard writes: <token>_RAN / <token>_REFUSED.
 inline std::string ran_marker(const std::string& token) { return token + "_RAN"; }
+//: The script effect every line of ours is written with. The game
+//: drops every log message of a level once 100,000 of that level have been
+//: logged in the session (a per-level counter, ck3::nlog::LEVEL_MSG_COUNTERS;
+//: re/findings/re_log_level_cap.md). DEBUG is the game's busiest level (the
+//: re-pilot's channel died at 1088.01.27 when it filled); INFO is near-unused by
+//: the game (2 lines in the re-pilot's 21 years), so our lines get their own
+//: budget there. scripts/policy_mod.py and scripts/proposal_overrides.py write
+//: the same effect (test_policy_mod.py / test_proposal_mod.py check it).
+inline constexpr const char* kLogEffect = "info_log";
+inline std::string log_line(const std::string& text) { return std::string(kLogEffect) + " = \"" + text + "\""; }
 inline std::string refused_marker(const std::string& token) { return token + "_REFUSED"; }
 
 //: The bridge's own token: SACT_<n>.
@@ -283,8 +293,8 @@ inline bool token_ok(std::string_view t) {
 
 inline Composed compose(Template t, const Slots& s) {
     if (!token_ok(s.token)) return refuse("bad_token");
-    const std::string ran = "debug_log = \"" + ran_marker(s.token) + "\"";
-    const std::string refused = "debug_log = \"" + refused_marker(s.token) + "\"";
+    const std::string ran = log_line(ran_marker(s.token));
+    const std::string refused = log_line(refused_marker(s.token));
     auto need = [](const std::string& k) { return is_ident(k); };
     Composed c;
     switch (t) {
@@ -390,8 +400,8 @@ inline Composed compose(Template t, const Slots& s) {
     case Template::kProposalList:
     case Template::kProposalAnswer: {
         if (!need(s.actor_title)) return refuse("bad_character_ref");
-        const std::string begin = "debug_log = \"" + s.token + "_BEGIN\"";
-        const std::string end = "debug_log = \"" + s.token + "_END\"";
+        const std::string begin = log_line(s.token + "_BEGIN");
+        const std::string end = log_line(s.token + "_END");
         if (t == Template::kProposalList) {
             c.script = holder_ref(s.actor_title) + " = { " + begin + " every_owned_story = { limit = { story_type = " +
                        kProposalStory + " ck3agent_proposal_open_trigger = yes } "
@@ -405,8 +415,8 @@ inline Composed compose(Template t, const Slots& s) {
                    kProposalStory + " var:ck3agent_proposal_id = " + std::to_string(s.proposal_id) +
                    " } save_scope_as = ck3a_found ck3agent_proposal_answer_effect = { ANSWER = " +
                    std::to_string(s.proposal_answer) + " BY = " + std::to_string(s.proposal_by) +
-                   " } } if = { limit = { NOT = { exists = scope:ck3a_found } } debug_log = \"" +
-                   kProposalWordPrefix + "OUTCOME|refused|not_found\" } " + end + " " + ran + " }";
+                   " } } if = { limit = { NOT = { exists = scope:ck3a_found } } " +
+                   log_line(std::string(kProposalWordPrefix) + "OUTCOME|refused|not_found") + " } " + end + " " + ran + " }";
         break;
     }
     case Template::kEndWar: {
@@ -419,7 +429,7 @@ inline Composed compose(Template t, const Slots& s) {
         if (!need(s.actor_title) || !need(s.target_title)) return refuse("bad_character_ref");
         if (!s.peace_terms.empty() && !is_peace_terms(s.peace_terms)) return refuse("bad_peace_terms");
         const std::string A = holder_ref(s.actor_title), E = holder_ref(s.target_title);
-        auto mark = [&](const std::string& m) { return "debug_log = \"" + s.token + "_" + m + "\""; };
+        auto mark = [&](const std::string& m) { return log_line(s.token + "_" + m); };
         const std::string between = "OR = { AND = { primary_attacker = " + A + " primary_defender = " + E +
                                     " } AND = { primary_attacker = " + E + " primary_defender = " + A + " } }";
         auto side_score = [&](const std::string& who, const char* op, int v) {

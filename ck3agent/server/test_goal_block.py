@@ -86,6 +86,12 @@ def game(monkeypatch, tmp_path):
             if (params or {}).get("played_line") == 1:
                 out["played_line"] = world["watch"]
             return out
+        if action == "query_realm" and "character_ids" in (params or {}):
+            # the batched read, as query_handlers.cpp query_realm_batch writes it:
+            # `realms` (each id's own query_realm reply, in order), `count`, `served`
+            ids = params["character_ids"]
+            rows = [world["realms"].get(i) or {"character_id": i, "has_realm": False} for i in ids]
+            return {"realms": rows, "count": len(ids), "served": len(ids)}
         if action == "query_realm":
             return world["realms"].get(cid) or {"character_id": cid, "has_realm": False}
         return {"character_id": cid, "action": action}

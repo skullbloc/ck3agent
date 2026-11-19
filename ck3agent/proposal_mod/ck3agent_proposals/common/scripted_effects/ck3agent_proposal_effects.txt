@@ -323,28 +323,28 @@ ck3agent_proposal_void_effect = {
 ck3agent_proposal_log_void_outcome_effect = {
 	if = {
 		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 1 }
-		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_sender_dead"
+		info_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_sender_dead"
 	}
 	else_if = {
 		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 2 }
-		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_subject_dead"
+		info_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_subject_dead"
 	}
 	else_if = {
 		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 3 }
-		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_war_ended"
+		info_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_war_ended"
 	}
 	else_if = {
 		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 4 }
-		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_recipient_dead"
+		info_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_recipient_dead"
 	}
 	else_if = {
 		limit = { has_variable = ck3agent_proposal_void_reason var:ck3agent_proposal_void_reason = 5 }
-		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|invalid_now"
+		info_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|invalid_now"
 	}
 	else = {
 		# a void story without its reason (one voided before the reason was kept):
 		# said as such, never as "already answered"
-		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_reason_unread"
+		info_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|void_reason_unread"
 	}
 }
 
@@ -375,7 +375,7 @@ ck3agent_proposal_answer_effect = {
 	}
 	else_if = {
 		limit = { NOT = { ck3agent_proposal_open_trigger = yes } }
-		debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|already_resolved"
+		info_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|already_resolved"
 	}
 	else = {
 		ck3agent_proposal_check_void_effect = yes
@@ -389,7 +389,7 @@ ck3agent_proposal_answer_effect = {
 				scope:ck3a_answer = 4
 				NOT = { ck3agent_proposal_resend_family_trigger = yes }
 			}
-			debug_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|native_not_supported"
+			info_log = "CK3AGENT_PROPOSAL_OUTCOME|refused|native_not_supported"
 		}
 		else_if = {
 			# the interaction's own conditions, now, for every family and answer
@@ -406,16 +406,16 @@ ck3agent_proposal_answer_effect = {
 			if = {
 				limit = { scope:ck3a_answer = 1 }
 				ck3agent_proposal_dispatch_accept_effect = yes
-				debug_log = "CK3AGENT_PROPOSAL_OUTCOME|applied_accept|none"
+				info_log = "CK3AGENT_PROPOSAL_OUTCOME|applied_accept|none"
 			}
 			else_if = {
 				limit = { scope:ck3a_answer = 2 }
 				ck3agent_proposal_dispatch_decline_effect = yes
-				debug_log = "CK3AGENT_PROPOSAL_OUTCOME|applied_decline|none"
+				info_log = "CK3AGENT_PROPOSAL_OUTCOME|applied_decline|none"
 			}
 			else = {
 				ck3agent_proposal_dispatch_resend_effect = { THRESHOLD = send_threshold }
-				debug_log = "CK3AGENT_PROPOSAL_OUTCOME|handed_back|none"
+				info_log = "CK3AGENT_PROPOSAL_OUTCOME|handed_back|none"
 			}
 		}
 	}
@@ -429,23 +429,23 @@ ck3agent_proposal_list_item_effect = {
 	if = {
 		limit = { exists = scope:secondary_actor }
 		set_global_variable = { name = ck3a_c_secondary_actor value = scope:secondary_actor }
-		debug_log = "CK3AGENT_PROPOSAL_ITEM_SECONDARY_ACTOR|[GetGlobalVariable('ck3a_c_secondary_actor').GetCharacter.GetID]"
+		info_log = "CK3AGENT_PROPOSAL_ITEM_SECONDARY_ACTOR|[GetGlobalVariable('ck3a_c_secondary_actor').GetCharacter.GetID]"
 	}
 	if = {
 		limit = { exists = scope:secondary_recipient }
 		set_global_variable = { name = ck3a_c_secondary_recipient value = scope:secondary_recipient }
-		debug_log = "CK3AGENT_PROPOSAL_ITEM_SECONDARY_RECIPIENT|[GetGlobalVariable('ck3a_c_secondary_recipient').GetCharacter.GetID]"
+		info_log = "CK3AGENT_PROPOSAL_ITEM_SECONDARY_RECIPIENT|[GetGlobalVariable('ck3a_c_secondary_recipient').GetCharacter.GetID]"
 	}
 	if = {
 		limit = { exists = scope:war }
-		debug_log = "CK3AGENT_PROPOSAL_ITEM_WAR|[SCOPE.sWar('war').GetName]"
+		info_log = "CK3AGENT_PROPOSAL_ITEM_WAR|[SCOPE.sWar('war').GetName]"
 	}
 	else_if = {
 		limit = {
 			var:ck3agent_proposal_family = flag:join_war
 			exists = scope:target
 		}
-		debug_log = "CK3AGENT_PROPOSAL_ITEM_WAR|[SCOPE.sWar('target').GetName]"
+		info_log = "CK3AGENT_PROPOSAL_ITEM_WAR|[SCOPE.sWar('target').GetName]"
 	}
 	ck3agent_proposal_log_options_effect = yes
 }

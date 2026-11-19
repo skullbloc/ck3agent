@@ -1503,6 +1503,16 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
 // socket. A slot that hangs up, errors or overruns a line has its queued lines
 // served before it is released: every line taken off the socket runs, as when
 // they ran at read time (test_reader_fairness).
+//
+// WAVE 19: fairness moved the cost to the seats. Each of those
+// vassal reads was a ~0.9 s walk of the character table on the game thread
+// (count_realm_counties), so a round of six seats' batches held this thread
+// ~0.9 s per line and the king's 32 lines took ~30 s, most past his read
+// timeout. The seat now sends ONE line, query_realm with `character_ids`, served
+// from one walk (query_handlers.cpp query_realm_batch, realm_tally.h): it holds
+// this thread about as long as one single read did, so the bound above (one line
+// of each other busy client) is unchanged
+//
 static void reader_loop() {
     bridge::register_thread(bridge::ThreadRole::IpcReader);
     // Mask SIGALRM on this thread — the watchdog timer targets the game thread

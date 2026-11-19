@@ -375,3 +375,76 @@ def test_a_reply_without_the_pin_word_is_none_not_pinned():
                         args={"task": "task_find_secrets", "target_character_id": FOE}))
     w = _council_warning(env)
     assert "ai_pin" in w and w["ai_pin"] is None, w
+
+
+# ── A marker the closed channel could not carry is not "not applied" ──
+
+OPEN = {"state": "open", "level": "info", "cap": 100000, "info_messages": 12,
+        "debug_messages": 99000, "closed_since": None}
+CLOSED = dict(OPEN, state="closed", info_messages=100000, closed_since="1088.01.27")
+
+
+def unseen(template, channel):
+    r = ran(template, guard="unseen")
+    if channel is not None:
+        r["script_log_channel"] = channel
+    return r
+
+
+def test_the_re_pilots_case_a_closed_channel_is_pending_unreadable_never_not_applied():
+    """Re-pilot finding 1: from 1088.01.27 the game's log carried no script line;
+    five writes were told write_not_applied (one war was in fact applied). With the
+    bridge reading the channel closed, the verdict is pending script_log_unreadable,
+    the guard `log_unreadable`, and the date the channel closed is in the reply."""
+    gw = Gw(unseen("gift", CLOSED))
+    env = run(R.do_impl(gw, intent="interact", character_id=ME,
+                        args={"interaction": "gift_interaction", "target_id": FOE}))
+    assert env["verdict"] == "pending", env
+    assert env["pending"]["raw_reason"] == "script_log_unreadable"
+    assert "since 1088.01.27" in env["pending"]["why_pending"]
+    assert env["result"]["guard"] == "log_unreadable"
+    assert env["result"]["script_log_channel"]["state"] == "closed"
+    assert "blocked" not in env or (env.get("blocked") or {}).get("gate") != "write_not_applied"
+
+
+def test_set_policy_with_a_closed_channel_is_pending_not_write_not_applied():
+    """The re-pilot's D2/D4 set_policy replies (1090.11): write_not_applied while
+    the log was dark."""
+    gw = Gw(unseen("set_policy", CLOSED))
+    env = run(R.do_impl(gw, intent="set_policy", character_id=ME,
+                        args={"policy": "join_liege_wars", "on": True}))
+    assert env["verdict"] == "pending" and env["pending"]["raw_reason"] == "script_log_unreadable", env
+
+
+def test_unseen_on_an_open_channel_is_still_not_applied():
+    gw = Gw(unseen("gift", OPEN))
+    env = run(R.do_impl(gw, intent="interact", character_id=ME,
+                        args={"interaction": "gift_interaction", "target_id": FOE}))
+    assert env["verdict"] == "rejected" and env["blocked"]["gate"] == "write_not_applied", env
+    assert env["result"]["guard"] == "unseen"
+
+
+def test_a_reply_with_no_channel_reading_is_never_read_as_open():
+    for ch in (None, {"state": "unmeasured", "info_messages": None}, {"state": "bogus"}):
+        gw = Gw(unseen("gift", ch))
+        env = run(R.do_impl(gw, intent="interact", character_id=ME,
+                            args={"interaction": "gift_interaction", "target_id": FOE}))
+        assert env["verdict"] == "pending" and env["result"]["guard"] == "log_unreadable", (ch, env)
+        assert env["result"]["script_log_channel"]["state"] in ("unmeasured", "not_reported")
+
+
+def test_a_late_read_that_finds_the_channel_open_keeps_unseen():
+    """The bridge answered before the logger flushed (no channel on the first
+    reply); the query_script_log polls carry the channel open: unseen, as before."""
+    gw = Gw(unseen("gift", None))
+    real = gw.read
+
+    async def read(action, params=None):
+        r = await real(action, params)
+        if action == "query_script_log" and "token" in (params or {}):
+            r = dict(r, script_log_channel=OPEN)
+        return r
+    gw.read = read
+    env = run(R.do_impl(gw, intent="interact", character_id=ME,
+                        args={"interaction": "gift_interaction", "target_id": FOE}))
+    assert env["result"]["guard"] == "unseen" and env["blocked"]["gate"] == "write_not_applied", env

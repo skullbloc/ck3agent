@@ -43,6 +43,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -140,11 +141,21 @@ def ast_cmd(entry: dict) -> list[str]:
 
 
 def scan_ast(entry: dict, root: Path) -> tuple[list[str], str | None]:
-    p = subprocess.Popen(ast_cmd(entry), cwd=entry.get("directory") or None, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True, errors="replace")
-    hits = same_type_casts(p.stdout, root, entry.get("directory") or "")
-    err = p.stderr.read()
-    if p.wait() != 0:
+    return run_dump(ast_cmd(entry), entry.get("directory") or None, root)
+
+
+def run_dump(cmd: list[str], cwd: str | None, root: Path) -> tuple[list[str], str | None]:
+    # stderr to a file, not a second pipe: the dump is read off stdout to its end
+    # before anything reads stderr, so a file whose warnings fill a stderr pipe
+    # (64 KiB) blocked clang in its write and this in its read for good (lane
+    # VREAD's gate: ai_eval_hook.cpp, runtime_resolver.cpp, snapshot.cpp, an hour).
+    with tempfile.TemporaryFile(mode="w+", errors="replace") as ef:
+        p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=ef, text=True, errors="replace")
+        hits = same_type_casts(p.stdout, root, cwd or "")
+        p.wait()
+        ef.seek(0)
+        err = ef.read()
+    if p.returncode != 0:
         return [], f"AST dump failed ({p.returncode}): {err.strip()[:400]}"
     return hits, None
 
@@ -265,7 +276,21 @@ def selftest() -> int:
     if got != _SELFTEST_WANT:
         print(f"msvc_standin_lint selftest: FAIL\n got  {got}\n want {_SELFTEST_WANT}", file=sys.stderr)
         return 1
-    print(f"msvc_standin_lint selftest: ok ({len(got)} flagged, 7 controls not flagged)")
+    # A dumper that writes more warnings than a pipe holds before its dump must
+    # still be read to the end (run_dump; the gate hung an hour on three files).
+    import threading
+    fake = [sys.executable, "-c", "import sys; sys.stderr.write('w' * 300000); sys.stderr.flush(); "
+            f"sys.stdout.write({_SELFTEST_DUMP!r})"]
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.update(r=run_dump(fake, None, Path("/r"))), daemon=True)
+    t.start()
+    t.join(60)
+    if t.is_alive() or box.get("r") != (_SELFTEST_WANT, None):
+        print("msvc_standin_lint selftest: FAIL: a dumper with 300000 bytes of stderr "
+              + ("never finished (pipe deadlock)" if t.is_alive() else f"answered {box.get('r')}"), file=sys.stderr)
+        return 1
+    print(f"msvc_standin_lint selftest: ok ({len(got)} flagged, 7 controls not flagged; "
+          "a 300000-byte stderr read to the end)")
     return 0
 
 

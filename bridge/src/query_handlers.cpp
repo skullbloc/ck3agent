@@ -22,6 +22,7 @@
 #include "budget_ledger.h"
 #include "siege_attribution.h"   // Which war a siege belongs to
 #include "liege_walk.h"          // An unfinished liege walk is 0, never self
+#include "realm_tally.h"         // Realm county counts for many rulers, one walk
 #include "war_side.h"            // which side of a war a character is on: the one definition
 #include "scheme_engine.h"   // l3-schemes: scheme_emit_state
 
@@ -1454,27 +1455,60 @@ bool do_query_imprisonment_reasons(const char* params_json, std::string* out) {
     return true;
 }
 
-// Forward decl — true vassal-inclusive realm county count (defined below, after
-// the get_top_realm_ruler_id liege walker it depends on).
-static int count_realm_counties(uintptr_t ruler_addr, uint32_t ruler_id, int* unresolved = nullptr);
+// Forward decls — true vassal-inclusive realm county count (defined below, after
+// the get_top_realm_ruler_id liege walker it depends on). `tally`: a walk already
+// taken (the batched query_realm), else the count takes its own.
+static realm_tally::Tally build_realm_tally();
+static int count_realm_counties(uintptr_t ruler_addr, uint32_t ruler_id, int* unresolved = nullptr,
+                                const realm_tally::Tally* tally = nullptr);
 
-// query_realm: realm structure for a character
+// query_realm's reply for one character (its own read, or one element of the
+// batched read). `tally`: the batch's one walk, or null for a walk of its own.
+static void realm_reply(ResponseBuilder& r, void* character, const realm_tally::Tally* tally);
+static void query_realm_batch(ResponseBuilder& r, const std::vector<uint32_t>& ids);
+
+// query_realm: realm structure for a character; with `character_ids` (lane
+// VREAD), the same reply for each of up to realm_tally::kBatchMax characters
+// from ONE walk of the character table (query_realm_batch).
 bool do_query_realm(const char* params_json, std::string* out) {
     // All derived-pointer hops now guarded with is_mapped.
     // resolve_title_realm/lookup_title_obj/lookup_character carry their own
     // is_mapped guards from; the body adds is_mapped at every
     // intermediate hop (rd/core_data, title_data sub-arrays, vassal data).
     FaultScope fault_scope("query_realm", out);   // (audit 3(iii)): nests; a caller's fault record survives this handler
+    ResponseBuilder r;
+    if (json_has_key(params_json, "character_ids")) {
+        std::vector<uint32_t> ids;
+        if (const char* refused = realm_tally::parse_batch(params_json, &ids)) {
+            if (out) {
+                char buf[256];
+                snprintf(buf, sizeof buf,
+                         "{\"error\":\"%s\",\"hint\":\"character_ids: a JSON array of 1 to %d positive "
+                         "character ids, without character_id\"}", refused, realm_tally::kBatchMax);
+                *out = buf;
+            }
+            return false;
+        }
+        query_realm_batch(r, ids);
+        if (out) *out = r.take();
+        return true;
+    }
     void* character = resolve_character(params_json);
     if (!character || is_sentinel(character)) {
         return false;
     }
+    realm_reply(r, character, nullptr);
+    if (out) *out = r.take();
+    return true;
+}
 
+// One character's query_realm object, written into `r` (the reply itself, or one
+// element of the batch's `realms`).
+static void realm_reply(ResponseBuilder& r, void* character, const realm_tally::Tally* tally) {
     uintptr_t c_ptr = reinterpret_cast<uintptr_t>(character);
     // char_get_realm uses unsafe safe_read<>; replace with safe_read + is_mapped.
     uintptr_t rd = safe_read<uintptr_t>(c_ptr + ck3::character::REALM_DATA);
     if (rd && !is_mapped(rd)) rd = 0;  // treat unmapped same as missing
-    ResponseBuilder r;
     r.begin_object();
     r.key("character_id"); r.value_uint(char_get_id(character) & 0xFFFFFF);
 
@@ -1485,8 +1519,7 @@ bool do_query_realm(const char* params_json, std::string* out) {
     if (!is_ruler) {
         r.key("has_realm"); r.value_bool(false);
         r.end_object();
-        if (out) *out = r.take();
-        return true;
+        return;
     }
 
     uintptr_t title_data = resolve_title_realm(c_ptr);
@@ -1547,7 +1580,7 @@ bool do_query_realm(const char* params_json, std::string* out) {
     {
         uint32_t ruler_id = char_get_id(character) & 0xFFFFFF;
         int unresolved = 0;
-        r.key("realm_total_counties"); r.value_int(count_realm_counties(c_ptr, ruler_id, &unresolved));
+        r.key("realm_total_counties"); r.value_int(count_realm_counties(c_ptr, ruler_id, &unresolved, tally));
         // County holders whose liege walk could not be made are in no
         // realm's count; when there are any, the total is a lower bound.
         if (unresolved > 0) { r.key("realm_total_counties_unresolved"); r.value_int(unresolved); }
@@ -1654,8 +1687,61 @@ bool do_query_realm(const char* params_json, std::string* out) {
     if (safe_read_had_fault()) emit_degraded(r, "query_realm");
 
     r.end_object();
-    if (out) *out = r.take();
-    return true;
+}
+
+// query_realm with `character_ids`: the reply realm_reply gives
+// each character's own read, for every id in order, from ONE walk of the
+// character table. A king's observe read his 32 vassals' realms as 32 lines,
+// each a ~0.9 s walk on the game thread while the bridge's one reader thread
+// waited; at a boundary six seats' batches held the reader for ~80 s
+// Reply:
+//   {"realms":[<query_realm reply of id 1>, ...], "count":N, "served":S}
+// an element of an id that names no character is
+//   {"character_id":id,"error":"character_not_found"}
+// and, once kGameThreadEvalBudgetMs is spent AFTER the walk (each element is
+// a handful of reads; the walk is the cost a single read always had), each id
+// not reached is {"character_id":id,"error":"not_reached"}. A list that is
+// not 1..kBatchMax positive ids is refused whole (realm_tally::parse_batch, in
+// do_query_realm).
+// An element's fault record is its own reads plus the walk's, as a single
+// read's is.
+static void query_realm_batch(ResponseBuilder& r, const std::vector<uint32_t>& ids) {
+    const realm_tally::Tally tally = build_realm_tally();
+    const SafeReadRecord walk = safe_read_save();          // the walk's faults (the handler's FaultScope cleared at entry)
+    const auto budget_start = std::chrono::steady_clock::now();
+    r.begin_object();
+    r.key("realms"); r.begin_array();
+    int served = 0;
+    bool spent = false;
+    for (uint32_t id : ids) {
+        if (spent || game_thread_budget_spent(budget_start)) {
+            spent = true;
+            r.begin_object();
+            r.key("character_id"); r.value_uint(id);
+            r.key("error"); r.value_string("not_reached");
+            r.end_object();
+            continue;
+        }
+        // The element's own fault bracket (FaultScope nests: the batch's record is
+        // kept and added back); it answers for the walk's faults too, as a single
+        // read's reply does (realm_reply's emit_degraded writes them inline).
+        FaultScope element_scope("query_realm", nullptr);
+        safe_read_restore(walk);
+        void* c = lookup_character(id);
+        if (!c || is_sentinel(c)) {
+            r.begin_object();
+            r.key("character_id"); r.value_uint(id);
+            r.key("error"); r.value_string("character_not_found");
+            r.end_object();
+            continue;
+        }
+        realm_reply(r, c, &tally);
+        served++;
+    }
+    r.end_array();
+    r.key("count"); r.value_int(static_cast<int>(ids.size()));
+    r.key("served"); r.value_int(served);
+    r.end_object();
 }
 
 // query_succession: succession info for a character
@@ -2344,24 +2430,32 @@ static int count_demesne_counties(uintptr_t char_addr) {
 // Linear over the AI-character set (counts are bounded; each top-liege walk is
 // depth-capped at 30). Fails toward the demesne-only count on any bad chain —
 // never crashes, never blocks the query.
-static int count_realm_counties(uintptr_t ruler_addr, uint32_t ruler_id, int* unresolved) {
+// The walk (realm_tally.h, the one definition of what it counts): every living
+// AI character that holds a realm and a county, its demesne count and its
+// independent top liege. ~0.9 s on the game thread for ~63,000 entries
+// (the re-pilot's trace), so it is taken once per read or once per batch.
+static realm_tally::Tally build_realm_tally() {
+    return realm_tally::build(
+        [](auto cb) {
+            enumerate_ai_characters([&](const CharacterInfo& info) -> bool {
+                cb(info.id & 0xFFFFFF, info.alive, info.has_realm, reinterpret_cast<uintptr_t>(info.raw_ptr));
+                return true;
+            });
+        },
+        [](uintptr_t a) { return count_demesne_counties(a); },
+        [](uintptr_t a) { return get_top_realm_ruler_id(a); });
+}
+
+static int count_realm_counties(uintptr_t ruler_addr, uint32_t ruler_id, int* unresolved,
+                                const realm_tally::Tally* tally) {
     ruler_id &= 0xFFFFFF;
-    int total = count_demesne_counties(ruler_addr);   // own demesne
-    enumerate_ai_characters([&](const CharacterInfo& info) -> bool {
-        if (!info.alive || !info.has_realm) return true;
-        uint32_t vid = info.id & 0xFFFFFF;
-        if (vid == ruler_id) return true;              // self already counted
-        uintptr_t vaddr = reinterpret_cast<uintptr_t>(info.raw_ptr);
-        int vc = count_demesne_counties(vaddr);
-        if (vc == 0) return true;                      // holds no counties — skip the liege walk
-        uint32_t top = get_top_realm_ruler_id(vaddr);
-        if (top == ruler_id)
-            total += vc;
-        else if (top == 0 && unresolved)
-            (*unresolved)++;                           // whose realm: not measured
-        return true;
-    });
-    return total;
+    realm_tally::Tally own;
+    if (!tally) {
+        own = build_realm_tally();
+        tally = &own;
+    }
+    if (unresolved) *unresolved = tally->unresolved_for(ruler_id);
+    return tally->total(ruler_id, count_demesne_counties(ruler_addr));   // own demesne + the holders under him
 }
 
 // lane-query item 5: realm county counts for MANY rulers in one pass, for the

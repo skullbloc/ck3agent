@@ -6288,6 +6288,26 @@ namespace dispatch_mgr {
 // SResult: +0x00 = uint8 success, +0x08 = std::string message (SSO)
 // All addresses base-relative (Ghidra VA minus 0x100000 image base).
 // Source: console_commands.csv HandlerFuncAddress column, verified addresses only.
+// ═══ NLog per-level message cap (re/findings/re_log_level_cap.md) ═══
+// Every logging call site of the game goes through a wrapper (FUN_039b22e0, one
+// of them) that reads the session counter of the message's level and drops the
+// message when it is >= 100,000, else logs it and increments the counter
+// (FUN_0829f920 reads, FUN_0829f900 increments with lock add; a table of six
+// int* at Ghidra 0x0bf92ba8 points at six consecutive int32 counters). Levels are
+// NLog's: 0 TRACE, 1 DEBUG, 2 INFO, 3 WARNING, 4 ERROR, 5 CRITICAL (the name
+// table at Ghidra 0x0bf92b70). A level that reaches the cap is dark for the rest
+// of the session: the re-pilot's debug.log carried its last [D] line at
+// 1088.01.27, and live run dbg-long1 reproduced it (93,662 [D] lines in
+// debug.log + 6,293 in message.log; logger and sink levels unchanged).
+namespace nlog {
+    constexpr uintptr_t LEVEL_MSG_COUNTERS = 0x0c767024;  // int32[6], .bss — HIGH (decompile of the
+                                                          // reader/incrementer/wrapper + live read: DEBUG
+                                                          // counter == 100000 when debug.log went dark)
+    constexpr int LEVEL_DEBUG = 1;
+    constexpr int LEVEL_INFO  = 2;
+    constexpr int LEVEL_MSG_CAP = 100000;                 // HIGH: `if (count < 100000)` in the wrapper
+}
+
 namespace console_handlers {
     // AI commands
     constexpr uintptr_t CMD_AI_DECLARE_WAR     = 0x04122760;  // HIGH: AI.declare_war (decompile-verified)

@@ -297,6 +297,7 @@ bool is_bridge_internal_query(const char* action_type) {
     //   ipc-exception toggle_ai_subsystem: single-byte AI flag stores
     //   ipc-exception get_player_character: scalar global read (the player id)
     //   ipc-exception get_controlled_roster: scalar reads (ids and liveness) of the controlled characters
+    //   ipc-exception query_script_log: scalar global reads (the game's per-level log counters, the game date) for the script log channel
     static const char* safe[] = {
         "get_bridge_state",
         // Who_holds_the_lock reads IPC-server static state (mutex-

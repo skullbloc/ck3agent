@@ -60,7 +60,7 @@ int main() {
               "title:c_leinster.holder = { if = { limit = { can_declare_war = { defender = "
               "title:d_meath.holder casus_belli = claim_cb target_titles = { title:d_meath } } } "
               "start_war = { cb = claim_cb target = title:d_meath.holder target_title = title:d_meath } "
-              "debug_log = \"SACT_7_RAN\" } else = { debug_log = \"SACT_7_REFUSED\" } }",
+              "info_log = \"SACT_7_RAN\" } else = { info_log = \"SACT_7_REFUSED\" } }",
               "declare_war: the probe's guarded start_war, token in both branches");
         s.claimant_title = "k_ireland";
         c = compose(Template::kDeclareWar, s);
@@ -77,7 +77,7 @@ int main() {
         Composed g = compose(Template::kGift, base());
         CHECK(g.ok && g.script ==
               "run_interaction = { interaction = gift_interaction actor = title:c_leinster.holder "
-              "recipient = title:d_meath.holder execute_threshold = accept } debug_log = \"SACT_7_RAN\"",
+              "recipient = title:d_meath.holder execute_threshold = accept } info_log = \"SACT_7_RAN\"",
               "gift: run_interaction with execute_threshold accept");
         Composed w = compose(Template::kSway, base());
         CHECK(w.ok && w.script.find("interaction = sway_interaction") != std::string::npos,
@@ -92,8 +92,8 @@ int main() {
         CHECK(c.ok && c.script ==
               "title:c_leinster.holder = { if = { limit = { exists = cp:councillor_spymaster } "
               "cp:councillor_spymaster = { set_council_task = { task_type = task_find_secrets "
-              "target = title:d_meath.holder } } debug_log = \"SACT_7_RAN\" } else = { "
-              "debug_log = \"SACT_7_REFUSED\" } }",
+              "target = title:d_meath.holder } } info_log = \"SACT_7_RAN\" } else = { "
+              "info_log = \"SACT_7_REFUSED\" } }",
               "council_task: the probe's set_council_task on cp:<seat>, guarded by exists");
         s.task_target_char.clear();
         s.task_target_county = "c_meath";
@@ -143,25 +143,25 @@ int main() {
         Composed c = compose(Template::kEndWar, s);
         CHECK(c.ok && c.script.rfind("title:c_leinster.holder = { if = { limit = { any_character_war = { " +
                                      between + " } } random_character_war = { limit = { " + between +
-                                     " } debug_log = \"SACT_7_LEADS\"", 0) == 0,
+                                     " } info_log = \"SACT_7_LEADS\"", 0) == 0,
               "end_war: inside the war both lead, LEADS first");
-        CHECK(c.ok && c.script.find("if = { limit = { " + we_win + " } debug_log = \"SACT_7_OPEN_WE_WIN\" }") !=
+        CHECK(c.ok && c.script.find("if = { limit = { " + we_win + " } info_log = \"SACT_7_OPEN_WE_WIN\" }") !=
                           std::string::npos &&
-                  c.script.find("if = { limit = { " + white + " } debug_log = \"SACT_7_OPEN_WHITE_PEACE\" }") !=
+                  c.script.find("if = { limit = { " + white + " } info_log = \"SACT_7_OPEN_WHITE_PEACE\" }") !=
                       std::string::npos &&
-                  c.script.find("debug_log = \"SACT_7_OPEN_WE_YIELD\"") != std::string::npos,
+                  c.script.find("info_log = \"SACT_7_OPEN_WE_YIELD\"") != std::string::npos,
               "end_war: the open terms are listed (we_win at our 100, white peace under their 25, we_yield always)");
-        CHECK(c.ok && c.script.find("debug_log = \"SACT_7_SCORE_GE_M25\"") != std::string::npos &&
-                  c.script.find("debug_log = \"SACT_7_SCORE_GE_100\"") != std::string::npos,
+        CHECK(c.ok && c.script.find("info_log = \"SACT_7_SCORE_GE_M25\"") != std::string::npos &&
+                  c.script.find("info_log = \"SACT_7_SCORE_GE_100\"") != std::string::npos,
               "end_war: our score band is listed");
         CHECK(c.ok && c.script.find("if = { limit = { any_character_war = { " + between + " " + we_win +
                                     " } } random_character_war = { limit = { " + between + " " + we_win +
                                     " } if = { limit = { primary_attacker = title:c_leinster.holder } "
                                     "end_war = attacker } else = { end_war = defender } } "
-                                    "debug_log = \"SACT_7_RAN\" } else = { debug_log = \"SACT_7_REFUSED\" }") !=
+                                    "info_log = \"SACT_7_RAN\" } else = { info_log = \"SACT_7_REFUSED\" }") !=
                           std::string::npos,
               "end_war we_win: guarded by our score at 100, OUR side wins");
-        CHECK(c.ok && c.script.find("} else = { debug_log = \"SACT_7_NO_WAR\" debug_log = \"SACT_7_REFUSED\" } }") !=
+        CHECK(c.ok && c.script.find("} else = { info_log = \"SACT_7_NO_WAR\" info_log = \"SACT_7_REFUSED\" } }") !=
                           std::string::npos,
               "end_war: no war led against them is NO_WAR, refused");
         s.peace_terms = "we_yield";
@@ -177,7 +177,7 @@ int main() {
         s.peace_terms.clear();
         c = compose(Template::kEndWar, s);
         CHECK(c.ok && c.script.find("end_war") == std::string::npos &&
-                  c.script.find("debug_log = \"SACT_7_RAN\" } else") != std::string::npos,
+                  c.script.find("info_log = \"SACT_7_RAN\" } else") != std::string::npos,
               "end_war read only: the listing and no end_war");
         for (const char* t : {"surrender", "victory", "enforce_demands", "attacker", "WE_WIN", "we_win }"}) {
             s.peace_terms = t;
@@ -211,6 +211,31 @@ int main() {
         CHECK(sizeof(kTemplates) / sizeof(kTemplates[0]) == 11, "the enumerated set is eleven templates");
     }
 
+    // ── 5.: every line of ours is INFO ──────────────────────────
+    // The game drops every message of a level once 100,000 of that level were
+    // logged in the session (ck3::nlog::LEVEL_MSG_CAP); DEBUG filled at
+    // 1088.01.27 in the re-pilot and every guard read `unseen` after it. No
+    // template may write a DEBUG line: each composes, writes kLogEffect, and
+    // carries no debug_log.
+    {
+        CHECK(std::string(kLogEffect) == "info_log", "the log effect is info_log");
+        for (const auto& tn : kTemplates) {
+            Slots s = base();
+            s.cb = "claim_cb"; s.war_title = "d_meath";
+            s.seat = "councillor_spymaster"; s.task = "task_find_secrets";
+            s.policy = "join_liege_wars"; s.proposal_on = true;
+            s.proposal_class = "alliance";
+            s.proposal_answer = tn.t == Template::kProposalPolicy ? proposal_policy_answer("decline")
+                                                                   : proposal_answer_code("accept");
+            s.proposal_by = proposal_by_code("seat"); s.proposal_id = 12;
+            s.peace_terms = "white_peace";
+            const Composed c = compose(tn.t, s);
+            const std::string what = std::string(tn.name) + ": composes, writes info_log, no debug_log";
+            CHECK(c.ok && c.script.find("info_log = \"") != std::string::npos &&
+                      c.script.find("debug_log") == std::string::npos, what.c_str());
+        }
+    }
+
     // ── 4. the incoming-proposal queue ─────────────────────────
     {
         Slots s = base();
@@ -218,13 +243,13 @@ int main() {
         Composed c = compose(Template::kProposalSeat, s);
         CHECK(c.ok && c.script ==
               "title:c_leinster.holder = { set_variable = { name = ck3agent_proposal_seat value = 1 days = 400 } "
-              "if = { limit = { has_variable = ck3agent_proposal_seat } debug_log = \"SACT_7_RAN\" } else = { "
-              "debug_log = \"SACT_7_REFUSED\" } }",
+              "if = { limit = { has_variable = ck3agent_proposal_seat } info_log = \"SACT_7_RAN\" } else = { "
+              "info_log = \"SACT_7_REFUSED\" } }",
               "proposal_seat on: the 400-day marker, read back by the guard");
         s.proposal_on = false;
         c = compose(Template::kProposalSeat, s);
         CHECK(c.ok && c.script.find("remove_variable = ck3agent_proposal_seat") != std::string::npos &&
-              c.script.find("has_variable = ck3agent_proposal_seat } debug_log = \"SACT_7_REFUSED\"") != std::string::npos,
+              c.script.find("has_variable = ck3agent_proposal_seat } info_log = \"SACT_7_REFUSED\"") != std::string::npos,
               "proposal_seat off: removed; still there is REFUSED");
     }
     {
@@ -235,8 +260,8 @@ int main() {
         CHECK(c.ok && c.script ==
               "title:c_leinster.holder = { set_variable = { name = ck3agent_proposal_answer_alliance value = 2 } "
               "if = { limit = { has_variable = ck3agent_proposal_answer_alliance "
-              "var:ck3agent_proposal_answer_alliance = 2 } debug_log = \"SACT_7_RAN\" } else = { "
-              "debug_log = \"SACT_7_REFUSED\" } }",
+              "var:ck3agent_proposal_answer_alliance = 2 } info_log = \"SACT_7_RAN\" } else = { "
+              "info_log = \"SACT_7_REFUSED\" } }",
               "proposal_policy: the class variable set to the answer's code and read back");
         for (const char* a : {"accept", "decline", "ask_me", "native"}) {
             s.proposal_answer = proposal_policy_answer(a);
@@ -254,9 +279,9 @@ int main() {
         Slots s = base();
         Composed c = compose(Template::kProposalList, s);
         CHECK(c.ok && c.script ==
-              "title:c_leinster.holder = { debug_log = \"SACT_7_BEGIN\" every_owned_story = { limit = { "
+              "title:c_leinster.holder = { info_log = \"SACT_7_BEGIN\" every_owned_story = { limit = { "
               "story_type = ck3agent_proposal ck3agent_proposal_open_trigger = yes } "
-              "ck3agent_proposal_list_item_effect = yes } debug_log = \"SACT_7_END\" debug_log = \"SACT_7_RAN\" }",
+              "ck3agent_proposal_list_item_effect = yes } info_log = \"SACT_7_END\" info_log = \"SACT_7_RAN\" }",
               "proposal_list: the seat's OWN open stories, between BEGIN and END");
     }
     {
@@ -266,11 +291,11 @@ int main() {
         s.proposal_by = proposal_by_code("seat");
         Composed c = compose(Template::kProposalAnswer, s);
         CHECK(c.ok && c.script ==
-              "title:c_leinster.holder = { debug_log = \"SACT_7_BEGIN\" every_owned_story = { limit = { "
+              "title:c_leinster.holder = { info_log = \"SACT_7_BEGIN\" every_owned_story = { limit = { "
               "story_type = ck3agent_proposal var:ck3agent_proposal_id = 12 } save_scope_as = ck3a_found "
               "ck3agent_proposal_answer_effect = { ANSWER = 1 BY = 1 } } if = { limit = { NOT = { exists = "
-              "scope:ck3a_found } } debug_log = \"CK3AGENT_PROPOSAL_OUTCOME|refused|not_found\" } "
-              "debug_log = \"SACT_7_END\" debug_log = \"SACT_7_RAN\" }",
+              "scope:ck3a_found } } info_log = \"CK3AGENT_PROPOSAL_OUTCOME|refused|not_found\" } "
+              "info_log = \"SACT_7_END\" info_log = \"SACT_7_RAN\" }",
               "proposal_answer: found by id inside the seat's own stories, the mod's one apply effect");
         CHECK(proposal_answer_code("ask_me") == -1 && proposal_answer_code("native") == 4 &&
               proposal_answer_code("decline") == 2, "proposal_answer: accept, decline, native only");

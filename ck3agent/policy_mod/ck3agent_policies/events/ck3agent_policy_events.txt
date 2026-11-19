@@ -14,8 +14,13 @@
 #                                     the vanilla joining_faction_block flag on so
 #                                     the game's faction AI does not join another
 #
-# Each action writes a CK3AGENT_POLICY_* line to debug.log (with the date and the
-# scopes): the bridge's query_script_log counts them for the seat and the bundle.
+# Each ACTION writes a CK3AGENT_POLICY_* line to debug.log at INFO level, with its
+# scopes: the bridge's query_script_log counts them for the seat and the bundle.
+# The 3-day re-arm itself writes nothing (lane DBGLOG): the game drops every line
+# of a level once 100,000 of that level are logged in a session, and the re-pilot's
+# per-tick TICK/DATE/scopes lines were 43% of the debug-level lines that filled it
+# at 1088.01.27. info_log, never debug_log (bridge/include/script_templates.h
+# kLogEffect; scripts/policy_mod.py LOG_EFFECT).
 # Variable names: bridge/include/script_templates.h kPolicies (test_policy_mod.py
 # checks the two agree).
 
@@ -30,9 +35,6 @@ ck3agent_policy.1 = {
 					has_variable = ck3agent_policy_no_liege_factions
 				}
 			}
-			debug_log = "CK3AGENT_POLICY_TICK"
-			debug_log_date = yes
-			debug_log_scopes = yes
 			if = {
 				limit = {
 					has_variable = ck3agent_policy_join_liege_wars
@@ -67,9 +69,8 @@ ck3agent_policy.1 = {
 								add_defender = root
 							}
 							root = {
-								debug_log = "CK3AGENT_POLICY_JOINED_WAR"
-								debug_log_date = yes
-								debug_log_scopes = yes
+								info_log = "CK3AGENT_POLICY_JOINED_WAR"
+								info_log_scopes = yes
 							}
 						}
 					}
@@ -87,9 +88,8 @@ ck3agent_policy.1 = {
 					}
 					joined_faction = { save_scope_as = ck3a_faction }
 					leave_faction = scope:ck3a_faction
-					debug_log = "CK3AGENT_POLICY_LEFT_FACTION"
-					debug_log_date = yes
-					debug_log_scopes = yes
+					info_log = "CK3AGENT_POLICY_LEFT_FACTION"
+					info_log_scopes = yes
 				}
 				add_character_flag = {
 					flag = joining_faction_block
@@ -103,8 +103,8 @@ ck3agent_policy.1 = {
 		}
 		else = {
 			remove_variable = ck3agent_policy_armed
-			debug_log = "CK3AGENT_POLICY_DISARMED"
-			debug_log_scopes = yes
+			info_log = "CK3AGENT_POLICY_DISARMED"
+			info_log_scopes = yes
 		}
 	}
 }
