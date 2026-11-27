@@ -1,10 +1,10 @@
-// test_speed_read.cpp —. NO GAME. The classifier is a pure function of
+// test_speed_read.cpp — NO GAME. The classifier is a pure function of
 // three facts, so every case including the memory fault is reachable host-side.
 //
 // THE CLAIM: a read that did not happen cannot leave this code wearing a legal
 // speed. The `+ 1` that turned an abstention into a "speed 1" is applied on the
 // OK path and nowhere else, and the negative control at the bottom — the
-// pre-fix arithmetic, restored verbatim — is required to FAIL that claim.
+// superseded arithmetic, restored verbatim — is required to FAIL that claim.
 
 #include "speed_read.h"
 
@@ -40,9 +40,9 @@ static std::string emitted(const Reading& r) {
 }
 
 int main() {
-    printf("test_speed_read (ck-k57a): absence is a different TYPE than a value\n");
+    printf("test_speed_read: absence is a different TYPE than a value\n");
 
-    // ── the OK path is unchanged, which is half the bead ───────────────────
+    // ── the OK path is unchanged, which is half the task ───────────────────
     printf("\nA READ THAT HAPPENED still reports exactly what it used to\n");
     for (int32_t raw = 0; raw <= 4; ++raw) {
         Reading r = classify(true, false, raw);
@@ -58,7 +58,7 @@ int main() {
           "a real speed 2 goes on the wire as the NUMBER 2",
           emitted(classify(true, false, 1)));
 
-    // ── THE BEAD: a faulted read is not a speed ────────────────────────────
+    // ── THE HAZARD: a faulted read is not a speed ────────────────────────────
     printf("\nA FAULTED READ carries no speed, and cannot be mistaken for one\n");
     {
         // raw is 0 because that is what safe_read returns on failure — the
@@ -115,7 +115,7 @@ int main() {
     check(classify(true, false, 1).legacy_int() == 2,
           "a real speed still reads 2 on game_speed_legacy");
     check(classify(false, false, 0).legacy_int() == 0,
-          "an unreadable root still reads 0 — byte-identical to pre-bead");
+          "an unreadable root still reads 0 — byte-identical to earlier");
     check(classify(true, true, 0).legacy_int() == 0,
           "and a FAULT now reads 0 as well, which is the fix a legacy "
           "integer consumer gets for free");
@@ -123,7 +123,7 @@ int main() {
     // ── NEGATIVE CONTROL. It runs, and it must fail the first claim. ───────
     printf("\nNEGATIVE CONTROL: the pre-fix arithmetic, restored verbatim\n");
     {
-        // query_handlers.cpp @ 899d328, the two lines this bead deleted:
+        // the two lines query_handlers.cpp does not have:
         //     int32_t speed_raw = safe_read<int32_t>(gs + GAME_SPEED);
         //     r.key("game_speed"); r.value_int(speed_raw + 1);
         // `safe_read` returned 0 on the fault, so:

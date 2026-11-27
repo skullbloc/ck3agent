@@ -1,9 +1,9 @@
-// meter_lane_latency_probe.cpp —.
+// meter_lane_latency_probe.cpp.
 //
 // WHAT DOES THE OBSERVER'S READ ACTUALLY WAIT FOR, and why does the same read
-// cost 0.10 s on E0 and 10.13 s on an arm?
+// cost 0.10 s with no agent and 10.13 s on an arm?
 //
-// measured the arm's blocked meter reads: 90 events, median 10.02 s, 54
+// A measurement found the arm's blocked meter reads: 90 events, median 10.02 s, 54
 // of them within 0.13 s of exactly 10.00 s, against pipeline.flush_period_ms =
 // 10000. That match names the flush period as the cost. It does NOT explain two
 // things the same measurement set contains:
@@ -11,8 +11,8 @@
 //   1. WHY A FULL PERIOD RATHER THAN HALF OF ONE. Reads arriving at random
 //      inside a 10 s cadence should wait uniformly 0-10 s and average 5. The
 //      observed distribution is a SPIKE at the full period.
-//   2. WHY E0 DOES NOT PAY IT. E0's max poll step is ~4 game-days; the arm's is
-//      173-347. excluded _record_ownership_sample's extra reads by
+//   2. WHY NULL MODE DOES NOT PAY IT. null mode's max poll step is ~4 game-days; the arm's is
+//      173-347. _record_ownership_sample's extra reads are excluded by
 //      measurement, so the difference is not the observer doing more work.
 //
 // THE HYPOTHESIS THIS PROBE DISCRIMINATES. Early-flush condition (b) —
@@ -60,7 +60,7 @@ bool submit(FlushScheduler& s, const char* sess, Polarity p, uint64_t now_ms) {
 // One observer poll: issue the read at `now`, then advance a millisecond at a
 // time until the scheduler says a flush is due, and flush. Returns the wait.
 //
-// `agent_period_ms` = 0 means no agent is attached at all (the E0 shape).
+// `agent_period_ms` = 0 means no agent is attached at all (the null-mode shape).
 // Otherwise a second registered session speaks once every that many ms, which is
 // the arm shape: present, registered, and much slower than the flush period.
 uint64_t one_poll(FlushScheduler& s, uint64_t& now, uint64_t agent_period_ms,
@@ -110,10 +110,10 @@ void report(const char* label, const std::vector<uint64_t>& w) {
 }  // namespace
 
 int main() {
-    std::printf("\nck-fvms.1 — what the observer's read waits for\n");
+    std::printf("\nwhat the observer's read waits for\n");
     std::printf("period_ms = 10000 (the live pipeline.flush_period_ms)\n\n");
 
-    std::printf("A  E0 SHAPE — the observer is the only registered session\n");
+    std::printf("A  NULL-MODE SHAPE — the observer is the only registered session\n");
     const std::vector<uint64_t> e0 = run_shape(0, 20);
     report("observer alone", e0);
     bool e0_immediate = true;
@@ -135,7 +135,7 @@ int main() {
     for (uint64_t v : arm) arm_total += v;
     for (uint64_t v : e0) e0_total += v;
     check(arm_total >= 100 * (e0_total + 1),
-          "the arm shape costs orders of magnitude more than the E0 shape for "
+          "the arm shape costs orders of magnitude more than the null-mode shape for "
           "IDENTICAL observer work");
 
     std::printf("\nC  IS IT THE AGENT'S SILENCE, OR MERELY ITS PRESENCE?\n");
@@ -171,8 +171,8 @@ int main() {
           "timeout that would have stayed at 10 s");
 
     std::printf("\nE  THE COST IS PER-READ AND THE SAMPLE ISSUES MANY\n");
-    // measured a SAMPLE at 6-28 bridge calls and a non-sample poll at
-    // exactly one. measured 90 blocked calls totalling 710 s. If each
+    // A measurement found a SAMPLE at 6-28 bridge calls and a non-sample poll at
+    // exactly one, and 90 blocked calls totalling 710 s. If each
     // read pays a full period SERIALLY, a sample's cost is (reads x period) and
     // not (period) — which is the arithmetic that turns a 10 s cadence into the
     // 100-200 s stalls actually observed, and thence into 173-347 game-day poll
@@ -219,12 +219,12 @@ int main() {
               "and the scheduler already serves them all in that one flush — "
               "the change is the CLIENT's issue order, not the pipeline's");
 
-        // AND THE BOUND, because "one flush however deep" is FALSE and I had
-        // written it (correction). A flush serves at most
+        // AND THE BOUND, because "one flush however deep" is FALSE
+        // (this row says so). A flush serves at most
         // max_paused_calls_per_flush and DEFERS the remainder; one socket may
         // not even buffer more than per_session_capacity. 41 counties gave 44
         // ids and fit; e_britannia's de-jure tree is 93 counties, which does
-        // not. The lane chunks for exactly this reason.
+        // not. The meter lane chunks for exactly this reason.
         FlushScheduler big(cfg);
         big.register_session("observer");
         big.register_session("agent");
@@ -239,7 +239,7 @@ int main() {
                     OVER, accepted, refused, bp.selected_count(),
                     bp.deferred.size());
         // I EXPECTED DEFERRAL AND GOT REFUSAL, which is worse and is the reason
-        // the lane chunks. per_session_capacity bounds ONE SOCKET's buffered
+        // the probe chunks. per_session_capacity bounds ONE SOCKET's buffered
         // calls, and it is checked at SUBMIT: past it, `submit` returns
         // accepted:false reason:"buffer_full" and the call never enters the
         // buffer at all. So an over-bound batch does not cost an extra period —

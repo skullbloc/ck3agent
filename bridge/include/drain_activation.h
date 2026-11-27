@@ -1,9 +1,9 @@
 #pragma once
 // The bridge goes DORMANT -> ACTIVE on the first game-thread drain.
 //
-// Before that the transition happened at the top of on_tick, i.e. on the first
+// Before the session-thread drain, the transition happened at the top of on_tick, i.e. on the first
 // AI tick, so a save loaded paused stayed DORMANT until something unpaused it —
-// which is why the bridge used to unpause the game itself at load (the
+// which is why the bridge does not unpause the game itself at load (the
 // auto-unpause, deleted). The drain runs on every session pass,
 // paused or running, so the transition needs no tick.
 //

@@ -1,4 +1,4 @@
-// log_archive.cpp —. The mechanism; the policy is in log_archive.h.
+// log_archive.cpp — The mechanism; the policy is in log_archive.h.
 //
 // Runs on the ACCEPT THREAD, never the game thread. See the header for why.
 #include "log_archive.h"

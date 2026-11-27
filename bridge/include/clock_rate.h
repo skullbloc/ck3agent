@@ -1,15 +1,15 @@
-// clock_rate.h —: HOW FAST THE WORLD ACTUALLY RAN, measured, in the
+// clock_rate.h — HOW FAST THE WORLD ACTUALLY RAN, measured, in the
 // condition the episode actually ran in.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §2.7. Filed by
-// off.
+// Part of the event pipeline (pipeline.h).
+//
 //
 // WHY THIS EXISTS. §2.7's covariate is denominated in GAME-DAYS; its gate is in
 // WALL-SECONDS; and every gap has to be recorded in BOTH, at the rate the run
 // actually ran at. The conversion between the two units is the clock rate, and
 // until this module the bridge never measured it. episode_policy.h's derivation
 // was therefore anchored to a rate nobody had measured IN AN ARM, and it cited
-// one measured in a different condition (E0 null mode) as though it were
+// one measured in a different condition (null mode) as though it were
 // evidence for the arms — 26x apart. A threshold with no dimensional check is a
 // number that can be off by 26x while every test stays green.
 //
@@ -19,7 +19,7 @@
 // converted against how long an agent may be silent in the real run, not
 // against a clean tick rate the run never sustained. The condition is published
 // beside the number (speeds seen, paused fraction, sample count) because a rate
-// without its condition is exactly the defect this module was filed against.
+// without its condition is exactly the hazard this module guards against.
 //
 // IT NEVER INVENTS A NUMBER. `measured` stays false until the window is long
 // enough to mean something (kMinWallSeconds of wall time AND a game-day that
@@ -75,19 +75,19 @@ public:
     // ms, the game speed setting, and whether the game was paused. Called from
     // the conductor loop beside unavailability().note_day(), which is the one
     // site that already reads both clocks.
-    // THE POLICY COMES IN AND THE RECORDING OWNS IT. It used to be a
+    // THE POLICY COMES IN AND THE RECORDING OWNS IT. It is not a
     // gate at the CALL SITE, which is a decision living one level away from the
     // thing it governs — and a call site can silently diverge from the policy it
-    // is supposed to be following. That is the same shape as the defect this
+    // is supposed to be following. That is the same shape as the hazard this
     // meter was fixed for: a decision at the wrong level, invisible to anything
     // that could check it.
     //
     // Now there is NO call-site gate to get wrong: the call is unconditional and
     // this returns early. Breaking it means editing THE METER, and the meter is
     // driven by clock_start_probe — so the mutant that was uncatchable is caught
-    // by the lane that already exists, without a grep.
+    // by the probe that already exists, without a grep.
     //
-    // RETURNS BEFORE TAKING THE LOCK, deliberately: E0 x8 runs on the test host, and
+    // RETURNS BEFORE TAKING THE LOCK, deliberately: eight null-mode episodes run on the test host, and
     // an unconditional call must cost a branch rather than a mutex in the modes
     // that record nothing.
     //
@@ -135,7 +135,7 @@ private:
 ClockRateMeter& clock_rate();
 
 // Days per game-year, for the game-days <-> game-years conversion that both the
-// design text and Appendix A.19 are written in. CK3's calendar is 365 days with
+// design text is written in. CK3's calendar is 365 days with
 // no leap year; the bridge's own day numbering is `(raw_date - DATE_EPOCH)/24`,
 // which counts those days exactly.
 constexpr double kGameDaysPerGameYear = 365.0;

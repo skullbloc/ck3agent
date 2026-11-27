@@ -5,7 +5,7 @@
 // 1. OBSERVATION: when g_in_bridge_war_intent is set by
 //    intent_dispatch.cpp, log the S1 verdict (cb_ref / titles / target / score)
 //    that the engine wrote to the caller-owned result buffer. Replaces the
-//    replay probe which crashed CK3.
+//    Replay probe which crashed CK3.
 //
 // 2. PATH B' OVERRIDE: if a global override slot is armed AND the
 //    g_in_bridge_war_intent gate is set on this thread, OVERWRITE the
@@ -103,7 +103,7 @@ struct CBSelectorOverride {
     int32_t  score;
     uint8_t  extra_roll;
     // Titles CDynArray payload (result+0x20). REQUIRED for war materialisation:
-    // showed the override-only-gate path dispatches an EMPTY title list,
+    // A live check showed the override-only-gate path dispatches an EMPTY title list,
     // so WAR_CREATE_CORE produces no CWar. When titles_count > 0 the hook writes
     // {data, cap, count} at +0x20/+0x28/+0x2c AND repoints the +0x30 allocator
     // holder at a fake no-op-free allocator (the epilog frees +0x20 via that
@@ -383,10 +383,10 @@ static uint64_t parse_u64_str(const char* s) {
 
 bool do_set_cb_selector_override(const char* params_json,
                                  std::string* response_out) {
-    // N3 (surface-audit 2026-08-01): "enabled":"banana" used to fall through
-    // json_get_bool's default(false) → CLEARED the override with success:true —
-    // a typo'd flag silently misconfigured CB steering. Present-but-non-boolean
-    // is now a typed reject. An ABSENT key keeps the documented legacy clear
+    // A non-boolean flag ("enabled":"banana") would otherwise fall through
+    // json_get_bool's default(false) → CLEAR the override with success:true —
+    // a typo'd flag would silently misconfigure CB steering. Present-but-non-boolean
+    // is a typed reject. An ABSENT key keeps the documented legacy clear
     // semantics ("clear takes only enabled:false"; {} has always cleared).
     bool enabled = false;
     if (json_has_key(params_json, "enabled") &&

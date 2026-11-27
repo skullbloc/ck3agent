@@ -1,4 +1,4 @@
-""" defects 3 (inspect war_score), 7 (the generate_claim path) and 8 (the
+"""Defects 3 (inspect war_score), 7 (the generate_claim path) and 8 (the
 per-reply ETA warning), each against the pilot reply that showed it.
 
 W1  inspect(subject="war_score") with no war_id answered every war in the game:
@@ -11,7 +11,7 @@ G1  discover(scheme_targets, scheme="generate_claim") -> the pilot reply was
     {"gate":"target_ineligible","summary":"scheme_type_targets_a_title"} with no
     next call (23 times). The refusal now names the door that takes a claim on a
     title: do(action_class="fabricate_targets").
-G2  the whipsaw (scale0 n8/s1 Cui, 0867.04.25-26): start_generate_claim_interaction
+G2  the whipsaw (a recorded seat, Cui, 0867.04.25-26): start_generate_claim_interaction
     with target_id == actor_id was told "Pass target_id=0 for self-scope actions";
     with target_id=0 it was told "targets another character — pass target_id".
     For an interaction that needs a recipient, following the self-target hint never
@@ -128,7 +128,7 @@ CUI = 13191
 
 
 def _own(cid):
-    # scale0 n2/s1 line 117: a remaining county of Cui's partly-held d_yongxing
+    # a recorded reply: a remaining county of Cui's partly-held d_yongxing
     return {"county_id": cid, "county_key": f"c_{cid}", "county_name": "Huazhou",
             "holder_id": 12284, "holder_name": "Jichu", "holder_top_liege_id": CUI,
             "holder_top_liege_independent": False, "is_independent": False, "is_kin": False,
@@ -138,7 +138,7 @@ def _own(cid):
 
 
 def _tengger(cid=14606, conquerable=True):
-    # scale0 n2/s1 line 120: the first conquerable_now row, verbatim keys
+    # a recorded reply: the first conquerable_now row, verbatim keys
     return {"county_id": cid, "county_key": "c_tengger", "county_name": "Tenggeli",
             "holder_id": 10744, "holder_name": "Yangchen", "holder_top_liege_id": 10744,
             "holder_top_liege_independent": True, "is_independent": True, "is_kin": False,

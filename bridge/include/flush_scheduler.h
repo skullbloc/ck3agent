@@ -1,7 +1,6 @@
-// flush_scheduler.h — R1a: the buffered, polarity-driven flush loop.
+// flush_scheduler.h — the buffered, polarity-driven flush loop.
 //
-// SHAPE (design of record: docs/design/event-pipeline-conductor.md §2.1-§2.3,
-// §2.8; overseer ruling 2026-09-10, decision G2). This is NOT a window
+// SHAPE. This is NOT a window
 // scheduler. There is no `window_open` and no `end_turn`. Calls are accepted
 // and BUFFERED; a flush runs on a short wall-clock cadence (or early); the
 // clock is paused ONLY if the batch contains pause-needing work, and only for
@@ -12,7 +11,7 @@
 // cannot pause anything by itself. It takes buffered call descriptors, session
 // facts and a clock READING, and emits a PLAN. Applying that plan (flipping the
 // clock, serving the reads, handing the tick batch to drain_and_execute_intents)
-// is the wiring bead,. That split is what makes this host-testable
+// is the wiring layer's (pipeline.cpp). That split is what makes this host-testable
 // with no game and no CK3 binary.
 //
 // POLARITY IS AN INPUT. The bridge already computes an action's required pause
@@ -116,14 +115,14 @@ enum class FlushTrigger {
     Cadence,               // FLUSH_PERIOD_MS elapsed (also the empty-buffer heartbeat)
     AllAny,                // (a) every buffered call is ANY-polarity: serve now, no cycle
     AllSessionsSubmitted,  // (b) every registered session has spoken since the last flush
-    ReadLaneEarly,         // (D') the EPISODE'S DECLARED OBSERVER spoke:
+    ReadLaneEarly,         // the EPISODE'S DECLARED OBSERVER spoke:
                            // serve the READ lane now; buffered WRITES stay for
                            // the cadence flush
     SizeBound,             // (c) the buffer reached its early-flush size
 
     // NOT A TRIGGER. The counter array's extent is derived from this,
     // so a trigger added ANYWHERE above is counted automatically. Deriving from
-    // SizeBound instead — which is what I did first — only works while SizeBound
+    // SizeBound instead only works while SizeBound
     // happens to be last, and "keep SizeBound last" in a comment is a warning,
     // not a control: the next person adds their trigger after it and the count
     // silently drops, which is the exact defect this replaced.
@@ -177,10 +176,10 @@ struct FlushPlan {
     std::map<std::string, size_t> per_session_counts;  // attribution spine, §2.8
     size_t unclassified = 0;            // calls that took the UNKNOWN->PAUSED default
 
-    // The scheduler owns the clock in pipeline mode (G1), so a paused reading at
+    // The scheduler owns the clock in pipeline mode, so a paused reading at
     // the head of an all-ANY flush is DRIFT, not our doing. The all-ANY fast path
     // still touches nothing (that invariant is absolute); it flags instead, so the
-    // wiring bead can log/page rather than have the fast path silently "fix" it.
+    // wiring task can log/page rather than have the fast path silently "fix" it.
     bool clock_drift_observed = false;
 
     size_t pause_count() const;
@@ -193,7 +192,7 @@ struct FlushPlan {
 // Config
 // ============================================================================
 struct FlushConfig {
-    uint64_t period_ms                  = 10000; // G8: 10s default cadence
+    uint64_t period_ms                  = 10000; // 10s default cadence
     size_t   buffer_capacity            = 256;   // global back-pressure bound
     size_t   per_session_capacity       = 64;    // one socket cannot fill the buffer
     size_t   early_flush_size           = 32;    // condition (c)
@@ -212,7 +211,7 @@ struct FlushConfig {
     // EVERY arm episode opened at a drifted date. A shakedown world was measured
     // 806 game-days past 1066.9.15 with start_witness correctly reading
     // "diverged". A session cannot simply pause it either: clock verbs return
-    // clock_owned_by_pipeline, by G1's own design.
+    // clock_owned_by_pipeline, by the pipeline mode's own design.
     //
     // BRING-UP AND PREFLIGHT ARE NOT THE EPISODE, so they must not consume game
     // time. Tying the clock's start to the observer's declaration makes observed
@@ -222,15 +221,15 @@ struct FlushConfig {
     // rest while no observer holds the privilege, so there is no window in which
     // a missed check lets the world run.
     //
-    // DEFAULT FALSE, and that is load-bearing: NULL mode is E0's observer-only
+    // DEFAULT FALSE, and that is load-bearing: NULL mode is the observer-only
     // FREE RUN and does not take clock ownership. Turning this on there would
     // freeze the baseline. Only pipeline mode sets it.
     bool     hold_clock_until_observer  = false;
-    // THE RESTING SPEED IS THE PRE-REGISTERED PIN, NOT A NUMBER CHOSEN HERE
+    // THE RESTING SPEED IS THE DECLARED PIN, NOT A NUMBER CHOSEN HERE.
     // It was `3` — a literal with no relationship to
     // `episode_validity.PINNED_SPEED = 2`, unreachable from production (the
     // default, three reads in the planner, and one assignment in a unit test),
-    // and therefore a SECOND HOME for a pre-registered constant. The plan's
+    // and therefore a SECOND HOME for a declared constant. The plan's
     // restore step then re-asserted it over the pin, once per world, and the
     // episode ran its whole horizon at a speed §7.3 does not declare.
     //
@@ -245,7 +244,7 @@ struct FlushConfig {
     // registered session has spoken, and ipc_server registers every session
     // including agents. An agent speaks about once per LLM turn, so (b) stopped
     // firing between the meter's polls and EVERY READ FELL THROUGH TO THE
-    // CADENCE — measured at 59 completed polls in 600 s against E0's 300, with
+    // CADENCE — measured at 59 completed polls in 600 s against null mode's 300, with
     // the meter's loop stalling rather than merely slowing.
     //
     // WHY IT IS A NAMED SESSION AND NOT `mode == observe`. A privileged reader
@@ -253,7 +252,7 @@ struct FlushConfig {
     // a canary, a second meter lane, a probe — would start driving the cadence
     // of the world it is measuring. Keyed on ONE DECLARED PARTICIPANT of one
     // episode, a diagnostic observer changes the cadence in NEITHER direction.
-    // That is the inverse of the defect this same line already had, where a
+    // That is the inverse of the hazard this same line already had, where a
     // registered SILENT session SUPPRESSED the early flush.
     //
     // WHY THE READ LANE ONLY. Serving buffered WRITES on the observer's trigger
@@ -284,13 +283,13 @@ public:
     // in agreement.
     bool   set_resting_speed(int speed);
 
-    // Name the episode's declared observer. Set ONCE at its
+    // (D'): name the episode's declared observer. Set ONCE at its
     // handshake, before it has spoken, so no flush can have been decided by a
     // half-installed privilege. `pipeline_declare_episode_observer` enforces
     // first-wins; this setter is the mechanism, not the policy.
     void   set_privileged_reader(const std::string& session_id);
     // PIPELINE MODE ONLY. See FlushConfig::hold_clock_until_observer
-    // — null mode is E0's free run and must never be gated on a declaration.
+    // — null mode is the free run and must never be gated on a declaration.
     void   set_hold_clock_until_observer(bool on);
 
     // --- session facts (early-flush condition (b), fairness rotation) --------
@@ -323,7 +322,7 @@ public:
     // with no steps when not due.
     FlushPlan tick(uint64_t now_ms, const ClockReading& clock);
 
-    // --- introspection (published on get_tick_info by bead .9) --------------
+    // --- introspection (published on get_tick_info by a sibling task) --------------
     size_t   buffer_depth() const;
     uint64_t last_flush_ms() const;
 

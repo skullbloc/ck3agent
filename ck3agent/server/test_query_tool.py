@@ -1,4 +1,4 @@
-"""query: behaviour against a fake bridge (F15).
+"""query(): behaviour against a fake bridge.
 
 The fake answers each bridge action from a table and records every send, so a
 row can say which bridge action a call reached and with what parameters. Rows:
@@ -20,6 +20,7 @@ row can say which bridge action a call reached and with what parameters. Rows:
 """
 
 import asyncio
+import json
 import re
 import sys
 from pathlib import Path
@@ -170,14 +171,8 @@ PARAMS = {
     "require_in_range": ("marriage_candidates", {"require_in_range": False},
                          {"require_in_range": 0}),
     "verbose": ("realm", {"verbose": True}, {"verbose": True}),
-    "scope": ("map_graph", {"scope": "target"}, {"scope": "target"}),
-    "hops": ("map_graph", {"hops": 4}, {"hops": 4}),
-    "max_nodes": ("map_graph", {"max_nodes": 25}, {"max_nodes": 25}),
-    "target_county": ("map_graph", {"target_county": 4411}, {"target_county": 4411}),
-    "target_county_key": ("map_graph", {"target_county_key": "c_york"},
-                          {"target_county_key": "c_york"}),
-    "counties": ("map_graph", {"counties": "c_york,c_lincoln"},
-                 {"counties": "c_york,c_lincoln"}),
+    # Scope, hops, max_nodes, target_county, target_county_key and counties moved behind
+    # inspect(subject="map") (map_view.py reads the region's window itself); test_map_digest_and_turn_one_notes checks they are gone
     "detail": ("map_graph", {"detail": "brief"}, {"detail": "brief"}),
 }
 
@@ -223,12 +218,14 @@ def test_the_defaults_the_description_states(bridge):
 
 def test_female_a_non_boolean_is_refused_at_the_mcp_boundary_and_nothing_is_sent(bridge):
     """The MCP boundary refuses female="yes" instead of
-    turning it into True; at a1fb8c6b pydantic's lax bool plus bool(female) sent
-    female=True for "yes". Control: a real boolean reaches the bridge as given."""
+    turning it into True (pydantic's lax bool plus bool(female) would send
+    female=True for "yes"). Control: a real boolean reaches the bridge as given."""
+    # The refusal is the typed envelope (invalid_argument naming the field), no
+    # longer a raised validation error whose text reached the seat
     for bad in ("yes", "no", 1):
-        with pytest.raises(Exception) as e:
-            run(ms.mcp.call_tool("query", {"domain": "characters", "female": bad}))
-        assert "female" in str(e.value), (bad, e.value)
+        out = run(ms.mcp.call_tool("query", {"domain": "characters", "female": bad}))
+        text = json.dumps([getattr(b, "text", None) for b in (out[0] if isinstance(out, tuple) else out)])
+        assert "invalid_argument" in text and "female" in text and "validation error" not in text, (bad, text)
     assert bridge.params_of("search_characters") == [], bridge.sent
     run(ms.mcp.call_tool("query", {"domain": "characters", "female": False}))
     (sent,) = bridge.params_of("search_characters")
@@ -244,10 +241,10 @@ def test_female_is_passed_as_given_not_coerced(bridge):
 
 
 def test_every_parameter_is_described():
-    desc = _defs()["query"]["description"]
-    args = desc[desc.index("Args:"):]
+    # Each argument's text is its schema description (tool_text, mcp_server Fields).
+    props = _defs()["query"]["input_schema"]["properties"]
     for name in list(PARAMS) + ["domain", "domains"]:
-        assert re.search(rf"\b{name}\b", args), f"query's description does not explain {name}"
+        assert (props.get(name) or {}).get("description"), f"query does not describe {name}"
 
 
 # ── the refusals ──────────────────────────────────────────────────────────────
@@ -264,17 +261,17 @@ def test_an_unknown_domain_is_named(bridge):
     assert bridge.sent == []
 
 
-#: Domains deleted in (lane S2), each with why. A domain added
+#: Deleted domains, each with why. A domain added
 #: back under one of these names reds here.
 DELETED_DOMAINS = {
-    "event_probabilities": "finding 7: answered events: [] in both clock modes; no tool answers an event",
-    "active_wars": "finding 8: the same war ids as query(wars), inspect(wars) and observe",
-    "dejure": "finding 8: inspect(subject='title') reads the same meter; de_jure is the one the docs cite (2 to 0)",
-    "goal": "finding 8: the same read as dejure",
-    "partition_preview": "finding 8: reads the current holder, not the split after the death",
-    "succession_preview": "finding 8: succession_plan carries the per-title map and the verdict",
-    "succession_simulation": "finding 8: succession_plan reads it and states its verdict",
-    "debug_flags": "finding 8: bridge switches (instabuild, yesmen), not a player read",
+    "event_probabilities": "answered events: [] in both clock modes; no tool answers an event",
+    "active_wars": "the same war ids as query(wars), inspect(wars) and observe",
+    "dejure": "inspect(subject='title') reads the same meter; de_jure is the one the docs cite (2 to 0)",
+    "goal": "the same read as dejure",
+    "partition_preview": "reads the current holder, not the split after the death",
+    "succession_preview": "succession_plan carries the per-title map and the verdict",
+    "succession_simulation": "succession_plan reads it and states its verdict",
+    "debug_flags": "bridge switches (instabuild, yesmen), not a player read",
 }
 
 
@@ -356,7 +353,7 @@ READ_FAULTS = {
 
 @pytest.mark.parametrize("shape", sorted(READ_FAULTS))
 def test_a_read_the_bridge_did_not_answer_is_a_typed_refusal(bridge, shape):
-    """RED on 293c0e00: the pipeline timeout was bridge_fault, retryable False
+    """RED without the rule: the pipeline timeout was bridge_fault, retryable False
     ("read back before sending it again" for a read that changed nothing), and
     the three replies with no `success` came back ok:true as the reading."""
     reply, gate, retryable = READ_FAULTS[shape]
@@ -370,15 +367,17 @@ def test_a_read_the_bridge_did_not_answer_is_a_typed_refusal(bridge, shape):
     assert [e["code"] for e in env["errors"]] == [gate], env["errors"]
 
 
-def test_control_a_read_error_beside_the_reading_is_still_the_reading(bridge):
-    """The flip: a read's `error` that is not one of the bridge's fault codes can
-    sit beside data (query_handlers.cpp do_query_title_hierarchy: an unknown
-    title_id is {"error": "title_not_found", "title_id": N}), so it stays the
-    reading."""
+def test_a_read_error_beside_the_reading_is_a_refusal_carrying_the_reading(bridge):
+    """A handler's `error` with no success is never ok true
+    (query_handlers.cpp do_query_title_hierarchy: an unknown title_id is
+    {"error": "title_not_found", "title_id": N}; live, inspect opinion answered
+    ok true with "missing actor_id or target_id"). The reply is kept under result
+    and the refusal names it."""
     reply = {"error": "title_not_found", "title_id": 999}
     bridge.replies["query_title_hierarchy"] = reply
     env = run(ms.query(domain="titles", title_id=999))
-    assert env["ok"] is True and env["result"] == reply, env
+    assert env["ok"] is False and env["result"] == reply, env
+    assert env["blocked"]["raw_reason"] == "title_not_found", env["blocked"]
 
 
 def test_control_a_reply_with_success_true_or_absent_is_a_reading(bridge):
@@ -563,7 +562,7 @@ def test_court_of_reaches_search_characters_and_is_absent_by_default(bridge):
 
 
 def test_female_reaches_search_characters_both_ways_and_is_absent_by_default(bridge):
-    """Female=False is a filter (men), not unset."""
+    """female=False is a filter (men), not unset."""
     run(ms.query(domain="characters", court_of=163110, female=True))
     run(ms.query(domain="characters", court_of=163110, female=False))
     run(ms.query(domain="characters", court_of=163110))

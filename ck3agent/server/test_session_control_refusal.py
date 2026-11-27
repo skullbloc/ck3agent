@@ -1,4 +1,4 @@
-""" / Ruling Three — a refused control call must SAY it was refused.
+"""A refused control call must SAY it was refused.
 
 The old branch inspected the bridge's reply for exactly one condition,
 `cannot_act_as_player`, and never read `success`. So every other refusal — the
@@ -19,12 +19,13 @@ Three things are asserted here:
      says nothing gets an explicit UNWITNESSED warning rather than a confident
      echo.
 
-The nine come from a test seat's enumeration of deploy-27's source, not from a
+The nine come from a test seat's enumeration of the source, not from a
 grep: `ownership_divergence` is a ternary at dispatch_router.cpp:807-808 rather
 than a string literal, so a literal search does not find it and a COUNT does not
 notice it missing.
 """
 
+import pathlib
 import asyncio
 import os
 import sys
@@ -159,13 +160,20 @@ def test_an_UNWITNESSED_success_still_applies_but_warns_in_so_many_words():
 def test_the_nine_are_exactly_nine_and_exactly_these():
     """Pinned by hand against a test seat's enumeration, because the source
     cannot be grepped for them: `ownership_divergence` is a ternary, not a
-    literal. own list had nine entries too — and double-counted
+    literal. A first list had nine entries too — and double-counted
     `observe_mode` (reachable from both gates under one spelling) while missing
     `ownership_divergence`, so a COUNT agreed while the SET did not."""
-    assert redesign.CONTROL_REFUSAL_REASONS == THE_NINE
-    assert len(redesign.CONTROL_REFUSAL_REASONS) == 9
+    # And the realm guard's two refusals of a control made while the seat's ruler is dead
+    # (dispatch_router.cpp; the names read from played_line.h realm_check_name, the bridge's own spelling)
+    import re
+    hdr = (pathlib.Path(__file__).resolve().parents[2] / "bridge" / "include" / "played_line.h").read_text()
+    body = hdr[hdr.index("realm_check_name"):hdr.index("succession_realm_check")]
+    guard = set(re.findall(r'return "([a-z_]+)";', body)) - {"in_realm"}
+    assert guard == {"realm_unresolved", "heir_outside_realm"}, guard
+    assert redesign.CONTROL_REFUSAL_REASONS == THE_NINE | guard
+    assert len(redesign.CONTROL_REFUSAL_REASONS) == 11
     # every code an agent can be handed carries a sentence telling it what to do
-    for reason in THE_NINE | {"refusal_reason_unknown"}:
+    for reason in redesign.CONTROL_REFUSAL_REASONS | {"refusal_reason_unknown"}:
         assert redesign.CONTROL_REFUSAL_SUMMARIES.get(reason), reason
 
 
@@ -191,7 +199,7 @@ class _SeatGw(_Gw):
 
 def test_the_echo_names_WHAT_THE_SEAT_HOLDS_when_it_differs_from_the_request():
     """THE 2,578 RETRIES. A call that is not refused, on a seat that ends up
-    holding somebody else, used to echo the REQUESTED character: the agent read
+    holding somebody else, does not echo the REQUESTED character: the agent read
     back the name it had just sent, saw it was not steering that character, and
     called again. The discrepancy has to be in the reply, not inferred three
     retries later."""
@@ -243,7 +251,7 @@ def test_an_UNDETERMINABLE_holding_is_labelled_as_the_request_not_presented_as_f
 THE_FOUR = {"missing_character_id", "not_in_roster", "not_owned_by_session",
             "observe_mode"}
 
-# added a FIFTH, and this file's exact-set assertion is what caught it
+# A FIFTH was added once, and this file's exact-set assertion is what caught it
 # — which is the assertion doing its job, not a reason to loosen it to `>=`.
 # THE_FOUR stays spelled as the four because it names what the per-call-site
 # audit found; the new member is listed apart so a later reader can still see
@@ -259,9 +267,9 @@ RELEASE_REASONS = THE_FOUR | THE_FIFTH
 
 @pytest.mark.parametrize("reason", sorted(RELEASE_REASONS))
 def test_a_refused_RELEASE_says_so_instead_of_reporting_applied(reason):
-    """THE SIBLING OF THE CONTROL DEFECT, one branch below it, and I fixed the
-    first without looking at the second until a per-call-site audit of every
-    bridge write in this module named it.
+    """THE SIBLING OF THE CONTROL DEFECT, one branch below it: a fix of the
+    first leaves the second, which only a per-call-site pass over every
+    bridge write in this module names.
 
     The old branch discarded the reply outright — not even assigned — and
     answered verdict "applied" with `released: <id>` unconditionally. A refused
@@ -288,7 +296,7 @@ def test_release_has_its_OWN_vocabulary_not_controls():
     The set is pinned EXACTLY, so adding a member reds this row on purpose:
     the point is that each addition is a deliberate widening of what this
     client will accept from the bridge, reviewed once rather than absorbed.
-    `last_claim_of_control_session` is the first such widening.
+    The `last_claim_of_control_session` is the first such widening.
     """
     assert redesign.RELEASE_REFUSAL_REASONS == RELEASE_REASONS
     assert RELEASE_REASONS & redesign.CONTROL_REFUSAL_REASONS == {"observe_mode"}
@@ -296,7 +304,7 @@ def test_release_has_its_OWN_vocabulary_not_controls():
     for reason in RELEASE_REASONS:
         assert redesign.RELEASE_REFUSAL_SUMMARIES.get(reason), reason
         assert redesign.why_blocked(reason)["class"] != "unknown", reason
-        # THE FLAG THE AGENT ACTS ON, and the one that caught: a
+        # THE FLAG THE AGENT ACTS ON, and the one that caught a defect: a
         # summary can be perfect while the reason has no GATE_TABLE row, and
         # the fallback says retryable TRUE. Not one of the five is won by
         # trying again, so a True here is a loop, not a retry.

@@ -6,7 +6,7 @@
 // set is therefore NOT safe: the next pass can replace it. Full path, guards and
 // evidence: re/findings/re_council_ai.md and bridge/include/council_pin.h.
 //
-// WHAT CHANGED (wave 12): the previous version hooked FUN_04dca2a0 and read the
+// WHAT CHANGED: the previous version hooked FUN_04dca2a0 and read the
 // ruler id at its first argument +0x18. That argument is the CAIStrategy, whose
 // +0x18 is the CCharacter POINTER, so the id it read was a pointer's low 24 bits
 // and the lock never matched any ruler (867 dump: 0 of 4593). It also froze

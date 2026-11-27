@@ -1,8 +1,8 @@
-// flush_scheduler.cpp — R1a: the buffered, polarity-driven flush loop.
+// flush_scheduler.cpp — the buffered, polarity-driven flush loop.
 //
-// See flush_scheduler.h for the shape ruling. Deliberately dependency-free:
+// See flush_scheduler.h for the shape rule. Deliberately dependency-free:
 // <cstdint>/<string>/<vector>/<mutex> and nothing from the bridge or the game.
-// A flush is a PLAN, not an effect; applies it.
+// A flush is a PLAN, not an effect; flush_apply.h applies it.
 
 #include "flush_scheduler.h"
 
@@ -181,7 +181,7 @@ void FlushScheduler::unregister_session(const std::string& session_id) {
     registered_.erase(session_id);
     submitted_since_flush_.erase(session_id);
     // Buffered calls are NOT dropped: a detached session's tickets survive
-    // (resume). They are still flushed and still attributed.
+    //. They are still flushed and still attributed.
 }
 
 size_t FlushScheduler::registered_session_count() const {
@@ -256,7 +256,7 @@ FlushTrigger FlushScheduler::due_locked(uint64_t now_ms) const {
     if (buffer_.empty()) {
         // Nothing pending: no EARLY condition can fire (an empty buffer is not
         // "all ANY work" and nobody has spoken). The cadence still fires as the
-        // flush-liveness heartbeat that last_flush_ms exposes (G9).
+        // flush-liveness heartbeat that last_flush_ms exposes.
         return cadence_due ? FlushTrigger::Cadence : FlushTrigger::None;
     }
 
@@ -278,7 +278,7 @@ FlushTrigger FlushScheduler::due_locked(uint64_t now_ms) const {
         if (all_spoke) return FlushTrigger::AllSessionsSubmitted;
     }
 
-    // (D') THE DECLARED OBSERVER'S OWN SUBMISSION SERVES THE READ
+    // THE DECLARED OBSERVER'S OWN SUBMISSION SERVES THE READ
     // LANE. Placed AFTER (b) so an all-spoke flush still wins and serves
     // everything: this trigger is the narrower case, not a replacement.
     if (!cfg_.privileged_reader.empty()
@@ -307,13 +307,11 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
     // because a probe that ticks a scheduler can then WITNESS the count move,
     // which a counter in the conductor could not show without the engine.
     //
-    // Under the SAME lock the rest of the function already takes. It
-    // was a scoped lock_guard immediately followed by re-acquiring mu_ — not a
-    // deadlock, the scope closes first, but a redundant lock cycle on EVERY
-    // flush. flagged it as a timing perturbation on the flush path,
-    // which is where the arm-A crash lives, so it is a weak confound for the
-    // first instrumented run and worth closing before that run rather than
-    // whenever this file is next touched.
+    // Under the SAME lock the rest of the function already takes. A scoped
+    // lock_guard immediately followed by re-acquiring mu_ is not a deadlock
+    // (the scope closes first) but a redundant lock cycle on EVERY flush: a
+    // timing perturbation on the flush path, where a recorded crash
+    // happened, so a weak confound for an instrumented run.
     const std::size_t ti = static_cast<std::size_t>(trigger);
     if (ti < kNumTriggers) ++trigger_counts_[ti];
     last_trigger_ = trigger;
@@ -381,10 +379,10 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
     plan.tick_calls.insert(plan.tick_calls.end(),
                            plan.tick_write_calls.begin(), plan.tick_write_calls.end());
 
-    // (D') A READ-LANE FLUSH LEAVES EVERY TICK CALL BUFFERED. Selection above
+    // A READ-LANE FLUSH LEAVES EVERY TICK CALL BUFFERED. Selection above
     // already ran; here the write half is handed BACK to the buffer rather than
     // served. This is the whole difference from the plain observer-triggered
-    // flush that was ruled inadmissible, and `by_read_flush` in the acceptance
+    // flush that was judged inadmissible, and `by_read_flush` in the acceptance
     // is what proves it rather than this comment.
     if (trigger == FlushTrigger::ReadLaneEarly && !plan.tick_calls.empty()) {
         for (const BufferedCall& tc : plan.tick_calls) tick_def.push_back(tc);
@@ -443,7 +441,7 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
 
         // ---- restore the resting state: RUNNING at the DECLARED speed ------
         //
-        // UNCONDITIONAL since 2026-09-12 (§2.7): the progenitor reversed G3', so
+        // UNCONDITIONAL (§2.7): the clock runs in experiment mode, so
         // there is no gate that can hold the clock and the world's resting state
         // is always RUNNING. An agent's latency is its own; what it costs the
         // experiment is MEASURED (unavailability.h), not prevented.
@@ -464,8 +462,8 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
         // plan sees agreement and emits nothing. A once-only signature is not
         // evidence of which writer you are watching.
         //
-        // The step is NOT the defect and is not removed — it is what makes an
-        // E0 episode free-run at a FIXED speed at all. Resting at a hard-coded
+        // The step is NOT the hazard and is not removed — it is what makes an
+        // null-mode episode free-run at a FIXED speed at all. Resting at a hard-coded
         // 3 over a pin of 2 was.
         // ── THE RESTING STATE IS PAUSED UNTIL AN OBSERVER DECLARES ─────
         // Bring-up and preflight are not the episode and must not consume game
@@ -474,12 +472,12 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
         // declares. Re-asserted every flush, so it is a STATE rather than a
         // condition somebody has to remember to check.
         // ONE RELEASE SIGNAL, AND IT CANNOT FIRE EARLY.
-        // This used to also release when `privileged_reader` was non-empty —
-        // i.e. when the episode OBSERVER declared. found the hazard:
-        // the standalone meter lane (meter_lane.py run) is the only thing in
+        // It does NOT release when `privileged_reader` is non-empty —
+        // i.e. when the episode OBSERVER declared. The hazard:
+        // a standalone meter is the only thing in
         // the tree that declares, and if an operator starts it against a
         // pipeline bridge BEFORE the driver opens the episode, its declaration
-        // released the clock during preflight — the exact defect was
+        // released the clock during preflight — the exact defect the episode-open hold was
         // written to kill, arriving through the other signal.
         //
         // So the observer release is RETIRED. The hold is released by the
@@ -500,7 +498,7 @@ FlushPlan FlushScheduler::plan_flush(uint64_t now_ms,
             // drive it, so the world sat at CK3's default 3 while §7.3 declared
             // 2, and the driver correctly refused to start because live speed
             // did not equal the pin. Refusing everyone else from a resource and
-            // not setting it yourself is the defect; a paused world at the pin
+            // not setting it yourself is the hazard; a paused world at the pin
             // is what lets an arm START.
             if (cur.speed != cfg_.resting_speed) {
                 PlanStep s; s.kind = StepKind::SetSpeed; s.speed = cfg_.resting_speed;

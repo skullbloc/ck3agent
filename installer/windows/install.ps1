@@ -13,10 +13,13 @@
      anyway, and the bridge then refuses to start (the game runs unmodified).
   4. Places the bridge, version.dll, beside ck3.exe. A version.dll there that this
      installer did not put there is never overwritten.
-  5. Writes %USERPROFILE%\ck3agent-play\.mcp.json, the play directory Claude Code is
-     started in, as `ck3agent setup` does on Linux.
-  What it installed is recorded in %LOCALAPPDATA%\ck3agent\install.json, which
-  uninstall.ps1 reads.
+  5. Writes the play directory Claude Code is started in (%USERPROFILE%\ck3agent-play,
+     else $env:CK3AGENT_PLAY_DIR or -PlayDir) as `ck3agent setup` does on Linux:
+     .mcp.json (the ck3 server, alwaysLoad), CLAUDE.md (the play protocol; kept if
+     present unless -Force) and .claude\settings.json (the ck3 tools allowed, MCP
+     auto-background off). The Linux live-state hook is not written.
+  What it installed is recorded in %LOCALAPPDATA%\ck3agent\install.json (or
+  $env:CK3AGENT_DATA_DIR), which uninstall.ps1 reads.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -151,11 +154,46 @@ $mcp = if (Test-Path $mcpPath) { Get-Content $mcpPath -Raw | ConvertFrom-Json } 
 if (-not ($mcp.PSObject.Properties.Match('mcpServers').Count -gt 0)) {
     $mcp | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{})
 }
-$entry = [pscustomobject]@{ command = $ck3agentExe; args = @('serve') }
+# alwaysLoad: the 13 tool schemas are served up front, never deferred behind tool search
+# (the entry `ck3agent setup` writes on Linux).
+$entry = [pscustomobject]@{ command = $ck3agentExe; args = @('serve'); alwaysLoad = $true }
 if ($mcp.mcpServers.PSObject.Properties.Match('ck3').Count -gt 0) { $mcp.mcpServers.ck3 = $entry }
 else { $mcp.mcpServers | Add-Member -NotePropertyName ck3 -NotePropertyValue $entry }
 Write-Utf8NoBom $mcpPath ($mcp | ConvertTo-Json -Depth 8)
 Step ".mcp.json: $mcpPath"
+
+# The play protocol (the tools, the reply envelope, binding a ruler), from the installed
+# package; an existing CLAUDE.md is kept unless -Force.
+$protoProbe = 'import pathlib, ck3agent; print(pathlib.Path(ck3agent.__file__).parent / "protocol" / "CLAUDE.md")'
+$proto = (& $vpy -c $protoProbe | Select-Object -First 1)
+if ($LASTEXITCODE -ne 0 -or -not $proto -or -not (Test-Path $proto)) { Die 'the installed ck3agent has no protocol/CLAUDE.md; the zip is incomplete' }
+$playMd = Join-Path $PlayDir 'CLAUDE.md'
+if ((Test-Path $playMd) -and -not $Force) { Step "CLAUDE.md kept: $playMd (-Force replaces it)" }
+else { Copy-Item -Force $proto $playMd; Step "CLAUDE.md: the play protocol" }
+
+# .claude/settings.json, merged as `ck3agent setup` merges it: the ck3 tools allowed, and no
+# MCP auto-background (session(action="wait") blocks for up to 110 s by design). The Linux
+# live-state hook is not written here.
+$settingsDir = Join-Path $PlayDir '.claude'
+New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null
+$settingsPath = Join-Path $settingsDir 'settings.json'
+$settings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
+if (-not ($settings.PSObject.Properties.Match('env').Count -gt 0)) {
+    $settings | Add-Member -NotePropertyName env -NotePropertyValue ([pscustomobject]@{})
+}
+if ($settings.env.PSObject.Properties.Match('CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS').Count -gt 0) {
+    $settings.env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS = '0'
+} else { $settings.env | Add-Member -NotePropertyName CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS -NotePropertyValue '0' }
+if (-not ($settings.PSObject.Properties.Match('permissions').Count -gt 0)) {
+    $settings | Add-Member -NotePropertyName permissions -NotePropertyValue ([pscustomobject]@{})
+}
+$allow = @()
+if ($settings.permissions.PSObject.Properties.Match('allow').Count -gt 0) { $allow = @($settings.permissions.allow) }
+if ($allow -notcontains 'mcp__ck3') { $allow += 'mcp__ck3' }
+if ($settings.permissions.PSObject.Properties.Match('allow').Count -gt 0) { $settings.permissions.allow = $allow }
+else { $settings.permissions | Add-Member -NotePropertyName allow -NotePropertyValue $allow }
+Write-Utf8NoBom $settingsPath ($settings | ConvertTo-Json -Depth 8)
+Step ".claude/settings.json: $settingsPath"
 
 Write-Utf8NoBom $state ([pscustomobject]@{
     version = $version; dll_path = $dst; dll_sha256 = $ours; venv = $venv
@@ -164,7 +202,10 @@ Write-Utf8NoBom $state ([pscustomobject]@{
 
 Write-Host ""
 Write-Host "Installed ck3agent $version."
+# The bridge's own base directory (bridge/src/os/win_paths.cpp): %LOCALAPPDATA%\ck3agent,
+# not CK3AGENT_DATA_DIR (an installer setting only).
+$bridgeBase = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'ck3agent' } else { Join-Path $userHome 'AppData\Local\ck3agent' }
 Write-Host "  1. Start Crusader Kings III from Steam and load a save. The bridge logs to"
-Write-Host "     $localAppData\bridge.log and listens once the save is loaded."
+Write-Host "     $bridgeBase\bridge.log and listens once the save is loaded."
 Write-Host "  2. cd `"$PlayDir`" and run claude. Claude cannot play your own character: bind an AI ruler."
 Write-Host "uninstall.ps1 removes everything this installer placed."

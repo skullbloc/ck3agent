@@ -1,14 +1,13 @@
-// registered_speed.h — THE PRE-REGISTERED GAME SPEED, DECLARED ONCE.
+// registered_speed.h — THE REGISTERED GAME SPEED, DECLARED ONCE.
 //
-// Design of record: the pre-registration's §7.3 (the speed itself) and §9.4
-// (the registered-conditions block that DECLARES it per episode, beside
+// An episode DECLARES its speed in the registered-conditions block, beside
 // strictness, the budget pair, the exclusion fraction, the horizon endpoints,
-// the start save and the tool surface).
+// the start save and the tool surface.
 //
 // WHY THIS FILE EXISTS, and it is not hygiene: the value had TWO HOMES and no
 // contract between them.
 //
-//     scripts/episode_validity.py   PINNED_SPEED = 2      the pre-registered pin
+//     scripts/episode_validity.py   PINNED_SPEED = 2      the declared pin
 //     bridge/include/flush_scheduler.h  resting_speed = 3 the bridge's own idea
 //
 // Nothing connected them, and `resting_speed` was UNREACHABLE FROM
@@ -21,7 +20,7 @@
 // So the flush planner's restore step re-asserted 3 over a pin of 2 on the
 // first flush that carried clock work, ONCE per world (flush_scheduler.cpp:399
 // updates the planner's own model, so every later plan saw agreement), and the
-// episode then ran the whole horizon at a speed the pre-registration does not
+// episode then ran the whole horizon at a speed the experiment design does not
 // declare while the validator recorded `speed_mismatch` for it.
 //
 // THE RULE APPLIED HERE is this project's one-contract rule: WHERE TWO
@@ -34,9 +33,9 @@
 // fails a host test if the name, the spelling of the environment variable or
 // the value drift apart. A mirror nobody checks is two homes wearing one name.
 //
-// THE RESTORE STEP IS NOT THE DEFECT AND IS NOT REMOVED. It is what makes an E0
+// THE RESTORE STEP IS NOT THE HAZARD AND IS NOT REMOVED. It is what makes a null-mode
 // episode free-run at a FIXED speed at all (pipeline.cpp's `pipeline_start`
-// comment says so in as many words). The hard-coded value was the defect: with
+// comment says so in as many words). The hard-coded value was the hazard: with
 // the declaration carried here the planner rests AT the pin and its
 // re-assertion is CORRECT rather than destructive.
 //
@@ -56,8 +55,8 @@ namespace bridge {
 // THE DECLARATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-//: THE pre-registered CK3 game speed — §7.3, ruled by the progenitor for every
-//: arm AND for E0. Mirrored by `scripts/registered_speed.REGISTERED_GAME_SPEED`.
+//: THE declared CK3 game speed — the same for every
+//: arm AND for null mode. Mirrored by `scripts/registered_speed.REGISTERED_GAME_SPEED`.
 //: This is the ONLY integer literal in the tree that means "the pinned speed";
 //: every other site reads it, and the audit fails on a second one.
 constexpr int kRegisteredGameSpeed = 2;
@@ -73,13 +72,15 @@ constexpr const char* kGameSpeedEnv = "CK3_EPISODE_GAME_SPEED";
 constexpr int kGameSpeedMin = 1;
 constexpr int kGameSpeedMax = 5;
 
-//: `game_set_speed` (event_handler.cpp) caps every write at 3, unconditionally
-//: and regardless of caller — it is the single chokepoint every speed-write
-//: funnels through and the cap predates this bead by a year. A DECLARATION
-//: ABOVE THIS CANNOT BE HONOURED: the sink writes 3, the meter reads 3, and
-//: §7.3 records `speed_mismatch` against the declared 4 or 5. That is the
-//: correct outcome and it is also a trap if nobody says so, which is why the
-//: bridge WARNS at init rather than silently clamping a declaration.
+//: The speed primitive under clock_write (event_handler.cpp) is the single
+//: chokepoint every speed write funnels through, and it caps a write at 3
+//: (at 4-5 a FREE-RUNNING agent loop lets deaths and wars
+//: resolve between its cycles). The cap is 3 UNLESS the episode
+//: DECLARED a faster speed (clamp_speed_write below) — a stepped episode
+//: pauses on a game-day alarm, so nothing resolves unseen between its turns.
+//: An undeclared world, a refused declaration and every declaration of 1..3
+//: (the declared pin is 2) cap at 3 exactly as before. The game's own
+//: limit is 5 (g_MaxGameSpeed, re/findings/re_game_speed.md).
 constexpr int kGameSpeedSinkCap = 3;
 
 //: Is `s` a speed at all? (Not "is it honourable" — see the cap above.)
@@ -92,11 +93,11 @@ constexpr bool game_speed_in_range(int s) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // What one episode declared. THREE STATES, and collapsing any two of them is
-// the defect class this whole file is filed under:
+// the hazard class this whole file is filed under:
 //
 //   declared=true,  refused=""     the harness declared a speed; `speed` is it.
 //   declared=false, refused=""     NOTHING WAS DECLARED. `speed` is the
-//                                  pre-registered default, and `declared`
+//                                  declared default, and `declared`
 //                                  is what a bundle must publish beside it so a
 //                                  reader can tell a declaration from a
 //                                  fallback. The two are the same NUMBER today
@@ -106,7 +107,7 @@ constexpr bool game_speed_in_range(int s) {
 //                                  publish the refusal instead of swallowing
 //                                  it; the default stands, loudly.
 //
-// ADDED A FOURTH, and it is the one `refused` alone cannot carry:
+// A FOURTH WAS ADDED, and it is the one `refused` alone cannot carry:
 //
 //   present=false                  THE VARIABLE WAS NOT SET. The establishing
 //                                  step never ran, or never reached this
@@ -162,15 +163,15 @@ inline std::string render_bytes(const std::string& raw) {
 // A trailing-garbage parse is a REFUSAL, not a silent prefix read: "2x" is a
 // typo, and `strtol` reading it as 2 would make a typo indistinguishable from
 // an intention.
-// THE RULE (re-ruled 2026-09-13): THE RAW BYTES MUST BE EXACTLY ONE OF
+// THE RULE: THE RAW BYTES MUST BE EXACTLY ONE OF
 // "1".."5". Anything else is a refusal carrying the raw text.
 //
-// THIS HALF CHANGED TOO, and that is the point. It used to hand the bytes to
+// THIS HALF CHANGED TOO, and that is the point. It does not hand the bytes to
 // `strtol`, WHICH SKIPS LEADING WHITESPACE — so it was never byte-equal, it was
 // ASYMMETRIC: ' 2', '\t2', '02' and '+2' all DECLARED while ' 2 ', '2 ', '2\n'
 // and '2\t' refused. Adopting it as the rule would have written "leading
 // whitespace is fine, trailing whitespace is a refusal" into the
-// pre-registration — a sentence nobody would state deliberately, inherited from
+// experiment design — a sentence nobody would state deliberately, inherited from
 // a library function, and contradicting §9.4.3's R4 byte-equality argument used
 // to justify it. `'02'` and `'+2'` agreed with the Python half BY ACCIDENT.
 //
@@ -205,6 +206,20 @@ inline GameSpeedDeclaration resolve_game_speed(const char* raw) {
 // The same question asked of the process environment.
 inline GameSpeedDeclaration resolve_game_speed_from_env() {
     return resolve_game_speed(getenv(kGameSpeedEnv));
+}
+
+// THE SPEED A WRITE LANDS AS. Below 1 is 1; above the ceiling is
+// the ceiling, which is kGameSpeedSinkCap, or the declared speed when the
+// episode DECLARED one above it. Mirrored by scripts/registered_speed.py
+// `write_ceiling`; host-tested by bridge/test/test_speed_ceiling.cpp.
+inline int game_speed_write_ceiling(const GameSpeedDeclaration& d) {
+    return (d.declared && d.speed > kGameSpeedSinkCap) ? d.speed : kGameSpeedSinkCap;
+}
+
+inline int clamp_speed_write(int requested, const GameSpeedDeclaration& d) {
+    if (requested < 1) return 1;
+    const int ceiling = game_speed_write_ceiling(d);
+    return requested > ceiling ? ceiling : requested;
 }
 
 }  // namespace bridge

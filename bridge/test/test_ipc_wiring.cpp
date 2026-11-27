@@ -1,4 +1,4 @@
-// test_ipc_wiring.cpp — + B9: the REAL ipc_server.cpp, on a real socket.
+// test_ipc_wiring.cpp — the REAL ipc_server.cpp, on a real socket.
 //
 // test_instance_paths checks instance_peer_admitted() as a pure predicate, so
 // deleting its call at accept() passed every test. This links ipc_server.cpp,
@@ -310,12 +310,12 @@ int main() {
         bridge::g_test_session_state = static_cast<int>(bridge::SessionState::DORMANT);
     }
 
-    // 2026.12.5: a handshake's resume token never reaches the bridge
+    // A handshake's resume token never reaches the bridge
     // log. The REAL reader logs the handshake line (ipc_server.cpp "Handshake
-    // received"); before the fix it logged it verbatim, token and all. The
+    // received"); without the redaction it would log it verbatim, token and all. The
     // control row: the line is still written, with the client's name, so the
-    // redaction is not a deleted log line. Red on e8411492: presented_token row.
-    // TK5 r5: the log FILE outlives the server's threads. The reader logs the
+    // redaction is not a deleted log line. Red without the rule: presented_token row.
+    // r5: the log FILE outlives the server's threads. The reader logs the
     // release of this row's slot ("poll POLLERR/HUP/NVAL") ASYNCHRONOUSLY after
     // the client closes, so an fclose here raced that fprintf: a use-after-free
     // of the FILE that aborted 6/300 runs with "free(): invalid pointer"
@@ -364,13 +364,13 @@ int main() {
         row("handshake_line_still_logged_control",
             ok && !hline.empty() && hline.find("redact-row") != std::string::npos,
             hline.substr(0, 160));
-        // THE ROW (red on e8411492: the line carried the token verbatim).
+        // THE ROW (red without the rule: the line carried the token verbatim).
         row("presented_resume_token_not_in_bridge_log",
             ok && !logged.empty() && logged.find(secret) == std::string::npos &&
                 logged.find("SECRET-0123456789abcdef") == std::string::npos &&
                 hline.find("\"resume_token\":\"<redacted>\"") != std::string::npos,
             "the presented token's bytes are absent; the key reads <redacted>");
-        // Guard (green on e8411492 too: the minted token was never logged).
+        // Guard (green without the rule too: the minted token was never logged).
         row("minted_resume_token_not_in_bridge_log",
             !minted.empty() && logged.find(minted) == std::string::npos,
             minted.empty() ? "no token in the ack" : "the ack's token is absent from the log");

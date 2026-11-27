@@ -1,10 +1,10 @@
 // frame_send.h — write one NDJSON frame to a client socket, and the rule for
-// which frames may wait for a slow reader (fix10, v4 pilot 2 COUNCIL).
+// which frames may wait for a slow reader.
 //
 // THE STALL. Every send waited up to g_send_timeout_ms (2 s) for POLLOUT, and the
 // backpressure drop (TIOCOUTQ over 8 x 66 KB) never fired on a Unix socket, whose
-// send buffer fills long before 528 KB is queued (council-a: backpressure_drops=0
-// for the whole run). So a client that does not read its socket (council-a slot
+// send buffer fills long before 528 KB is queued (one recorded run: backpressure_drops=0
+// for the whole run). So a client that does not read its socket (that run's slot
 // 31: a `ck3agent run` control link idle between its polls, 225 keepalives
 // `poll_timeout`; 346 failed pings in all) cost the SENDING thread 2 s on every
 // frame addressed to it. The keepalive ping and every broadcast are sent from

@@ -73,6 +73,11 @@ class FamilyGateway:
         r = self.replies.get(action, {})
         return r(p) if callable(r) else r
 
+    async def read_many(self, reqs):
+        """The gateway's batched read (BridgeGateway.read_many): one read each, in order
+        (succession_plan reads the ruler's children together for the partition forecast)."""
+        return [await self.read(a, p) for a, p in reqs]
+
     async def clock(self):
         """Paused: a days lever with a readback (the grant) reads once and waits."""
         return {"paused": True, "date": "867.1.1"}
@@ -243,7 +248,7 @@ def test_title_law_queued_is_pending_not_applied():
 
 
 def test_title_law_names_its_intent_and_reads_back_as_applied():
-    """ and the ruling (X1): set_title_law's reply names
+    """set_title_law's reply names
     its verdict's intent, so the do() tail reads the drain's verdict back, and a
     title law is a stage-1 lever (LEVERS: the command runs on the next pass) whose
     readback is the title's own laws: the drain's success with the law listed is
@@ -336,7 +341,9 @@ def test_succession_plan_no_longer_teaches_the_retired_refusal():
 def test_disinherit_lever_names_the_dynasty_head_read_by_dynasty_id():
     gw = FamilyGateway(head=RULER)
     lev = _plan(gw)["result"]["levers"]["disinherit"]
-    assert lev["available"] is True and lev["dynasty_head_id"] == RULER
+    # The head rule is needed, not enough: without the game's check of the send, available is unread (None)
+    assert lev["available"] is None and lev["dynasty_head_id"] == RULER
+    assert "check of the send was not read" in lev["why_not"]
     assert gw.dynasty_reads and all(r.get("dynasty_id") == 555 for r in gw.dynasty_reads)
     gw = FamilyGateway(head=99)
     lev = _plan(gw)["result"]["levers"]["disinherit"]
@@ -344,7 +351,7 @@ def test_disinherit_lever_names_the_dynasty_head_read_by_dynasty_id():
 
 
 def test_succession_plan_falls_back_to_the_per_title_map_when_the_simulation_is_empty():
-    # Measured on the 867 save (live867 l4-live-a-t1, ruler 10465): an empty simulation
+    # Measured on the 867 save: an empty simulation
     # read passes_intact=true while the per-title map split the realm between two sons.
     gw = FamilyGateway(ages={SON: 24, 13463: 19}, replies={
         "query_succession_simulation": {"heirs": []},
@@ -375,7 +382,7 @@ def test_engine_text_reads_the_tooltip_as_words():
            "\x16prestige_icon!\x15! 948\x15!")
     assert redesign.engine_text(raw) == "Missing prestige 948"
     assert redesign.engine_text("plain words") == "plain words"
-    # Measured on the 867 save (live867 l4fix-live-2): a grant refused by CTX_VALIDATE,
+    # Measured on the 867 save: a grant refused by CTX_VALIDATE,
     # and a title law refused for two reasons on two lines.
     grant = ("\x15indent_newline:0 \x15!\x15indent_newline:6 \x16warning_icon! \x15X "
              "\x15ONCLICK:CHARACTER,33217 \x15TOOLTIP:CHARACTER,33217 \x15L \x15high "
@@ -417,7 +424,7 @@ class _DesignateGateway(FamilyGateway):
 
 
 def test_designate_heir_is_not_available_below_its_prestige_cost():
-    # Witness run w-l4-succession-1: the lever said available=true and the engine
+    # A recorded run: the lever said available=true and the engine
     # refused every child. The prestige the interaction costs is checked from the read.
     gw = _DesignateGateway(prestige=601.11, laws=[{"name": "crown_authority_3",
                                                    "group_name": "crown_authority"}])
@@ -441,7 +448,7 @@ def test_designate_heir_names_only_children_the_engine_takes():
 
 
 def test_designate_heir_in_an_administrative_realm_does_not_claim_the_unread_influence():
-    # Live867 l4fix-live-3: 10357 (japanese_bureaucracy_1, japanese_regency_succession_law)
+    # A live 867 game: 10357 (japanese_bureaucracy_1, japanese_regency_succession_law)
     # was refused "does not have influence 150"; no read carries influence.
     gw = _DesignateGateway(prestige=2919.0, laws=[
         {"name": "japanese_bureaucracy_1", "group_name": "japanese_bureaucracy"},

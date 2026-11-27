@@ -1,15 +1,15 @@
-// test_council_task_family.cpp — row B5: which council task type
+// test_council_task_family.cpp — which council task type
 // a named task is on a given seat (council_task_family.h), on EVERY task type of
 // the 867 dump.
 //
-// Fixture: the core dump ck3_20260625_152901_ivar867 (CLAUDE.md, "Runtime probing") (BuildID
+// Fixture: the 867 start dump (BuildID
 // e61ff264...), CCouncilTaskTypeDatabase *(base+0x0bed76d8), the flat map at
 // inst+0x1b0 (mask inst+0x1bc, stride 0x18, ctrl +0x04, value +0x10) exactly as
 // do_set_council_task walks it; per type: name std::string +0x10, clone template
 // +0x14d8, seat = *(+0x30)'s name +0x10. Read 2026-11-04 with re/coredump/
 // core_reader.py. Built twice: plain (must pass) and -DFAMILY_PREFIX_CONTROL,
-// the pre-fix rule (the asked type's own seat or refuse), registered WILL_FAIL:
-// it refuses B5 with task_seat councillor_court_chaplain.
+// the superseded rule (the asked type's own seat or refuse), registered WILL_FAIL:
+// it refuses the ministries ruler with task_seat councillor_court_chaplain.
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -93,7 +93,7 @@ static const std::vector<Row> kRows = {
 
 static const Row* pick(const std::string& task, const std::string& seat) {
 #ifdef FAMILY_PREFIX_CONTROL
-    // the pre-fix rule (git show 85be8d78:bridge/src/action_handlers.cpp:1293-1296):
+    // the superseded rule (action_handlers.cpp's earlier family check):
     // the asked type; refused only for a non-empty, non-numeric seat that differs
     // from the type's own seat (an empty task seat was admitted too)
     for (const auto& r : kRows)
@@ -119,7 +119,7 @@ static void expect(const char* what, const Row* got, const char* want_name) {
 }
 
 int main() {
-    // B5: Cui 13191 (ministries), seat minister_justice
+    // A ministries ruler: Cui 13191, seat minister_justice
     expect("B5 task_fabricate_claim @ minister_justice",
            pick("task_fabricate_claim", "minister_justice"), "task_fabricate_claim_minister_of_rites");
     // the chaplain's own seat, both spellings, and no seat: unchanged
@@ -127,7 +127,7 @@ int main() {
     expect("task_fabricate_claim @ councillor_court_chaplain",
            pick("task_fabricate_claim", "councillor_court_chaplain"), "task_fabricate_claim");
     expect("task_fabricate_claim, no seat", pick("task_fabricate_claim", ""), "task_fabricate_claim");
-    // (not discriminating: the pre-fix rule admitted a numeric seat too; it pins
+    // (not discriminating: the superseded rule admitted a numeric seat too; it pins
     // that the new rule keeps it)
     expect("task_fabricate_claim, numeric seat", pick("task_fabricate_claim", "1006"), "task_fabricate_claim");
     // a seat no family member sits on is still refused

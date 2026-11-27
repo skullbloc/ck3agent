@@ -1,6 +1,6 @@
-// log_archive.h —. Keep EVERY rotated window, not the last three.
+// log_archive.h — Keep EVERY rotated window, not the last three.
 //
-// THE DEFECT. made rotation preserve the retired window under
+// THE HAZARD. Rotation preserves the retired window under
 // <log>.1/.2/.3 instead of truncating it, and says out loud when the ring is
 // full so a reader cannot mistake three files for full coverage. That is
 // correct and it is still a BOUND. diag25 rotated TWELVE times: the counters
@@ -29,7 +29,7 @@
 // CONTIGUITY IS THE ACCEPTANCE, which is why the tick range is in the NAME.
 // A directory of archives is only evidence of complete coverage if the windows
 // TILE — [a,b) [b,c) [c,d) with no gap. Counting files proves nothing, and
-// that is the same mistake refused to let the .1/.2/.3 count make.
+// that is the same mistake the rotation check refuses to let the .1/.2/.3 count make.
 #pragma once
 
 #include <cstdio>
@@ -93,7 +93,7 @@ inline int first_gap(const ArchiveWindow* w, size_t n) {
 // A fixed queue. FIXED because the producer is the game thread inside the tick
 // hook: no allocation, no lock, no path where a full queue blocks the
 // simulation. A full queue DROPS and COUNTS the drop — never silently, because
-// a dropped window is exactly the evidence this bead exists to keep.
+// a dropped window is exactly the evidence this code exists to keep.
 // THE INDICES ARE ATOMIC BECAUSE THE THREADS ARE DIFFERENT ONES.
 //
 // The first version of this ring had plain `int head, tail` and plain counters.
@@ -103,11 +103,11 @@ inline int first_gap(const ArchiveWindow* w, size_t n) {
 // not been written yet — and two threads reading and writing a plain int is a
 // data race, which is undefined rather than merely unlikely.
 //
-// That is the SAME DEFECT CLASS AS, which is a non-atomic
-// read-modify-write on a slot the engine publishes with `xchg`, and I wrote
-// this one in the same session as that fix. Knowing the shape did not stop me
-// producing it; what caught it was re-reading this file after a reviewer asked
-// an unrelated question about the queue.
+// That is the SAME DEFECT CLASS AS the scope-slot latch: a non-atomic
+// read-modify-write on a slot the engine publishes with `xchg`. Knowing the
+// shape of that defect is not enough to keep it out of a new queue: the
+// indices below are atomics for that reason, whatever a reading of the
+// code suggests.
 //
 // Single producer, single consumer, so the discipline is the textbook one:
 // the producer writes the SLOT and then RELEASES `tail`; the consumer ACQUIRES
@@ -121,7 +121,7 @@ inline int first_gap(const ArchiveWindow* w, size_t n) {
 //
 // Still constant-initialisable: `std::atomic<int>`'s default constructor is
 // constexpr, so `constexpr ArchiveQueue{}` compiles and the global needs no
-// dynamic initializer — the property verified, with the control that
+// dynamic initializer — the property a static check verified, with the control that
 // `constexpr std::string{}` does NOT compile.
 struct ArchiveQueue {
     static constexpr int kSlots = 16;
@@ -171,16 +171,15 @@ struct ArchiveQueue {
 
 // ── THE CONTROL, not the observation ─────────────────────
 //
-// REPORTED that these atomics are lock-free and that the property was
-// static_asserted. The measurement was real; the assert was not. It lived in a
-// throwaway probe under /tmp that nothing in this tree compiles, so the claim
-// could not have been contradicted by any build, any gate or any reviewer — a
-// control that exists only in /tmp is a control that does not exist.
+// That these atomics are lock-free is a property this header static_asserts.
+// A measurement in a throwaway probe that nothing in this tree compiles could
+// not be contradicted by any build, any gate or any reviewer — a control that
+// exists only outside the tree is a control that does not exist.
 //
 // WHY IT IS LOAD-BEARING. `push()` runs on the GAME THREAD inside the tick hook.
 // A std::atomic<T> that is NOT lock-free is backed by a mutex, so on a platform
 // where these are not lock-free the archive queue would take a lock in the
-// simulation's hot path — the exact hazard the whole bead exists to avoid, and
+// simulation's hot path — the exact hazard the whole task exists to avoid, and
 // it would be silent. These asserts turn that platform into a BUILD FAILURE.
 //
 // At namespace scope deliberately: every translation unit that includes this

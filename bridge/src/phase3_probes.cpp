@@ -1,4 +1,4 @@
-// phase3_probes.cpp — Phase-3 Wave-2 probe handlers
+// phase3_probes.cpp — Phase-3 probe handlers
 //
 // Four read-only probes that convert silent failures in the interaction +
 // war-creation pipelines into loud diagnostics. See re/findings/re_interaction_trysend_cascade_v3.md,
@@ -40,8 +40,8 @@ extern std::atomic<uint64_t> g_tick_id;
 // Singleton resolution — CPendingCharacterInteractionManager
 // ============================================================================
 //
-// The manager is a heap-allocated game-manager singleton. Empirically
-// (core-dump trace) it lives in a glibc mmap-arena 700+MB from the binary base,
+// The manager is a heap-allocated game-manager singleton. Empirically,
+// from a core-dump trace, it lives in a glibc mmap-arena 700+MB from the binary base,
 // in a ~128MB anonymous region — NOT in .data/.bss and NOT in the brk heap.
 //
 // Strategy: scan all writable anonymous mappings for the 16-byte signature
@@ -533,7 +533,7 @@ bool do_tick_diff(const char* params_json, std::string* response_out) {
 
     // Snapshot pause state alongside tick counters so harness
     // preflight can distinguish "game paused, no tick advance possible" from
-    // "game ticking but state happened not to move." With multiple polecats
+    // "game ticking but state happened not to move." With several agent sessions
     // sharing one bridge, a sibling's pause_game can no-op our unpause and
     // strand this scenario in tick_from==tick_to.
     bool paused_before = is_paused();
@@ -774,7 +774,7 @@ bool do_probe_gate_4_slots(const char* params_json, std::string* response_out) {
     }
 
     // Build params for query_trigger_result. ResponseBuilder escapes the
-    // client's name (rc2: it used to be spliced into the JSON with %s).
+    // client's name (never spliced into the JSON with %s).
     ResponseBuilder fw;
     fw.begin_object();
     fw.key("interaction_type"); fw.value_string(interaction_name.c_str(), interaction_name.size());
@@ -958,7 +958,7 @@ void process_cascade_query() {
     g_cascade_query.slot_count = copy_n;
     g_cascade_query.approved = all_pass;
     if (!all_pass && first_fail_name) {
-        // Emit canonical letter-suffix format (schema contract):
+        // Emit canonical letter-suffix format:
         //   slot_idx 1 (is_shown)                       → GATE_4_SLOT_A
         //   slot_idx 2 (is_valid_showing_failures_only) → GATE_4_SLOT_B
         //   slot_idx 3 (can_be_sent_despite_rejection)  → GATE_4_SLOT_C
@@ -980,7 +980,7 @@ void process_cascade_query() {
 
         // Prefer the loc key from the loud-failure evaluator when the
         // caller opted in via extract_loc_keys and the populator yielded
-        // a SCREAMING_SNAKE_CASE identifier (Strategy C). Fall
+        // a SCREAMING_SNAKE_CASE identifier. Fall
         // back to the slot-name derived key otherwise.
         if (first_fail_loc_key && first_fail_loc_key[0]) {
             snprintf(g_cascade_query.rejection_key,

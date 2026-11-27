@@ -34,7 +34,7 @@ _ACT_TYPES = {"interaction", "war", "decision", "event", "law", "lifestyle", "co
               # write tools — validated bridge-side (their handlers return explicit reject reasons
               # like position_id_required / maa_type_required), so they pass the pre-flight gate.
               "appoint", "maa", "contract", "move_capital", "hire_mercenary", "faith",
-              # ck-#130 culture: convert the actor's OWN culture (e.g. "english"/"anglo_saxon").
+              # culture: convert the actor's OWN culture (e.g. "english"/"anglo_saxon").
               # THE convert-own-culture lever — unblocks e_britannia (culture-gated can_create).
               # Routes to set_character_culture (engine SetCultureOnCharacter); self-validates bridge-side.
               "culture",
@@ -42,7 +42,7 @@ _ACT_TYPES = {"interaction", "war", "decision", "event", "law", "lifestyle", "co
               # scheme_action; redesign._do_scheme refuses a start without scheme and
               # target_id, and the game's CanStartScheme decides the rest.
               "scheme",
-              # #111 create_title: create a de-jure duchy/kingdom title the AI ruler controls
+              # create_title: create a de-jure duchy/kingdom title the AI ruler controls
               # (the k_danelaw 2nd-duchy unlock). Engine-gated (CCreateTitleCommand CanExecute:
               # de-jure control + not-extant + gold cost); self-validates bridge-side.
               "create_title"}
@@ -144,7 +144,7 @@ def _validate_building(params: dict) -> dict:
             ["building"],
             "type=building requires building (a building key, e.g. 'castle_03') "
             "and location_id (the holding's barony title id from "
-            "query(domain='county_details') holdings[].barony_title_id).",
+            "query(domain='county') holdings[].barony_title_id).",
             {"building": "<building key>", "location_id": "<barony title id>"},
         )
     if not params.get("location_id"):
@@ -174,6 +174,10 @@ def _validate_council_task(params: dict) -> dict:
 
 def _validate_lifestyle(params: dict) -> dict:
     focus = (params.get("focus") or "").strip()
+    perk = str(params.get("perk") or "").strip()
+    if perk:
+        # A perk instead of a focus (tools.resolve_act: unlock_perk)
+        return {"valid": True, "type": "lifestyle", "perk": perk}
     if not focus:
         return _reject(
             "missing_focus",
@@ -213,7 +217,7 @@ def _validate_interaction(params: dict, actor_id: int, target_id: int) -> dict:
     own_court = (interaction_type in _OWN_COURT_RECIPIENT_INTERACTIONS
                  and (params.get("secondary_actor_id") or params.get("secondary_recipient_id")))
     if target_id and actor_id and target_id == actor_id and not own_court:
-        # This hint said "Pass target_id=0
+        # This hint once said "Pass target_id=0
         # for self-scope actions" for every interaction; the seat passed 0 and the
         # branch above answered "targets another character — pass target_id". Only a
         # self-scope interaction is offered target_id=0; any other needs another

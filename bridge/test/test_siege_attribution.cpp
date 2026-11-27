@@ -1,7 +1,7 @@
 // test_siege_attribution.cpp — a siege is listed under the war it belongs to
-// (F8; bridge/include/siege_attribution.h).
+// (bridge/include/siege_attribution.h).
 //
-// THE DEFECT (live867 l5fx5-live-1). query_wars listed every siege whose
+// THE HAZARD. query_wars listed every siege whose
 // besieger was among a war's attackers, so 14859's sieges 6 and 7 appeared
 // under his three wars (3, 4 and the new 16777218), each with that war's
 // primary defender written in as the siege's defender. The rule now needs the

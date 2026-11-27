@@ -9,7 +9,7 @@ cost one period however many there are (measured live: 20.01s sequential vs
 The load-bearing properties are not "it is faster" — a unit test cannot see a
 flush. They are: the reads are ISSUED TOGETHER (all in flight before any
 returns), results come back in REQUEST ORDER (so nothing is silently
-transposed), and one failure does not take the batch down. Since then there is
+transposed), and one failure does not take the batch down. Now there is
 no scope and no partition: each read keeps its own path.
 """
 import asyncio
@@ -45,7 +45,7 @@ def _gw(delays: dict = None, fail: set = frozenset()):
 
 def test_the_reads_are_issued_together():
     """Every read is in flight before the first one returns: the concurrency the
-    measurement bought."""
+    Measurement bought."""
     gw = _gw({"a": 0.05, "b": 0.05, "c": 0.05})
     _run(gw.read_many([("a", {}), ("b", {}), ("c", {})]))
     issues = [i for i, e in enumerate(gw.events) if e[0] == "issue"]
@@ -56,7 +56,7 @@ def test_the_reads_are_issued_together():
 def test_results_come_back_in_REQUEST_ORDER():
     """THE TRANSPOSITION GUARD. Reads that finish out of order must still be
     paired with their own slot — silently transposed replies would pass every
-    downstream isinstance check. was exactly this class of defect."""
+    downstream isinstance() check. A past defect was exactly this class."""
     gw = _gw({"p1": 0.04, "a1": 0.0, "p2": 0.02, "a2": 0.01})
     out = _run(gw.read_many([("p1", {}), ("a1", {}), ("p2", {}), ("a2", {})]))
     assert [r["action"] for r in out] == ["p1", "a1", "p2", "a2"]

@@ -3,25 +3,34 @@
 //
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
+#include "council_holder.h"
 #include "pause_alarm.h"
 #include "council_task_family.h"
-#include "council_pin.h"        // COUNCILRE: the per-seat council-task pin verdicts
+#include "council_pin.h"        // The per-seat council-task pin verdicts
+#include "council_task_target.h"  // County task target = a province; task progress
 #include "optional_id.h"     // An optional id read through json_get_int
 #include "game_date.h"
 #include "action_dispatch_internal.h"
-#include "action_args.h"      // Action_sub_op
+#include "action_args.h"      // action_sub_op
 #include "diag_dtor.h"   // The diag record dtor, witnessed from the engine's call
 #include "declare_war_outcome.h"
 #include "refusal_record.h"
 #include "scope_slot_policy.h"   // The scope latch + its one refusal text
 #include "latch_guarded_rows.h"  // construction_check's list: the latch before every row
-#include "scheme_engine.h"     // l3-schemes: is_json_object
+#include "scheme_engine.h"     // is_json_object
 #include "war_side.h"          // which side of a war a character is on
 #include "lobby_view_hook.h"
 #include "observer_data_functions.h"
 #include "script_templates.h"   // The script action layer
 #include "console_call.h"       // The console-handler ABI per OS
 #include "os/game_logs.h"      // The game's debug.log/error.log per OS
+#include "maa_currency.h"       // A tribal ruler buys men-at-arms with prestige
+#include "engine_text.h"        // maa_disband's game reason
+#include "win_anchor_refusal.h"  // The uncosted law setter's anchor, by value
+#include "engine_id.h"          // The whole id a game function compares
+#ifdef _WIN32
+#include "windows/ck3_offsets_win.h"   // CAddLawCommand's second vtable
+#endif
 #include <dirent.h>
 #include <map>
 #include <mutex>
@@ -234,7 +243,7 @@ bool do_query_intents(const char* /*params_json*/, std::string* response_out) {
             if (c.rejected && c.rejection_reason[0]) {
                 r.key("rejection_reason"); r.value_string(c.rejection_reason);
             }
-            // #98: derive a readable terminal status so the agent can tell "the
+            // Derive a readable terminal status so the agent can tell "the
             // steered AI declined this" from "still pending" against its dispatch_id
             // (inspect(subject="pending") is the surface the agent polls). Mirrors the
             // status derivation in do_query_intent_results. A self-disadvantaging move
@@ -325,6 +334,7 @@ bool do_query_intent_results(const char* params_json, std::string* response_out)
         if (!c.send_options.empty()) { r.key("send_options_requested"); r.value_string(c.send_options.c_str()); }
         if (!c.send_options_applied.empty()) { r.key("send_options_applied"); r.value_string(c.send_options_applied.c_str()); }
         if (!c.console_output.empty()) { r.key("detail"); r.value_string(c.console_output.c_str()); }
+        if (!c.failed_check.empty()) { r.key("failed_check"); r.value_string(c.failed_check.c_str()); }
         if (c.secondary_actor_id) { r.key("secondary_actor_id"); r.value_uint(c.secondary_actor_id & 0xFFFFFF); }
         if (c.secondary_recipient_id) { r.key("secondary_recipient_id"); r.value_uint(c.secondary_recipient_id & 0xFFFFFF); }
         if (c.title_id > 0) { r.key("title_id"); r.value_int(c.title_id); }
@@ -402,6 +412,7 @@ bool do_query_dispatch_result(const char* params_json, std::string* response_out
         if (found.rejected && found.rejection_reason[0]) {
             r.key("rejection_reason"); r.value_string(found.rejection_reason);
         }
+        if (!found.failed_check.empty()) { r.key("failed_check"); r.value_string(found.failed_check.c_str()); }
         if (!found.interaction_name.empty()) {
             r.key("action_name"); r.value_string(found.interaction_name.c_str());
         }
@@ -413,7 +424,7 @@ bool do_query_dispatch_result(const char* params_json, std::string* response_out
         return true;
     }
     case DispatchLookup::Running: {
-        // Consumed by the drain, not yet in the completed
+        // consumed by the drain, not yet in the completed
         // ring (same pass). The verdict lands within the pass; never not_found.
         r.key("success"); r.value_bool(true);
         r.key("status"); r.value_string("running");
@@ -643,7 +654,7 @@ bool do_send_interaction(const char* params_json, std::string* response_out) {
     return true;
 }
 
-// query_interaction_check (F16, l10): the send pipeline's own checks for one
+// query_interaction_check: the send pipeline's own checks for one
 // interaction from one actor, against target_id or each of `candidates` (up to 64),
 // nothing sent. Drained on the game thread like send_interaction
 // (ai_eval_hook.cpp execute_interaction_check_intent), so the game must run a tick
@@ -687,6 +698,26 @@ bool do_query_interaction_check(const char* params_json, std::string* response_o
                 }
                 if (!ids.empty()) cmd = "check:" + ids;
             }
+            // `pairs`, each {target_id, secondary_actor_id,
+            // secondary_recipient_id}: a marriage listing's rows, each checked with the
+            // pair the window would hold for it (execute_interaction_check_intent).
+            auto pit2 = scope->FindMember("pairs");
+            if (pit2 != scope->MemberEnd() && pit2->value.IsArray()) {
+                auto u = [](const rapidjson::Value& o, const char* k) -> uint32_t {
+                    auto m = o.FindMember(k);
+                    return (m != o.MemberEnd() && m->value.IsUint()) ? (m->value.GetUint() & 0xFFFFFF) : 0u;
+                };
+                std::string ids;
+                for (auto& v : pit2->value.GetArray()) {
+                    if (!v.IsObject()) continue;
+                    const uint32_t t = u(v, "target_id");
+                    if (!t) continue;
+                    if (!ids.empty()) ids += ',';
+                    ids += std::to_string(t) + "/" + std::to_string(u(v, "secondary_actor_id")) + "/" +
+                           std::to_string(u(v, "secondary_recipient_id"));
+                }
+                if (!ids.empty()) cmd = "check:" + ids;
+            }
         }
     }
     if (cmd == "check" && target_raw <= 0) { short_error("target_id_required"); return false; }
@@ -710,6 +741,24 @@ bool do_query_interaction_check(const char* params_json, std::string* response_o
     intent.interaction_hash = game_string_hash(interaction_name.c_str(),
                                                static_cast<uint32_t>(interaction_name.size()));
     intent.title_id = -1;
+    // The war a call_ally / join_war check is about, parsed as send_interaction parses it,
+    // so the check runs the send's own validity with the same target scope (the send refused
+    // call_ally_interaction "interaction_not_valid_for_target" and gave no words)
+    if (json_has_key(params_json, "war_id")) {
+        const uint32_t war_ref = static_cast<uint32_t>(json_get_int(params_json, "war_id"));
+        intent.has_target_war = war_ref != 0xFFFFFFFFu && war_ref != 0u;
+        intent.target_war_id = intent.has_target_war ? war_ref : 0u;
+    }
+    // The pair and the send options, as send_interaction takes them, so the
+    // check runs the send's own validity with the window's choices (MARRIAGE_CHECK_LIMIT:
+    // without them every marriage check answered "No target selected").
+    {
+        const int sa = json_get_int(params_json, "secondary_actor_id");
+        const int sr = json_get_int(params_json, "secondary_recipient_id");
+        intent.secondary_actor_id = sa > 0 ? static_cast<uint32_t>(sa) : 0;
+        intent.secondary_recipient_id = sr > 0 ? static_cast<uint32_t>(sr) : 0;
+        if (const char* so = json_get_string(params_json, "send_options")) intent.send_options = so;
+    }
     intent.console_command = cmd;
     intent.queued_tick = tick;
     intent.ttl_ticks = 10;
@@ -769,7 +818,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
     //
     // actor_id still wins, so nothing that works today changes.
     //
-    // Send_decision READS character_id, so it never goes through
+    // send_decision READS character_id, so it never goes through
     // resolve_actor with one (that resolver refuses a write whose actor is named
     // under a key it does not read: actor_resolve.h rule 0).
     safe_read_clear();
@@ -792,7 +841,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
     // while logging identical decorative ids.
     //
     // That is not hypothetical bookkeeping: it means the per-character
-    // comparisons drawn from arma4 and arma5 — "same type, same character,
+    // comparisons drawn from two arm runs — "same type, same character,
     // different outcome" — were drawn from the decorative field, and the actual
     // actor is unknown for every send_decision ever logged. This line is what
     // makes the next capture interpretable.
@@ -880,7 +929,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
                 r.key("action"); r.value_string("send_decision");
                 r.key("reason"); r.value_string("ai_controller_unbound");
                 r.key("detail"); r.value_string(which);
-                // / e0's condition: the refusal must be COUNTABLE per
+                // the experiment's condition: the refusal must be COUNTABLE per
                 // bundle, not just visible in a log. decision_capture.py reads
                 // success, reason and character_id off the reply and emits them
                 // as an actions[] entry, so carrying the RESOLVED actor here is
@@ -1001,8 +1050,31 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
     bool took_decision = false;
     std::string engine_message;
     try {
-        ai_try_decision(result_ptr, actor, decision);
+        {
+            // AI_TRY_DECISION_CORE posts CExecuteDecisionCommand with flags 7 from inside the
+            // game image, as the AI's own decision passes do; the marker tells the veto hook this
+            // post is the seat's (ai_veto.h decision_origin), so a decision veto never drops it.
+            bridge::OwnDispatchMark own_post;
+            ai_try_decision(result_ptr, actor, decision);
+        }
 
+#if defined(_WIN32)
+        // The MSVC string the game wrote (ck3_offsets_win.h funcs::AI_TRY_DECISION_CORE):
+        // size +0x10, capacity +0x18, the characters inline while the capacity is 15 or less. The
+        // buffer is the game's allocation: left to the game's heap (a few dozen bytes), never freed
+        // through this module's CRT.
+        {
+            const size_t w_size = *reinterpret_cast<size_t*>(result_storage + 16);
+            const size_t w_cap = *reinterpret_cast<size_t*>(result_storage + 24);
+            if (w_size > 0 && w_size < 4096 && w_cap >= w_size) {
+                const char* w_data = w_cap <= 15 ? result_storage : *reinterpret_cast<const char**>(result_storage);
+                if (w_data && is_mapped_range(reinterpret_cast<uintptr_t>(w_data), w_size)) {
+                    engine_message.assign(w_data, w_size);
+                    took_decision = (engine_message.find("Took decision") != std::string::npos);
+                }
+            }
+        }
+#else
         // Read result string — std::string layout: [ptr/sso_buf(16B), size(8B)]
         // SSO: if size <= 15, string data is at result_storage+0 (inline)
         // Heap: if size > 15, ptr at result_storage+0 points to heap data
@@ -1024,6 +1096,7 @@ bool do_send_decision(const char* params_json, std::string* response_out) {
             char* heap_ptr = *reinterpret_cast<char**>(result_storage);
             if (heap_ptr) free(heap_ptr);  // libstdc++ uses malloc/free for std::string
         }
+#endif
     } catch (...) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] send_decision '%s': exception\n", type);
     }
@@ -1114,12 +1187,12 @@ bool do_set_lifestyle_focus(const char* params_json, std::string* response_out) 
     // a global that `arm` swaps into RandomScopeManager+0x20 — if the call crashes
     // and we longjmp out WITHOUT restoring it, the manager is left pointing at our
     // fake scope and the game thread wedges (tick stops). So arm BEFORE the
-    // sigsetjmp and restore on BOTH paths (normal + crash). (harden, 20260614)
+    // sigsetjmp and restore on BOTH paths (normal + crash).
     auto set_focus = reinterpret_cast<void(*)(void*, void*)>(bridge::game_fn(ck3::funcs::SET_FOCUS_APPLY));
     uint64_t saved_rng = 0;
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_lifestyle_focus", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -1201,6 +1274,132 @@ bool do_set_education_focus(const char* params_json, std::string* response_out) 
     }
     // Delegate to the proven hardened setter (same slot, same readback).
     return do_set_lifestyle_focus(params_json, response_out);
+}
+
+// ===========================================================================
+// do_unlock_perk (re/findings/re_lifestyle_perks.md §2, §5): the ruler spends one
+// of his own lifestyle points on a perk, through the player's command and its own check.
+// CAddLifestylePerkCommand is built on the stack (ctor FUN_067c9f50(cmd, full id, perk)), its
+// CanExecute FUN_067ca090(cmd, 0) is the game's price (an active focus, >= 1 point in the perk's
+// lifestyle, alive, the perk's can-pick: not held, every parent held, its trigger), and on true
+// its Execute (secondary vtable, FUN_067ca010(cmd+0x18)) adds the perk and spends one point's XP,
+// synchronously on the game thread as hire_mercenary and mint_title run theirs: it is never
+// posted, so the AI veto's dispatch hook never sees it. add_perk as a script effect stays refused
+// (it is free: no point, no parent, no focus). Kill switch CK3_BRIDGE_UNLOCK_PERK=0.
+// ===========================================================================
+bool do_unlock_perk(const char* params_json, std::string* response_out) {
+    static const char* kAction = "unlock_perk";
+    FaultScope fault_scope(kAction, response_out);
+    auto fail = [&](const char* reason, const char* detail = nullptr) {
+        if (response_out) {
+            ResponseBuilder r; r.begin_object();
+            r.key("success"); r.value_bool(false);
+            r.key("action"); r.value_string(kAction);
+            r.key("reason"); r.value_string(reason);
+            if (detail) { r.key("detail"); r.value_string(detail); }
+            r.end_object();
+            *response_out = r.take();
+        }
+        return false;
+    };
+    const char* sw = getenv("CK3_BRIDGE_UNLOCK_PERK");
+    if (sw && sw[0] == '0' && sw[1] == '\0') return fail("unlock_perk_disabled", "CK3_BRIDGE_UNLOCK_PERK=0");
+    const char* perk_s = json_get_string(params_json, "perk");
+    if (!perk_s || !perk_s[0]) return fail("perk_required");
+    const std::string want(perk_s);
+    void* actor = resolve_actor(params_json);
+    if (reject_player_actor(actor, kAction, response_out)) return false;
+    if (const char* why = actor_refusal(actor)) {
+        if (response_out) *response_out = actor_refusal_reply(kAction, why);
+        return false;
+    }
+    const uintptr_t ch = reinterpret_cast<uintptr_t>(actor);
+    uintptr_t perk = 0;
+    for (uintptr_t p : lifestyle_perk_entries())
+        if (ad_read_std_string(p + ck3::lifestyle_perk::NAME_KEY) == want) { perk = p; break; }
+    if (!perk) return fail("perk_not_found");
+    const uintptr_t ls = safe_read<uintptr_t>(perk + ck3::lifestyle_perk::LIFESTYLE_PTR);
+    const std::string ls_key = (ls && is_mapped(ls)) ? ad_read_std_string(ls + ck3::db_object::NAME_KEY) : std::string();
+
+    LifestyleState before;
+    if (!read_lifestyle_state(ch, &before)) return fail("lifestyle_unread");
+    const int pts_before = lifestyle_points_of(before, ls);
+    const auto pick = perk_pick_of(before, perk);
+    const char* reads_say = bridge::lifestyle_points::refusal(before.focus_type != 0, pts_before, pick);
+    const uint32_t full = safe_read<uint32_t>(ch + ck3::character::ID);
+
+    if (safe_read_had_fault()) return answer_memory_access_fault(kAction, response_out);
+    if (bridge::scope_latched()) {
+        bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
+        if (response_out) *response_out = bridge::scope_latched_refusal_json(kAction);
+        return false;
+    }
+    auto ctor = reinterpret_cast<void (*)(void*, uint32_t, uintptr_t)>(bridge::game_fn(ck3::add_lifestyle_perk_cmd::CTOR));
+    auto can_exec = reinterpret_cast<bridge::EngineBoolFn<void*, void*>>(bridge::game_fn(ck3::add_lifestyle_perk_cmd::CAN_EXECUTE));
+    auto execute = reinterpret_cast<void (*)(void*)>(bridge::game_fn(ck3::add_lifestyle_perk_cmd::EXECUTE));
+    auto base_dtor = reinterpret_cast<void (*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));
+    if (!is_mapped(reinterpret_cast<uintptr_t>(ctor)) || !is_mapped(reinterpret_cast<uintptr_t>(can_exec)) ||
+        !is_mapped(reinterpret_cast<uintptr_t>(execute)) || !is_mapped(reinterpret_cast<uintptr_t>(base_dtor)))
+        return fail("perk_command_unmapped");
+
+    alignas(16) uint8_t cmd[0x40];
+    memset(cmd, 0, sizeof(cmd));
+    volatile bool can = false, ran = false, crashed = false, built = false;
+    uint64_t saved_tmp = 0;
+    volatile bool rng_armed = arm_fake_random_scope(&saved_tmp);
+    volatile uint64_t saved_rng = saved_tmp;
+    watchdog_arm(3);
+    g_in_protected_region = true;
+    if (sigsetjmp(g_recovery_point, 1) != 0) {
+        crashed = true;
+    } else {
+        try {
+            ctor(cmd, full, perk);
+            built = true;
+            can = can_exec(cmd, nullptr);
+            if (can) { execute(cmd + 0x18); ran = true; }
+            base_dtor(cmd);
+            built = false;
+        } catch (...) {
+            crashed = true;
+        }
+    }
+    g_in_protected_region = false;
+    watchdog_disarm();
+    if (rng_armed) restore_fake_random_scope(saved_rng);
+    (void)built;
+    if (crashed) return fail("apply_crashed");
+
+    LifestyleState after;
+    read_lifestyle_state(ch, &after);
+    bool held_after = false;
+    for (uint64_t h : after.held) held_after = held_after || h == perk;
+    const int pts_after = lifestyle_points_of(after, ls);
+    const bool ok = can && ran && held_after;
+    ADLOG("unlock_perk: char=%u perk=%s can=%d ran=%d held_after=%d points %d -> %d reads=%s\n", full & 0xFFFFFF,
+          want.c_str(), can ? 1 : 0, ran ? 1 : 0, held_after ? 1 : 0, pts_before, pts_after, reads_say ? reads_say : "admit");
+    if (response_out) {
+        ResponseBuilder r; r.begin_object();
+        r.key("success"); r.value_bool(ok);
+        r.key("action"); r.value_string(kAction);
+        r.key("perk"); r.value_string(want.c_str(), want.size());
+        r.key("lifestyle"); r.value_string(ls_key.c_str(), ls_key.size());
+        r.key("game_check"); r.value_bool(can);
+        r.key("points_before"); r.value_int(pts_before);
+        r.key("points_after"); r.value_int(pts_after);
+        r.key("perks_before"); r.value_int(static_cast<int32_t>(before.held.size()));
+        r.key("perks_after"); r.value_int(static_cast<int32_t>(after.held.size()));
+        r.key("held_after"); r.value_bool(held_after);
+        if (!ok) {
+            // the game's check gives its reason as text the bridge does not render; the bridge's own
+            // reads of the same conditions name it (lifestyle_points::refusal), else the perk's trigger
+            r.key("reason"); r.value_string(!can ? (reads_say ? reads_say : "game_check_refused_perk_trigger")
+                                                 : "not_held_after_execute");
+        }
+        r.end_object();
+        *response_out = r.take();
+    }
+    return ok;
 }
 
 // ===========================================================================
@@ -1286,6 +1485,77 @@ namespace {
         }
         return 0;
     }
+
+    // The province scope cache BUILD_TARGET_SCOPE({8, id}) indexes, read
+    // directly (pure reads; ck3::province_cache). 0 when `pid` is not an entry.
+    uintptr_t province_cache_entry(uint32_t pid, int32_t* count_out) {
+        if (count_out) *count_out = 0;
+        const uintptr_t gs = safe_read_offset<uintptr_t>(ck3::globals::GAME_STATE_ROOT);
+        if (!gs || !is_mapped(gs)) return 0;
+        const uintptr_t mgr = safe_read<uintptr_t>(gs + ck3::province_cache::PROVINCE_MANAGER);
+        if (!mgr || !is_mapped(mgr)) return 0;
+        const uintptr_t cache = mgr + ck3::province_cache::PROVINCE_CACHE;
+        const int32_t n = safe_read<int32_t>(cache + ck3::county::PROVINCE_COUNT);
+        if (n <= 0 || n > 1000000) return 0;
+        if (count_out) *count_out = n;
+        if (pid == 0 || pid >= static_cast<uint32_t>(n)) return 0;
+        const uintptr_t arr = safe_read<uintptr_t>(cache + ck3::county::PROVINCE_ARRAY);
+        if (!arr || !is_mapped(arr)) return 0;
+        const uintptr_t prov = safe_read<uintptr_t>(arr + static_cast<uintptr_t>(pid) * 8);
+        return (prov && is_mapped(prov)) ? prov : 0;
+    }
+
+    // The round trip of one barony of `county` (council_task_target.h). 0 unless verified.
+    uint32_t verified_barony_province(uint32_t county_tid, uint32_t barony_id) {
+        namespace ctt = bridge::council_task_target;
+        const uintptr_t barony = lookup_title_obj(barony_id);
+        if (!barony) return 0;
+        ctt::ProvinceRoundTrip t;
+        t.county_id = county_tid;
+        t.barony_id = barony_id;
+        t.province = safe_read<uintptr_t>(barony + ck3::title_obj::PROVINCE_PTR);
+        if (!t.province || !is_mapped(t.province)) return 0;
+        t.province_id = safe_read<uint32_t>(t.province + ck3::province::ID);
+        t.cache_entry = province_cache_entry(t.province_id, &t.cache_count);
+        t.province_barony = safe_read<uint32_t>(t.province + ck3::province::BARONY_TITLE_ID);
+        t.barony_parent = safe_read<uint32_t>(barony + ck3::title_obj::DE_JURE_PARENT);
+        return ctt::county_province_verified(t) ? t.province_id : 0;
+    }
+}
+
+// Per action_dispatch_internal.h: county title -> target province.
+uint32_t council_county_province(uint32_t county_title_id, const char** why) {
+    if (why) *why = nullptr;
+    const uintptr_t county = lookup_title_obj(county_title_id);
+    if (!county || get_title_tier(county) != 2) {
+        if (why) *why = "not_a_county";
+        return 0;
+    }
+    // The capital barony first: the game stores the capital's province (dump 1097:
+    // 1,391 of 1,395 county-task targets), then each de jure barony in order.
+    const uint32_t capital = safe_read<uint32_t>(county + ck3::title_obj::COUNTY_CAPITAL_BARONY);
+    if (uint32_t pid = verified_barony_province(county_title_id, capital)) return pid;
+    const int32_t n = safe_read<int32_t>(county + ck3::title_obj::SUB_TITLE_COUNT);
+    const uintptr_t subs = safe_read<uintptr_t>(county + ck3::title_obj::SUB_TITLE_ARRAY);
+    if (subs && is_mapped(subs) && n > 0 && n < 64) {
+        for (int32_t i = 0; i < n; i++) {
+            const uint32_t b = safe_read<uint32_t>(subs + static_cast<uintptr_t>(i) * 4);
+            if (uint32_t pid = verified_barony_province(county_title_id, b)) return pid;
+        }
+    }
+    if (why) *why = "no_province";
+    return 0;
+}
+
+uint32_t council_province_county(uint32_t province_id) {
+    const uintptr_t prov = province_cache_entry(province_id, nullptr);
+    if (!prov) return 0;
+    const uint32_t barony_id = safe_read<uint32_t>(prov + ck3::province::BARONY_TITLE_ID);
+    const uintptr_t barony = lookup_title_obj(barony_id);
+    if (!barony || safe_read<uintptr_t>(barony + ck3::title_obj::PROVINCE_PTR) != prov) return 0;
+    const uint32_t county_id = safe_read<uint32_t>(barony + ck3::title_obj::DE_JURE_PARENT);
+    const uintptr_t county = lookup_title_obj(county_id);
+    return (county && get_title_tier(county) == 2) ? (county_id & 0xFFFFFF) : 0;
 }
 
 bool do_set_council_task(const char* params_json, std::string* response_out) {
@@ -1351,13 +1621,13 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
 
     uintptr_t postype_ref = safe_read<uintptr_t>(tasktype + TASKTYPE_POSREF);
 
-    // lane-query item 1: NAME THE SEAT, AND REFUSE ONE THAT CANNOT TAKE THE TASK.
+    // NAME THE SEAT, AND REFUSE ONE THAT CANNOT TAKE THE TASK.
     // A council task belongs to exactly one position type (tasktype+0x30, the
     // same key query_council prints as position_key). The handler always
     // resolved the seat from the task and never read a `seat` argument, so a
     // caller asking for the chancellor to fabricate a claim got the court
     // chaplain (task_fabricate_claim is a chaplain task: dump
-    // ck3_20260625_152901_ivar867, tasktype+0x30 -> councillor_court_chaplain)
+    // the 867 start dump, tasktype+0x30 -> councillor_court_chaplain)
     // with nothing in the reply saying so, and its retry read
     // no_change_already_set. Now: the reply names the seat it used, and an
     // explicit `seat` that is not the task's seat is refused up front.
@@ -1409,7 +1679,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         }
     }
 
-    // #118: target-required tasks (task_fabricate_claim, task_conversion,
+    // Target-required tasks (task_fabricate_claim, task_conversion,
     // task_integrate_title, …) carry a non-zero target-mode discriminator at
     // tasktype+0x38 (0 = no target; 1 = single-target eval-predicate path, the
     // fabricate-claim case; 2 = title target). The engine's CanAssign runs the
@@ -1441,6 +1711,29 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         return false;
     }
 
+    // Per re_fabricate_claim.md §2: a county task's target scope is a PROVINCE
+    // (BUILD_TARGET_SCOPE type 8). The county named by target_title_id is passed as one
+    // of its own provinces, checked by the round trip; the title id passed as the
+    // province id would set the task on an unrelated county.
+    uint32_t target_province_id = 0;
+    if (target_disc == 1 && target_title_id > 0) {
+        const char* why = nullptr;
+        target_province_id = council_county_province(static_cast<uint32_t>(target_title_id), &why);
+        if (!target_province_id) {
+            if (response_out) {
+                ResponseBuilder r; r.begin_object();
+                r.key("success"); r.value_bool(false);
+                r.key("action"); r.value_string("set_council_task");
+                r.key("requested"); r.value_string(want.c_str(), want.size());
+                r.key("reason"); r.value_string(why ? why : "no_province");
+                r.key("target_title_id"); r.value_int(target_title_id);
+                r.end_object();
+                *response_out = r.take();
+            }
+            return false;
+        }
+    }
+
     // --- Resolve the ruler's position instance by walking the council (pure reads) ---
     // find_council_position (above; shared with the script path's pin read-back).
     uintptr_t council = 0;
@@ -1463,11 +1756,11 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     // Everything that calls game code goes under the crash net + RNG scope.
     // Arm the fake RNG scope BEFORE sigsetjmp so the crash branch can restore it —
     // otherwise a SIGSEGV mid-call leaves RandomScopeManager pointing at our global
-    // fake scope and the game thread wedges. (harden, 20260614)
+    // fake scope and the game thread wedges.
     uint64_t saved_rng = 0;
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_council_task", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -1494,13 +1787,16 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         if (cur && is_mapped(cur)) prior = ad_read_std_string(cur + CTT_NAME);
     }
 
-    // --- Build the target scope (existing title object; type 8 = title) ---
+    // --- Build the target scope (type 8 = PROVINCE) ---
     uint8_t scope_in[16];
     memset(scope_in, 0, sizeof(scope_in));
     void* target_scope = nullptr;
     if (target_title_id > 0) {
         *reinterpret_cast<int16_t*>(scope_in) = 8;
-        *reinterpret_cast<uint32_t*>(scope_in + 8) = static_cast<uint32_t>(target_title_id);
+        // A county task gets the county's verified province; any other target kind keeps
+        // the id it was given (court tasks: not reached by this path's callers).
+        *reinterpret_cast<uint32_t*>(scope_in + 8) =
+            target_province_id ? target_province_id : static_cast<uint32_t>(target_title_id);
         target_scope = build_scope(scope_in);
     } else {
         target_scope = reinterpret_cast<void*>(safe_read_offset<uintptr_t>(ck3::globals::NO_TARGET_SCOPE));
@@ -1530,7 +1826,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     uint32_t ctx_b = safe_read<uint32_t>(position + ck3::funcs::COUNCIL_POS_CTX_B);  // ruler char id
     uint32_t pos_id = safe_read<uint32_t>(position + ck3::globals::COUNCIL_POS_KEY);
 
-    // #72/B1 death-guard (SAFE, pure-read): a task stored on a DEAD or EMPTY
+    // Death-guard (SAFE, pure-read): a task stored on a DEAD or EMPTY
     // councillor seat is inert — no councillor executes it, so it produces no
     // progress (the same silent-stall class as the seat_vacant case). ctx_a is
     // the seated councillor char-id. Resolve it and reject up front if the seat
@@ -1565,8 +1861,8 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
                 r.key("warning"); r.value_string(
                     "The seat's councillor is DEAD or the seat is EMPTY — this task "
                     "would be inert (no councillor to execute it, no progress). Seat a "
-                    "live councillor first: act(type='appoint', position_id=<this seat>, "
-                    "character_id=<courtier>), or wait for the AI (Council subsystem) "
+                    "live councillor first: do(intent='appoint', args={'seat': <this seat>, "
+                    "'character_id': <courtier>}), or wait for the AI (Council subsystem) "
                     "to fill it, then re-assign the task.");
                 r.end_object();
                 *response_out = r.take();
@@ -1635,7 +1931,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
     bool unchanged = readback_ok && (prior == task_used);
     bool applied = changed;
 
-    // COUNCILRE: pin THIS seat against the native per-seat task selection
+    // Pin THIS seat against the native per-seat task selection
     // (FUN_04dc9fc0), which can switch the task on the ruler's next bucket-3 pass.
     // Armed on the read-back (a re-set of the same task pins too), only for a
     // controlled character; the other seats keep their AI. council_pin.h.
@@ -1652,7 +1948,7 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         // localized reject_reason, but the EARLIER target validate (FUN_05cb80e0)
         // returns false with NO string — so for target-required tasks an empty
         // reject means "the game's target oracle rejected this title/target".
-        // Surface that explicitly (#118) so the agent stops seeing a bare
+        // Surface that explicitly so the agent stops seeing a bare
         // assignable:false: pick a different (assignable) target, or — for a
         // tribal/administrative realm or wrong county — accept that fabrication is
         // not available there. (Feudal/clan realm + an assignable county is the
@@ -1683,7 +1979,8 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         if (!prior.empty()) { r.key("prior_task"); r.value_string(prior.c_str(), prior.size()); }
         if (!reject.empty()) { r.key("reject_reason"); r.value_string(reject.c_str(), reject.size()); }
         if (target_title_id > 0) { r.key("target_title_id"); r.value_int(target_title_id); }
-        // lane-query item 1: the seat this task was applied to (or tried).
+        if (target_province_id) { r.key("target_province_id"); r.value_uint(target_province_id); }
+        // The seat this task was applied to (or tried).
         if (!task_seat.empty()) { r.key("seat"); r.value_string(task_seat.c_str(), task_seat.size()); }
         r.key("position_id"); r.value_uint(pos_id & 0xFFFFFF);
         r.key("ai_pin"); r.value_string(ai_pin);
@@ -1698,14 +1995,14 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
         // Vacant-seat warning: ctx_a is the seated councillor id. A task stored on
         // an EMPTY seat is inert — no councillor executes it, so it produces no
         // progress (the silent-stall the agent kept hitting). Tell the agent to
-        // seat the councillor first via act(type="appoint", ...).
+        // seat the councillor first via do(intent="appoint", ...).
         bool seat_vacant = (ctx_a == 0 || ctx_a == 0xFFFFFF);
         r.key("seat_vacant"); r.value_bool(seat_vacant);
         if (seat_vacant) {
             r.key("warning"); r.value_string(
                 "Seat is VACANT — this task has no councillor to execute it and will "
-                "produce no progress. Seat one first: act(type='appoint', position_id="
-                "<this seat>, character_id=<courtier>), or wait for the AI (Council "
+                "produce no progress. Seat one first: do(intent='appoint', args={'seat': "
+                "<this seat>, 'character_id': <courtier>}), or wait for the AI (Council "
                 "subsystem) to fill it, then re-assign the task.");
         }
         r.end_object();
@@ -1728,13 +2025,15 @@ bool do_set_council_task(const char* params_json, std::string* response_out) {
 //     COUNCIL_TASK_SCOPE_PREP(scope_buf, uVar3,
 //                             *(u32*)(position + COUNCIL_POS_CTX_A), target_scope);
 //     valid = COUNCIL_TASK_TARGET_VALIDATE(tasktype, scope_buf, 0);   // 1 = eligible
-// target_scope = BUILD_TARGET_SCOPE(&{i16 8; u32 county_title_id}) returns the
-// existing title object (no allocation) — so iterating thousands of counties is
-// leak-free. Game calls advance RNG → wrapped in arm_fake_random_scope, watchdog
+// target_scope = BUILD_TARGET_SCOPE(&{i16 8; u32 PROVINCE id}) returns the existing
+// province scope (no allocation) — so iterating thousands of counties is leak-free.
+// Type 8 is a PROVINCE; each county goes in as its own verified province
+// (council_county_province). At first the county TITLE id went in as the
+// province id, so every verdict was about another county. Game calls advance RNG → wrapped in arm_fake_random_scope, watchdog
 // + sigsetjmp net (identical safety domain to do_set_council_task). A game-thread
 // read (snapshot.cpp is_game_thread_read): drained on the game thread on a tick,
-// because served inline while paused it tripped the scope latch (live867
-// l6fin4-latch-3).
+// because served inline while paused it tripped the scope latch.
+//
 // ===========================================================================
 bool do_query_fabricate_targets(const char* params_json, std::string* response_out) {
     FaultScope fault_scope("query_fabricate_targets", response_out);   // A game-thread read; a fault marks the reply degraded
@@ -1754,7 +2053,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     int scan_budget = json_get_int(params_json, "scan_budget");
     if (scan_budget <= 0 || scan_budget > 200000) scan_budget = 50000;
     constexpr size_t HIT_STORAGE_CAP = 512;
-    // When true, return ONLY de-jure-of-actor targets
+    // when true, return ONLY de-jure-of-actor targets
     // (relevance 0) — the natural reconquest/consolidation frontier.
     bool de_jure_only = json_get_bool(params_json, "de_jure_only", false);
     // war_validity_discovery: by default targets[] is the ACTIONABLE
@@ -1763,6 +2062,13 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     // set_council_task won't apply. Pass assignable_only=false to also see the
     // oracle-only diagnostic rows.
     bool assignable_only = json_get_bool(params_json, "assignable_only", true);
+    // `title_id` judges that one county only and answers `verdict` for it
+    // (eligible and assignable, false included), so one county's game check is one read.
+    const int only_tid_arg = json_get_int(params_json, "title_id");
+    const uint32_t only_tid = only_tid_arg > 0 ? (static_cast<uint32_t>(only_tid_arg) & 0xFFFFFF) : 0;
+    struct OneVerdict { bool seen = false; const char* skipped = nullptr; uint32_t holder = 0;
+                        uint32_t province_id = 0; bool eligible = false; bool assignable = false; };
+    OneVerdict one;
 
     void* actor = resolve_actor(params_json);
     if (reject_player_actor(actor, "query_fabricate_targets", response_out)) return false;
@@ -1856,7 +2162,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
             r.key("action"); r.value_string("query_fabricate_targets");
             r.key("reason"); r.value_string("no_matching_position");
             r.key("requested"); r.value_string(want.c_str(), want.size());
-            // The seat evaluated and every seat the
+            // the seat evaluated and every seat the
             // task family has, so a ruler whose government seats the task
             // elsewhere (a ministry's minister_justice) is told which to pass.
             r.key("task_seat"); r.value_string(fab_pick.chosen->seat.c_str(), fab_pick.chosen->seat.size());
@@ -1875,14 +2181,14 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     uint32_t pos_id = safe_read<uint32_t>(position + ck3::globals::COUNCIL_POS_KEY);
     // war_validity_discovery: ctx_a (+0x38) is the SEATED councillor id; sentinel
     // 0/0xFFFFFF == the seat is VACANT. A vacant seat means set_council_task would
-    // store an INERT task on an empty chair (lesson / council-fabrication
+    // store an INERT task on an empty chair (lesson council-fabrication
     // silent stall). The sibling WRITE handler do_set_council_task already emits
     // this signal (action_handlers.cpp:1067); the READ surface omitted it. Mirror
     // it so the discovery surface stops lying about assignability.
     bool seat_vacant = (ctx_a == 0 || ctx_a == 0xFFFFFF);
     uint32_t actor_id = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(actor) + ck3::character::ID);
 
-    // Compute the actor's DE-JURE region (the set of its
+    // compute the actor's DE-JURE region (the set of its
     // de-jure duchy + kingdom title IDs) so we can surface NEARBY / strategically
     // relevant targets first instead of the lowest-title-id (far English) counties
     // the old title_id sort surfaced. The de-jure-region walk: enumerate the
@@ -1929,7 +2235,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         }
     }
 
-    // Relevance of a candidate county to the actor.
+    // relevance of a candidate county to the actor.
     //   0 = de-jure within the actor's own duchy/kingdom region (reconquest frontier)
     //   2 = everything else (fallback, ordered by title_id)
     // (Tier 1 = realm-adjacent is intentionally skipped — computing 4-way border
@@ -1976,15 +2282,17 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     }
 
     // Collect eligible counties under the crash net + RNG scope.
-    struct Hit { uint32_t title_id; uint32_t holder_id; std::string name; bool assignable; int relevance; };
+    struct Hit { uint32_t title_id; uint32_t holder_id; std::string name; bool assignable; int relevance;
+                 uint32_t province_id; };
     std::vector<Hit> hits;
     size_t n_unassignable_stored = 0;  // Cap applies only to these
     uint32_t scanned = 0, considered = 0, total_eligible = 0, total_assignable = 0;
+    uint32_t no_province = 0;          // Counties whose province did not verify (not judged)
 
     // Arm RNG scope BEFORE sigsetjmp so the crash branch restores it (else a
-    // SIGSEGV mid-scan leaves the game thread wedged). (harden, 20260614)
+    // SIGSEGV mid-scan leaves the game thread wedged).
     uint64_t saved_rng = 0;
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -2014,16 +2322,25 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         scanned++;
         uint32_t title_id = safe_read<uint32_t>(entry + ck3::title_obj::TITLE_ID);
         if (title_id == 0 || title_id == 0xFFFFFFFF) continue;
+        if (only_tid && (title_id & 0xFFFFFF) != only_tid) continue;
         uint32_t holder = safe_read<uint32_t>(entry + ck3::title_obj::HOLDER_CHAR_ID);
+        if (only_tid) { one.seen = true; one.holder = holder & 0xFFFFFF; }
         // Skip unheld counties and counties the actor already holds (no claim to fab).
-        if (holder == 0xFFFFFFFF) continue;
-        if ((holder & 0xFFFFFF) == (actor_id & 0xFFFFFF)) continue;
+        if (holder == 0xFFFFFFFF) { if (only_tid) one.skipped = "unheld"; continue; }
+        if ((holder & 0xFFFFFF) == (actor_id & 0xFFFFFF)) { if (only_tid) one.skipped = "held_by_actor"; continue; }
+        // Per re_fabricate_claim.md §2: type 8 is a PROVINCE scope. The county is
+        // judged through one of its provinces; the title id passed as the
+        // province id would judge an unrelated county (c_leinster 508 -> province 508,
+        // c_dorostorum; c_athlone 469 -> c_duklja).
+        const uint32_t province_id = council_county_province(title_id, nullptr);
+        if (!province_id) { no_province++; if (only_tid) one.skipped = "no_province"; continue; }
+        if (only_tid) one.province_id = province_id;
         considered++;
 
         uint8_t scope_in[16];
         memset(scope_in, 0, sizeof(scope_in));
-        *reinterpret_cast<int16_t*>(scope_in) = 8;                       // type 8 = title
-        *reinterpret_cast<uint32_t*>(scope_in + 8) = title_id;
+        *reinterpret_cast<int16_t*>(scope_in) = 8;                       // type 8 = province
+        *reinterpret_cast<uint32_t*>(scope_in + 8) = province_id;
         void* target_scope = build_scope(scope_in);
         if (!target_scope) continue;
 
@@ -2033,7 +2350,8 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         char ok = validate(reinterpret_cast<void*>(tasktype), scope_buf, 0);
         if (ok) {
             Hit h; h.title_id = title_id; h.holder_id = holder & 0xFFFFFF; h.assignable = false;
-            // Relevance key (0=de-jure-of-actor, 2=other).
+            h.province_id = province_id;
+            // relevance key (0=de-jure-of-actor, 2=other).
             h.relevance = county_relevance(title_id);
             // The title's display name (a game std::string, read through the build's ABI)
             h.name = ad_read_std_string(entry + ck3::title_obj::TITLE_DISPLAY_NAME);
@@ -2054,6 +2372,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
                 ::operator delete(reinterpret_cast<void*>(vsp));
             total_eligible++;
             if (h.assignable) total_assignable++;
+            if (only_tid) { one.eligible = true; one.assignable = h.assignable; }
             // ALWAYS store assignable hits — they are the
             // actionable, range-respecting targets and are inherently few
             // (bounded by total_assignable). The HIT_STORAGE_CAP applies ONLY
@@ -2075,7 +2394,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     g_in_protected_region = false;
     watchdog_disarm();
 
-    // Optional de_jure_only filter — drop everything that
+    // optional de_jure_only filter — drop everything that
     // isn't in the actor's own de-jure region (relevance 0). The agent uses this
     // to get ONLY consolidation/reconquest targets.
     if (de_jure_only) {
@@ -2096,7 +2415,7 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
     // Sort assignable-first (the actionable, range-respecting targets — these
     // are what was being truncated off behind far oracle-only hits), THEN by
     // relevance ascending (de-jure-of-actor counties before far foreign ones —
-    //: the old title_id-only sort surfaced the lowest-id =
+    // The old title_id-only sort surfaced the lowest-id =
     // far English counties for a King of Italy; relevance pulls Italian counties
     // to the front), then by title_id for stable ordering. Agent reads the front.
     std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
@@ -2120,13 +2439,18 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         r.key("actor_id"); r.value_uint(actor_id & 0xFFFFFF);
         r.key("counties_scanned"); r.value_uint(scanned);
         r.key("counties_considered"); r.value_uint(considered);
+        // The contract of this reply: each county was judged through its own
+        // province (council_county_province); a reader may key on this field to tell a
+        // reply of this bridge from one of a bridge that judged province <title id>.
+        r.key("target_scope"); r.value_string("county_province");
+        r.key("counties_without_province"); r.value_uint(no_province);
         // Totals reflect the FULL scan (not just the returned slice), so the
         // agent knows the true scope. assignable_count is the actionable subset.
         r.key("eligible_count"); r.value_uint(total_eligible);
         r.key("assignable_count"); r.value_uint(total_assignable);  // FULL CanAssign (apply would stick)
         // war_validity_discovery: disclose seat occupancy. When the executor seat
         // is vacant, set_council_task stores an INERT task — no target is truly
-        // actionable regardless of per-row assignable (lesson).
+        // actionable regardless of per-row assignable.
         r.key("seat_vacant"); r.value_bool(seat_vacant);
         if (seat_vacant) {
             r.key("seat_warning");
@@ -2136,6 +2460,26 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
         // scan_truncated: the validate-call budget was exhausted before the whole
         // county DB was scanned, so more targets may exist beyond what we saw.
         r.key("scan_truncated"); r.value_bool(scan_truncated);
+        if (only_tid) {
+            // The one county asked for. eligible = the task's target check
+            // (county_target filter, valid, potential) through the county's own province;
+            // assignable = the full CanAssign (target + councillor). `skipped` names why
+            // it was not judged; not_a_county when no county has that id.
+            r.key("verdict"); r.begin_object();
+            r.key("title_id"); r.value_uint(only_tid);
+            if (!one.seen) {
+                r.key("skipped"); r.value_string("not_a_county");
+            } else if (one.skipped) {
+                r.key("holder_id"); r.value_uint(one.holder);
+                r.key("skipped"); r.value_string(one.skipped);
+            } else {
+                r.key("holder_id"); r.value_uint(one.holder);
+                r.key("target_province_id"); r.value_uint(one.province_id);
+                r.key("eligible"); r.value_bool(one.eligible);
+                r.key("assignable"); r.value_bool(one.assignable);
+            }
+            r.end_object();
+        }
         // returned: how many of the sorted (assignable-first) hits we emit.
         size_t emit_n = hits.size() < static_cast<size_t>(max_results) ? hits.size() : static_cast<size_t>(max_results);
         r.key("returned"); r.value_uint(static_cast<uint32_t>(emit_n));
@@ -2146,10 +2490,11 @@ bool do_query_fabricate_targets(const char* params_json, std::string* response_o
             r.key("title_id"); r.value_uint(h.title_id);
             if (!h.name.empty()) { r.key("title_key"); r.value_string(h.name.c_str(), h.name.size()); }
             r.key("holder_id"); r.value_uint(h.holder_id);
+            r.key("target_province_id"); r.value_uint(h.province_id);
             // target-eligible (oracle) is implied by presence; assignable adds the
             // councillor-side check — true ⇒ set_council_task will apply + stick.
             r.key("assignable"); r.value_bool(h.assignable);
-            // Relevance to the actor — de_jure=true means the
+            // relevance to the actor — de_jure=true means the
             // county is within the actor's own de-jure duchy/kingdom region (the
             // reconquest/consolidation frontier); these sort to the front.
             r.key("relevance"); r.value_uint(static_cast<uint32_t>(h.relevance));
@@ -2230,7 +2575,7 @@ namespace {
     bool resolve_build_target(const char* params_json, const char* action, const std::string& want,
                               BuildTarget& t, std::string* out) {
         // json_get_int answers -1 for an absent key: masked, that was the id
-        // 0xFFFFFF and missing_location_id never fired (the A3 class;
+        // 0xFFFFFF and missing_location_id never fired (see
         // optional_id.h, tested by test_optional_id).
         t.barony_id = bridge::optional_id(json_get_int(params_json, "location_id"));
         if (want.empty()) { build_refusal(out, action, "missing_building", want, 0); return false; }
@@ -2378,8 +2723,8 @@ namespace {
 // this one call, one row each. A game-thread read (snapshot.cpp
 // is_game_thread_read): the validity and the price run under the fake random
 // scope, which is only safe where the engine's RandomScopeManager slot is stable.
-// Served inline on the IPC thread while paused (until), an
-// engine scope another thread held was popped under the bridge's arm and the
+// Served inline on the IPC thread while paused, an
+// engine scope another thread held would be popped under the bridge's arm and the
 // restore tripped the scope latch for the rest of the process.
 namespace {
     constexpr size_t kConstructionCheckMaxBuildings = 128;
@@ -2518,7 +2863,7 @@ bool do_construct_building(const char* params_json, std::string* response_out) {
     const char* want = json_get_string(params_json, "building");
     if (!resolve_build_target(params_json, "construct_building", want ? want : "", t, response_out)) return false;
     if (reject_player_actor(t.actor, "construct_building", response_out)) return false;
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("construct_building", response_out);
     if (bridge::scope_latched()) {
         bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
@@ -2537,7 +2882,7 @@ bool do_construct_building(const char* params_json, std::string* response_out) {
     }
     const double gold_before = actor_gold(t.actor);
     // The validity holds the price against the treasury itself ("Missing gold
-    // 318", live l6fix2-live-1), so its verdict is the one refusal.
+    // 318", read live), so its verdict is the one refusal.
     const char* refusal = ev.valid ? nullptr : "construction_refused";
 
     bool started = false, threw = false, crashed = false;
@@ -2609,7 +2954,7 @@ bool do_construct_building(const char* params_json, std::string* response_out) {
     return started;
 }
 
-// Declare_war's two waits, sized so the whole call fits
+// declare_war's two waits, sized so the whole call fits
 // the client's 8 s read deadline: the pre-validation on the game thread (its CB
 // check is itself bounded by kGameThreadEvalBudgetMs) and the intent's verdict.
 static constexpr int kDeclareWarPrevalWaitMs = 3000;
@@ -2618,7 +2963,7 @@ static_assert(kDeclareWarPrevalWaitMs + kDeclareWarIntentWaitMs < 8000,
               "declare_war must answer inside the client's 8 s deadline");
 
 bool do_declare_war(const char* params_json, std::string* response_out) {
-    // Force_player_path bypass.
+    // force_player_path bypass.
     // The default declare_war path queues a WAR_DECLARE intent → AI war
     // pipeline (target eval + post_decl with force=1), which routinely
     // returns dispatched_but_no_war when the AI's evaluator rejects the
@@ -2847,7 +3192,7 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
     // incapable of reaching WAR_CREATE_CORE. The AI
     // pipeline is one of the 25 type-7 callers that does reach war creation.
     // Caveat: the AI selects the actual target and CB; target_id and
-    // cb_title_id become suggestions rather than commands (FIX-1
+    // cb_title_id become suggestions rather than commands (
     // Option A).
     bool queued = queue_intent(
         actor_id, static_cast<uint32_t>(target_id),
@@ -2989,7 +3334,7 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
     if (!war_created && global_war_created) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] declare_war: global WAR_DB gained a war "
             "(global %d→%d) but actor's active_wars did not change (%d→%d) — NOT attributed to this dispatch "
-            "(likely concurrent AI-initiated war; see ck-65la)\n",
+            "(likely concurrent AI-initiated war)\n",
             global_wars_before, global_wars_after, wars_before, wars_after);
     }
 
@@ -3024,7 +3369,7 @@ bool do_declare_war(const char* params_json, std::string* response_out) {
                                            "read. Read the actor's wars (query_wars) to see.");
         } else if (intent_succeeded) {
             // AI war pipeline ran but no war count increase. Under the
-            // WAR_DECLARE routing (FIX-1), this usually means
+            // WAR_DECLARE routing , this usually means
             // the AI target-evaluation rejected the suggested target or
             // picked zero candidates; target_id is a hint, not a command.
             r.key("reason"); r.value_string("ai_pipeline_ran_but_did_not_declare");
@@ -3165,7 +3510,7 @@ bool do_unpause_game_with_alarm(const char* params_json, std::string* out) {
 #ifdef CK3_BRIDGE_DEBUG_VERBS  // Input injection is compiled out of release builds
 
 // =============================================================================
-// X11 Mouse Click Injection (rewritten under)
+// X11 Mouse Click Injection
 //
 // CK3 does not link or load SDL2 (verified: ck3 binary's NEEDED list and the
 // process map both contain zero libSDL*). The original SDL_PushEvent path was
@@ -3305,7 +3650,7 @@ bool xtest_click_locked(XInjector& inj, int x, int y, unsigned int button,
 // When the X11/XTest path above is unavailable — typically because the bridge
 // process inherited a context without DISPLAY/XAUTHORITY or the X server is
 // otherwise unreachable — `select_observe_default` falls back to /dev/uinput.
-// The CK3 process runs as `gaming`, which has rw on /dev/uinput via the udev
+// The CK3 process's user needs rw on /dev/uinput (a udev rule gives it),
 // rule in SETUP.md, so this path does not require an X session at all.
 //
 // We create a synthetic USB-shaped mouse, park the cursor at the screen
@@ -3349,7 +3694,7 @@ bool ensure_uinput_ready(UInputInjector& inj) {
         inj.failure_reason = "uinput_open_failed";
         if (g_logfile) fprintf(g_logfile,
             "[CK3-Bridge] uinput inject: open(/dev/uinput) failed: %s "
-            "(gaming user needs `user:gaming:rw-` ACL on /dev/uinput — see SETUP.md)\n",
+            "(the user running the game needs read-write access to /dev/uinput)\n",
             strerror(errno));
         return false;
     }
@@ -3715,8 +4060,8 @@ bool do_select_observe_default(const char* params_json, std::string* response_ou
 
 bool do_set_character_ai(const char* params_json) {
     // ── `< 0` ACCEPTS ZERO, AND ZERO IS NOT A CHARACTER ────────────
-    // This was the root of four faults. All four calls were
-    // {"character_id":0,"enabled":true} (from armb1's SEALED bundle):
+    // This was the root of the four faults. All four calls were
+    // {"character_id":0,"enabled":true} (from one recorded run's SEALED bundle):
     // 0 is not < 0, so this guard passed it, lookup_character(0) returned
     // something neither null nor the sentinel, and the AI_CHAR_TOGGLE store
     // faulted on the controller derived from it.
@@ -3741,7 +4086,7 @@ bool do_set_character_ai(const char* params_json) {
         if (g_logfile) fprintf(g_logfile,
             "[CK3-Bridge] set_character_ai: REFUSING — character_id %s "
             "(parsed %d); 0 is not a character and would reach the "
-            "AI_CHAR_TOGGLE store (ck-vf92)\n",
+            "AI_CHAR_TOGGLE store\n",
             cid_present ? "present but not a valid character id" : "absent",
             cid);
         return false;
@@ -3761,11 +4106,11 @@ bool do_set_character_ai(const char* params_json) {
     // STORE. So a non-null-but-invalid controller is not a bad read, it is a
     // WRITE to unmapped memory, and the null check above cannot see it.
     //
-    // MEASURED, arm B on deploy-20: four byte-identical recovered faults,
+    // MEASURED in a pilot: four byte-identical recovered faults,
     // thread=ipc_reader, rip_off 0x4d1f190 == ck3::funcs::AI_CHAR_TOGGLE, with
     // fault_addr - rdi == 0x28 — exactly the documented store, on a controller
-    // pointer that was NOT MAPPED. gave the thread and instruction,
-    // frame word named this call site, and range check is
+    // pointer that was NOT MAPPED. The fault record gave the thread and instruction,
+    // The frame word named this call site, and the range check is
     // what revealed the return address lay in the BRIDGE rather than in CK3.
     //
     // Same defect as check_delayed_unpause: `if (idler)` guarding a
@@ -3788,7 +4133,7 @@ bool do_set_character_ai(const char* params_json) {
         if (g_logfile) fprintf(g_logfile,
             "[CK3-Bridge] set_character_ai: REFUSING — character %d's AI "
             "controller %p is non-null but its AI_ENABLED field is unreadable, "
-            "so AI_CHAR_TOGGLE's store would fault (ck-bl15)\n", cid, ctrl);
+            "so AI_CHAR_TOGGLE's store would fault\n", cid, ctrl);
         return false;
     }
     if (ctrl_writable_field_readable) {
@@ -3812,7 +4157,7 @@ bool do_set_character_ai(const char* params_json) {
 // prestige/piety cost, does NOT set the ~10yr cooldown, and does NOT run the
 // powerful-vassals vote or apply the crown-authority vassal-opinion penalty — it
 // is the DEBUG-console path, not the player Change-Law interaction. (The earlier
-// re_ck-iglm_add_law_modes.md "cost+cooldown+event" claim was refuted.) So this
+// add-law modes finding's "cost+cooldown+event" claim was refuted.) So this
 // handler is uncosted: it is GATED below for the high-stakes laws (crown authority,
 // succession), because no validated costed command path exists (audit §4). mode 4 stays
 // available via an explicit `mode` param for harness setup.
@@ -3827,7 +4172,7 @@ static bool is_high_stakes_law(const char* law_name) {
     // costs prestige (increase_tribal_authority_prestige_cost) + a ~10yr cooldown and
     // applies a vassal-opinion penalty — exactly the kind of change that MUST go
     // through the engine's costed CAddLawCommand pipeline, never the uncosted setter.
-    // Without this entry, act(type=law, law_name=tribal_authority_3) fell through to
+    // Without this entry, a law change (law_name=tribal_authority_3) fell through to
     // the illegitimate AddLawToCharacter path (the "cannot enact" failures the agent
     // hit on the feudalize prerequisite — tribal_authority_3 gates
     // convert_whole_realm_to_feudalism_decision).
@@ -3862,7 +4207,7 @@ static bool reject_forced_uncosted_high_stakes_law(const char* law_name, const c
     return true;
 }
 
-// ── #109: SPECIFIC law-refusal reason harvesting ────────────────────────────────
+// ── SPECIFIC law-refusal reason harvesting ────────────────────────────────
 // When the CAddLawCommand CanExecute pre-gate (FUN_06e30000) rejects a change, the
 // coarse "not_allowed_or_unaffordable" hides WHICH sub-check failed. The CanExecute
 // structure (decompiled) is:
@@ -4041,7 +4386,13 @@ static void diagnose_law_refusal(void* actor, uintptr_t law_obj, uintptr_t char_
 
     // 2. Tier slot: law+0xb08 must be < 10 and bit set in 0x23d. (Mirrors CANEXEC.)
     {
+#if defined(_WIN32)
+        // +0xB10 on Windows (ck3_offsets_win.h struct_layout::REALM_LAW_PASS_SLOT:
+        // the inlined slot test reads [law+0xB10], levels 0..9 through a jump table = mask 0x23d)
+        uint8_t level = safe_read<uint8_t>(law_obj + ck3_win::struct_layout::REALM_LAW_PASS_SLOT);
+#else
         uint8_t level = safe_read<uint8_t>(law_obj + 0xb08);
+#endif
         bool slot_ok = (level < 10) && (((0x23dUL >> (level & 0x3f)) & 1) != 0);
         if (!slot_ok) {
             d.tier_blocked = true;
@@ -4078,10 +4429,9 @@ static void diagnose_law_refusal(void* actor, uintptr_t law_obj, uintptr_t char_
     // 4. Harvest the specific failing loc-key from the law's scripted trigger blocks
     //    (can_pass @+0x230, can_keep/can_have @+0x3f0 and +0x4d0). The first block to
     //    yield a loud-failure key wins for the coarse reason; both are surfaced raw.
-    // #109 CRASH FIX: the scripted-trigger-block harvest (EVAL_WITH_FAILURES over the
+    // The scripted-trigger-block harvest (EVAL_WITH_FAILURES over the
     // law's can_pass/can_keep/can_have blocks) HUNG the game thread on a live at-war
-    // law-refusal (SIGALRM masked → uncatchable → hard crash). It was never live-tested
-    // in the original #109 commit. GATED OFF by default; the cheap sub-checks above
+    // law-refusal (SIGALRM masked → uncatchable → hard crash). GATED OFF by default; the cheap sub-checks above
     // (not_a_ruler / not_eligible_yet / already_active) plus the at-war pre-check in
     // do_change_realm_law provide the reason safely. Set the env opt-in to re-enable for
     // bounded RE of the hang.
@@ -4135,16 +4485,44 @@ static void engine_virtual_dtor(void* obj) {
     if (dtor) reinterpret_cast<void (*)(void*)>(dtor)(obj);
 }
 
+#if defined(_WIN32)
+// A CGameCommand the bridge builds in a stack buffer on MSVC, where the engine
+// inlines every command constructor (re/findings/windows/re_win2_veto_events.md §4). The
+// layout is the Linux one (the clones copy +0x8 byte, +0xC, +0x10, +0x14, then both
+// vtables and the class's fields at the Linux offsets); the slots are MSVC's:
+//   primary [0] scalar deleting destructor (this, flags): 0 = destroy in place, 1 = free
+//   primary [6] CanExecute(this, why) -> al (Linux vt[7])
+//   helper (+0x18) [1] Execute(helper this) (Linux calls the body with the primary this)
+// Each class's slots are read off its own RTTI vtable in ck3_offsets_win.h.
+// The slots are read through safe_read (G-raw): a slot that does not read is a 0 that faults
+// inside the caller's guarded region, never a jump through a raw load.
+static uintptr_t win_cmd_slot(const uint8_t* cmd, size_t sub, size_t slot) {
+    const uintptr_t vt = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(cmd) + sub);
+    return vt ? safe_read<uintptr_t>(vt + slot * 8) : 0;
+}
+static bool win_cmd_can_execute(uint8_t* cmd) {
+    return reinterpret_cast<bridge::EngineBoolFn<void*, void*>>(win_cmd_slot(cmd, 0, 6))(cmd, nullptr);
+}
+static void win_cmd_execute(uint8_t* cmd) {
+    reinterpret_cast<void (*)(void*)>(win_cmd_slot(cmd, 0x18, 1))(cmd + 0x18);
+}
+static void win_cmd_destroy(uint8_t* cmd) {
+    reinterpret_cast<void* (*)(void*, uint32_t)>(win_cmd_slot(cmd, 0, 0))(cmd, 0);
+}
+#endif
+
 static bool dispatch_costed_law_command(void* actor, uintptr_t law_obj,
                                         bool* out_crashed, bool* out_eligible) {
     if (out_crashed)  *out_crashed = false;
     if (out_eligible) *out_eligible = true;
     uint32_t actor_id = safe_read<uint32_t>(reinterpret_cast<uintptr_t>(actor) + 0x18);  // FULL engine id
 
-    auto ctor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::ADD_LAW_COMMAND_CTOR));
     auto dispatch = reinterpret_cast<void(*)(void*, void*, int, int)>(
         bridge::game_fn(ck3::funcs::GAME_COMMAND_DISPATCH));
+#if !defined(_WIN32)
+    auto ctor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::ADD_LAW_COMMAND_CTOR));
     auto base_dtor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));  // FUN_0765b650
+#endif
 
     uint8_t cmd[0x48]; memset(cmd, 0, sizeof(cmd));
     void* out_a = nullptr;
@@ -4165,6 +4543,49 @@ static bool dispatch_costed_law_command(void* actor, uintptr_t law_obj,
     }
 
     bool dispatched = false;
+#if defined(_WIN32)
+    // The same command on MSVC (ck3_offsets_win.h funcs::ADD_LAW_CMD_VTABLE and
+    // re/findings/windows/re_win2_veto_events.md). MSVC inlines the constructor at every
+    // use (no copy to call): the base fields are the zeroed buffer (+0x8 byte, +0xC, +0x14,
+    // as the engine's own inlined copies store them), then both vtables, the actor at
+    // +0x20 and the CLaw* at +0x28 (the clone [8] copies exactly these). Slots, read off
+    // the MSVC vtable: [6] CanExecute(cmd, ctx) -> al (the Linux vt[7] body: the actor
+    // through CharacterDB, then the law gate with a null-checked ctx), [8] the clone as a
+    // member (this = source, out) -> out, [0] the scalar deleting destructor (this, flags).
+    // The dispatch takes the clone by value (MSVC: the callee destroys it), so the slot is
+    // empty after it; the stack command gets vt[0](cmd, 0), its non-freeing destructor.
+    try {
+        *reinterpret_cast<uintptr_t*>(cmd) = g_base_addr + ck3::funcs::ADD_LAW_CMD_VTABLE;
+        *reinterpret_cast<uintptr_t*>(cmd + 0x18) = g_base_addr + ck3_win::funcs::ADD_LAW_CMD_VTABLE2;
+        *reinterpret_cast<uint32_t*>(cmd + 0x20) = actor_id;     // CAddLawCommand char id
+        *reinterpret_cast<uintptr_t*>(cmd + 0x28) = law_obj;     // CAddLawCommand CLaw*
+        void** vt = *reinterpret_cast<void***>(cmd);
+        auto destroy = reinterpret_cast<void* (*)(void*, uint32_t)>(vt[0]);
+        auto can_exec = reinterpret_cast<bridge::EngineBoolFn<void*, void*>>(vt[6]);
+        if (!can_exec(cmd, nullptr)) {
+            if (out_eligible) *out_eligible = false;
+            destroy(cmd, 0);
+            if (rng_armed) restore_fake_random_scope(saved_rng);
+            g_in_protected_region = false; watchdog_disarm();
+            ADLOG("change_realm_law(costed): CanExecute rejected (ineligible/unaffordable)\n");
+            return false;
+        }
+        auto clone = reinterpret_cast<void** (*)(void*, void**)>(vt[8]);
+        clone(cmd, &out_b);
+        dispatch(reinterpret_cast<void*>(g_base_addr + ck3::globals::COMMAND_DISPATCH_MGR), &out_b, 0xe, 0);
+        if (out_b) {   // never on the measured dispatch; a leak beats a jump through a bad slot
+            uintptr_t ovt = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(out_b));
+            uintptr_t od = ovt ? safe_read<uintptr_t>(ovt) : 0;
+            if (od && is_mapped(od)) reinterpret_cast<void* (*)(void*, uint32_t)>(od)(out_b, 1);
+        }
+        destroy(cmd, 0);
+        dispatched = true;
+    } catch (...) {
+        ADLOG("change_realm_law(costed): exception during command dispatch\n");
+        dispatched = false;
+    }
+    (void)out_a;
+#else
     try {
         // Build the command (sets both vtables + char=-1/law=sentinel), then stamp
         // the explicit actor id and the chosen law object.
@@ -4178,7 +4599,7 @@ static bool dispatch_costed_law_command(void* actor, uintptr_t law_obj,
         // Returns nonzero iff eligible+affordable. On 0 we refuse without dispatching,
         // so the (potentially crash-prone) Execute path is never reached for an
         // ineligible change.
-        // CJominiCommand's vt[7] returns a C++ bool: AL only (engine_bool.h,
+        // CJominiCommand's vt[7] returns a C++ bool: AL only (engine_bool.h:
         // the create-title override of this slot read a refusal as a pass).
         auto can_exec = reinterpret_cast<bridge::EngineBoolFn<void*, void*>>(vt[7]);  // FUN_067cd410(cmd,ctx)
         const bool eligible = can_exec(cmd, nullptr);
@@ -4197,7 +4618,7 @@ static bool dispatch_costed_law_command(void* actor, uintptr_t law_obj,
         dispatch(reinterpret_cast<void*>(g_base_addr + ck3::globals::COMMAND_DISPATCH_MGR),
                  &out_b, 0xe, 0);
         // Cleanup: virtual dtor (vtable+8) on out holders, then base dtor on cmd.
-        // The holder's vtable and its slot through safe_read; a
+        // (G-raw): the holder's vtable and its slot through safe_read; a
         // holder whose vtable cannot be read is left alone (a leak, not a jump).
         if (out_b) engine_virtual_dtor(out_b);
         if (out_a) engine_virtual_dtor(out_a);
@@ -4207,6 +4628,7 @@ static bool dispatch_costed_law_command(void* actor, uintptr_t law_obj,
         ADLOG("change_realm_law(costed): exception during command dispatch\n");
         dispatched = false;
     }
+#endif
     if (rng_armed) restore_fake_random_scope(saved_rng);
     g_in_protected_region = false; watchdog_disarm();
     return dispatched;
@@ -4346,7 +4768,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("change_realm_law", response_out);
     void* law_obj = reinterpret_cast<void*>(law_obj_addr);
 
@@ -4356,7 +4778,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
     // the prestige cost + ~10yr cooldown + powerful-vassals vote + vassal-opinion
     // penalty. We read prestige before/after as a legitimacy witness.
     if (use_costed) {
-        // #109 CRASH-SAFETY: a ruler AT WAR cannot legitimately change a high-stakes
+        // CRASH-SAFETY: a ruler AT WAR cannot legitimately change a high-stakes
         // realm law, and invoking the costed CanExecute / trigger-harvest in that state
         // has hung the game thread (scripted trigger eval runs with SIGALRM masked →
         // no watchdog can bound it → eventual hard crash). Detect at-war via a CHEAP
@@ -4384,7 +4806,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
                 }
             }
         }
-        // scope latch, guarded HERE rather than inside
+        // Scope latch, guarded HERE rather than inside
         // dispatch_costed_law_command: that helper reports through out-params
         // (out_crashed / out_eligible) and the caller turns them into specific
         // responses, so a refusal from inside would have to borrow one of those
@@ -4396,9 +4818,9 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
             return false;
         }
         int64_t prestige_before = read_char_prestige_fp(actor);
-        // The at-war guard and the prestige witness read
+        // (G-commit): the at-war guard and the prestige witness read
         // after the decision above. A war count that faulted reads 0 and would
-        // skip the at-war refusal (#109: the costed path at war hangs the game
+        // skip the at-war refusal (the costed path at war hangs the game
         // thread), so a fault in them refuses here, before the engine is touched.
         if (safe_read_had_fault()) return answer_memory_access_fault("change_realm_law", response_out);
         bool crashed = false;
@@ -4423,19 +4845,19 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
             // already has law) or unaffordable (scripted cost). Clean refusal — Execute
             // was never reached, so no state changed and no crash risk.
             //
-            // #109: harvest the SPECIFIC reason so the agent can plan around the gate.
+            // Harvest the SPECIFIC reason so the agent can plan around the gate.
             // diagnose_law_refusal reproduces the CanExecute sub-checks (read-only) and
             // pulls the failing trigger block's loud-failure loc-key. Fully crash-net-
             // wrapped; on any fault it leaves reason=nullptr and we keep the coarse key.
             LawRefusalDetail detail;
-            // scope latch: this block is a READ-ONLY ENRICHMENT of a
+            // Scope latch: this block is a READ-ONLY ENRICHMENT of a
             // refusal that has ALREADY been decided — the law change is not
             // happening either way, and `reason` below falls back to the
             // coarse key on its own. So when latched we skip it and make NO
             // engine call at all, rather than refusing: a latch refusal here
             // would REPLACE a correct, specific law-refusal reason with a
             // reason about the bridge, which is strictly worse for the seat
-            // and buys no safety. Same shape as the 1989 ruling (skip the
+            // and buys no safety. Same shape as the war-validity rule (skip the
             // optional step), and unlike 1989 nothing here mutates.
             if (bridge::scope_latched()) {
                 bridge::g_law_diagnostic_skipped_latched.fetch_add(
@@ -4483,7 +4905,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
                 r.key("path"); r.value_string("costed_command");
                 r.key("character_id"); r.value_uint(char_get_id(actor) & 0xFFFFFF);
                 r.key("prestige_fp"); r.value_int(prestige_before);
-                r.key("reason_detail_confidence"); r.value_string("medium");  // #109: trigger-key harvest
+                r.key("reason_detail_confidence"); r.value_string("medium");  // trigger-key harvest
                 r.key("hint"); r.value_string("the engine's CanExecute gate rejected this change. `reason` is the specific blocker (at_war / cooldown_active / insufficient_prestige / missing_prerequisite / not_eligible_yet / already_active / not_a_ruler); `failures[]` carries the raw engine loc-keys. If reason is generic, the gate is affordability or an unmapped scripted prerequisite.");
                 r.end_object();
                 *response_out = r.take();
@@ -4515,6 +4937,24 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
     }
 
     // ── Legacy UNCOSTED setter path (non-high-stakes laws, or force_uncosted) ────
+    // The costed path above runs on Windows; this setter has no Windows anchor
+    // yet. Refuse it by value (win_anchor_refusal.h: never true on Linux) before the call.
+    if (bridge::win_anchor::rva_unmapped(ck3::funcs::ADD_REALM_LAW)) {
+        if (response_out) {
+            ResponseBuilder r; r.begin_object();
+            r.key("success"); r.value_bool(false);
+            r.key("action"); r.value_string("change_realm_law");
+            r.key("reason"); r.value_string("not_on_windows");
+            r.key("missing_anchor"); r.value_string("funcs::ADD_REALM_LAW");
+            r.key("law_name"); r.value_string(law_name);
+            r.key("detail"); r.value_string(
+                "the uncosted law setter has no Windows address in this build; crown, tribal authority and "
+                "succession laws take the costed command path, which does; nothing was sent to the game");
+            r.end_object();
+            *response_out = r.take();
+        }
+        return false;
+    }
     // Use AddLawToCharacter: fn(char, law, mode, extra)
     using fn_add_law = void(*)(void*, void*, int, int);
     auto add_law = reinterpret_cast<fn_add_law>(bridge::game_fn(ck3::funcs::ADD_REALM_LAW));
@@ -4526,7 +4966,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
     // SIGSEGV leaves the game thread wedged. (20260614: missing-RNG-scope was the
     // `crashed_during_execution` cause; harden = restore-on-crash.)
     uint64_t saved_rng = 0;
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -4557,7 +4997,7 @@ bool do_change_realm_law(const char* params_json, std::string* response_out) {
 
     bool success = false;
     try {
-        // mode is 7 (default, full effects) or 4 (skip effects) —.
+        // mode is 7 (default, full effects) or 4 (skip effects).
         add_law(actor, law_obj, mode, 0);
         success = true;
         ADLOG("change_realm_law: applied law '%s' mode=%d to char %u\n",
@@ -4641,7 +5081,7 @@ static bool character_has_raised_armies(uint32_t actor_char_id,
         if ((owner_id & 0xFFFFFF) != (actor_char_id & 0xFFFFFF)) continue;
 
         owned++;
-        // #112: a raised army's true strength is the SUM of current (alive) men over
+        // A raised army's true strength is the SUM of current (alive) men over
         // its regiment list (CArmy+0x18 REG_VEC → ARMY_REGIMENT_DB → +0x38), NOT
         // owner_link+0x168 (which reads 0 for most armies and would make this
         // predicate wrongly report "no raised armies" for a ruler that has them).
@@ -4839,7 +5279,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
             char cb_err[64] = {};
             int valid_cbs = -1;
             const char* mode_tag = strict_cb ? "strict" : "engine pipeline";
-            // Per_cb lifted to outer scope so the NO_VIABLE_PAIR
+            // per_cb lifted to outer scope so the NO_VIABLE_PAIR
             // branch below can compute top-outer-reasons enrichment.
             std::vector<CBQueryResult> per_cb;
             // The g_cb_query slot is serviced on the game thread, where
@@ -4861,7 +5301,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
                                                              cb_err, sizeof(cb_err));
                     }
             };
-            // Pre_validate_war is a game-thread read (and declare_war runs it
+            // pre_validate_war is a game-thread read (and declare_war runs it
             // there); the CB check services its slot inline and the drain is
             // serial, so no single-flight lock is taken.
             cb_check(nullptr);
@@ -4886,7 +5326,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
                     // callers can distinguish "feudal actor dropped 34
                     // government_specific CBs" from "all dropped on liege
                     // relation". Mirrors PRE_VALIDATE_WAR_NO_VIABLE_PAIR_REASON
-                    // in the bead: tagged class instead of opaque count.
+                    // in the task: tagged class instead of opaque count.
                     struct ReasonCount { const char* tag; int n; };
                     ReasonCount rc[16] = {};
                     int rc_size = 0;
@@ -5186,14 +5626,14 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
     //
     // ROOT CAUSE (doubly broken before): (1) it read target_ptr+0x1B8
     // (TITLE_REALM_DATA), not core_data (target_ptr+0x1A8); (2) it called
-    // ck3::funcs::IS_IMPRISONED (0x0664adf0), which the note / re_imprisonment.md
-    // document is maybe_realm_predicate_inverted (an INDEPENDENCE predicate, not an
+    // ck3::funcs::IS_IMPRISONED (0x0664adf0), which re_imprisonment.md
+    // documents is maybe_realm_predicate_inverted (an INDEPENDENCE predicate, not an
     // imprisonment check); (3) it emitted pass=true in BOTH branches so R4 could
     // never fail. Net: an imprisoned target (Louis of Italy / Tortona) reported
     // war_validity=declarable, the agent burned steered attempts, the engine culled
     // the war to war_count 0.
     //
-    // FIX: use the AUTHORITATIVE imprisonment signal — the same pure-memory read
+    // Use the AUTHORITATIVE imprisonment signal — the same pure-memory read
     // do_query_character ships at query_handlers.cpp:124-130: core_data =
     // *(target+0x1A8 REALM_DATA); imprisoned == (*(core_data+0x288 IMPRISONER_LINK)
     // != null && mapped). The engine culls steered claim_cb wars on imprisoned
@@ -5305,7 +5745,7 @@ bool do_pre_validate_war(const char* params_json, std::string* response_out) {
 // WAR_DECLARE_SPECIAL_HANDLER (FUN_065db970): builds a minimal CB-params
 // struct + direct call to WAR_CREATE_CORE on the game thread.
 //
-// Designed for the LLM-as-player claim-war scenario (A.6 /): caller
+// Designed for the LLM-as-player claim-war scenario (A.6): caller
 // supplies a pre-validated (attacker, target, claim CB, claimed title,
 // claimant) tuple. Validity gates are the caller's responsibility — the
 // engine still runs Block-J vtable[2] but typically passes for hand-curated
@@ -5330,7 +5770,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
     if (target_raw <= 0) target_raw = json_get_int(params_json, "target_character_id");
     const char* cb_name = json_get_string(params_json, "casus_belli");
     if (!cb_name || !cb_name[0]) cb_name = json_get_string(params_json, "cb_name");
-    // Declare_war's force_player_path passes the original
+    // declare_war's force_player_path passes the original
     // params_json through verbatim, and declare_war's caller-facing
     // convention is "cb_title_id" (see do_declare_war:644). Earlier
     // versions only accepted "title_id"/"target_title_id", silently
@@ -5428,8 +5868,8 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
     // and its intent_not_completed_within_5s reply are live: declare_war is a
     // Tier-1 handler (snapshot.cpp is_bridge_internal_query, the IPC reader
     // thread) and its force_player_path forwards here (do_declare_war), off the
-    // game thread (FB2: read call_war_create_core's own
-    // classification only).
+    // game thread (call_war_create_core's own classification is not
+    // enough).
     for (int poll = 0; poll < 100 && !bridge::on_game_thread(); poll++) {  // 100 * 50ms = 5 seconds
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
@@ -5476,7 +5916,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
                 r.key("status"); r.value_string("war_created");
             }
         } else if (bridge::on_game_thread()) {
-            // (audit 3(i)): on the game thread the poll is skipped (the
+            // On the game thread the poll is skipped (the
             // drain runs the intent after this handler returns), so no wait
             // happened: say that, and when the verdict comes.
             r.key("status"); r.value_string("queued");
@@ -5494,7 +5934,7 @@ bool do_call_war_create_core(const char* params_json, std::string* response_out,
 }
 
 // =============================================================================
-// #111 — do_create_title (re/findings/re_create_title_action.md)
+// do_create_title (re/findings/re_create_title_action.md)
 // =============================================================================
 // LEGITIMATE de-jure create-title. The agent passes the AI ruler (actor_id) and the
 // target title — either a numeric title_id OR a title_key string (e.g. "d_northumbria",
@@ -5578,7 +6018,7 @@ bool do_create_title(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("create_title", response_out);
     uint64_t current_tick = g_tick_id.load(std::memory_order_relaxed);
     char req_id_buf[64];
@@ -5607,13 +6047,13 @@ bool do_create_title(const char* params_json, std::string* response_out) {
         if (!resolved_from.empty()) { r.key("title_key"); r.value_string(resolved_from.c_str()); }
         r.key("intent_request_id"); r.value_string(request_id.c_str());
         r.key("dispatch_id"); r.value_string(request_id.c_str());
-        // (audit 3(i)): no poll runs on the game thread; the drain runs
+        // No poll runs on the game thread; the drain runs
         // the intent on the next pass. The verdict and the price are the
         // completed intent's (query_intents / the server's settle).
         r.key("status"); r.value_string("queued");
         r.key("reason"); r.value_string("no_poll_on_game_thread");
         r.key("drains_when"); r.value_string("next_pass");
-        r.key("hint"); r.value_string("the engine's IsValid (de-jure control, not extant, the price) and the price from the engine's cost function, PLUS the #131 de-jure-majority bar for kingdom/empire tiers. query_create_title_cost asks the same questions without minting. Verify that the ruler now HOLDS the title by its holder: query_title_succession(title_id) current_holder_id.");
+        r.key("hint"); r.value_string("the engine's IsValid (de-jure control, not extant, the price) and the price from the engine's cost function, PLUS the bridge's own de-jure-majority bar for kingdom/empire tiers. query_create_title_cost asks the same questions without minting. Verify that the ruler now HOLDS the title by its holder: query_title_succession(title_id) current_holder_id.");
         r.end_object();
         *response_out = r.take();
     }
@@ -5621,14 +6061,14 @@ bool do_create_title(const char* params_json, std::string* response_out) {
 }
 
 // =============================================================================
-// Query_create_title_cost: the engine's verdict and the price, no mint
+// — query_create_title_cost: the engine's verdict and the price, no mint
 // =============================================================================
 // What the "Create Title" button would show: the engine's IsValid with its reasons
 // (the tooltip text, std::string *why as CAddLawCommand's IsValid takes it) and the
 // price from the engine's cost function in the currency the engine charges, beside
 // what the ruler holds of it. Changes nothing. A game-thread read (snapshot.cpp
 // is_game_thread_read): IsValid runs scripted triggers under the fake random scope.
-// The #131 de-jure-majority bar is the bridge's own, read by query_dejure_progress.
+// The de-jure-majority bar is the bridge's own, read by query_dejure_progress.
 bool do_query_create_title_cost(const char* params_json, std::string* response_out) {
     FaultScope fault_scope("query_create_title_cost", response_out);   // A game-thread read; a fault marks the reply degraded
     extern thread_local sigjmp_buf g_recovery_point;
@@ -5780,7 +6220,7 @@ bool do_enter_observe_mode(const char* /*params_json*/, std::string* response_ou
     // Best-effort unpause: even without driving CloseGameView/ToggleObserve
     // directly, prodding the engine out of pause exercises the
     // GameCommandDispatch queue drain. For pinned-bookmark saves (per
-    // observation) this alone has been enough on occasion; for
+    // Observation) this alone has been enough on occasion; for
     // others, the click is still required and ck3ctl will fall back.
     bool unpaused = false;
     if (captured) {
@@ -5831,7 +6271,7 @@ bool do_enter_observe_mode(const char* /*params_json*/, std::string* response_ou
 }
 
 // =============================================================================
-// do_dispatch_scheme_intent (#132) — a SCHEME intent, drained on the game thread.
+// do_dispatch_scheme_intent — a SCHEME intent, drained on the game thread.
 // Mirrors do_dispatch_faction_intent (factions.cpp). Three sub-operations (params.action):
 //
 //   start   execute_scheme_intent: the engine's CanStartScheme (the scheme type's
@@ -5853,7 +6293,7 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
     int target_raw = json_get_int(params_json, "target_id");
     const char* scheme = json_get_string(params_json, "scheme");
     if (!scheme || !scheme[0]) scheme = json_get_string(params_json, "scheme_type");
-    // lane-scheme 2026-10-18, measured live: the CANCEL branch was unreachable
+    // 2026-10-18, measured live: the CANCEL branch was unreachable
     // over the wire. The handler receives the whole request
     //   {"action":"scheme_action","params":{...,"action":"cancel",...}}
     // and json_get_string looks at the TOP level first, so "action" always
@@ -5898,8 +6338,7 @@ bool do_dispatch_scheme_intent(const char* params_json, std::string* response_ou
         *response_out = r.take();
     };
 
-    // lane-scheme 2026-10-18 refused a PAUSED call up front with game_paused,
-    // because the intent then drained only on a sim tick.: the drain runs
+    // A PAUSED call is not refused up front with game_paused: the drain runs
     // every session pass, paused or running, so the intent drains within a pass
     // and the bounded wait below sees its verdict.
 
@@ -6138,7 +6577,7 @@ bool do_move_capital(const char* params_json, std::string* response_out) {
     uint32_t actor_id = static_cast<uint32_t>(actor_raw) & 0xFFFFFF;
     if (reject_player_actor(actor_id, "move_capital", response_out)) return false;
     void* actor = lookup_character(actor_id);
-    // A miss resolves to the database SENTINEL, not null.
+    // (G-char): a miss resolves to the database SENTINEL, not null.
     if (const char* why = actor_refusal(actor)) { short_error(why); return false; }
 
     uintptr_t county_addr = lookup_title_obj(static_cast<uint32_t>(title_raw) & 0xFFFFFF);
@@ -6152,9 +6591,9 @@ bool do_move_capital(const char* params_json, std::string* response_out) {
 
     bool valid = false, relocated = false;
     uint64_t saved_rng = 0;
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("move_capital", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6231,14 +6670,14 @@ bool do_set_obligation_level(const char* params_json, std::string* response_out)
     uint32_t vassal_id = static_cast<uint32_t>(vassal_raw) & 0xFFFFFF;
 
     void* actor = lookup_character(actor_id);
-    // A miss resolves to the database SENTINEL, not null.
+    // (G-char): a miss resolves to the database SENTINEL, not null.
     if (const char* why = actor_refusal(actor)) { short_error(why); return false; }
     uintptr_t tr = resolve_title_realm(reinterpret_cast<uintptr_t>(actor));
     if (!tr || !is_mapped(tr)) { short_error("actor_no_realm"); return false; }
 
     // The liege's contract with this vassal (vassal_roster.h: the contract refs in
     // the liege's title_realm, looked up in VASSAL_CONTRACT_DB by their REF_KEY, the
-    // subject a CCharacter* at subject_contract::SUBJECT). Until this walk
+    // subject a CCharacter* at subject_contract::SUBJECT). At first this walk
     // looked the refs up keyed at +0x10 and compared SUBJECT's pointer as an id: it
     // found no contract.
     uintptr_t contract = vassal_contract_with(tr, actor_id, vassal_id);
@@ -6268,7 +6707,7 @@ bool do_set_obligation_level(const char* params_json, std::string* response_out)
     uintptr_t level_addr = hit->level_addr;
     if (!is_mapped(level_addr)) { short_error("level_addr_unmapped"); return false; }
     uint8_t old_level = safe_read<uint8_t>(level_addr);   // (G-raw)
-    // A read that faulted decides before the byte is compared or written.
+    // (G-commit): a read that faulted decides before the byte is compared or written.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_obligation_level", response_out);
 
     // LEGITIMACY GATE (re_write_action_legitimacy_audit.md §3.3): this is a raw byte
@@ -6322,10 +6761,19 @@ bool do_set_obligation_level(const char* params_json, std::string* response_out)
 //         character_id (courtier to seat), replace (bool, default false).
 //
 // A VACANT seat is refused (vacant_seat_fill_unsupported): the only fill path
-// (COUNCIL_SEAT_ASSIGN with the candidate's full handle, #79) was never
-// confirmed live and was deleted with its arming verb in (D4);
+// (COUNCIL_SEAT_ASSIGN with the candidate's full handle) was never
+// confirmed live and was deleted with its arming verb;
 // re/findings/re_council_vacant_fill_status.md keeps the RE record.
 // =============================================================================
+
+// A seat's holder counts only when he is a live character (query_council's "filled" rule). A
+// helper of its own, so the actor's early return stays the first resolve-and-return in appoint's body (the
+// inline-safety G-char row grades that pair).
+static bool seat_holder_is_live(uint32_t holder) {
+    if (!council_holder::is_id(holder)) return false;
+    void* ch = lookup_character(holder);
+    return ch && !is_sentinel(ch);
+}
 
 bool do_appoint_councillor(const char* params_json, std::string* response_out) {
     FaultScope fault_scope("appoint_councillor", response_out);   // A fault after the commit marks the reply degraded
@@ -6355,13 +6803,12 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
     uint32_t position_id = static_cast<uint32_t>(pos_raw) & 0xFFFFFF;
     uint32_t character_id = static_cast<uint32_t>(char_raw) & 0xFFFFFF;
     void* actor = lookup_character(actor_id);
-    // A miss resolves to the database SENTINEL, not null.
+    // (G-char): a miss resolves to the database SENTINEL, not null.
     if (const char* why = actor_refusal(actor)) { short_error(why); return false; }
 
     // Resolve the position-instance object (same chase as do_set_council_task),
     // matching the seat by position id (24-bit).
     constexpr size_t COUNCIL_POS_ARRAY = 0x230, COUNCIL_POS_COUNT = 0x23c;
-    constexpr size_t POS_HOLDER = 0x30;  // ASSIGN_COUNCILLOR holder char id (vacant=0/0xFFFFFF)
     uintptr_t pos_obj = 0;
     uintptr_t council = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(actor) + 0x1b8);
     uintptr_t posdb = safe_read_offset<uintptr_t>(ck3::globals::COUNCIL_POSITION_DB);
@@ -6387,11 +6834,19 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
     }
     if (!pos_obj) { short_error("position_not_found"); return false; }
 
-    uint32_t holder = safe_read<uint32_t>(pos_obj + POS_HOLDER) & 0xFFFFFF;
-    bool occupied = (holder != 0 && holder != 0xFFFFFF);
+    // the holder as query_council reads it (include/council_holder.h: the display
+    // field +0x30, else the seated councillor +0x38), and a seat is occupied only by a live character, as
+    // query_council says filled. +0x30 alone is not enough: on a realm whose display field is blank on every
+    // seat, a filled seat would read vacant (vacant_seat_fill_unsupported) and the swap would never be tried.
+    auto seat_holder = [&]() {
+        return council_holder::resolve(safe_read<uint32_t>(pos_obj + ck3::globals::COUNCIL_POS_HOLDER_ID),
+                                       safe_read<uint32_t>(pos_obj + ck3::globals::COUNCIL_POS_COUNCILLOR_ID));
+    };
+    uint32_t holder = seat_holder();
+    bool occupied = seat_holder_is_live(holder);
     if (occupied && !replace) { short_error("seat_occupied_pass_replace"); return false; }
 
-    // #62 FIX v2 (2026-06-19, re_resolution_appoint.md — HIGH, verified): TWO bugs fixed.
+    // Two traps on this path.
     // (1) SWAP_COUNCIL_RAW_LEAF was stored as an IMAGE VA (0x068b4d10) → g_base_addr+that
     // resolved +0x310 into a logging fn → the crash. Header corrected to 0x067b4d10
     // (image-0x100000). (2) The leaf takes 4 args, not 3: FUN_068b4d10(council_instance_ptr,
@@ -6407,12 +6862,14 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
     if (!occupied) { short_error("vacant_seat_fill_unsupported"); return false; }
 
     // ── OCCUPIED/replace branch (swap-leaf path) ──
+    const uint32_t character_full = engine_char_id(character_id);
+    const uint32_t holder_full = engine_char_id(holder);
     auto swap_leaf = reinterpret_cast<void(*)(void*, void*, uint32_t, uint32_t)>(
         bridge::game_fn(ck3::funcs::SWAP_COUNCIL_RAW_LEAF));
 
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("appoint_councillor", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6420,7 +6877,7 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = bridge::scope_latched_refusal_json("appoint_councillor");
         return false;
     }
-    // (S4, audit 3(ii)): armed before the guard, so the crash branch below
+    // Armed before the guard, so the crash branch below
     // (siglongjmp does not unwind) restores the scope in the frame that armed it.
     uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
     watchdog_arm(4);
@@ -6436,13 +6893,14 @@ bool do_appoint_councillor(const char* params_json, std::string* response_out) {
     }
 
     // 4-arg: (council_instance, owner_char_ptr, char_a=courtier to seat, char_b=current holder).
-    // The two characters trade seats (char_a takes char_b's seat).
-    swap_leaf(reinterpret_cast<void*>(council), actor, character_id, holder);
+    // The two characters trade seats (char_a takes char_b's seat). The leaf resolves both by
+    // slot and compares the WHOLE stored id (engine_id.h): it is given each one's whole id.
+    swap_leaf(reinterpret_cast<void*>(council), actor, character_full, holder_full);
 
     if (rng_armed) restore_fake_random_scope(saved_rng);
     g_in_protected_region = false; watchdog_disarm();
 
-    uint32_t new_holder = safe_read<uint32_t>(pos_obj + POS_HOLDER) & 0xFFFFFF;
+    uint32_t new_holder = seat_holder();
     bool applied = (new_holder == character_id);
 
     if (response_out) {
@@ -6522,16 +6980,57 @@ bool do_maa_recruit(const char* params_json, std::string* response_out) {
     // ── AFFORDABILITY GATE (legitimacy; pure-memory, zero engine calls) ──
     // Execute charges the upfront recruit cost via FUN_06f07fa0 regardless of treasury,
     // so without this gate a recruit can drive gold negative = a cheat-class write. Mirror
-    // the #133 build_gate: read ruler gold (REALM_DATA+GOLD, int64 fp/100000) and the MaA
+    // The build_gate: read ruler gold (REALM_DATA+GOLD, int64 fp/100000) and the MaA
     // type's buy_cost (::maa_type::RECRUIT_GOLD_COST +0x68, int64 fp/100000). Refuse ONLY when
     // the cost is known (>0) and unaffordable; a 0 cost read = unknown → stay permissive.
     // Base buy_cost is the dominant legitimacy floor; terrain/innovation modifiers shift the
     // real price but the engine still validates server-side on the tick.
+    // In the currency his government buys regiments with (maa_currency.h): a tribal ruler pays
+    // prestige, the buy cost x MAA_PRESTIGE_BUY_COST_MULT; a government not read is refused, never priced in gold.
     {
+        namespace mc = bridge::maa_currency;
+        const std::string gov = read_government_key(actor);
+        const mc::Currency cur = mc::of_government(gov);
         uintptr_t core = safe_read<uintptr_t>(reinterpret_cast<uintptr_t>(actor) + ck3::character::REALM_DATA);
-        int64_t gold_fp = (core && is_mapped(core)) ? safe_read<int64_t>(core + ck3::core_data::GOLD) : 0;
         int64_t cost_fp = safe_read<int64_t>(maa_type_obj + ::maa_type::RECRUIT_GOLD_COST);
-        if (cost_fp > 0 && gold_fp < cost_fp) {
+        if (cur == mc::Currency::Unread) {
+            if (response_out) {
+                ResponseBuilder r; r.begin_object();
+                r.key("success"); r.value_bool(false);
+                r.key("action"); r.value_string("maa_recruit");
+                r.key("reason"); r.value_string("maa_currency_unread");
+                r.key("maa_type"); r.value_string(want.c_str(), want.size());
+                r.key("why"); r.value_string("the ruler's government was not read: whether the price is gold or "
+                                             "prestige is unknown, so the regiment is not bought");
+                r.end_object();
+                *response_out = r.take();
+            }
+            return false;
+        }
+        if (cur == mc::Currency::Prestige) {
+            const int64_t prestige_fp = (core && is_mapped(core)) ? safe_read<int64_t>(core + ck3::core_data::PRESTIGE) : 0;
+            const double price = mc::price(static_cast<double>(cost_fp) / 100000.0, cur);
+            if (cost_fp > 0 && static_cast<double>(prestige_fp) / 100000.0 < price) {
+                if (response_out) {
+                    ResponseBuilder r; r.begin_object();
+                    r.key("success"); r.value_bool(false);
+                    r.key("action"); r.value_string("maa_recruit");
+                    r.key("reason"); r.value_string("insufficient_prestige");
+                    r.key("maa_type"); r.value_string(want.c_str(), want.size());
+                    r.key("currency"); r.value_string("prestige");
+                    r.key("government"); r.value_string(gov.c_str(), gov.size());
+                    r.key("cost"); r.value_float(price);
+                    r.key("prestige"); r.value_float(static_cast<double>(prestige_fp) / 100000.0);
+                    r.end_object();
+                    *response_out = r.take();
+                }
+                ADLOG("maa_recruit: actor=0x%x type='%s' REFUSED insufficient_prestige (cost=%.2f prestige=%.2f)\n",
+                      actor_id, want.c_str(), price, static_cast<double>(prestige_fp) / 100000.0);
+                return false;
+            }
+        }
+        int64_t gold_fp = (core && is_mapped(core)) ? safe_read<int64_t>(core + ck3::core_data::GOLD) : 0;
+        if (cur == mc::Currency::Gold && cost_fp > 0 && gold_fp < cost_fp) {
             if (response_out) {
                 ResponseBuilder r; r.begin_object();
                 r.key("success"); r.value_bool(false);
@@ -6550,7 +7049,7 @@ bool do_maa_recruit(const char* params_json, std::string* response_out) {
         }
     }
 
-    // #62 FIX v2 (2026-06-19, re_create_maa_regiment_command.md): the bare effect-leaf
+    // The bare effect-leaf
     // 0x062645c0 is DISPROVEN (hangs/crashes — it needs a DB-RESOLVED owner `this` that
     // only the command Execute supplies). The PROPER apply path is the full
     // CCreateMAARegimentCommand: ctor → Execute → base_dtor, exactly like
@@ -6560,18 +7059,22 @@ bool do_maa_recruit(const char* params_json, std::string* response_out) {
     // under the proven arm_fake_random_scope + watchdog + sigsetjmp harness.
     //   ctor(cmd, actor_id, char_id, maa_type_obj, origin=0xFFFFFFFF, flag=1)
     //   Execute(cmd)  [PRIMARY this]   base_dtor(cmd)
+    // Execute resolves the owner from cmd+0x28 by slot and compares the WHOLE stored id
+    // (engine_id.h), so both ids are the actor's whole id (+0x18), never its low 24 bits.
+#if !defined(_WIN32)
     auto ctor = reinterpret_cast<void(*)(void*, uint32_t, uint32_t, void*, uint32_t, uint8_t)>(
         bridge::game_fn(ck3::funcs::CREATE_MAA_CMD_CTOR));
     auto execute = reinterpret_cast<void(*)(void*)>(
         bridge::game_fn(ck3::funcs::CREATE_MAA_CMD_EXECUTE));
     auto base_dtor = reinterpret_cast<void(*)(void*)>(
         bridge::game_fn(ck3::funcs::CREATE_MAA_CMD_BASE_DTOR));
+#endif
 
     uint8_t cmd[0x40]; memset(cmd, 0, sizeof(cmd));   // struct >=0x38; 0x40 buffer is safe
 
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("maa_recruit", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6579,7 +7082,7 @@ bool do_maa_recruit(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = bridge::scope_latched_refusal_json("maa_recruit");
         return false;
     }
-    // (S4, audit 3(ii)): armed before the guard, so the crash branch below
+    // Armed before the guard, so the crash branch below
     // (siglongjmp does not unwind) restores the scope in the frame that armed it.
     uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
     watchdog_arm(4);
@@ -6593,10 +7096,27 @@ bool do_maa_recruit(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    ctor(cmd, actor_id & 0xFFFFFF, actor_id & 0xFFFFFF,
+#if defined(_WIN32)
+    // The Linux ctor's stores (CreateMaARegiment: +0x20 actor, +0x24 -1 (no title),
+    // +0x28 the character, +0x2C the type's index = its DB id, +0x30 origin, +0x34 flag) and
+    // both RTTI vtables; Execute is the helper's slot 1 (0x20FDE50: reads +0xC/+0x10/+0x14/
+    // +0x18/+0x1C off the helper = the same fields). ck3_offsets_win.h CREATE_MAA_REGIMENT_CMD_*.
+    *reinterpret_cast<uintptr_t*>(cmd) = g_base_addr + ck3::funcs::CREATE_MAA_REGIMENT_CMD_VTABLE;
+    *reinterpret_cast<uintptr_t*>(cmd + 0x18) = g_base_addr + ck3_win::funcs::CREATE_MAA_REGIMENT_CMD_VTABLE2;
+    *reinterpret_cast<uint32_t*>(cmd + 0x20) = actor_id;
+    *reinterpret_cast<uint32_t*>(cmd + 0x24) = 0xFFFFFFFF;
+    *reinterpret_cast<uint32_t*>(cmd + 0x28) = actor_id;
+    *reinterpret_cast<uint32_t*>(cmd + 0x2c) = safe_read<uint32_t>(maa_type_obj + ::maa_type::DB_ID);
+    *reinterpret_cast<uint32_t*>(cmd + 0x30) = 0xFFFFFFFF;    // origin/count sentinel
+    *reinterpret_cast<uint8_t*>(cmd + 0x34) = 1;              // charge gold
+    win_cmd_execute(cmd);
+    win_cmd_destroy(cmd);
+#else
+    ctor(cmd, actor_id, actor_id,
          reinterpret_cast<void*>(maa_type_obj), 0xFFFFFFFF /*origin/count sentinel*/, 1 /*charge gold*/);
     execute(cmd);
     base_dtor(cmd);
+#endif
 
     if (rng_armed) restore_fake_random_scope(saved_rng);
     g_in_protected_region = false; watchdog_disarm();
@@ -6683,7 +7203,7 @@ static bool maa_origin_dispatch(const char* params_json, std::string* response_o
         return false;
     }
 
-    // #62 FIX v3 (2026-06-19): the leaf validates regobj+0x10 == cmd+0x20 against the FULL
+    // The leaf validates regobj+0x10 == cmd+0x20 against the FULL
     // regiment ref (with generation/high bits), but the roster/agent passes the masked
     // low-24 id → validity fails → silent no-op. Reconstruct the full ref from the masked id.
     {
@@ -6714,7 +7234,7 @@ static bool maa_origin_dispatch(const char* params_json, std::string* response_o
         return false;
     }
 
-    // #62 FIX v2 (2026-06-19, re_resolution_maa_station.md): the Set/Remove ctors
+    // The Set/Remove ctors
     // (0x065981a0/0x06599020) + CanExec (0x06598dd0) were MID-FUNCTION hashmap helpers
     // (calling them as ctors corrupted memory). The Execute leaves read ONLY scalar cmd fields
     // and never deref the cmd vtable — so a memset-zeroed cmd[0x40] with the two id fields is a
@@ -6732,9 +7252,9 @@ static bool maa_origin_dispatch(const char* params_json, std::string* response_o
     *reinterpret_cast<uint32_t*>(cmd + 0x20) = regiment_id;
     if (station) *reinterpret_cast<uint32_t*>(cmd + 0x24) = location_id;
 
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault(action_label, response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6742,7 +7262,7 @@ static bool maa_origin_dispatch(const char* params_json, std::string* response_o
         if (response_out) *response_out = bridge::scope_latched_refusal_json(station ? "maa_station" : "maa_unstation");
         return false;
     }
-    // (S4, audit 3(ii)): armed before the guard, so the crash branch below
+    // Armed before the guard, so the crash branch below
     // (siglongjmp does not unwind) restores the scope in the frame that armed it.
     uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
     watchdog_arm(4);
@@ -6802,9 +7322,101 @@ bool do_maa_unstation(const char* params_json, std::string* response_out) {
 }
 
 // =============================================================================
+// do_maa_disband — (a test seat: "the tools have no way to disband them"):
+// the game's own CDestroyMAARegimentCommand, built as the game's AI builds it (image 0x04dfa625: ctor with
+// src 2 and the regiment's full id, CanExecute with a reason), then Execute on the game thread: the
+// army_disband route (army_orders.cpp). params actor_id (AI ruler), regiment_id, check (true: the game's
+// check only, nothing sent). re/findings/re_maa_disband.md. BUILT, NOT PROVEN LIVE.
+// =============================================================================
+bool do_maa_disband(const char* params_json, std::string* response_out) {
+    FaultScope fault_scope("maa_disband", response_out);
+    auto refuse_with = [&](const char* reason, uint32_t rid, const std::string* why) {
+        if (response_out) {
+            ResponseBuilder r; r.begin_object();
+            r.key("success"); r.value_bool(false);
+            r.key("action"); r.value_string("maa_disband");
+            r.key("reason"); r.value_string(reason);
+            if (rid) { r.key("regiment_id"); r.value_int(static_cast<int64_t>(rid & 0xFFFFFF)); }
+            if (why) { r.key("game_reason"); r.value_string(why->c_str(), why->size()); }
+            r.end_object();
+            *response_out = r.take();
+        }
+        return false;
+    };
+    void* actor = resolve_actor(params_json);
+    if (reject_player_actor(actor, "maa_disband", response_out)) return false;
+    if (const char* why = actor_refusal(actor)) {
+        if (response_out) *response_out = actor_refusal_reply("maa_disband", why);
+        return false;
+    }
+    int rid = json_get_int(params_json, "regiment_id");
+    if (rid <= 0) return refuse_with("regiment_id_required", 0, nullptr);
+    uintptr_t reg = ad_db_lookup(ck3::globals::REGIMENT_DB, static_cast<uint32_t>(rid));
+    uint32_t full = reg && is_mapped(reg) ? safe_read<uint32_t>(reg + 0x10) : 0;
+    if (!full || (full & 0xFFFFFF) != (static_cast<uint32_t>(rid) & 0xFFFFFF))
+        return refuse_with("regiment_not_found", static_cast<uint32_t>(rid), nullptr);
+    if (!actor_owns_regiment(actor, full)) return refuse_with("regiment_not_owned", full, nullptr);
+    const bool check = json_get_bool(params_json, "check", false);
+
+    auto ctor = reinterpret_cast<void (*)(void*, uint32_t, uint32_t)>(bridge::game_fn(ck3::funcs::DESTROY_MAA_CMD_CTOR));
+    auto canexec = reinterpret_cast<uint8_t (*)(void*, std::string*)>(bridge::game_fn(ck3::funcs::DESTROY_MAA_CMD_CANEXEC));
+    auto execute = reinterpret_cast<void (*)(void*)>(bridge::game_fn(ck3::funcs::DESTROY_MAA_CMD_EXECUTE));
+    auto base_dtor = reinterpret_cast<void (*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));
+    alignas(16) uint8_t cmd[0x40];   // the command is the 0x20-byte head, +0x20 src, +0x24 regiment
+    memset(cmd, 0, sizeof(cmd));
+    std::string reason;
+    uint8_t can = 0;
+    bool executed = false;
+
+    if (safe_read_had_fault()) return answer_memory_access_fault("maa_disband", response_out);
+    if (bridge::scope_latched()) {
+        bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
+        if (response_out) *response_out = bridge::scope_latched_refusal_json("maa_disband");
+        return false;
+    }
+    uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
+    watchdog_arm(4);
+    g_in_protected_region = true;
+    int sig = sigsetjmp(g_recovery_point, 1);
+    if (sig != 0) {
+        if (rng_armed) restore_fake_random_scope(saved_rng);
+        g_in_protected_region = false; watchdog_disarm();
+        return refuse_with("apply_crashed", full, nullptr);
+    }
+    ctor(cmd, 2 /* the AI's source, as army_disband */, full);
+    can = canexec(cmd, &reason);
+    if (can && !check) { execute(cmd + 0x18); executed = true; }
+    base_dtor(cmd);
+    if (rng_armed) restore_fake_random_scope(saved_rng);
+    g_in_protected_region = false; watchdog_disarm();
+
+    uintptr_t after = ad_db_lookup(ck3::globals::REGIMENT_DB, full);
+    const bool present_after = after && is_mapped(after) && safe_read<uint32_t>(after + 0x10) == full;
+    std::string why_text = clean_engine_text(reason);
+    if (!can) {
+        ADLOG("maa_disband: regiment=0x%x check=%d REFUSED '%s'\n", full, check ? 1 : 0, why_text.c_str());
+        return refuse_with("refused_by_game", full, &why_text);
+    }
+    if (response_out) {
+        ResponseBuilder r; r.begin_object();
+        r.key("success"); r.value_bool(true);
+        r.key("action"); r.value_string("maa_disband");
+        r.key("regiment_id"); r.value_int(static_cast<int64_t>(full & 0xFFFFFF));
+        r.key("check"); r.value_bool(check);
+        r.key("applied"); r.value_bool(executed);
+        r.key("regiment_after"); r.value_string(present_after ? "present" : "absent");
+        r.end_object();
+        *response_out = r.take();
+    }
+    ADLOG("maa_disband: regiment=0x%x check=%d executed=%d after=%s\n", full, check ? 1 : 0, executed ? 1 : 0,
+          present_after ? "present" : "absent");
+    return true;
+}
+
+// =============================================================================
 // do_hire_mercenary — hire a mercenary company. Synchronous game-thread command-
 // dispatch, clone of do_maa_recruit. CHireMercenaryCompanyCommand:
-//   ctor(cmd, hirer_char_id, company_id, contract_len) → prepare(vt[9]) →
+//   ctor(cmd, hirer's whole id, company's whole id, contract_len) → prepare(vt[9]) →
 //   dispatch(mgr, &out, 0x7, 0).  (re_hire_mercenary_wiring.md — HIGH.)
 //   Execute calls the RNG-mix cost fn, so the fake RNG scope IS required.
 //   company_id comes from discover(hireable_mercenaries). NEEDS LIVE VALIDATION
@@ -6831,17 +7443,24 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
     uint32_t contract_len = clen > 0 ? static_cast<uint32_t>(clen) : 1;
 
     // Verify the company id resolves in the real merc DB before fabricating (honest reject).
-    if (ad_db_lookup(ck3::globals::MERC_COMPANY_DB, company_id) == 0) {
+    const uintptr_t company_entry = ad_db_lookup(ck3::globals::MERC_COMPANY_DB, company_id);
+    if (company_entry == 0) {
         if (response_out) *response_out = R"({"success":false,"action":"hire_mercenary","reason":"company_not_found"})";
         return false;
     }
+    // The command's CanExecute and Execute look the hirer and the company up by slot and compare
+    // the WHOLE stored id with the one given (engine_id.h): a company asked for by its low 24 bits
+    // goes in as the whole id read off its entry, and the hirer as his whole id (+0x18).
+    const uint32_t company_full = engine_id::full_or(company_id,
+        safe_read<uint32_t>(company_entry + ck3::hash_map::ENTRY_KEY_REF));
 
-    // #63 FIX: GAME_COMMAND_DISPATCH only ENQUEUES to the player-command queue
+    // GAME_COMMAND_DISPATCH only ENQUEUES to the player-command queue
     // (never applies fabricated AI commands). Use strategy B instead: probe
     // CanExecute (HIRE_MERC_CMD_CANEXEC, honest reject — validates both DB
     // lookups + hireable-precheck + contract) then call Execute directly
     // (HIRE_MERC_CMD_EXECUTE, which tail-applies the hire effect). Execute calls
     // the RNG-mix cost fn, so keep the fake RNG scope. (re_hire_mercenary_*.md)
+#if !defined(_WIN32)
     auto ctor = reinterpret_cast<void(*)(void*, uint32_t, uint32_t, uint32_t)>(
         g_base_addr + ck3::globals::HIRE_MERC_CMD_CTOR);
     auto canexec = reinterpret_cast<uint8_t(*)(void*, int)>(
@@ -6849,13 +7468,14 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
     auto execute = reinterpret_cast<void(*)(void*)>(
         g_base_addr + ck3::globals::HIRE_MERC_CMD_EXECUTE);
     auto base_dtor = reinterpret_cast<void(*)(void*)>(bridge::game_fn(ck3::funcs::CJOMINI_COMMAND_BASE_DTOR));
+#endif
 
     uint8_t cmd[0x40]; memset(cmd, 0, sizeof(cmd));   // struct is 0x30; 0x40 buffer is safe
     uint8_t can = 0;
 
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("hire_mercenary", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -6863,7 +7483,7 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
         if (response_out) *response_out = bridge::scope_latched_refusal_json("hire_mercenary");
         return false;
     }
-    // (S4, audit 3(ii)): armed before the guard, so the crash branch below
+    // Armed before the guard, so the crash branch below
     // (siglongjmp does not unwind) restores the scope in the frame that armed it.
     uint64_t saved_rng = 0; const bool rng_armed = arm_fake_random_scope(&saved_rng);
     watchdog_arm(4);
@@ -6876,10 +7496,24 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    ctor(cmd, actor_id & 0xFFFFFF, company_id & 0xFFFFFF, contract_len);
+#if defined(_WIN32)
+    // The Linux ctor's stores (+0x20 hirer, +0x24 company, +0x28 contract) and both
+    // RTTI vtables; CanExecute is primary slot 6 (0x24ED4F0: the Linux body, `why` null-checked),
+    // Execute the helper's slot 1 (0x24ED400: the Linux body over the helper's +0x8/+0xC/+0x10).
+    *reinterpret_cast<uintptr_t*>(cmd) = g_base_addr + ck3::globals::HIRE_MERC_CMD_VTABLE_PRIMARY;
+    *reinterpret_cast<uintptr_t*>(cmd + 0x18) = g_base_addr + ck3_win::funcs::HIRE_MERC_CMD_VTABLE_HELPER;
+    *reinterpret_cast<uint32_t*>(cmd + 0x20) = actor_id;
+    *reinterpret_cast<uint32_t*>(cmd + 0x24) = company_full;
+    *reinterpret_cast<uint32_t*>(cmd + 0x28) = contract_len;
+    can = win_cmd_can_execute(cmd) ? 1 : 0;
+    if (can) win_cmd_execute(cmd);
+    win_cmd_destroy(cmd);
+#else
+    ctor(cmd, actor_id, company_full, contract_len);
     can = canexec(cmd, 0);
     if (can) execute(cmd);
     base_dtor(cmd);
+#endif
 
     if (rng_armed) restore_fake_random_scope(saved_rng);
     g_in_protected_region = false; watchdog_disarm();
@@ -6895,7 +7529,7 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
             r.end_object();
             *response_out = r.take();
         }
-        ADLOG("hire_mercenary: actor=0x%x company=0x%x REJECTED (CanExecute=0)\n", actor_id, company_id);
+        ADLOG("hire_mercenary: actor=0x%x company=0x%x REJECTED (CanExecute=0)\n", actor_id, company_full);
         return false;
     }
 
@@ -6917,7 +7551,7 @@ bool do_hire_mercenary(const char* params_json, std::string* response_out) {
 
 // faith_lookup (dispatch_router.cpp, action_dispatch_internal.h): THE faith
 // lookup, FAITH_DB keyed at faith::FAITH_ID (+0x08). (#faith RE FIX 2026-06-19;
-// one definition since then FB.)
+// one definition.)
 
 // ===========================================================================
 // do_set_doctrine — swap one doctrine/tenet on the actor's CURRENT faith.
@@ -6978,7 +7612,7 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
         return false;
     }
 
-    // The handler ABI and the game's std::string layout per OS: console_call.h (WINRE).
+    // The handler ABI and the game's std::string layout per OS: console_call.h.
     namespace cc = bridge::console_call;
     auto handler = reinterpret_cast<void* (*)(void*, const void*)>(
         g_base_addr + ck3::console_handlers::CMD_ADD_DOCTRINE);
@@ -6992,9 +7626,9 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
     cmd_data.args = args; cmd_data.arg_count = 2;
     cc::Result result;
 
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_doctrine", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -7056,7 +7690,7 @@ bool do_set_doctrine(const char* params_json, std::string* response_out) {
 //          "terms" (end_war: we_win|white_peace|we_yield; absent = read only),
 //          "on", "class", "answer", "by", "proposal_id"}
 // proposal_list adds {list_complete, proposals[]}; proposal_answer adds
-// {outcome, outcome_reason, window_complete} (docs/design/incoming-proposals.md).
+// {outcome, outcome_reason, window_complete}.
 // reply:  {success, action, template, token, script, engine_result, guard
 //          (ran|refused|unseen), marks[] (the token's other debug.log marks:
 //          end_war's reading), errors[] (the game's own script errors for this
@@ -7101,7 +7735,7 @@ std::string read_from(const std::string& p, long long offset, size_t cap = 512 *
 // were logged (ck3::nlog; re/findings/re_log_level_cap.md). Our lines are INFO
 // (script_templates.h kLogEffect): the channel is open while the INFO counter is
 // under the cap. DEBUG is read beside it (the game's own busiest level; the
-// re-pilot's channel was DEBUG and died at 1088.01.27). A counter that cannot be
+// a recorded game's channel was DEBUG and died at 1088.01.27). A counter that cannot be
 // read (the RVA unmapped: Windows has no counterpart yet) is `unmeasured`, a
 // state of its own, never `open`.
 struct LogChannel {
@@ -7154,9 +7788,14 @@ void emit_log_channel(ResponseBuilder& r, const LogChannel& c) {
     r.end_object();
 }
 
-// A ruler's script reference: the key of his primary title, the title's holder
+// A ruler's script reference: the key of a title he holds, the title's holder
 // checked to be him. Empty (with WHY) when he holds no title, so he cannot be
-// addressed in script (character:<id> takes HISTORY ids, probe e12b).
+// addressed in script (character:<id> takes HISTORY ids, a probe).
+// The primary title first (a 1078.11.27 game showed why), but only when script
+// resolves its key (script_tpl::is_script_title_key): a title the game created
+// mid-run (x_script_846, Domnall of Oriel's duchy) is not a script link, and
+// `title:x_script_846.holder` was a null defender. Otherwise the first other title
+// he holds whose key script resolves (his county); none: not addressable.
 std::string primary_title_key_of(uint32_t cid, const char** why) {
     void* ch = lookup_character(cid & 0xFFFFFF);
     if (!ch || is_sentinel(ch)) { *why = "character_not_found"; return {}; }
@@ -7165,16 +7804,26 @@ std::string primary_title_key_of(uint32_t cid, const char** why) {
     const int32_t n = safe_read<int32_t>(realm + ck3::title_realm::TITLE_ARRAY_COUNT);
     const uintptr_t arr = safe_read<uintptr_t>(realm + ck3::title_realm::TITLE_ARRAY_PTR);
     if (!arr || !is_mapped(arr) || n <= 0) { *why = "target_not_script_addressable"; return {}; }
-    const uint32_t tid = safe_read<uint32_t>(arr);
-    const uintptr_t tobj = lookup_title_obj(tid);
-    if (!tobj) { *why = "target_not_script_addressable"; return {}; }
-    const uint32_t holder = safe_read<uint32_t>(tobj + ck3::title_obj::HOLDER_CHAR_ID) & 0xFFFFFF;
-    if (holder != (cid & 0xFFFFFF)) { *why = "primary_title_holder_mismatch"; return {}; }
-    const uintptr_t type_ptr = safe_read<uintptr_t>(tobj + ck3::title_obj::TITLE_TYPE_PTR);
-    std::string key = (type_ptr && is_mapped(type_ptr))
-        ? ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY) : std::string();
-    if (!bridge::script_tpl::is_ident(key)) { *why = "title_key_unreadable"; return {}; }
-    return key;
+    const char* first_why = nullptr;
+    const int32_t cap = n > 500 ? 500 : n;
+    for (int32_t i = 0; i < cap; i++) {
+        const uint32_t tid = safe_read<uint32_t>(arr + i * 4);
+        const uintptr_t tobj = lookup_title_obj(tid);
+        if (!tobj) { if (!first_why) first_why = "target_not_script_addressable"; continue; }
+        const uint32_t holder = safe_read<uint32_t>(tobj + ck3::title_obj::HOLDER_CHAR_ID) & 0xFFFFFF;
+        if (holder != (cid & 0xFFFFFF)) { if (!first_why) first_why = "primary_title_holder_mismatch"; continue; }
+        const uintptr_t type_ptr = safe_read<uintptr_t>(tobj + ck3::title_obj::TITLE_TYPE_PTR);
+        std::string key = (type_ptr && is_mapped(type_ptr))
+            ? ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY) : std::string();
+        if (!bridge::script_tpl::is_ident(key)) { if (!first_why) first_why = "title_key_unreadable"; continue; }
+        if (!bridge::script_tpl::is_script_title_key(key)) {
+            if (!first_why) first_why = "target_not_script_addressable";   // a dynamic title
+            continue;
+        }
+        return key;
+    }
+    *why = first_why ? first_why : "target_not_script_addressable";
+    return {};
 }
 
 std::string title_key_of(uint32_t tid, const char** why) {
@@ -7184,6 +7833,8 @@ std::string title_key_of(uint32_t tid, const char** why) {
     std::string key = (type_ptr && is_mapped(type_ptr))
         ? ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY) : std::string();
     if (!bridge::script_tpl::is_ident(key)) { *why = "title_key_unreadable"; return {}; }
+    // A dynamic title's key is no script link (title:x_script_846 is null)
+    if (!bridge::script_tpl::is_script_title_key(key)) { *why = "target_not_script_addressable"; return {}; }
     return key;
 }
 
@@ -7239,6 +7890,32 @@ void emit_proposal_window(ResponseBuilder& r, bool list, const bridge::script_tp
 }
 
 std::atomic<bool> g_proposal_mod_seen{false};
+
+// After a jump out of the console effect, which of the engine's
+// game-state mutexes does THIS thread still own (scope_slot_policy.h,
+// jump_lock_mask)? A read of the glibc owner field only; nothing is unlocked
+// (the frames that took them are gone; releasing them is not ours to decide).
+// A fault reads as "not owned" and leaves the fault accounting as it was.
+int script_jump_engine_lock_mask() {
+#ifdef _WIN32
+    return 0;   // the Windows build's game-state lock is not decompiled
+#else
+    auto owner_of = [](uint64_t rva) -> int {
+        const uintptr_t a = g_base_addr + rva + bridge::PTHREAD_MUTEX_OWNER_FIELD;
+        if (!is_mapped(a)) return 0;
+        const int faults = g_safe_read_fault_count;
+        const uintptr_t last = g_safe_read_last_fault_addr;
+        const int v = safe_read<int>(a);
+        const bool ok = g_safe_read_fault_count == faults;
+        g_safe_read_fault_count = faults;
+        g_safe_read_last_fault_addr = last;
+        return ok ? v : 0;
+    };
+    return bridge::jump_lock_mask(static_cast<int>(syscall(SYS_gettid)),
+                                  owner_of(bridge::GAME_STATE_ACQUISITION_MUTEX_LINUX),
+                                  owner_of(bridge::GAME_STATE_MUTEX_LINUX));
+#endif
+}
 
 }  // namespace
 
@@ -7373,13 +8050,77 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         break;   // compose refuses bad_proposal_id / bad_answer / bad_by
     }
     case st::Template::kEndWar: {
-        // lane peace: the enemy LEADER, and the terms from the actor's side
-        // (absent = the read-only listing).
-        if (!char_key("target_id", &s.target_title, true)) return false;
+        // The enemy LEADER, and the terms from the actor's side
+        // (absent = the read-only listing). Enemy_landless = true for a leader who
+        // holds no title (a rebel): no title is resolved for him, the war is matched by side.
+        bool landless = false;
+        if (json_has_key(params_json, "enemy_landless") &&
+            json_get_bool_strict(params_json, "enemy_landless", &landless) && landless) {
+            if (json_get_int(params_json, "target_id") <= 0) return refuse("target_required", "target_id");
+            s.enemy_landless = true;
+        } else if (!char_key("target_id", &s.target_title, true)) {
+            return false;
+        }
         const char* terms = json_get_string(params_json, "terms");
         if (terms && terms[0]) {
             if (!st::is_peace_terms(terms)) return refuse("bad_peace_terms", terms);
             s.peace_terms = terms;
+        }
+        break;
+    }
+    case st::Template::kGoldReserve: {
+        // The actor's own reserve; `amount` whole gold, `move`
+        // (a JSON boolean, absent = false) also moves the gold held now into it.
+        if (!json_has_key(params_json, "amount")) return refuse("amount_required", "amount");
+        s.reserve_gold = json_get_int(params_json, "amount");
+        bool mv = false;
+        if (json_has_key(params_json, "move") && !json_get_bool_strict(params_json, "move", &mv))
+            return refuse("bad_move", "move");
+        s.reserve_move = mv;
+        break;   // compose refuses bad_reserve_amount
+    }
+    case st::Template::kActivity: {
+        // `activity` (absent = the listing) and `host` (a JSON boolean,
+        // absent = false); compose refuses a type outside kActivityTypes.
+        const char* a = json_get_string(params_json, "activity");
+        if (a && a[0]) s.activity = a;
+        bool host = false;
+        if (json_has_key(params_json, "host") && !json_get_bool_strict(params_json, "host", &host))
+            return refuse("bad_host", "host");
+        s.activity_host = host;
+        bool leave = false;   // Leave the activity he is a guest in (a JSON boolean)
+        if (json_has_key(params_json, "leave") && !json_get_bool_strict(params_json, "leave", &leave))
+            return refuse("bad_leave", "leave");
+        s.activity_leave = leave;
+        break;
+    }
+    case st::Template::kClaimPriceFacts:
+        break;   // the actor only
+    case st::Template::kCbPrices: {
+        // The defender, the casus belli keys (`cbs`, comma separated, each a kCbPrices row:
+        // compose refuses any other), and as declare_war the claimant and the war's title when given.
+        if (!char_key("target_id", &s.target_title, true)) return false;
+        if (!char_key("claimant_id", &s.claimant_title, false)) return false;
+        const char* list = json_get_string(params_json, "cbs");
+        if (!list || !list[0]) return refuse("cbs_required", "cbs");
+        std::string one_cb;
+        for (const char* p = list;; ++p) {
+            if (*p == ',' || *p == 0) {
+                if (!one_cb.empty()) {
+                    if (!st::is_ident(one_cb)) return refuse("bad_cb_key", "cbs");
+                    s.price_cbs.push_back(one_cb);
+                }
+                one_cb.clear();
+                if (*p == 0) break;
+            } else if (*p != ' ') {
+                one_cb += *p;
+            }
+        }
+        const int tid = json_get_int(params_json, "cb_title_id");
+        if (tid > 0) {
+            const char* w = nullptr;
+            s.war_title = title_key_of(static_cast<uint32_t>(tid), &w);
+            if (s.war_title.empty()) return refuse(w ? w : "title_not_found", "cb_title_id");
         }
         break;
     }
@@ -7405,7 +8146,7 @@ bool do_script_action(const char* params_json, std::string* response_out) {
     const long long dbg0 = file_size_of(logs.debug), err0 = file_size_of(logs.error);
 
     // The handler's ABI (SResult* h(SResult*, const SCommandData*)) and the game's
-    // std::string layout per OS: console_call.h (WINRE; one argument, the script).
+    // std::string layout per OS: console_call.h (one argument, the script).
     namespace cc = bridge::console_call;
     auto handler = reinterpret_cast<void* (*)(void*, const void*)>(addr);
     cc::Arg args[1] = {cc::arg(c.script.c_str(), c.script.size())};
@@ -7418,13 +8159,30 @@ bool do_script_action(const char* params_json, std::string* response_out) {
     const auto t0 = std::chrono::steady_clock::now();
     watchdog_arm(5);
     g_in_protected_region = true;
-    if (sigsetjmp(g_recovery_point, 1) != 0) {
+    int jsig = sigsetjmp(g_recovery_point, 1);
+    if (jsig != 0) {
         if (rng_armed) restore_fake_random_scope(saved_rng);
         g_in_protected_region = false; watchdog_disarm();
+        // A jump out of the effect is never silent. Which
+        // engine game-state mutexes does this thread still own? A jump inside
+        // the engine's game-state lock (FUN_076fbc00 takes the acquisition
+        // mutex, then the game-state mutex) leaves them held, and the main
+        // thread's next frame then blocks for good (the hang).
+        bridge::g_sact_jumped.fetch_add(1, std::memory_order_relaxed);
+        const int lock_mask = script_jump_engine_lock_mask();
+        if (lock_mask) bridge::g_jump_engine_lock_held.fetch_add(1, std::memory_order_relaxed);
+        const long long jus = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        ADLOG("SCRIPT WATCHDOG FIRED: %s template=%s sig=%s us=%lld "
+              "engine_locks_held=%d (1 acquisition, 2 game state)%s\n",
+              tok, tname, jsig == 2 ? "SIGALRM" : jsig == 1 ? "SIGSEGV" : "other", jus, lock_mask,
+              lock_mask ? " -- THE GAME WILL FREEZE: an engine lock was left held by the jump" : "");
         return refuse("handler_crashed");
     }
     ADLOG("script_action: %s %s (%zu bytes) actor=%u\n", tname, tok, c.script.size(), actor_id);
+    bridge::g_sact_started.fetch_add(1, std::memory_order_relaxed);
     handler(&result, &cmd);
+    bridge::g_sact_returned.fetch_add(1, std::memory_order_relaxed);
     if (rng_armed) restore_fake_random_scope(saved_rng);
     g_in_protected_region = false; watchdog_disarm();
     const long long us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -7447,13 +8205,15 @@ bool do_script_action(const char* params_json, std::string* response_out) {
         m = st::marker_in(dbg_text, s.token);
         marks = st::token_marks(dbg_text, s.token);
     }
-    // lane peace: end_war with no terms writes nothing to the game; the action
+    // end_war with no terms writes nothing to the game; the action
     // log says so (action_log_row.h: read_only -> verdict "read").
-    const bool read_only = (t == st::Template::kEndWar && s.peace_terms.empty());
+    const bool read_only = (t == st::Template::kEndWar && s.peace_terms.empty()) ||
+                           (t == st::Template::kActivity && !s.activity_host && !s.activity_leave) ||
+                           t == st::Template::kClaimPriceFacts || t == st::Template::kCbPrices;
     const auto errs = st::console_effect_errors(read_from(logs.error, err0));
     ADLOG("script_action: %s returned %d guard=%s errors=%zu us=%lld\n", tok, ran ? 1 : 0,
           st::marker_name(m), errs.size(), us);
-    // COUNCILRE: the council_task template pins the seat it set (council_pin.h) on
+    // The council_task template pins the seat it set (council_pin.h) on
     // the seat's own read-back, as the native path does; a refused or failed
     // script pins nothing.
     const char* ai_pin = nullptr;
@@ -7703,11 +8463,11 @@ static uint32_t faith_lookup_by_key(const std::string& key) {
 // performed by the engine setter SetFaithOnCharacter @ funcs::SET_FAITH
 // (0x0666bc40), signature SetFaithOnCharacter(CCharacter*, uint faith_id,
 // char fire_onaction, char head_of_faith_cleanup). Decompile-verified
-// (re_religion_conversion_holywar.md): it looks the faith up in _g_FaithDB by
+// Per re_religion_conversion_holywar.md: it looks the faith up in _g_FaithDB by
 // id, writes char+0xB4 (FAITH_ID_DIRECT), and — with the two trailing flags = 1 —
 // fires on_faith_conversion (OnActionManager_Dispatch event 0x33), runs the
 // modifier/HoF/title recalc, and the head-of-faith cleanup. It takes a faith_id
-// INTEGER, NOT a faith-scope object → NO scope_ctx frame (#73) needed.
+// INTEGER, NOT a faith-scope object → NO scope_ctx frame needed.
 //
 // Request: { "actor_id": <int>, "faith": "<faith_key>" }   (e.g. "catholic")
 //      or  { "actor_id": <int>, "faith_id": <int> }
@@ -7804,9 +8564,9 @@ bool do_set_character_faith(const char* params_json, std::string* response_out) 
     auto set_faith = reinterpret_cast<void(*)(void*, unsigned int, char, char)>(
         bridge::game_fn(ck3::funcs::SET_FAITH));
     uint64_t saved_rng = 0;
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_character_faith", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -7906,15 +8666,15 @@ static uintptr_t culture_lookup_by_key(const std::string& key) {
 // ===========================================================================
 // do_set_character_culture — convert the ACTOR's OWN culture to a target culture.
 //
-// THE convert-own-culture lever (ck-#130). This is the CRITICAL unlock for the
+// THE convert-own-culture lever. This is the CRITICAL unlock for the
 // e_britannia goal: the e_britannia title's can_create is culture-gated on
 // heritage_west_germanic (english/anglo_saxon), heritage_goidelic (gaelic), or
 // heritage_brythonic (welsh). A NORSE (north_germanic) ruler — the Halfdan
 // k_danelaw line — can form e_britannia by NEITHER path, so the agent must
 // convert its OWN culture to e.g. english/anglo_saxon first. There is no in-game
 // scripted/interaction lever for a ruler to swap its own culture wholesale
-// headlessly, so we route through the engine setter directly — exactly as #128
-// did for faith.
+// headlessly, so we route through the engine setter directly, as the faith
+// lever does.
 //
 // The conversion is performed by the engine setter SetCultureOnCharacter @
 // funcs::SET_CULTURE (0x0666ada0), signature
@@ -7924,7 +8684,7 @@ static uintptr_t culture_lookup_by_key(const std::string& key) {
 // then runs the culture-change recalc (innovation/heritage/county tracking).
 // The console handler CMD_SET_CULTURE drives it with flag=0; we mirror that.
 // It takes a culture-OBJECT pointer (NOT an id, unlike SetFaith), so we resolve
-// the object via culture_lookup_by_key/_by_id first. No scope_ctx (#73) needed.
+// the object via culture_lookup_by_key/_by_id first. No scope_ctx needed.
 //
 // Request: { "actor_id": <int>, "culture": "<script_key>" }   (e.g. "english")
 //      or  { "actor_id": <int>, "culture_id": <int> }
@@ -8016,9 +8776,9 @@ bool do_set_character_culture(const char* params_json, std::string* response_out
     auto set_culture = reinterpret_cast<void(*)(void*, void*, char)>(
         bridge::game_fn(ck3::funcs::SET_CULTURE));
     uint64_t saved_rng = 0;
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_character_culture", response_out);
-    // scope latch: a restore was refused earlier in this
+    // Scope latch: a restore was refused earlier in this
     // process, so the slot cannot be reasoned about. REFUSE — do not
     // proceed unarmed, which is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -8125,7 +8885,7 @@ bool do_set_title_law(const char* params_json, std::string* response_out) {
     const uintptr_t type_ptr = safe_read<uintptr_t>(tobj + ck3::title_obj::TITLE_TYPE_PTR);
     if (type_ptr && is_mapped(type_ptr)) title_key = ad_read_std_string(type_ptr + ck3::db_object::NAME_KEY);
 
-    // A read that faulted decides before the engine is touched.
+    // (G-commit): a read that faulted decides before the engine is touched.
     if (safe_read_had_fault()) return answer_memory_access_fault("set_title_law", response_out);
     if (bridge::scope_latched()) {
         bridge::g_arm_refused_latched.fetch_add(1, std::memory_order_relaxed);
@@ -8184,7 +8944,7 @@ bool do_set_title_law(const char* params_json, std::string* response_out) {
           full_tid & 0xFFFFFF, title_key.c_str(), law.c_str(), full_aid & 0xFFFFFF,
           valid ? 1 : 0, queued ? 1 : 0, crashed ? 1 : 0, why.c_str());
 
-    // The engine's verdict on the command, as an intent
+    // the engine's verdict on the command, as an intent
     // in the completed ring under its own id, in the shape every other intent
     // answers (intent_request_id + dispatch_id; query_dispatch_result reads it).
     // Like create_title, "executed" means the engine's IsValid passed and its

@@ -1,10 +1,10 @@
-""" deploy-51 item (4) — tell each seat what it controls, truthfully.
+"""Tell each seat what it controls, truthfully.
 
-THE EVIDENCE. d49's king wrote "I never had hands on the army" in its own
-retrospective. d50 read `native_ai_disabled: true` 210 times — and that field is
+THE EVIDENCE. A recorded king wrote "I never had hands on the army" in its own
+retrospective. One recorded episode read `native_ai_disabled: true` 210 times — and that field is
 `bool(disable_native_ai)`, THE PARAMETER THE CALLER PASSED, echoed back as
 though it were a measured state. Seats then spent cycles interrogating it: 188
-`control` and 183 `whoami` calls in arm A, 4-9% of all calls, asking a question
+`control` and 183 `whoami` calls in one recorded set, 4-9% of all calls, asking a question
 the instrument answered with their own input.
 
 THE TRAP THESE TESTS EXIST FOR. There are TWO fields called `ai_enabled` and
@@ -54,7 +54,7 @@ class Gateway:
             # the GLOBAL controller, deliberately disagreeing with the per-char one
             return {"ai_controller": {"ai_enabled": True}}
         if action == "query_character":
-            # a BOUND ruler: since whoami blocks no_ruler_bound when
+            # a BOUND ruler: whoami blocks no_ruler_bound when
             # character_id=0 resolves to nothing, and carries no agency then.
             return {"id": 30853, "alive": True}
         return {}

@@ -3,17 +3,17 @@
 //: readers.
 //:
 //: The detach path in ipc_server.cpp keys R3's claim pin on this, and
-//: bridge/test/claimless_detach_probe.cpp asserts it. It lives here because my first
-//: version of that probe RE-SPELLED the condition as a local lambda — which proves
-//: only that the same expression can be written twice, and would have gone on passing
-//: if the branch's own copy had drifted. The probe now calls this function, so the
+//: bridge/test/claimless_detach_probe.cpp asserts it. It lives here because a probe
+//: that RE-SPELLS the condition as a local lambda proves
+//: only that the same expression can be written twice, and goes on passing
+//: if the branch's own copy drifts. The probe now calls this function, so the
 //: rows are about the shipped predicate rather than about a faithful copy of it.
 //:
 //: Dependency-free on purpose (no session.h, no socket layer): a host probe must be
 //: able to evaluate it from two plain values, and the branch must be able to call it
 //: while holding g_client_mutex.
 //:
-//: THE THREE STATES, ruled by the progenitor ("amend, re-freeze, then fix"), of which
+//: THE THREE STATES (amend the rule, re-freeze it, then fix the code), of which
 //: only (a) changes any behaviour:
 //:   (a) not declared AND claims_ever == 0 -> NOT a participant. The detach suppresses
 //:       the detached note, ends the session, destroys it, and accrues nothing. These
@@ -22,10 +22,10 @@
 //:       and close. Pinning them cost 364 silent game-days each against an X of 18 and
 //:       would have invalidated every registered episode.
 //:   (b) DECLARED, claimed or not -> a participant, today's behaviour exactly. This is
-//:       window: the world loads ~17s after the first connection, so a real
+//:       The window: the world loads ~17s after the first connection, so a real
 //:       agent has a stretch where claims_ever is still 0, and a seat that dies there
 //:       must remain a MEASURED HOLE. Making a genuine agent failure invisible is the
-//:       same defect this bead fixes, pointed the other way.
+//:       same defect this code guards against, pointed the other way.
 //:   (c) claims_ever > 0 -> a participant, today's behaviour exactly. This covers a
 //:       seat whose declaration went missing, so a dropped field can never un-seat a
 //:       session that actually steered.

@@ -1,9 +1,9 @@
-// siege_attribution.h — which war a siege belongs to (F8).
+// siege_attribution.h — which war a siege belongs to.
 //
-// A CWar stores no sieges (re_siege_progress_struct.md §1). query_wars used to
+// A CWar stores no sieges (re_siege_progress_struct.md §1). query_wars does not
 // list every siege whose besieger was one of the war's ATTACKERS, so a ruler
 // fighting three wars showed the same siege under all three, each with that
-// war's primary defender written in as the siege's defender (live867 l5fx5:
+// war's primary defender written in as the siege's defender (a test run:
 // sieges 6 and 7 of 14859 listed under wars 3, 4 and 16777218).
 //
 // The besieged holding is read now: the barony whose CProvince back-links the

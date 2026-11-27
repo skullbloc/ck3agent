@@ -17,7 +17,7 @@
 // (now-unexecuted) stack frame, so skipping it leaks nothing and is equivalent to
 // the engine's own many internal early-returns (HasVassals/pacing gates).
 //
-// CRASH-HARDENING (crash2 class — all avoided): no engine calls under the hook,
+// CRASH-HARDENING (every known crash class avoided): no engine calls under the hook,
 // no allocation, no name-cache drain. Fail-open is total — every uncertain branch
 // runs the original, so a mis-firing veto can only ever LET A WAR THROUGH (status
 // quo); it can never crash, corrupt, or wedge the game thread. No sigsetjmp region

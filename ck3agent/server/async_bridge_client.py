@@ -53,8 +53,8 @@ class AsyncBridgeClient:
         the MCP server keeps its implicit control session until it asks for
         something else.
 
-        THIS SIGNATURE IS A HAND-COPIED MIRROR OF THE SYNC ONE, AND IT DRIFTED
-       `episode_seat` was added to `BridgeClient.handshake` and not
+        THIS SIGNATURE IS A HAND-COPIED MIRROR OF THE SYNC ONE, AND IT DRIFTED:
+        `episode_seat` was added to `BridgeClient.handshake` and not
         here, so `mcp_server`'s one handshake path — which splats
         `seat_declaration_kwargs()` — raised `unexpected keyword argument
         'episode_seat'` at startup. The agent had no game tools for a whole
@@ -65,7 +65,7 @@ class AsyncBridgeClient:
         
         `test_async_mirrors_sync_handshake` now compares the two parameter
         sets, because a mirror nobody checks is not a mirror. Adding a keyword
-        to the sync client and not here is the defect this class of bug is,
+        to the sync client and not here is the hazard this class of bug is,
         and the next one will be caught by arithmetic rather than by an
         episode.
         """

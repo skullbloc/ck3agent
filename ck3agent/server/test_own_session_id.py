@@ -6,20 +6,20 @@ asking "who am I" was told the same character, and for five of them it was not
 theirs. A true switch depends on a seat knowing what it holds, so this had to be
 right before `control` could be.
 
-THE FIRST VERSION OF THIS WAS WRONG AND NO BEHAVIOURAL TEST COULD HAVE SAID SO.
-I wrote a list of four candidate attribute paths from memory — ("state",
-"_client"), ("_a", "_client"), ("client",), ("_client",) — and doubles shaped
-after that list passed, because a double built from my model cannot falsify my
-model. Tracing the two real gateway classes found that `_AgentGateway` keeps its
-client at `_a.bridge`, not `_a._client`: on the AUTONOMOUS path, the one that
-actually drives an arm episode, every seat would have answered "I do not know
+A LIST OF CANDIDATE PATHS IS WRONG IN A WAY NO BEHAVIOURAL TEST CAN SAY. Four
+attribute paths written from memory — ("state",
+"_client"), ("_a", "_client"), ("client",), ("_client",) — pass doubles shaped
+after that list, because a double built from a model cannot falsify that
+model. The real gateway classes differ: `_AgentGateway` keeps its
+client at `_a.bridge`, not `_a._client`, so on the autonomous path
+every seat would answer "I do not know
 which seat I am". The bare ("client",) was worse than useless — on CK3Agent that
 name is the ANTHROPIC client, so the path could reach a wrong object rather than
 no object.
 
 So these rows check the REAL class. If someone renames BridgeState._client, a
 row here reds — rather than every seat quietly losing its identity in the next
-arm. (the retired autonomous loop's path, ("_a", "bridge"),
+episode. (the retired autonomous loop's path, ("_a", "bridge"),
 was removed with the rest of its leftovers; the production seat is the MCP
 server.)
 """

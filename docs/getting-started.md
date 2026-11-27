@@ -8,6 +8,8 @@ From download to Claude's first move, about 15 minutes.
 - Crusader Kings III **1.18.3.1**, the native Linux build, from the native
   Steam package. Not Flatpak, not Snap, not the Windows build under Proton.
 - Python 3.11 or newer. `pipx` is optional.
+  Ubuntu 22.04 ships Python 3.10: install 3.11 first (`sudo apt install
+  python3.11 python3.11-venv`) and run the install steps with `python3.11`.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) on the same machine, signed in.
 - A single-player save that is not Ironman. Two kinds work: an **observer
   save** (start a new game, choose **Observe** on the character-selection
@@ -20,7 +22,7 @@ From download to Claude's first move, about 15 minutes.
 ## 1. Download and verify
 
 From the [releases page](https://github.com/skullbloc/ck3agent/releases),
-download `ck3agent-2026.12.11-linux-x86_64.tar.gz` and `SHA256SUMS` into one
+download `ck3agent-2026.12.12-linux-x86_64.tar.gz` and `SHA256SUMS` into one
 directory. Verify there, before unpacking:
 
 ```bash
@@ -28,15 +30,15 @@ cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-Expected: `ck3agent-2026.12.11-linux-x86_64.tar.gz: OK`. With the GitHub CLI
+Expected: `ck3agent-2026.12.12-linux-x86_64.tar.gz: OK`. With the GitHub CLI
 you can also run
-`gh attestation verify ck3agent-2026.12.11-linux-x86_64.tar.gz --repo skullbloc/ck3agent`.
+`gh attestation verify ck3agent-2026.12.12-linux-x86_64.tar.gz --repo skullbloc/ck3agent`.
 
 ## 2. Install
 
 ```bash
-tar xzf ck3agent-2026.12.11-linux-x86_64.tar.gz
-cd ck3agent-2026.12.11-linux-x86_64
+tar xzf ck3agent-2026.12.12-linux-x86_64.tar.gz
+cd ck3agent-2026.12.12-linux-x86_64
 ./install.sh
 ```
 

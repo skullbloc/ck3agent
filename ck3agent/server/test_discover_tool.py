@@ -1,4 +1,4 @@
-"""discover: behaviour against a fake bridge (F15).
+"""discover(): behaviour against a fake bridge.
 
 Rows:
   * every `what` resolve_discover maps reaches its bridge action, on the path its
@@ -45,7 +45,7 @@ GATEWAY = {w for w in T._DISCOVER_RESOLVED
 
 
 def test_the_game_thread_reads_are_the_ones_lane_l6_moved():
-    # fabricate_targets left discover in (finding 8): do(action_class=...) owns it.
+    # fabricate_targets left discover: do(action_class=...) owns it.
     assert GATEWAY == {"construction_check"}
 
 
@@ -141,7 +141,8 @@ def test_the_deferred_whats_come_from_the_one_definition():
     """discover keeps no list of its own: the five whats that queue work onto the
     game thread are found through DEFERRED_DRAIN_READS (the control: the set is
     not empty and holds them)."""
-    assert {"acceptance", "valid_cbs", "valid_cbs_strict", "trigger_result",
+    # acceptance is composed (redesign.acceptance_impl)
+    assert {"valid_cbs", "valid_cbs_strict", "trigger_result",
             "interaction_validity"} <= DEFERRED
     src = Path(ms.__file__).read_text(encoding="utf-8")
     body = src[src.index("async def discover("):]
@@ -154,10 +155,11 @@ def test_the_deferred_whats_come_from_the_one_definition():
 
 #: parameter -> (what, kwargs, the bridge action, what it must receive)
 PARAMS = {
-    "interaction_type": ("acceptance", {"interaction_type": "befriend_interaction"},
-                         "query_interaction_acceptance",
+    # Acceptance is composed (redesign.acceptance_impl, test_ireland_walk_replies.py)
+    "interaction_type": ("trigger_result", {"interaction_type": "befriend_interaction"},
+                         "query_trigger_result",
                          {"interaction_type": "befriend_interaction"}),
-    "target_id": ("acceptance", {"target_id": 4242}, "query_interaction_acceptance",
+    "target_id": ("trigger_result", {"target_id": 4242}, "query_trigger_result",
                   {"target_id": 4242}),
     "actor_id": ("valid_cbs", {"actor_id": 30853}, "query_valid_cbs", {"actor_id": 30853}),
     "interaction": ("interaction_validity", {"interaction": "befriend"},
@@ -178,7 +180,7 @@ PARAMS = {
                      {"character_id": 812}),
     "decisions": ("decisions_annotated", {"decisions": ["found_kingdom_decision"]},
                   "list_decisions_annotated", {"decisions": ["found_kingdom_decision"]}),
-    # what=scheme_targets (cleanup): the scheme key and an explicit candidate list
+    # what=scheme_targets: the scheme key and an explicit candidate list
     # reach the engine's start check (scheme_action, action=check); nothing starts.
     "scheme": ("scheme_targets", {"scheme": "murder", "target_id": 4242, "character_id": 30853},
                "scheme_action", {"action": "check", "scheme": "murder", "target_id": 4242,
@@ -189,8 +191,9 @@ PARAMS = {
                                      "actor_id": 30853}),
 }
 
-#: the two parameters that shape the verdict instead of the request
-SHAPING = {"cb", "title", "decision_type"}
+#: the parameters that shape the verdict instead of the request (topic: the shared
+#: notes, served without the bridge: test_notes.py)
+SHAPING = {"cb", "title", "decision_type", "topic"}
 
 
 def test_every_discover_parameter_has_a_row():
@@ -282,10 +285,10 @@ def test_decision_type_picks_the_shield_decision(bridge):
 
 
 def test_every_parameter_is_described():
-    desc = _defs()["discover"]["description"]
-    args = desc[desc.index("Args:"):]
+    # Each argument's text is its schema description (tool_text, mcp_server Fields).
+    props = _defs()["discover"]["input_schema"]["properties"]
     for name in set(PARAMS) | SHAPING | {"what"}:
-        assert re.search(rf"\b{name}\b", args), f"discover's description does not explain {name}"
+        assert (props.get(name) or {}).get("description"), f"discover does not describe {name}"
 
 
 # ── the refusals ──────────────────────────────────────────────────────────────
@@ -314,7 +317,7 @@ def test_an_unmodelled_decision_is_unknown_subject(bridge):
             "unknown_subject")
 
 
-@pytest.mark.parametrize("what", ["war_targets", "valid_cbs_strict"])
+@pytest.mark.parametrize("what", ["valid_cbs_strict"])   # war_targets: test_ireland_walk_replies.py
 @pytest.mark.parametrize("exc,gate", [(TimeoutError("late"), "read_timeout"),
                                       (ConnectionError("gone"), "bridge_disconnected")])
 def test_a_read_that_did_not_come_back_is_named(bridge, what, exc, gate):
@@ -330,8 +333,8 @@ def test_a_deferred_read_the_bridge_never_answered_is_read_timeout(bridge):
 
 
 @pytest.mark.parametrize("what,reply,gate", [
-    ("acceptance", {"success": False, "reason": "interaction_not_found"}, "name_not_found"),
-    ("acceptance", {"success": False, "reason": "missing interaction_type"},
+    ("trigger_result", {"success": False, "reason": "interaction_not_found"}, "name_not_found"),
+    ("trigger_result", {"success": False, "reason": "missing interaction_type"},
      "missing_required_argument"),
     ("imprisonment", {"success": False}, "unmapped_refusal"),
 ])
@@ -351,7 +354,7 @@ def test_a_declined_targets_read_is_a_refusal(bridge):
 
 
 def test_imprison_targets_are_one_judge_in_discover_and_do(bridge):
-    """MAJOR 4: discover(what='targets', action='imprison') annotated
+    """discover(what='targets', action='imprison') annotated
     vassals with grounds alone (query_imprisonment_reasons), a second imprison judge
     beside do(action_class='imprison_targets'). It is now the same rows: the game's
     own send check per vassal, with the target's answer and score."""
@@ -369,7 +372,7 @@ def test_imprison_targets_are_one_judge_in_discover_and_do(bridge):
     r = d["result"]
     do = run(ms.do(action_class="imprison_targets", character_id=30853))["result"]
     assert r["available"] == do["available"] and r["unavailable"] == do["unavailable"]
-    assert [(x["do_call"]["args"]["target_id"], x["answer"], x["accept_score"]) for x in r["available"]] == \
+    assert [(x["do_call"]["args"]["args"]["target_id"], x["answer"], x["accept_score"]) for x in r["available"]] == \
         [(5, "yes", 153.5), (6, "maybe", 50.0)]
     assert "chance_pct" not in r["available"][0] and r["available"][1]["chance_pct"] == 50.0
     assert r["unavailable"][0]["blocked"]["gate"] == "interaction_invalid"
@@ -447,9 +450,9 @@ def test_danelaw_with_a_failed_title_read_reports_the_duchy_clause_unmeasured(br
 
 
 def test_danelaw_with_a_clamped_title_list_reports_the_duchy_clause_unmeasured(bridge):
-    """An empty held_titles while query_realm counts titles was the
-    emitter's >500 clamp, not "holds no duchy". RED on 16dd7f14 (counted 0). The
-    emitter answers an error since then R9; this is the second line of defence."""
+    """Witness n6: an empty held_titles while query_realm counts titles was the
+    emitter's >500 clamp, not "holds no duchy". RED without the rule (counted 0). The
+    emitter now answers an error; this is the second line of defence."""
     bridge.replies["query_realm"] = {"title_tier": 3, "war_count": 0, "held_title_count": 612}
     bridge.replies["query_character"] = {"id": 30853, "top_liege_id": 30853}
     bridge.replies["query_title_hierarchy"] = {"character_id": 30853, "held_titles": [],
@@ -514,8 +517,8 @@ def _danelaw(bridge, held, progress=None):
 def test_danelaw_counts_only_the_duchies_whose_de_jure_parent_is_k_england(bridge):
     """The reader filtered on "de_jure_kingdom"/"de_jure_liege_key", which
     the bridge never writes (it writes de_jure_parent_key, query_handlers.cpp:2964),
-    so the k_england filter never ran and a Scottish duchy counted. RED on
-    0f5ed6b7: complete 2, pass True."""
+    so the k_england filter never ran and a Scottish duchy counted. RED without
+    the rule: complete 2, pass True."""
     duchy = _danelaw(bridge, [_held("d_lothian", 70, "k_scotland"),
                               _held("d_essex", 80, "k_england"),
                               _held("c_colchester", 81, "d_essex", tier=2)])
@@ -528,7 +531,7 @@ def test_danelaw_counts_only_the_duchies_whose_de_jure_parent_is_k_england(bridg
 def test_danelaw_a_duchy_whose_kingdom_did_not_read_is_unmeasured(bridge):
     """A held duchy with no de_jure_parent_key may be an English one: short of the
     count, the clause is UNMEASURED, not a fail, and the duchy is not counted.
-    RED on 0f5ed6b7 (counted: complete 2, pass True)."""
+    RED without the rule (counted: complete 2, pass True)."""
     duchy = _danelaw(bridge, [_held("d_essex", 80, "k_england"),
                               _held("d_kent", 90, None)])
     assert duchy["measured"]["complete"] == 1
@@ -548,7 +551,7 @@ def test_danelaw_a_failed_meter_read_is_unmeasured_not_incomplete(bridge):
 
 
 def test_danelaw_two_complete_english_duchies_pass(bridge):
-    """The non-discriminating control (green on 0f5ed6b7 too)."""
+    """The non-discriminating control (green without the rule too)."""
     duchy = _danelaw(bridge, [_held("d_essex", 80, "k_england"),
                               _held("d_kent", 90, "k_england")])
     assert duchy["pass"] is True and duchy["measured"]["complete"] == 2, duchy
@@ -565,7 +568,7 @@ def test_a_vassal_duke_is_graded_from_the_fields_the_bridge_writes():
     the tier read 0 ("<= duke" FAILED for every ruler) and independence
     defaulted to True (PASSED for every vassal). Now: query_realm title_tier
     (do_query_realm), query_character id/top_liege_id (build_char_profile),
-    query_realm war_count. RED on 627af763 (tier fails, independent passes)."""
+    query_realm war_count. RED without the rule (tier fails, independent passes)."""
     c, r = _clauses({"title_tier": 3, "war_count": 0},
                     {"id": 501, "top_liege_id": 12618, "is_imprisoned": False, "prestige": 900.0})
     assert c["highest_title_le_duke"]["pass"] is True, c["highest_title_le_duke"]
@@ -612,7 +615,7 @@ def test_a_shield_fix_names_no_lever_that_does_nothing():
         assert "steer" not in str(c.get("fix") or ""), c
 
 
-#: discover enumerations deleted in (finding 8) -> the do door that owns each.
+#: discover enumerations deleted -> the do door that owns each.
 MOVED = {"hireable_mercenaries": "mercenaries", "fabricate_targets": "fabricate_targets",
          "joinable_factions": "factions_to_join"}
 

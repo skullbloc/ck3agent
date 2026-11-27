@@ -5,7 +5,7 @@
 //
 // EVENTUAL SOURCE: re/offsets/offset_version.h, Windows section (PE_PDB_GUID,
 // PE_PDB_AGE, PE_SIZE_OF_IMAGE, ...; the ADR's "Binary identity on the Python
-// side"). Another lane (lane-p0p1) owns that header; until its Windows
+// side"). That header is shared; until its Windows
 // constants land, the gate reads them from here so the two edits do not
 // conflict. When they land, this header becomes aliases of those constants
 // (or is deleted): never a second copy that can drift.
@@ -15,7 +15,7 @@
 // rawVersion 1.18.3.1, titus_branch.txt release/1.18.3, titus_rev 7b069e36),
 // read 2026-10-18 from the pinned 1.18.3 depot; the sha256 was
 // re-taken there with sha256sum and the CodeView/SizeOfImage pair was observed
-// by this gate inside the running game under Proton (lane-p4, evidence in
+// by this gate inside the running game under Proton (evidence in
 // re/findings/windows/re_p4_proxy_gate.md). The record's PDB path is
 // C:\mnt\gsg\ck3\titus\outputdir_windows\binaries\ck3.pdb.
 //

@@ -1,8 +1,8 @@
-// test_char_is_alive.cpp — cleanup final fix (minor 8). NO GAME.
+// test_char_is_alive.cpp — an unreadable death date is not "alive". NO GAME.
 //
 // THE CLAIM: a character whose death date cannot be read is not reported as
-// alive. safe_read answers 0 on a fault and 0 is the "alive" value, so before
-// the fix enumerate_ai_characters handed such a character to its callback as a
+// alive. safe_read answers 0 on a fault and 0 is the "alive" value, so without
+// this check enumerate_ai_characters would hand such a character to its callback as a
 // living AI ruler. The fixture is real memory: three characters in a stand-in
 // CHARACTER_DB, one of them placed so its DEATH_DATE field is the first byte of
 // a PROT_NONE page (every field below it readable), one alive, one dead.

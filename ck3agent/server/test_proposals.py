@@ -1,8 +1,8 @@
 """The incoming-proposal queue, server side, against a STUB BRIDGE.
 
-The stub (`Game` + `Gw`) speaks the contract of docs/design/incoming-proposals.md
-("The contract between QMOD and QSRV") as written, not the bridge's code (QMOD
-builds that in parallel): the four templates through `script_action`
+The stub (`Game` + `Gw`) speaks the contract of a design note
+(the incoming-proposal contract) as written, not the bridge's code
+(built separately): the four templates through `script_action`
 (`proposal_seat`, `proposal_policy`, `proposal_list`, `proposal_answer`) with the
 replies the contract's table names, and `query_script_log` with
 `proposal_mod_enabled` (character mode) and `proposal_lines` (lines since an
@@ -16,7 +16,7 @@ emitters' keys: query_character `spouses`/`betrothed`/`liege_id`
 redesign._all_wars.
 
 Every assumption about the not-yet-built bridge is a stub line here; the live
-rows of the design (L1-) are what proves the real one.
+rows of the design (twelve of them) are what proves the real one.
 """
 import asyncio
 import json
@@ -651,7 +651,7 @@ def test_the_servers_outcome_reasons_are_the_bridges():
 # ── The answer's own call row does not blind the read-back ────
 
 def _held_before_the_seat_was_known(monkeypatch, tmp_path):
-    """Live qf2 (2026-11-15): offers 4 and 5 to seat 37241 were HELD while
+    """Live (2026-11-15): offers 4 and 5 to seat 37241 were HELD while
     this server had marked only other seats (the scenario marked 37241 through
     the template first), so their HELD lines were read and left out; the seat's
     observe then LISTED both. The answer's own call row took the id off the last

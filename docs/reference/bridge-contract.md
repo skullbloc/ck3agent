@@ -2,7 +2,8 @@
 
 What the bridge guarantees an agent that controls a CK3 ruler, what it does
 not, and how to hand control back. Read this before writing an agent or a
-bridge handler. Tool names are the 13 MCP tools in [tools.md](tools.md).
+bridge handler. Tool names are the 13 MCP tools in [tools.md](tools.md), the
+surface a default install registers.
 Bridge handler names, such as `query_*` and `set_controlled_character`, are
 the verbs those tools call, listed in [bridge-actions.md](bridge-actions.md).
 
@@ -67,7 +68,7 @@ without an id is refused (`missing_character_id`).
 
 Two more refusals come from the MCP server itself, before any bridge call, and only
 when the harness declares seat reservations (`CK3_RESERVED_FOR_OTHER_SEATS`, set by
-an experiment cell to the other seats' declared rulers, with `CK3_SEAT_DECLARED_CHARACTER_ID`;
+a scheduled run to the other seats' declared rulers, with `CK3_SEAT_DECLARED_CHARACTER_ID`;
 unset, nothing changes):
 
 | Reason | Fix |

@@ -1,4 +1,4 @@
-// test/test_pipeline_frames.cpp — regression tests for (bridge half).
+// test/test_pipeline_frames.cpp — regression tests for the pipeline frames (bridge half).
 //
 // THE BUG. A pipeline result frame is the bridge's envelope with the HANDLER's
 // JSON spliced in. It carried NO `type` key. For a client that also sent no
@@ -104,7 +104,7 @@ static void test_ordinary_handler_reply() {
     rapidjson::Document d = must_parse(f);
     if (d.HasParseError()) return;
 
-    // THE bead: the frame can be named.
+    // THE task: the frame can be named.
     CHECK(std::strcmp(str_or(d, "type"), "result") == 0);
     // ...without losing anything it carried before.
     CHECK(d.HasMember("request_id"));
@@ -254,7 +254,7 @@ static void test_degenerate_handler_replies() {
             CHECK(d.HasMember("type"));
         }
     }
-    // TRUNCATED object — no closing brace. The pre-fix splice produced INVALID
+    // TRUNCATED object — no closing brace. The superseded splice produced INVALID
     // JSON here (it copied the fragment and never closed the frame). This must
     // parse.
     {
@@ -275,7 +275,7 @@ static void test_degenerate_handler_replies() {
 }
 
 // A frame for a client that sent no request_id: this is the population the
-// bead is about. It must still be NAMEABLE even though it is not keyable.
+// task is about. It must still be NAMEABLE even though it is not keyable.
 static void test_frame_without_request_id_is_still_nameable() {
     std::printf("a frame with NO request_id still carries a type\n");
     std::string f = open_frame("");     // ticket-only, no request_id
@@ -284,25 +284,25 @@ static void test_frame_without_request_id_is_still_nameable() {
     rapidjson::Document d = must_parse(f);
     if (d.HasParseError()) return;
     CHECK(!d.HasMember("request_id"));
-    // Before that this frame had neither a key nor a type: unroutable.
+    // At first this frame had neither a key nor a type: unroutable.
     CHECK(std::strcmp(str_or(d, "type"), "result") == 0);
     CHECK(d.HasMember("ticket"));
 }
 
 
-// ══ ═══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 // A ROW THAT CANNOT SAY WHAT WAS EXECUTED.
 //
-// `escaped_action` used to be emitted ONLY when the handler's reply was
+// `escaped_action` is not emitted ONLY when the handler's reply was
 // unusable, so a reply that was a perfectly good JSON object and simply did not
-// name itself produced a frame with no `action` key. measured it in a
-// d39 episode: 2,302 of 3,009 ticketed rows carried ticket, request_id,
+// name itself produced a frame with no `action` key. A recorded episode
+// measured it: 2,302 of 3,009 ticketed rows carried ticket, request_id,
 // character_id, flush_id, tick_executed and game_date_executed — everything
 // except the verb. The driver's relay copies `action` off the frame,
 // `split_bridge_rows` calls a nameless row unnameable, and `decision_capture`
 // declines it outright.
 static void test_a_reply_that_does_not_name_itself_is_named_by_the_frame() {
-    std::printf("ck-9vdk: a reply that does not name itself is NAMED\n");
+    std::printf("a reply that does not name itself is NAMED\n");
 
     // The shape the two highest-volume reads actually send: valid, useful, and
     // anonymous. query_character and query_realm write no `action` key at all.
@@ -321,9 +321,9 @@ static void test_a_reply_that_does_not_name_itself_is_named_by_the_frame() {
 
 // THE OTHER HALF, AND IT IS THE ONE THAT KEEPS THE FIX HONEST: a reply that
 // DOES name itself must be byte-identical to before, with the handler's own
-// value standing. Otherwise this bead moves a number every mediator reads.
+// value standing. Otherwise this code moves a number every mediator reads.
 static void test_a_reply_that_names_itself_is_untouched() {
-    std::printf("ck-9vdk: a reply that names itself keeps ITS value, once\n");
+    std::printf("a reply that names itself keeps ITS value, once\n");
     const std::string f = build(
         "{\"success\":true,\"action\":\"set_council_task\",\"task\":\"develop\"}",
         "set_council_task");
@@ -348,7 +348,7 @@ static void test_a_reply_that_names_itself_is_untouched() {
 // have called each of these "already named" and left the row anonymous — the
 // direction that reads as fixed.
 static void test_only_a_TOP_LEVEL_action_counts_as_named() {
-    std::printf("ck-9vdk: nested and quoted `action` do not count\n");
+    std::printf("nested and quoted `action` do not count\n");
     struct Case { const char* body; const char* why; } cases[] = {
         {"{\"detail\":{\"action\":\"nested\"}}",        "nested object"},
         {"{\"rows\":[{\"action\":\"in_array\"}]}",      "inside an array"},
@@ -376,7 +376,7 @@ static void test_only_a_TOP_LEVEL_action_counts_as_named() {
 // of bodies, `has_top_level_key(body, "\"type\"")` must be true exactly when
 // the rename actually rewrote the body.
 static void test_the_two_traversals_agree_about_type() {
-    std::printf("ck-9vdk: has_top_level_key agrees with the rename scanner\n");
+    std::printf("has_top_level_key agrees with the rename scanner\n");
     const char* bodies[] = {
         "\"type\":\"handler\"",
         "\"success\":true,\"type\":\"handler\"",
@@ -407,7 +407,7 @@ static void test_the_two_traversals_agree_about_type() {
 }
 
 int main() {
-    std::printf("test_pipeline_frames — ck-6kvq.18 typed pipeline egress\n");
+    std::printf("test_pipeline_frames — typed pipeline egress\n");
 #if defined(CK3_PIPELINE_FRAME_UNTYPED)
     std::printf("*** NEGATIVE CONTROL BUILD (untyped frames). "
                 "THIS MUST FAIL. ***\n");

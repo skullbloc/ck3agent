@@ -1,4 +1,4 @@
-"""A grant reads its new holder once before answering (minor 9).
+"""A grant reads its new holder once before answering.
 
 The evaluator's grant 12618 -> 18679 (county 8182) answered pending
 clock_advances ("an AI answers within days") while the very next read, with no

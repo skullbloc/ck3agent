@@ -1,7 +1,7 @@
-"""The seats' guide, served page by page (pre-registration v4 draft section 6).
+"""The seats' guide, served page by page.
 
-WHY A TOOL. A seat is locked down (no file tools, slash commands off:
-ck3bench/runner/seat_surface.py), so strategy context cannot be skills or
+WHY A TOOL. A seat is locked down (no file tools, slash commands off),
+so strategy context cannot be skills or
 files it opens. The harness serves it like the notepad: one tool,
 `guide_read(topic)`, registered only when the seat's environment declares a
 guide. One page per call; a page may name deeper pages; an unknown topic
@@ -21,9 +21,9 @@ seals. The readers are:
     arm's expected surface when the block declares a guide, transcribes the
     declaration (`transcription_for`) and compares the launch with the
     bundle's open stamp (`cross_check`);
-  * `scripts/dry_cell.py`: transcribes the same into each seat's environment
+  * the experiment's seat launcher (not shipped): transcribes the same into each seat's environment
     and seals the fetch log (`seal`) into the bundle;
-  * `ck3bench/runner/cell.py`: writes each seat's play file from the role
+  * the harness that starts the seats: writes each seat's play file from the role
     (`role_of`, `Guide.play_text`) and witnesses its sha256 beside the
     manifest's (`play_witness`).
 
@@ -86,8 +86,8 @@ ENV_DIR = "CK3_GUIDE_DIR"
 ENV_MANIFEST_SHA = "CK3_GUIDE_MANIFEST_SHA256"
 TRANSCRIPTION_KEYS = (ENV_DIR, ENV_MANIFEST_SHA)
 
-#: Where the experiment's guide lives in the research tree (the cell and the
-#: launcher resolve it against their repository root).
+#: Where a guide lives, relative to a repository root (the launcher resolves it
+#: there; a checkout without that directory has no guide to serve).
 REPO_GUIDE_REL = "scripts/prompts/v4-1066"
 MANIFEST_NAME = "manifest.json"
 MANIFEST_FORMAT = 1

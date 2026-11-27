@@ -1,5 +1,5 @@
 // scheme_engine.cpp -- the scheme reads and the engine's own start check
-// (l3-schemes, re/findings/re_schemes.md).
+// (re/findings/re_schemes.md).
 //
 // What a player sees in the scheme window, read from the engine's own fields and
 // getters: secrecy, success chance, progress, breaches, exposure and the agents in
@@ -263,10 +263,10 @@ namespace {
 // its users: re_schemes.md §2). It records which top-level blocks (allow, valid)
 // failed and the engine's own entries (steps 3/4); nothing else is read.
 //
-// 2026-10-30: what a refusal can say. The engine's entries carry the
+// What a refusal can say. The engine's entries carry the
 // game's words (scheme_fail_entry::TEXT). A failing trigger carries none the
 // bridge can read: with wants_text() answering true, the descriptions the game
-// handed this sink on one paused live867 launch (eval_d_words_court, abduct by
+// handed this sink on one paused launch (eval_d_words_court, abduct by
 // 9238, 10 refused targets) held an empty text (+0x10), an empty loc key (+0x30)
 // and no lines object (+0x08) for every failing statement, and every leaf entry
 // was empty as well: the game renders a trigger's words later, from the trigger

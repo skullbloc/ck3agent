@@ -1,4 +1,4 @@
-// speed_read_probe.cpp —. The BRIDGE's own emission, on a host.
+// speed_read_probe.cpp — The BRIDGE's own emission, on a host.
 //
 // WHY THIS EXISTS. The python acceptance needs `get_tick_info` payloads for a
 // faulted speed read, and CK3 is not running on the host lane. A python model
@@ -7,7 +7,7 @@
 // is the handler's own bytes.
 //
 // Built TWICE. Without `CK3_SPEED_PREFIX_CONTROL` it is the shipping handler.
-// With it, the emission reverts to the pre-fix arithmetic restored verbatim
+// With it, the emission reverts to the superseded arithmetic restored verbatim
 // from query_handlers.cpp @ 899d328 — the negative control, as a binary. A
 // control that fails to COMPILE is a control doing its job.
 //
@@ -44,8 +44,8 @@ int main(int argc, char** argv) {
         const int32_t raw     = static_cast<int32_t>(atoi(argv[i + 2]));
         StubBuilder b;
 #ifdef CK3_SPEED_PREFIX_CONTROL
-        // THE PRE-FIX HANDLER. Note what it does NOT look at: `faulted`. That
-        // is the defect, in one line — the fault information existed (the
+        // THE SUPERSEDED HANDLER. Note what it does NOT look at: `faulted`. That
+        // is the hazard, in one line — the fault information existed (the
         // counter was already being bumped) and the emission site never
         // consulted it.
         (void)faulted;

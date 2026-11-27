@@ -1,0 +1,2130 @@
+{
+"rows": {
+"L.me0.raw": {
+"n": 14,
+"reply": {
+"current_focus": "diplomacy_foreign_affairs_focus",
+"focus_date_set": 53144328,
+"focus_lifestyle": "diplomacy_lifestyle",
+"game_date": "1066.09.15",
+"lifestyle_xp": {},
+"lifestyles": [],
+"next_perks": [
+{
+"lifestyle": "diplomacy_lifestyle",
+"perk": "thoughtful_perk"
+},
+{
+"lifestyle": "diplomacy_lifestyle",
+"perk": "benevolent_intent_perk"
+},
+{
+"lifestyle": "diplomacy_lifestyle",
+"perk": "firm_hand_perk"
+},
+{
+"lifestyle": "diplomacy_lifestyle",
+"perk": "befriend_perk"
+},
+{
+"lifestyle": "diplomacy_lifestyle",
+"perk": "familial_familiar_perk"
+}
+],
+"perk_count": 8,
+"perks": [
+"stalwart_leader_perk",
+"chivalric_dominance_perk",
+"courtship_perk",
+"never_back_down_perk",
+"kingsguard_perk",
+"promising_prospects_perk",
+"loyalty_and_respect_perk",
+"peacemaker_perk"
+],
+"request_id": "a8f8de9409d441169d7b9e7076b93513",
+"status": "ok",
+"tick": 0,
+"total_xp": 0,
+"unlock_check": "the bridge's reads: a focus, a point in the perk's lifestyle, not held, every parent held; unlock_perk runs the game's own check, which adds the perk's trigger",
+"unlockable_now": []
+}
+},
+"L.unlock_no_point": {
+"n": 16,
+"reply": {
+"actor": {
+"alive": true,
+"id": 31506,
+"is_controlled": true,
+"is_player": false,
+"name": "Murchad"
+},
+"applied": false,
+"blocked": {
+"class": "target_state",
+"gate": "engine_refused",
+"is_known_limitation": false,
+"raw_reason": "perk_points_needed",
+"retry": "never",
+"retryable": false,
+"scope": "arguments",
+"severity": "invalid",
+"summary": "perk_points_needed",
+"why": "perk_points_needed"
+},
+"bridge_health": "ok",
+"errors": [],
+"game": {
+"date": "1066.09.15",
+"paused": true,
+"speed": 3,
+"tick": 0
+},
+"ok": false,
+"result": {},
+"tool": "do",
+"verdict": "rejected",
+"warnings": []
+}
+},
+"prestige_series": {
+"n": 100,
+"rulers": [
+31506,
+32095
+],
+"series": [
+[
+{
+"date": "1066.09.15",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.15",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.16",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.16",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.17",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.17",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.18",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.18",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.19",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.19",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.20",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.20",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.21",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.21",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.22",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.22",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.23",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.23",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.24",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.24",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.25",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.25",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.26",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.26",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.27",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.27",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.28",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.28",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.29",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.29",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.09.30",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.09.30",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.01",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.01",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.02",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.02",
+"id": 32095,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 550.0,
+"prestige": -2800.0,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.03",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.03",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.04",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.04",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.05",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.05",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.06",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.06",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.07",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.07",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.08",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.08",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.09",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.09",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.10",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.10",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.11",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 600.0,
+"tier": 2
+},
+{
+"date": "1066.10.11",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.12",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 500.0,
+"tier": 2
+},
+{
+"date": "1066.10.12",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.13",
+"id": 31506,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 400.0,
+"prestige": 500.0,
+"tier": 2
+},
+{
+"date": "1066.10.13",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.14",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.14",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.15",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.15",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.16",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.16",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.17",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.17",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.18",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.18",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.19",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.19",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.20",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.20",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.21",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.21",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.22",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.22",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.23",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.23",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.24",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.24",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.25",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.25",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.26",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.26",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.27",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.27",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.28",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.28",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.29",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.29",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+],
+[
+{
+"date": "1066.10.30",
+"id": 31506,
+"monthly_change": {
+"piety": 3.8,
+"prestige": 1.02,
+"prestige_tail": 0.0
+},
+"name": "Murchad",
+"piety": 403.8,
+"prestige": 501.02,
+"tier": 2
+},
+{
+"date": "1066.10.30",
+"id": 32095,
+"monthly_change": {
+"piety": 3.56,
+"prestige": 7.94,
+"prestige_tail": 0.0
+},
+"name": "Alp Arslan",
+"piety": 553.56,
+"prestige": -2792.06,
+"tier": 5
+}
+]
+]
+},
+"V.census": {
+"n": 589,
+"reply": {
+"action": "query_ai_veto",
+"bridge_posts_seen": 1,
+"call_ally_type_resolved": true,
+"disabled_by_env": false,
+"game_date": "1068.10.31",
+"hook_installed": true,
+"interactions": [
+{
+"character_id": 30706,
+"count": 3,
+"first": "1066.10.02",
+"interaction": "invite_to_council_position_interaction",
+"last": "1066.10.02",
+"site": "0x4cca49f"
+},
+{
+"character_id": 32095,
+"count": 5,
+"first": "1066.10.02",
+"interaction": "grant_titles_interaction",
+"last": "1066.11.03",
+"site": "0x4d1189d"
+},
+{
+"character_id": 32095,
+"count": 4,
+"first": "1066.10.10",
+"interaction": "invite_to_council_position_interaction",
+"last": "1066.12.13",
+"site": "0x4cca49f"
+},
+{
+"character_id": 29767,
+"count": 1,
+"first": "1066.10.10",
+"interaction": "feudalize_holding_interaction",
+"last": "1066.10.10",
+"site": "0x4ce1fe5"
+},
+{
+"character_id": 29767,
+"count": 1,
+"first": "1066.10.18",
+"interaction": "invite_to_council_position_interaction",
+"last": "1066.10.18",
+"site": "0x4cca49f"
+},
+{
+"character_id": 29767,
+"count": 1,
+"first": "1066.10.18",
+"interaction": "grant_vassal_interaction",
+"last": "1066.10.18",
+"site": "0x4d0d254"
+},
+{
+"character_id": 29767,
+"count": 1,
+"first": "1066.11.11",
+"interaction": "arrange_marriage_interaction",
+"last": "1066.11.11",
+"site": "0x4cf59ed"
+},
+{
+"character_id": 32095,
+"count": 7,
+"first": "1066.11.11",
+"interaction": "grant_vassal_interaction",
+"last": "1066.12.29",
+"site": "0x4d0d254"
+},
+{
+"character_id": 29076,
+"count": 2,
+"first": "1066.11.19",
+"interaction": "invite_to_council_position_interaction",
+"last": "1068.04.16",
+"site": "0x4cca49f"
+},
+{
+"character_id": 29767,
+"count": 2,
+"first": "1066.12.09",
+"interaction": "sway_interaction",
+"last": "1067.12.09",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 32095,
+"count": 1,
+"first": "1066.12.12",
+"interaction": "sway_interaction",
+"last": "1066.12.12",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 32095,
+"count": 4,
+"first": "1066.12.12",
+"interaction": "offer_ward_interaction",
+"last": "1068.06.27",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 29076,
+"count": 1,
+"first": "1067.01.31",
+"interaction": "ai_only_liege_modify_vassal_contract_interaction",
+"last": "1067.01.31",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 29076,
+"count": 1,
+"first": "1067.01.31",
+"interaction": "sway_interaction",
+"last": "1067.01.31",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 29076,
+"count": 1,
+"first": "1067.01.31",
+"interaction": "befriend_interaction",
+"last": "1067.01.31",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 30706,
+"count": 1,
+"first": "1067.03.18",
+"interaction": "sway_interaction",
+"last": "1067.03.18",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 30706,
+"count": 2,
+"first": "1067.03.18",
+"interaction": "educate_child_interaction",
+"last": "1068.03.18",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 29767,
+"count": 2,
+"first": "1067.06.09",
+"interaction": "offer_vassalization_interaction",
+"last": "1068.06.09",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 32095,
+"count": 2,
+"first": "1067.06.27",
+"interaction": "educate_child_interaction",
+"last": "1068.06.27",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 32095,
+"count": 1,
+"first": "1067.06.27",
+"interaction": "swing_scales_currency_interaction",
+"last": "1067.06.27",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 32095,
+"count": 2,
+"first": "1067.06.27",
+"interaction": "demand_conversion_vassal_ruler_interaction",
+"last": "1068.06.27",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 31506,
+"count": 1,
+"first": "1067.07.12",
+"interaction": "educate_child_interaction",
+"last": "1067.07.12",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 30706,
+"count": 1,
+"first": "1068.03.18",
+"interaction": "offer_ward_interaction",
+"last": "1068.03.18",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 31506,
+"count": 1,
+"first": "1068.10.12",
+"interaction": "end_war_attacker_victory_interaction",
+"last": "1068.10.12",
+"site": "0x4cc4a8f"
+},
+{
+"character_id": 31506,
+"count": 1,
+"first": "1068.10.27",
+"interaction": "invite_to_council_position_interaction",
+"last": "1068.10.27",
+"site": "0x4cca49f"
+}
+],
+"interactions_overflow": 0,
+"last_seq": 9,
+"origin_disagreements": 0,
+"records": [
+{
+"ally_id": 36529,
+"character_id": 29767,
+"date": "1066.09.15",
+"dropped": false,
+"gold": 473.0,
+"key": "call_ally_interaction",
+"origin": "bridge",
+"piety": 600.0,
+"prestige": 1200.0,
+"priced": "no",
+"seq": 1,
+"site": "0x184c5b",
+"target_scope_type": 16,
+"unpriced_why": "no_price_read",
+"war_id": 0,
+"what": "ally_call"
+},
+{
+"character_id": 29767,
+"date": "1066.10.02",
+"dropped": false,
+"gold": 216.13,
+"key": "crown_authority_1",
+"origin": "game",
+"piety": 600.0,
+"prestige": 1050.0,
+"price": {
+"currency": "gold",
+"gold": 0.0,
+"piety": 0.0,
+"prestige": 320.0
+},
+"priced": "yes",
+"seq": 2,
+"site": "0x4cbe240",
+"what": "law"
+},
+{
+"building_type_index": 24,
+"character_id": 30706,
+"date": "1066.10.02",
+"dropped": false,
+"gold": 266.52,
+"location_id": 2964,
+"origin": "game",
+"piety": 150.75,
+"prestige": 1052.67,
+"priced": "no",
+"seq": 3,
+"site": "0x4cd3f7d",
+"unpriced_why": "no_price_read",
+"what": "construction"
+},
+{
+"character_id": 29076,
+"date": "1066.10.26",
+"dropped": false,
+"gold": 247.45,
+"key": "crown_authority_1",
+"origin": "game",
+"piety": 50.4,
+"prestige": 1052.13,
+"price": {
+"currency": "gold",
+"gold": 0.0,
+"piety": 0.0,
+"prestige": 214.0
+},
+"priced": "yes",
+"seq": 4,
+"site": "0x4cbe240",
+"what": "law"
+},
+{
+"character_id": 30706,
+"date": "1066.11.11",
+"dropped": false,
+"gold": 124.72,
+"key": "crown_authority_1",
+"origin": "game",
+"piety": 151.5,
+"prestige": 1055.21,
+"price": {
+"currency": "gold",
+"gold": 0.0,
+"piety": 0.0,
+"prestige": 281.0
+},
+"priced": "yes",
+"seq": 5,
+"site": "0x4cbe240",
+"what": "law"
+},
+{
+"character_id": 29076,
+"date": "1066.11.11",
+"dropped": false,
+"gold": 247.45,
+"key": "d_pomerelia",
+"origin": "game",
+"piety": 50.4,
+"prestige": 838.13,
+"price": {
+"currency": "gold",
+"gold": 200.0,
+"piety": 0.0,
+"prestige": 0.0
+},
+"priced": "yes",
+"seq": 6,
+"site": "0x4ce1b35",
+"title_id": 2964,
+"what": "create_title"
+},
+{
+"building_type_index": 611,
+"character_id": 30706,
+"date": "1066.12.05",
+"dropped": false,
+"gold": 132.78,
+"location_id": 2965,
+"origin": "game",
+"piety": 152.25,
+"prestige": 776.46,
+"priced": "no",
+"seq": 7,
+"site": "0x4cd3f7d",
+"unpriced_why": "no_price_read",
+"what": "construction"
+},
+{
+"character_id": 31506,
+"date": "1067.01.30",
+"dropped": true,
+"gold": 94.7,
+"key": "crown_authority_1",
+"origin": "game",
+"piety": 413.4,
+"prestige": 504.08,
+"price": {
+"currency": "gold",
+"gold": 0.0,
+"piety": 0.0,
+"prestige": 101.0
+},
+"priced": "yes",
+"seq": 8,
+"site": "0x4cbe240",
+"what": "law"
+},
+{
+"character_id": 31506,
+"date": "1068.01.26",
+"dropped": true,
+"gold": 40.06,
+"key": "crown_authority_1",
+"origin": "game",
+"piety": 451.8,
+"prestige": 391.31,
+"price": {
+"currency": "gold",
+"gold": 0.0,
+"piety": 0.0,
+"prestige": 101.0
+},
+"priced": "yes",
+"seq": 9,
+"site": "0x4cbe240",
+"what": "law"
+}
+],
+"request_id": "bafe952e82bc4663a9d106719fa47d4b",
+"ring_cap": 128,
+"rulers": [
+{
+"character_id": 31506,
+"dropped": {
+"ally_call": 0,
+"construction": 0,
+"create_title": 0,
+"law": 2,
+"mercenary": 0,
+"perk": 0
+},
+"passed": {
+"ally_call": 0,
+"construction": 0,
+"create_title": 0,
+"law": 0,
+"mercenary": 0,
+"perk": 0
+},
+"vetoes": [
+"create_title",
+"law",
+"ally_call",
+"perk"
+]
+},
+{
+"character_id": 29767,
+"dropped": {
+"ally_call": 0,
+"construction": 0,
+"create_title": 0,
+"law": 0,
+"mercenary": 0,
+"perk": 0
+},
+"passed": {
+"ally_call": 1,
+"construction": 0,
+"create_title": 0,
+"law": 1,
+"mercenary": 0,
+"perk": 0
+},
+"vetoes": [
+"ally_call"
+]
+},
+{
+"character_id": 29076,
+"dropped": {
+"ally_call": 0,
+"construction": 0,
+"create_title": 0,
+"law": 0,
+"mercenary": 0,
+"perk": 0
+},
+"passed": {
+"ally_call": 0,
+"construction": 0,
+"create_title": 1,
+"law": 1,
+"mercenary": 0,
+"perk": 0
+},
+"vetoes": []
+},
+{
+"character_id": 30706,
+"dropped": {
+"ally_call": 0,
+"construction": 0,
+"create_title": 0,
+"law": 0,
+"mercenary": 0,
+"perk": 0
+},
+"passed": {
+"ally_call": 0,
+"construction": 2,
+"create_title": 0,
+"law": 1,
+"mercenary": 0,
+"perk": 0
+},
+"vetoes": []
+},
+{
+"character_id": 32095,
+"dropped": {
+"ally_call": 0,
+"construction": 0,
+"create_title": 0,
+"law": 0,
+"mercenary": 0,
+"perk": 0
+},
+"passed": {
+"ally_call": 0,
+"construction": 0,
+"create_title": 0,
+"law": 0,
+"mercenary": 0,
+"perk": 0
+},
+"vetoes": []
+}
+],
+"success": true,
+"tick": 776
+}
+},
+"first_chr": {
+"n": 5,
+"reply": {
+"age": 41,
+"alive": true,
+"betrothed": null,
+"birth_date": -1,
+"children": [
+36124,
+37111,
+37528
+],
+"culture": "Irish",
+"culture_id": 74,
+"culture_key": "irish",
+"designated_heir_id": null,
+"domain_size": 1,
+"dread": 0.0,
+"dynasty_id": 1838,
+"dynasty_name": "ua Cheinnselaig",
+"faith": "Catholicism",
+"faith_id": 23,
+"faith_key": "catholic",
+"father_id": 27052,
+"game_date": "1066.09.15",
+"gold": 84.0,
+"has_realm": true,
+"health": 4.55,
+"house_id": 1838,
+"house_name": "ua Cheinnselaig",
+"id": 31506,
+"income_breakdown": {
+"gross_domain": 0.0,
+"net_domain": 0.0,
+"net_gold": 0.0,
+"total_expenses": 0.0,
+"total_monthly": 2.34
+},
+"is_ai": true,
+"is_female": false,
+"is_imprisoned": false,
+"liege_id": 0,
+"merit": 0.0,
+"military_strength": 565,
+"monthly_change": {
+"piety": 0.0,
+"prestige": 0.0,
+"prestige_tail": 0.0
+},
+"mother_id": 28444,
+"name": "Murchad",
+"personality": {
+"boldness": 10,
+"compassion": 30,
+"dominance": 0,
+"energy": 10,
+"greed": -65,
+"honor": 60,
+"rationality": 0,
+"sociability": 55,
+"vengefulness": -10,
+"zeal": -10
+},
+"piety": 400.0,
+"prestige": 600.0,
+"primary_title_id": 463,
+"primary_title_key": "c_dublin",
+"primary_title_name": "Dubhlinn",
+"realm_size": 3,
+"request_id": "88a5c8d1198b4f2c9f3b898a07fa3be8",
+"ruler_tier": 2,
+"skills": {
+"diplomacy": 7,
+"intrigue": 4,
+"learning": 12,
+"martial": 7,
+"prowess": 8,
+"stewardship": 7
+},
+"spouse_id": 31658,
+"spouses": [
+{
+"alive": true,
+"id": 31658,
+"matrilineal": false
+}
+],
+"stress": 0,
+"tick": 0,
+"top_liege_id": 31506,
+"traits": [
+{
+"category": "personality",
+"flags": 7204,
+"id": 47,
+"is_education": false,
+"is_genetic": false,
+"is_incapacitating": false,
+"is_physical": false,
+"name": "lustful",
+"opposite_opinion": -10,
+"same_opinion": 10
+},
+{
+"category": "personality",
+"flags": 7204,
+"id": 62,
+"is_education": false,
+"is_genetic": false,
+"is_incapacitating": false,
+"is_physical": false,
+"name": "honest",
+"opposite_opinion": -10,
+"same_opinion": 10
+},
+{
+"category": "personality",
+"flags": 7204,
+"id": 60,
+"is_education": false,
+"is_genetic": false,
+"is_incapacitating": false,
+"is_physical": false,
+"name": "humble",
+"opposite_opinion": -15
+},
+{
+"category": "personality",
+"flags": 7204,
+"id": 50,
+"is_education": false,
+"is_genetic": false,
+"is_incapacitating": false,
+"is_physical": false,
+"name": "temperate",
+"opposite_opinion": -10,
+"same_opinion": 10
+},
+{
+"category": "education",
+"flags": 7220,
+"id": 15,
+"is_education": false,
+"is_genetic": false,
+"is_incapacitating": false,
+"is_physical": false,
+"name": "education_martial_1"
+},
+{
+"category": "commander",
+"flags": 7204,
+"id": 241,
+"is_education": false,
+"is_genetic": false,
+"is_incapacitating": false,
+"is_physical": false,
+"name": "reckless"
+}
+],
+"vassal_count": 2
+}
+},
+"v4.I.seat.wars": {
+"n": 101,
+"war0": {
+"active": true,
+"attackers": [
+29767
+],
+"battle_count": 1,
+"battle_score": -9,
+"cb_family": "invasion",
+"cb_type": "norwegian_invasion_cb",
+"defenders": [
+30853
+],
+"favored_side": "defender",
+"my_side": "unknown",
+"name": "Norwegian Invasion of England",
+"primary_attacker": 29767,
+"primary_defender": 30853,
+"score_breakdown": {
+"battle": -9,
+"imprisonment": 0,
+"landless": 0,
+"occupation": 0,
+"ticking": 0
+},
+"sieges": [
+{
+"active": false,
+"besieger_army_id": 21,
+"besieger_id": 29767,
+"besieger_side": "attacker",
+"defender_id": 32643,
+"holding_title_id": 155,
+"progress": 0.0,
+"progress_max": 20.0,
+"progress_pct": 0.0,
+"siege_id": 12,
+"state": 0,
+"status": "stalled"
+}
+],
+"target_titles": [
+108
+],
+"ticking_score": 0,
+"war_id": 0,
+"war_score": -9,
+"war_score_source": "computed"
+}
+},
+"perk_veto_drops": {
+"date": "1067.03.14",
+"drops": [
+{
+"ally_id": 36529,
+"character_id": 29767,
+"date": "1067.02.20",
+"dropped": true,
+"gold": 12.74,
+"key": "call_ally_interaction",
+"origin": "game",
+"piety": 606.6,
+"prestige": 591.54,
+"priced": "no",
+"seq": 12,
+"site": "0x4cbc2ac",
+"target_scope_type": 16,
+"unpriced_why": "no_price_read",
+"war_id": 0,
+"what": "ally_call"
+}
+],
+"n": 99
+}
+},
+"source": "a live check on the 1066 save (first run's calls file)",
+"source_v4": "a live check on the 1066 save (fourth run's calls file)"
+}

@@ -1,7 +1,7 @@
-"""WSTANCE: a war row the bridge could not label is not the engine's word.
+"""A war row the bridge could not label is not the engine's word.
 
-v3pilot5/6 (2026-11-10): of 32 inspect(war_stance) reads (30 in pilot5, 2 in
-pilot6), 29 came back stance "unavailable" under stance_source
+Two pilot runs: of 32 inspect(war_stance) reads (30 in the first, 2 in
+the second), 29 came back stance "unavailable" under stance_source
 "engine_stance_db" (wars 10, 11 and 27; K seats and one D seat), and 3 were
 inferred. The pilot bridge's coordinator-record walk was default OFF and
 nothing armed it, so do_query_war_stance answers every row with the placeholder

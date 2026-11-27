@@ -2,7 +2,7 @@
 // (ADR 0001 P5): sigsetjmp(g_recovery_point) + a protected region + a fault in a
 // callee must come back through siglongjmp to the second return of sigsetjmp, with
 // the caller's frame intact. This is the bridge's inline-query shape
-// (ipc_server.cpp): a std::string reply declared before sigsetjmp, written by the
+// Per ipc_server.cpp: a std::string reply declared before sigsetjmp, written by the
 // handler through a pointer, assigned an error after recovery.
 // And the dispatch watchdog's interrupt (P6, ck3_win_watchdog_interrupt): a thread
 // spinning in a protected region, in this exe's code, is redirected to the second

@@ -1,4 +1,4 @@
-// F12: the TLS guard offset the bridge reads must be
+// The TLS guard offset the bridge reads must be
 // the one AI_INTERACTION_CORE compares, and the context the one it LEAs.
 //
 // The bytes are AI_INTERACTION_CORE's first 0x50 (ELF 0x4cc4540, binary MD5

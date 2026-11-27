@@ -1,9 +1,9 @@
-""" ruling (b): set_phase surfaces the bridge's `lock_state`, and observe
+"""set_phase surfaces the bridge's `lock_state`, and observe
 carries it under posture.genome.
 
-The 2026.11 pilots' first set_phase reverted in 12 of 32 seats while the reply
-returned the declared genome (redesign.set_phase_impl, note).
-bridge now says lock_state (live / quarantined / none) and world_epoch in both
+In one recorded series the first set_phase reverted in 12 of 32 seats while the reply
+returned the declared genome (redesign.set_phase_impl, the note). The
+bridge says lock_state (live / quarantined / none) and world_epoch in both
 personality replies (bridge/src/personality.cpp do_get_ai_personality,
 do_set_ai_personality); the server passes the bridge's word through, one reading
 (redesign.lock_state_of), and a reply without it reads not_reported, never live.

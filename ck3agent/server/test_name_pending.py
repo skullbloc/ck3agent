@@ -1,8 +1,8 @@
-"""lane-namekey: a name the bridge has not localized yet is PENDING, never a key.
+"""A name the bridge has not localized yet is PENDING, never a key.
 
 The bridge's reader thread cannot call the game's localizer; on a name-cache
 miss it queues the id for the game thread, which resolves it in its next drain
-(bridge/src/name_tables.cpp). Before this lane, ad_read_char_name answered the
+(bridge/src/name_tables.cpp). Before, ad_read_char_name answered the
 miss with the localization KEY stored on CCharacter (`E_thelred` for Æthelred),
 so the first reads of a session — the game paused before any tick — handed
 every client a key where a name belongs. The bridge now omits `name` and sends

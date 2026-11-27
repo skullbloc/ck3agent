@@ -1,13 +1,13 @@
-// pipeline.h — R1b: the wired conductor.
+// pipeline.h — the wired conductor.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §2.2, §2.3, §2.4,
-// §2.8, §2.10, §8; overseer decisions G1, G2, G11 (RULED GO 2026-09-10).
+// The event pipeline's conductor: the flush loop, the polarity authority and
+// clock ownership in pipeline mode.
 //
 // This is the ENGINE-FACING half of the pipeline. The two host-testable halves
 // are flush_scheduler.{h,cpp} (cut a plan) and flush_apply.{h,cpp} +
 // ticket_table.{h,cpp} (apply a plan, drive tickets). This file owns:
 //
-//   1. pipeline_mode      — legacy | pipeline | null, DEFAULT legacy (G11).
+//   1. pipeline_mode      — legacy | pipeline | null, DEFAULT legacy.
 //   2. classify_polarity  — THE polarity authority (§2.2). The MCP gateway's
 //                           table (mcp_server.py:129-178) is demoted to a
 //                           timeout hint that must AGREE with this one.
@@ -15,7 +15,7 @@
 //                           Not the game thread: the game thread does not run
 //                           while paused, and a flush must be able to END a
 //                           pause.
-//   4. clock ownership    — G1: pause_game / unpause_game / set_speed from a
+//   4. clock ownership    — pause_game / unpause_game / set_speed from a
 //                           session are typed refusals in pipeline mode.
 //   5. pipeline telemetry — published on get_tick_info and nowhere else
 //                           (§2.10), so the self-heal ladder, overlay poller,
@@ -23,7 +23,7 @@
 //
 // LEGACY IS THE DEFAULT AND MUST BE INDISTINGUISHABLE. Every entry point below
 // is a single relaxed atomic load away from a no-op when the mode is `legacy`.
-// That is the acceptance gate for this bead, not an aspiration.
+// That is the acceptance gate for this code, not an aspiration.
 
 #pragma once
 
@@ -34,7 +34,7 @@
 #include "pipeline_mode.h"
 // Session::Mode is a PARAMETER of the conferral function below,
 // and a nested enum is not reachable through the forward declaration this
-// header used to rely on. session.h includes only world_identity.h and the
+// header does not rely on. session.h includes only world_identity.h and the
 // standard library, so there is no cycle.
 #include "session.h"
 
@@ -44,7 +44,7 @@ class Session;
 class ResponseBuilder;
 
 // ============================================================================
-// Mode (G11) — the ENUM and the POLICY now live in pipeline_mode.h.
+// Mode — the ENUM and the POLICY now live in pipeline_mode.h.
 // ============================================================================
 // This header keeps only the process-wide accessor. `PipelineMode`,
 // `pipeline_mode_name`, `parse_pipeline_mode` and the four `mode_*` policy
@@ -57,7 +57,7 @@ PipelineMode pipeline_mode();
 // this header short-circuits.
 bool pipeline_active();
 
-// G1: in pipeline mode the bridge owns the clock, so pause_game / unpause_game
+// In pipeline mode the bridge owns the clock, so pause_game / unpause_game
 // / set_speed from a session are refused. Unchanged in legacy mode.
 bool pipeline_owns_clock();
 bool is_clock_verb(const char* action_type);
@@ -97,7 +97,7 @@ bool action_routes_to_drain(const char* action_type);
 // so the legacy ladder below it is reached unchanged.
 bool pipeline_handle_envelope(const std::string& line, Session* session);
 
-// THE FLUSH A HANDLER IS RUNNING INSIDE (R4 / §3.2).
+// THE FLUSH A HANDLER IS RUNNING INSIDE (§3.2).
 //
 // Thread-local, set by the conductor around each `serve()` and 0 everywhere
 // else — on the reader thread in legacy mode, on the game thread, and outside
@@ -144,7 +144,7 @@ void pipeline_register_session(const char* session_id);
 // THE MODE IS A PARAMETER because this is where the privilege is
 // CONFERRED. Before this the mode floor lived only at the ipc_server call site,
 // so a caller that logged REFUSED and then declared anyway conferred it on a
-// control session — and lane, which read the call site's SOURCE TEXT,
+// control session — and the old check, which read the call site's SOURCE TEXT,
 // passed 9/9 on exactly that. Asking the floor HERE makes that mutant harmless
 // rather than merely detectable: this function is the ONLY caller of
 // set_privileged_reader, so a privilege that this refuses cannot be conferred by
@@ -159,22 +159,22 @@ void pipeline_declare_episode_observer(const char* session_id,
 std::string pipeline_episode_observer();
 
 // ── THE EPISODE HAS OPENED. Release the clock hold. ────────────────────────
-// held the world paused until an episode observer declared, and the arm
+// The clock hold kept the world paused until an episode observer declared, and the arm
 // path NEVER DECLARES: `episode_observer: True` is sent in exactly one place in
 // the tree, meter_lane.run_live(), the STANDALONE entry point that builds its
 // own client. episode_driver embeds ml.MeterLane(self.guard, ...) — the CLASS,
-// on the DRIVER's client — and contains zero occurrences of the flag. The node
+// on the DRIVER's client — and contains zero occurrences of the flag. The test
 // pilot therefore ran 17 minutes at 0.0000 game-days/sec: 18 samples, one
 // distinct game_date, paused, at the pin. The fix did exactly what it said and
 // nothing ever satisfied its release condition.
 //
-// THE DIAGNOSIS IS THE NAME: is called "the clock starts when the
+// THE DIAGNOSIS IS THE NAME: the gate is called "the clock starts when the
 // EPISODE starts" and was KEYED on "an episode observer declares". Those are
 // different events, and the arm driver does the first and not the second.
 //
 // WHY NOT MAKE THE DRIVER DECLARE. That is the small diff and it is the wrong
 // one: it creates a SECOND DECLARER, and first-wins then makes the read-lane
-// privilege a race — the exact hazard census exists to prevent, and
+// privilege a race — the exact hazard the census exists to prevent, and
 // one it would NOT catch, because both declarers would be legitimate.
 //
 // WHY TWO RELEASE SIGNALS CANNOT RACE, which is what makes this safe where a
@@ -224,11 +224,11 @@ void pipeline_note_episode_owner_gone(const char* session_id, const char* why);
 // THE DESTROY PATH GETS A BOUND, so both ways of losing a session are
 // bounded and the re-arm cannot beat a reconnect.
 //
-// The bridge loses a session two ways and treated them as one:
+// The bridge loses a session two ways, and once treated them as one:
 //   EXPERIMENT  a drop DETACHES; the session is resumable by token and becomes
 //               LOST only past max_detach_s. Already bounded — the sweep IS the
 //               bound — so that path still re-arms immediately when it fires.
-//   OTHERWISE   the session is DESTROYED at once, and re-armed with NO
+//   OTHERWISE   the session is DESTROYED at once, and was re-armed with NO
 //               bound. But the harness client reconnects in EVERY mode, so the
 //               re-arm was right that THAT SESSION is gone and wrong that THE
 //               EPISODE is over: it freezes a world whose driver is about to
@@ -262,7 +262,7 @@ bool pipeline_tick_owner_grace(uint64_t now_ms);
 //   DEBUG_YESMEN             u8   ai_eval_hook.cpp execute_direct_dispatch
 //   DEBUG_BYPASS             u8   ai_eval_hook.cpp execute_direct_dispatch
 //
-// Deliberately OUT of Tier A, and why (each is recorded in the bead report):
+// Deliberately OUT of Tier A, and why (each is recorded in the task report):
 //   - the score-hook rel32 `.text` patch (ai_eval_hook arm_/disarm_score_hook):
 //     healing it needs mprotect, and rewriting `.text` from the conductor thread
 //     while the game thread runs it is a worse hazard than the one being fixed.
@@ -309,6 +309,10 @@ void pulse_exit_addr(uintptr_t addr);
 //    whole flush boundary, because a false pulse_leak aborts an episode.
 size_t pulse_sweep_drain();
 size_t pulse_sweep_ipc();
+// The random-scope rework (intent_dispatch.cpp): the drain and IPC anchors re-try a
+// deferred random-scope restore (one CAS, no wait) and, if a siglongjmp skipped
+// an arm's restore on THIS thread, set the fake scope's owner tag back to idle.
+void scope_anchor_retry();
 size_t pulse_sweep_flush(uint64_t flush_id);
 
 // EXPERIMENT-MODE CONTAINMENT (§2.9: "in experiment mode abort the episode with
@@ -324,9 +328,9 @@ const char* pipeline_abort_reason();
 // ============================================================================
 // UNAVAILABILITY ACCOUNTING — engine glue (R3 as REVERSED, §2.7)
 // ============================================================================
-// G3' was reversed by the progenitor on 2026-09-12: in experiment mode THE
+// There is no checkpoint gate: in experiment mode THE
 // CLOCK RUNS, and an agent's silence is MEASURED rather than waited out. The
-// checkpoint clock gate built for the original ruling is withdrawn; what is left
+// checkpoint clock gate built for the original rule is withdrawn; what is left
 // is a covariate.
 //
 // The ledger itself is pure (unavailability.{h,cpp}); these are the only places
@@ -346,7 +350,7 @@ void pipeline_episode_init_from_env();
 // ledger, and an unknown session id is ignored.
 void pipeline_note_session_activity(const Session* session);
 
-// Bead .13's hook: mark a control session's decision budget as exhausted. With
+// a sibling task's hook: mark a control session's decision budget as exhausted. With
 // the gate gone this no longer changes any clock behaviour — it is carried on
 // the wire (`pipeline.budget_exhausted`) so .13's governor and the episode
 // bundle can tell "silent because spent" from "silent because capped", which
@@ -366,19 +370,19 @@ void pipeline_set_budget_exhausted(const char* session_id, bool exhausted);
 // `unavailability` carries the computed spans and both totals.
 //
 // `gate_state` and `waiting_on` SURVIVE THE GATE'S WITHDRAWAL as constants
-// ("inert" and []). They are read's SHIPPED abort ladder, which
+// ("inert" and []). They are read by the SHIPPED abort ladder, which
 // keys its hold timer on "$gate_state|$waiting_on"; dropping the keys would
 // change that ladder's progress key on a bridge it was not rebuilt against, for
 // no gain. Constant-"inert" is never in the ladder's held set, so the gate can
 // never fire — which is exactly the withdrawal. The `gate_held_beyond_max`
-// termination reason retires with it (knock-on to, §6.3).
+// termination reason retires with it (§6.3).
 //
 // episode_id has no producer in the bridge: it is CK3_EPISODE_ID when set, and
-// otherwise emitted as "" rather than omitted, so the lanes coding against this shape keep
+// otherwise emitted as "" rather than omitted, so the consumers coding against this shape keep
 // a stable key set.
 //
-// `last_flush_ms` vs `last_flush_age_ms` (left this open): the name
-// says stamp, G9's probe wants age, and ladder already reads
+// `last_flush_ms` vs `last_flush_age_ms`: the name
+// says stamp, the liveness probe wants age, and the ladder already reads
 // `last_flush_ms` AS AN AGE ("no flush for ${pl_flush_ms}ms"). The consumer wins
 // — a monotonic stamp is meaningless to anything outside this process, and one
 // of the two readings makes the shipped ladder abort on a healthy bridge.
@@ -387,7 +391,7 @@ void pipeline_set_budget_exhausted(const char* session_id, bool exhausted);
 // `last_flush_mono_ms` carries the raw stamp for anyone debugging in-process.
 //
 // `pulse_leak` (§2.9) is null while clean and an OBJECT once latched. Null
-// matters: treats any non-empty, non-"0", non-"false" value as the
+// matters: the abort ladder treats any non-empty, non-"0", non-"false" value as the
 // abort, so an empty object would be a false abort on a healthy run.
 void pipeline_emit_state(ResponseBuilder& r);
 

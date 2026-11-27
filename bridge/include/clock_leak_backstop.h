@@ -1,6 +1,6 @@
 // clock_leak_backstop.h — THE SECOND DETECTOR FOR THE CLOCK LEAK
 //
-// NOT AN ALTERNATIVE TO'S TRIGGER. That one keys on the session that
+// NOT AN ALTERNATIVE TO THE FIRST DETECTOR'S TRIGGER. That one keys on the session that
 // opened the episode and is narrow, bounded and fast. This one notices when the
 // narrow trigger WAS NEVER ARMED.
 //
@@ -9,7 +9,7 @@
 //     AN INSTRUMENT GATED ON THE CONDITION IT WOULD DETECT CANNOT DETECT ITS
 //     VIOLATION.
 //
-// sampled the still-leaking deploy-13 world twice, 60 s apart, because
+// A measurement sampled a still-leaking world twice, 60 s apart, because
 // the question was MOVEMENT and not values. Everything episode-scoped was
 // static — tickets_open, pulses, buffer_depth, last_activity, waiting_on,
 // episode_id '', episode_mode 'free_play', gate_state 'inert' — while flush_id
@@ -24,9 +24,9 @@
 //     the pipeline OWNS the clock, the hold is NOT armed, the episode id is
 //     EMPTY, the mode is free play, and flush_id IS ADVANCING.
 //
-// IT DEPENDS ON (20e21f76). flush_id advances during every healthy
+// IT DEPENDS ON the episode_id stamp. flush_id advances during every healthy
 // episode too; what makes the conjunction safe is episode_id being NON-EMPTY
-// then, and that is the field started publishing. Built against a bridge
+// then, and that is the field the bridge publishes. Built against a bridge
 // where episode_id is always '', this would fire on every healthy episode.
 //
 // PURE AND LEAF ON PURPOSE. No engine symbols, no globals, no clock: the caller
@@ -42,9 +42,9 @@ namespace bridge {
 
 //: One observation of the five fields the conjunction is made of.
 struct ClockLeakSample {
-    bool     owns_clock       = false;  // pipeline mode; E0 (null) is never here
-    bool     hold_armed       = false;  // the hold
-    bool     episode_id_empty = true;   // publishes this
+    bool     owns_clock       = false;  // pipeline mode; null mode is never here
+    bool     hold_armed       = false;  // the clock hold is armed
+    bool     episode_id_empty = true;   // the bridge publishes this
     bool     free_play        = true;   // episode_mode
     uint64_t flush_id         = 0;      // THE UNCONDITIONED WITNESS
     uint64_t now_ms           = 0;      // monotonic
@@ -57,7 +57,7 @@ struct ClockLeakState {
     bool     have_last        = false;
     //: LATCHED until the condition CLEARS. Without it the rule re-fires every
     //: span for as long as the leak lasts — the probe measured 8 times over ten
-    //: minutes, which is how I found out the header's "exactly once" was a
+    //: minutes, so a header's "exactly once" without the latch is a
     //: claim about intent rather than about the code.
     bool     fired            = false;
 };

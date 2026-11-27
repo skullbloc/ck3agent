@@ -1,7 +1,7 @@
 """The episode-observer declaration must COMPOSE, not merely exist.
 
 WHAT BROKE. `ck3agent/server/harness_client.py` has built `hs_kwargs["episode_observer"]`
-since then and handed it to `BridgeClient.handshake`, which did not accept
+and handed it to `BridgeClient.handshake`, which did not accept
 it. Every attempt died with:
 
     TypeError: BridgeClient.handshake() got an unexpected keyword argument
@@ -27,13 +27,13 @@ import pytest
 from ck3agent.server.bridge_client import BridgeClient
 
 #: SPELLED INDIRECTLY, ON PURPOSE — and note this comment avoids the literal
-#: spelling too, which is not fussiness: my first draft of it tripped the very
+#: spelling too, which is not fussiness: a comment that spells it trips the very
 #: check it describes.
 #:
 #: `acceptance_observer_declaration.py` is a census over the whole tree for the
 #: flag being SET, and its claim is that EXACTLY ONE file declares the
 #: privilege. A literal assignment here would count as a second declarer and RED
-#: that lane — correctly, since the census cannot tell a test from a client. The
+#: that census — correctly, since the census cannot tell a test from a client. The
 #: alternative was adding this file to the census's PLUMBING exemption, which
 #: today holds exactly ONE entry; doubling a guard's exemption list for a test's
 #: convenience is how guards stop guarding. So the test pays a little
@@ -99,10 +99,10 @@ def test_a_plain_handshake_carries_NO_observer_field():
     """NON-DISCRIMINATING CONTROL, and the first version of it was NOT one.
 
     I originally compared `handshake()` against `handshake(episode_observer=None)`
-    — which cannot run on the pre-fix code at all, because passing the kwarg is
-    the very thing that raised TypeError. So it failed pre-fix for the SIGNATURE,
+    — which cannot run on the superseded code at all, because passing the kwarg is
+    the very thing that raised TypeError. So it failed on the superseded code for the SIGNATURE,
     not for the frame, and graded as discriminating when it was meant to be the
-    opposite. Caught by running the whole file against the pre-fix tree and
+    opposite. Caught by running the whole file against the superseded tree and
     seeing 5 of 5 red where 4 were expected.
 
     This version passes on BOTH trees: it never mentions the kwarg, and asserts
@@ -130,4 +130,4 @@ def test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it():
         "deliberate this test should change with it")
     assert "episode_observer" in inspect.signature(BridgeClient.handshake).parameters, (
         "harness_client.py forwards a kwarg BridgeClient.handshake cannot take "
-        "— exactly the TypeError that killed ep-20260921T0611 (ck-43u3)")
+        "— exactly the TypeError that once killed an episode")

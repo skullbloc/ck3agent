@@ -1,8 +1,8 @@
-"""steer and pass_turn: behaviour against a fake bridge (F15).
+"""steer() and pass_turn(): behaviour against a fake bridge.
 
 steer rows:
   * read mode (no personality): one read, with character_id; no verdict;
-  * write mode answers the write envelope (finding 5): exactly the axes
+  * write mode answers the write envelope: exactly the axes
     passed are written, applied when they read back as written, rejected
     write_unconfirmed when they do not, pending next_pass when the bridge did not
     confirm it and a read does not show it, rejected with the gate its reason
@@ -119,7 +119,7 @@ def test_a_read_that_failed_is_a_named_refusal(bridge, reply, gate):
     assert "personality" not in env["result"], "a refusal is not shown as the reading"
 
 
-# ── write mode: the write envelope (finding 5) ────────────────────────────
+# ── write mode: the write envelope ────────────────────────────
 
 def _back(**axes):
     return {"success": True, "action": "set_ai_personality", "character_id": 30853,
@@ -244,7 +244,7 @@ def test_no_bridge_source_keeps_its_own_axis_table():
 
 def _python_axis_tables(roots):
     """Every list/tuple/set literal, in the Python files under roots, whose string
-    elements name all ten axes, as (path, line). Parses each file (a comment or a
+    elements name all nine axes (personality_axes.AXES), as (path, line). Parses each file (a comment or a
     docstring cannot satisfy it); a file that does not parse is reported, never
     skipped (fail OPEN)."""
     import ast

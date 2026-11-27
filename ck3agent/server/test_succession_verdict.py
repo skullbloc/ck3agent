@@ -1,12 +1,12 @@
-"""One succession verdict, one definition (surface-eval finding 8).
+"""One succession verdict, one definition.
 
 succession_plan, observe's succession block and the live-state hook state whether
 the next succession passes intact. Each calls succession_verdict.verdict; these
 rows drive the three with the same bridge replies and compare what they say. The
 replies are the two states recorded live on the 867 save (ck3agent/hooks/fixtures,
-live867 l7-hook-1 and l10fx5-live-2), not shapes written here: the simulation's
+two live launches), not shapes written here: the simulation's
 `heirs` rows are the bridge's own (do_query_succession_simulation), which the
-server read under a key the bridge never emits (`eligible_heirs`) until.
+server read under a key the bridge never emits (`eligible_heirs`) at first.
 """
 import asyncio
 import json
@@ -98,7 +98,7 @@ def test_inspect_has_no_succession_preview_subject():
 
 
 def test_succession_plan_states_no_field_the_bridge_never_sends():
-    """ ruling (c): primary_keeps_kingdom and realm_above_partition_floor were
+    """primary_keeps_kingdom and realm_above_partition_floor were
     read off the succession simulation, which never sends them
     (do_query_succession_simulation), so the reply always said false / true.
     A constant is not a reading; the reply carries neither. Fixture-free, so it
@@ -167,7 +167,7 @@ def test_a_split_names_its_breaker():
 def test_no_heir_read_is_undetermined_never_intact():
     """The simulation empty and the map's
     read an error. Nobody was read, so nobody is known to take every title:
-    undetermined, naming both reads. RED on b84e3634 (intact, passes_intact True)."""
+    undetermined, naming both reads. RED without the rule (intact, passes_intact True)."""
     v = SV.verdict({}, {}, SV.map_summary({"error": "x"}))
     assert v["outcome"] != "intact", v
     assert v["outcome"] == "undetermined" and v["passes_intact"] is None, v
@@ -182,7 +182,7 @@ def test_both_reads_fail_and_observe_and_succession_plan_warn():
     """Both reads answer the bridge's fault reply as it is really sent
     (MEMORY_ACCESS_FAULT_REPLY {"error":"memory_access_fault"}, bridge/include/
     bridge.h). observe and succession_plan both say undetermined, with the
-    succession_undetermined warning. RED on b84e3634 (intact, no warning)."""
+    succession_undetermined warning. RED without the rule (intact, no warning)."""
     fault = {"error": "memory_access_fault"}
     gw = Gw({"query_succession_simulation": fault, "query_title_succession_map": fault,
              "query_character": {"id": 777, "name": "R", "alive": True}})
@@ -197,10 +197,10 @@ def test_both_reads_fail_and_observe_and_succession_plan_warn():
 
 
 def test_the_hook_says_undetermined_when_no_heir_is_read():
-    """ int5 (FA2's left-over, N-MAJ-2's third reader): the live-state hook
-    printed no succession line at all when no heir was read, so the prompt said
-    nothing where observe and succession_plan say undetermined. Now it states the
-    same verdict and reason. RED on e262847e (partition_line returned None)."""
+    """The live-state hook, the verdict's third reader, states a succession line
+    when no heir was read: undetermined, with the same verdict and reason as observe
+    and succession_plan, never no line at all. RED without the rule (partition_line
+    returned None)."""
     import inject_state
     fault = {"error": "memory_access_fault"}
     line = inject_state.partition_line(fault, {}, fault)
@@ -212,7 +212,7 @@ def test_the_hook_says_undetermined_when_no_heir_is_read():
                     "(simulation empty; map: no_response))"), line
 
 
-# ── B2: a second crown title (set v3-registered-2 s3) ──────────────────
+# ── A second crown title (a registered run) ──────────────────
 # Charles 12015 held k_france and k_aquitaine; all 25 of the king's observes said
 # "intact" with one heir, and at his death k_aquitaine went to Carloman 15319
 # (89 -> 44 counties). The two replies below are the bridge's shapes, keys from
@@ -223,7 +223,7 @@ def test_the_hook_says_undetermined_when_no_heir_is_read():
 # (do_query_title_succession_map: `primary_title_id`, `primary_heir_id`,
 # `primary_heir_name`, `titles[]` `title_id/title_key/title_name/tier/
 # succession_law/title_division/projected_heir_id/projected_heir_name/
-# splits_away`, `any_splits`). The values are the 867 core dump's (ivar867):
+# splits_away`, `any_splits`). The values are the 867 core dump's:
 # each kingdom's own law vector resolves (order, division) = (unset, unset), so
 # the map writes succession_law "unset" / title_division "n/a" and the
 # simulation's partition switch (the primary title's division) is off, giving
@@ -281,8 +281,8 @@ def _s3_readers(sim, sp):
 def test_a_second_kingdom_the_map_gives_another_heir_splits():
     """s3: the simulation gives both kingdoms to Louis, the engine's own heir for
     k_aquitaine is Carloman. The verdict is splits, Carloman the breaker taking
-    k_aquitaine, and observe, succession_plan and the hook all say it. RED on
-    8cef520a: intact, passes_intact True, eligible_heir_count 1 (what the king
+    k_aquitaine, and observe, succession_plan and the hook all say it. RED without
+    the rule: intact, passes_intact True, eligible_heir_count 1 (what the king
     read 25 times)."""
     v = SV.verdict(_s3_sim(), {}, SV.map_summary(_s3_map()))
     assert v["outcome"] == "splits" and v["passes_intact"] is False, v
@@ -308,7 +308,7 @@ def test_a_second_kingdom_the_map_gives_another_heir_splits():
 def test_a_second_kingdom_with_no_map_heir_is_undetermined_never_intact():
     """The same realm with the per-title map not read (the bridge's fault reply)
     or projecting nobody on k_aquitaine: the simulation alone cannot see the second
-    kingdom's heir, so the verdict is undetermined, naming it. RED on 8cef520a:
+    kingdom's heir, so the verdict is undetermined, naming it. RED without the rule:
     intact."""
     for sp in ({"error": "memory_access_fault"}, _s3_map(aquitaine_heir=-1)):
         v = SV.verdict(_s3_sim(), {}, SV.map_summary(sp))

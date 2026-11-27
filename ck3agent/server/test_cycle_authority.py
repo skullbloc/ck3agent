@@ -1,8 +1,8 @@
-"""One derivation of the episode cycle (item 4a).
+"""One derivation of the episode cycle.
 
 `channel.send_cycle` (a message's cycle) and `notepad.cycle_at` (a pad
-record's, and the guide log's) used to derive the cycle each by its own copy of
-`cell_schedule` + `ordinal` + `cycle_index`. Both now call
+record's, and the guide log's) do not derive the cycle each by its own copy of
+`cell_schedule` + `ordinal` + `cycle_index`. Both call
 `cycle_cadence.episode_cycle`; this file checks the mirror both ways: they agree
 with it on every case, and neither module derives the cycle another way.
 """

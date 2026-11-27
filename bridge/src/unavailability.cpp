@@ -1,10 +1,9 @@
 // unavailability.cpp — see unavailability.h.
 //
-// (R3 as reversed) built the accounting; replaced the GATE
-// with the progenitor's 2026-09-13 ruling: anomalous is a WALL-CLOCK judgement,
+// The accounting is built; the GATE's rule is: anomalous is a WALL-CLOCK judgement,
 // the covariate stays in GAME-DAYS, and the retired game-day `min_span` is not
 // re-derived because no game-day number can express "the agent was late" while
-// the clock rate is free. then made X itself a RULE over the episode's
+// the clock rate is free. X is then itself a RULE over the episode's
 // DECLARED horizon rather than the constant 365, which is that rule's answer at
 // the registered 20-game-year horizon and at no other.
 
@@ -41,7 +40,7 @@ bool UnavailabilityLedger::exclusion_armed() const {
 
 // THE GATE, in one place. UNKNOWN IS NOT "LONG": a gap with no wall stamp is
 // never anomalous, because the only way to call it long would be to convert its
-// game-days at an assumed rate, and an assumed rate is the defect was
+// game-days at an assumed rate, and an assumed rate is the hazard the anomaly gate was
 // filed for.
 bool UnavailabilityLedger::is_anomalous_locked(bool wall_measured,
                                                double wall_seconds) const {
@@ -97,7 +96,7 @@ void UnavailabilityLedger::note_session(const std::string& session_id, int64_t d
 
     auto it = recs_.find(session_id);
     if (it != recs_.end()) {
-        // A RE-REGISTRATION IS AN ATTACH, NOT A RESET. bead .5's resume rebinds
+        // A RE-REGISTRATION IS AN ATTACH, NOT A RESET. A sibling task's resume rebinds
         // the same session_id; zeroing `last_activity_day` here would erase the
         // very gap the resume just ended — the covariate would read 0 for
         // exactly the failure it exists to measure.
@@ -135,11 +134,11 @@ void UnavailabilityLedger::note_session_ended(const std::string& session_id) {
 // appear in snapshot(), cannot carry an open span, and cannot be over threshold —
 // because it was never a participant and has no silence to account for.
 //
-// Erasing and marking-ended differ in exactly the way shakedown 3 showed: the marked
-// record stayed in the report with 364 silent days against an X of 18. A row that
-// only checks the session was destroyed cannot tell these apart, which is how my own
-// acceptance passed while the episode still sealed invalid — it graded the registry
-// and the ledger is a different observer.
+// Erasing and marking-ended differ in exactly the way a recorded episode showed: the
+// marked record stayed in the report with 364 silent days against an X of 18. A row
+// that only checks the session was destroyed cannot tell these apart: it passes while
+// the episode still seals invalid, because it grades the registry and the ledger is a
+// different observer.
 void UnavailabilityLedger::forget_session(const std::string& session_id) {
     std::lock_guard<std::mutex> lk(mu_);
     recs_.erase(session_id);

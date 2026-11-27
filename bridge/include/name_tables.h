@@ -24,8 +24,8 @@ const char* resolve_decision_name(uint32_t hash);
 // Returns the cached name, or empty string on cache miss (schedules resolution).
 std::string get_cached_character_name(uint32_t char_id);
 
-// The name a hook buffer row reports for a character (surface-eval finding
-// 7: every query(event_log) scheme row read owner_name "" and target_name "").
+// The name a hook buffer row reports for a character (once,
+// every query(event_log) scheme row read owner_name "" and target_name "").
 // A hook records the name when the engine acts, and then the cache usually
 // misses (the hook runs before any read asked for that id), so the row kept "".
 // The recorded name when it has one, else the cache's now (a miss queues the id,

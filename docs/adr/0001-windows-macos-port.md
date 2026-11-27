@@ -1,5 +1,15 @@
 # ADR 0001 — Porting the bridge to Windows and macOS
 
+> **Status banner (2026-11-24).** This record is kept as written on
+> 2026-10-18 and is not updated as the port proceeds. Since then the tree has
+> grown a Windows build of the bridge core (`bridge/src/os/windows/`, the
+> generated Windows offset headers) and a Windows installer under
+> `installer/windows/`; which platforms a release supports is stated in the
+> README and in [supported-versions.md](../supported-versions.md), not here.
+> Today the Windows bridge builds with clang-cl and the MSVC libraries (xwin)
+> from Linux (docs/porting), CI builds its platform layer with MSVC, and it is not yet
+> proven on a live Windows game; no release supports Windows.
+
 - **Status:** proposed (design of record for releases after 2026.10.0)
 - **Date:** 2026-10-17; amended 2026-10-18 (see "Review amendments")
 - **Applies to:** `bridge/` (the in-process game bridge), `re/offsets/`, the
@@ -18,7 +28,7 @@ prerequisites, not facts.
 
 ## Review amendments 2026-10-18
 
-Corrections from the 2026.10.0-rc1 review. Where they conflict with the
+Corrections made before 2026.10.0. Where they conflict with the
 sections below, they win. The `W*`/`M*` milestone table is superseded by the
 phased plan at the end of this section; its ids stay for cross-reference.
 

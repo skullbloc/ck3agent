@@ -4,13 +4,11 @@ Bridge order (the engine's byte order at personality_ptr). It mirrors the
 engine-backed part of bridge/include/personality_locks.h
 (PERSONALITY_AXIS_NAMES[:PERSONALITY_ENGINE_AXES], PERSONALITY_AXIS_MIN/MAX);
 test_steer_tool.py reads that header and checks this table. Every Python reader
-imports it from here: steer's validation (through redesign), personality_nudge,
-scripts/bridge_test_suite.py and re/coredump/bridge_emulator.py.
+imports it from here (steer's validation, through redesign).
 
 The bridge's table has a tenth name, dominance, with no engine byte and no
 getter hook (personality.cpp): the game's AI never reads it. It is not an axis
-here, so no tool accepts or writes it (finding 5; neither the
-pre-registration nor docs/pre-registration-conditions.md declares an axis list).
+here, so no tool accepts or writes it.
 """
 
 AXES = (

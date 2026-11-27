@@ -5,8 +5,8 @@ The field case: Murchad of Munster (31762, 1066 save) called
 do(intent="mint_title", args={"title_key": "k_ireland"}) at 1071.10.15; the kingdom
 was created and the reply said verdict "applied" beside raw.success false. His gold
 was read 17.85 at 1071.06.23 (the last reading before the mint) and -302.21 at
-1072.09.22; no reading exists at the mint itself
-(murchad-1066.md). 320.06 below is a FIXTURE VALUE, not a measured price: it is
+1072.09.22; no reading exists at the mint itself (a seated 1066
+Munster game's record). 320.06 below is a FIXTURE VALUE, not a measured price: it is
 17.85 - (-302.21), the difference of two readings 15 months apart ("about 320,
 back-solved, not measured"). The rows only need a price above the gold held. The
 price block is query_create_title_cost's reply shape (bridge/src/action_handlers.cpp
@@ -140,7 +140,10 @@ def test_murchads_mint_is_refused_cannot_afford_with_the_price():
     assert env["ok"] is False and env["verdict"] == "rejected", env
     blk = env["blocked"]
     assert blk["gate"] == "cannot_afford", blk
-    assert blk["measured"] == {"currency": "gold", "cost": 320.06, "gold": 17.85}, blk
+    # Every requirement rides beside the price (title_requirements)
+    assert {k: v for k, v in blk["measured"].items() if k != "requirements"} == \
+        {"currency": "gold", "cost": 320.06, "gold": 17.85}, blk
+    assert [r["requirement"] for r in blk["measured"]["requirements"]][:2] == ["de_jure_counties", "price"]
     assert "320.06" in blk["summary"] and "17.85" in blk["summary"], blk["summary"]
     assert not [a for a, _ in gw.writes if a == "create_title"], gw.writes
     assert ("query_create_title_cost", {"actor_id": MURCHAD, "title_key": KEY}) in gw.reads
@@ -155,7 +158,7 @@ def test_formable_titles_lists_the_unaffordable_title_unavailable():
     assert row["blocked"]["gate"] == "cannot_afford", row
     assert row["price"] == {"currency": "gold", "cost": 320.06, "gold": 17.85}, row
     detail = " ".join(w.get("detail", "") for w in env["warnings"])
-    assert "only gold + not" not in detail and "bypasses the #131 bar" not in detail, detail
+    assert "only gold + not" not in detail and "bypasses the" not in detail, detail
 
 
 def test_an_unread_price_refuses_the_mint_mint_cost_unverified():
@@ -218,7 +221,7 @@ def test_applied_result_drops_only_a_raw_that_did_not_say_success():
 
 
 def test_a_refused_mint_by_a_ruler_with_full_dejure_control_is_not_applied():
-    """ B-1: the game refuses the mint of a ruler who
+    """The game refuses the mint of a ruler who
     holds every de-jure county. Full de-jure control is the mint's precondition,
     not its product, so it never reads back as applied: the reply's own refusal
     is the verdict."""
@@ -238,9 +241,9 @@ FAULT = {"error": "memory_access_fault"}
 
 
 def test_a_faulted_mint_with_the_title_in_the_realm_is_not_applied():
-    """Create_title answers the fault and
+    """create_title answers the fault and
     query_realm lists the key. The reply's own refusal outranks the readback.
-    RED on b84e3634 (applied)."""
+    RED without the rule (applied)."""
     gw = Gateway(price_reply(cost=10.0, have=400.0), raw=dict(FAULT), held_after=True)
     env = _mint(gw)
     assert env["verdict"] != "applied", env
@@ -265,7 +268,7 @@ class RealSettle(Gateway):
 def test_settle_write_refuses_a_fault_before_the_readback(raw):
     """The same through settle_write: a reply that queued nothing and carries the
     bridge's fault (or the hung gateway's bridge_disconnected) is refused before
-    any readback can resolve on the title already in the realm. RED on b84e3634."""
+    any readback can resolve on the title already in the realm. RED without the rule."""
     gw = RealSettle(price_reply(cost=10.0, have=400.0), raw=dict(raw), held_after=True)
     env = _mint(gw)
     assert env["verdict"] == "rejected" and env["ok"] is False, env
@@ -300,7 +303,7 @@ def test_a_kings_new_duchy_is_read_off_the_title_not_the_realms_primary():
     query_realm for a primary title or a titles list, and a king's primary stays
     his kingdom while query_realm has no titles list, so a title the game created
     was answered "rejected" (write_unconfirmed). The holder is read off the title
-    the create_title reply names. RED on d6290865."""
+    the create_title reply names. RED without the rule."""
     gw = Gateway(price_reply(cost=212.5, have=321.0), held_after=True,
                  primary_after="k_lotharingia",
                  dejure=dict(DEJURE, held=3, total=3, fraction=1.0))
@@ -316,18 +319,18 @@ def test_a_kings_new_duchy_is_read_off_the_title_not_the_realms_primary():
     assert env["verdict"] == "rejected" and env["blocked"]["gate"] == "write_unconfirmed", env
 
 
-def test_the_51_percent_rule_is_one_statement_and_mirrors_the_bridge():
+def test_the_dejure_rule_is_one_statement_and_mirrors_the_bridge():
     """The warning, the formable_titles rows and the mint pre-check
-    apply the #131 bar at the bridge's tiers (>= 4) and fraction, read from one
-    place; the bridge's constants are checked here."""
+    apply the bar at the bridge's tiers (>= 4), read from one place; the
+    bridge's constants (bridge/include/dejure_bar.h) are checked here."""
     import re
-    src = open(os.path.join(os.path.dirname(__file__), "..", "..", "bridge", "src",
-                            "intent_dispatch.cpp"), encoding="utf-8").read()
+    src = open(os.path.join(os.path.dirname(__file__), "..", "..", "bridge", "include",
+                            "dejure_bar.h"), encoding="utf-8").read()
     tier = re.search(r"CREATE_TITLE_DEJURE_MIN_TIER\s*=\s*(\d+)", src)
-    frac = re.search(r"CREATE_TITLE_DEJURE_MIN_FRAC\s*=\s*([\d.]+)", src)
-    assert tier and frac, "the bridge's #131 constants moved"
+    pct = re.search(r"CREATE_TITLE_DEJURE_OTHER_PCT\s*=\s*(\d+)", src)
+    assert tier and pct, "the bridge's de-jure-majority constants moved"
     assert int(tier.group(1)) == redesign.MINT_DEJURE_MIN_TIER
-    assert float(frac.group(1)) == redesign.MINT_DEJURE_MIN_FRAC
+    assert int(pct.group(1)) == round(redesign.MINT_DEJURE_MIN_FRAC * 100)
     assert [redesign.title_tier_of_key(k) for k in ("b_x", "c_x", "d_x", "k_x", "e_x", "x")] == \
         [1, 2, 3, 4, 5, None]
 
@@ -347,12 +350,12 @@ def test_a_duchy_short_of_51_percent_is_the_games_call_not_the_servers():
     assert env["result"]["available"], env["result"]
 
 
-def test_control_a_kingdom_short_of_51_percent_is_refused_before_sending():
+def test_control_a_kingdom_short_of_half_is_refused_before_sending():
     king = dict(DEJURE, held=5, total=14, fraction=0.357)
     gw = Gateway(price_reply(cost=10.0, have=400.0), dejure=king)
     env = _mint(gw)
     assert env["blocked"]["gate"] == "de_jure_control", env["blocked"]
-    assert env["blocked"]["measured"]["need"] == 8 and not gw.writes
+    assert env["blocked"]["measured"]["need"] == 8 and not gw.writes     # More than half of 14 (the game's 8)
 
 
 def test_an_unpriced_duchy_is_refused_not_left_to_isvalid():
@@ -381,10 +384,10 @@ def test_the_levers_header_names_every_synchronous_row():
 
 
 def test_a_title_read_that_did_not_come_back_after_a_drained_mint_is_pending_readback():
-    """Witness r4 N4-2 (R1): the drain ran the mint and query_title_succession
+    """The drain ran the mint and query_title_succession
     answered nothing. That is a reading not made, not "not held": through the
     module's own settle_write the verdict is pending, drains_when "readback",
-    never rejected write_unconfirmed. RED on 9c8d5581 (rejected)."""
+    never rejected write_unconfirmed. RED without the rule (rejected)."""
     gw = RealSettle(price_reply(cost=212.5, have=321.0), held_after=True, primary_after="k_lotharingia",
                     dejure=dict(DEJURE, held=3, total=3, fraction=1.0))
     gw.title_row = None
@@ -400,3 +403,44 @@ def test_a_title_read_that_did_not_come_back_after_a_drained_mint_is_pending_rea
     env = _mint(gw)
     assert env["verdict"] == "pending" and env["pending"]["drains_when"] == "readback", env
     assert not any(a == "query_realm" for a, _ in gw.reads), "the realm's primary title is not a mint readback"
+
+
+# ── A candidate not creatable yet says, per requirement, met or not ──
+
+def test_a_kingdom_short_of_the_bar_still_carries_its_price_and_each_requirement():
+    """k_ireland at 5 of 14 with 17.85 gold against 320.06: every requirement is a
+    row (de-jure counties held/needed, the price against the gold held, the game's
+    own check with its words), each met or not; the row is unavailable on the first
+    unmet one, and the price is read although the bar already refuses it."""
+    king = dict(DEJURE, held=5, total=14, fraction=0.357)
+    gw = Gateway(price_reply(engine_valid=False, reasons=["Must hold 51% of Ireland"]), dejure=king)
+    env = _formable(gw)
+    (row,) = env["result"]["unavailable"]
+    req = {r["requirement"]: r for r in row["requirements"]}
+    assert req["de_jure_counties"] == {"requirement": "de_jure_counties", "have": 5, "need": 8,
+                                       "of": 14, "met": False}     # More than half (the game's 8 of 14)
+    # A kingdom short of gold also says it in months of income (months_of_income, income_basis)
+    # The price's basis and the realised monthly gold (test_do_intent_census)
+    assert {k: v for k, v in req["price"].items()
+            if k not in ("months_of_income", "income_basis", "basis", "net_realised", "months_to_target")} == {
+        "requirement": "price", "currency": "gold", "cost": 320.06, "have": 17.85, "met": False}
+    assert "months_of_income" in req["price"]
+    assert req["game_check"]["met"] is False and "51%" in req["game_check"]["reasons"][0]
+    assert row["blocked"]["gate"] == "de_jure_control"
+    assert row["do_call"] == {"tool": "do", "args": {"intent": "mint_title", "args": {"title_key": KEY}}}
+
+
+def test_formable_titles_without_candidates_is_refused_not_an_empty_list():
+    gw = Gateway(price_reply())
+    env = asyncio.run(redesign.do_impl(gw, action_class="formable_titles", character_id=MURCHAD))
+    assert env["ok"] is False and env["blocked"]["gate"] == "missing_required_argument", env
+    assert "candidates" in env["blocked"]["summary"]
+
+
+def test_mint_title_takes_one_spelling_and_names_it_when_another_is_sent():
+    gw = Gateway(price_reply())
+    for wrong in ({"title": KEY}, {"title_id": 461}):
+        env = asyncio.run(redesign.do_impl(gw, intent="mint_title", character_id=MURCHAD, args=wrong))
+        assert env["ok"] is False and env["blocked"]["gate"] == "invalid_argument", env
+        assert "title_key" in env["blocked"]["summary"]
+    assert not gw.writes

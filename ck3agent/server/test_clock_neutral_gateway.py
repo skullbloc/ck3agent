@@ -1,4 +1,4 @@
-"""No tool but session changes the clock (contract D5/D6).
+"""No tool but session() changes the clock.
 
 Every tool works whether the game is paused or running, and
 only session(action="pause"|"unpause"|"speed"|"wait") touches the clock, on the
@@ -12,7 +12,8 @@ records every action sent, then assert the clock verbs never appear:
       scheme_targets, every do() intent and action_class, every inspect
       subject), paused and running;
   N3  session's non-clock actions;
-  N4  the agent loop's gateway, the same surface;
+  N4  the agent loop's gateway, the same surface (test_agent_gateway_twin.py,
+      which imports the retired loop and runs in the research tree only);
   C1  THE CONTROL: session's own clock actions DO reach the recorder, so a
       green N1-N4 is not a recorder that cannot see a clock verb;
   P1  confirmed_write on a paused game: stage 1 (the drain) reads back in
@@ -39,8 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 ms = pytest.importorskip("mcp_server")
 import redesign as R  # noqa: E402
 
-#: The bridge verbs that move the game clock. Only session sends them
-#: (contract D5/D6); the rows below prove no other gateway path does.
+#: The bridge verbs that move the game clock. Only session() sends them
+#: (the clock contract); the rows below prove no other gateway path does.
 CLOCK = {"pause_game", "unpause_game", "set_speed", "set_pause"}
 ME, FOE = 7, 9
 
@@ -230,22 +231,6 @@ class _Loop:
         return self.rec.reply(action, params)
 
 
-@pytest.mark.parametrize("paused", [True, False])
-def test_N4_the_agent_loop_gateway_sends_no_clock_verb(wired, paused):
-    agent = pytest.importorskip("agent")
-    rec = Recorder(paused)
-    gw = agent._AgentGateway(_Loop(rec))
-    run(gw.read("query_character", {"character_id": ME}))
-    run(gw.read("query_cb_validity_strict", {}))
-    run(gw.write("set_council_task", {}))
-    run(gw.read_many([("query_realm", {}), ("get_active_wars", {})]))
-    run(gw.confirmed_write("send_interaction", {}, readback=lambda raw: _none()))
-    raised = run(_drive_impls(gw))
-    assert len(set(rec.sent)) > 20, "the impls reached too few bridge actions (fail OPEN)"
-    assert not CLOCK & set(rec.sent), sorted(CLOCK & set(rec.sent))
-    assert not raised, raised
-
-
 STAGE1 = len(R.DRAIN_SCHEDULE_S)
 
 
@@ -294,7 +279,7 @@ def test_W1_the_clock_is_read_not_taken_from_a_frame_the_bridge_never_pushes(wir
                                                                             world_polls):
     """Witness W1's discriminating row. No tick_start was ever pushed (the live
     state) and get_tick_info answers `paused`. Running, the world poll runs;
-    paused, it does not. The pre-fix gateway read `state.latest_tick_start` (a
+    paused, it does not. The superseded gateway read `state.latest_tick_start` (a
     cache only a pushed tick_start filled), defaulted it to paused, and never
     polled: polls == 0 in both rows."""
     rec, gw = wired(paused)
@@ -317,28 +302,15 @@ def test_W1_the_envelope_game_block_is_the_fresh_reading_never_a_default(wired, 
     assert env["game"]["paused"] is False, env["game"]
 
 
-@pytest.mark.parametrize("paused", [True, False])
-def test_W1_the_agent_loop_gateway_reads_the_clock_too(wired, paused):
-    agent = pytest.importorskip("agent")
-    rec = Recorder(paused)
-    loop = _Loop(rec)
-    loop._last_observation = {}            # no observation frame is ever pushed
-    gw = agent._AgentGateway(loop)
-    assert gw.game()["paused"] is None
-    out = run(gw.confirmed_write("send_interaction", {}, readback=_probe({}), max_polls=3))
-    assert out["polls"] - STAGE1 == (0 if paused else 3), out
-    assert gw.game()["paused"] is paused
-
-
 QUEUED = {"success": True, "status": "queued", "action": "send_interaction",
           "method": "intent_dispatch", "intent_request_id": "si_12627_31_39007",
           "pending_count": 1}
 
 
 def test_S1_a_queued_write_drained_on_the_next_pass_resolves_PAUSED(wired):
-    """The live gl5-p reply. The verdict appears on the 2nd drain read with the
+    """A live reply. The verdict appears on the 2nd drain read with the
     clock paused; the readback sees the outcome the drain produced: resolved,
-    no world poll. The pre-fix server answered pending at once."""
+    no world poll. The superseded server answered pending at once."""
     rec, gw = wired(True)
     rec.write_replies["send_interaction"] = QUEUED
     rec.dispatch = [{"status": "pending"}, {"status": "success"}]
@@ -380,24 +352,3 @@ def test_S1_a_pending_must_name_its_wait():
     with pytest.raises(ValueError):
         R.conf_pending({"drains_when": None, "game_date_at_submit": "867.1.2"})
 
-
-def test_m12_the_agent_loop_delta_cursor_moves_with_the_clock_reading(wired):
-    """The twin's delta feeds read `since_tick` from `_last_observation`, which no
-    live frame fills, so every call re-read the feeds from tick 0. The cursor now
-    follows the gateway's fresh clock reading."""
-    agent = pytest.importorskip("agent")
-    rec = Recorder(True)
-    seen = []
-    loop = _Loop(rec)
-    loop._last_observation = None
-
-    async def rd(action, params):
-        seen.append((action, (params or {}).get("since_tick")))
-        return rec.reply(action, params)
-    loop._read = rd
-    gw = agent._AgentGateway(loop)
-    run(gw.clock())
-    run(gw.delta_records_since_last())
-    run(gw.delta_records_since_last())
-    ticks = [t for a, t in seen if a == "query_war_declarations"]
-    assert ticks == [0, 77], seen

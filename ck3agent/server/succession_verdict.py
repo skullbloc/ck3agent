@@ -1,11 +1,11 @@
-"""Does the next succession pass intact? ONE definition (finding 8).
+"""Does the next succession pass intact? ONE definition.
 
 The player was answered by five reads in three vocabularies: `scatters` (the
 per-title map's summary, in observe and inspect(succession_preview)),
 `is_partition` (the succession simulation's heir row, in the live-state hook and
 query(partition_preview)) and `passes_intact` (succession_plan). They could
 disagree: on the 867 save the simulation named no heir while the map projected
-three (live867 l4-live-a-t1). The vocabulary is succession_plan's, and the
+three. The vocabulary is succession_plan's, and the
 computation lives here so that every reader that states a verdict calls it:
 succession_plan, observe's succession block and the live-state hook
 (ck3agent/hooks/inject_state.py).
@@ -45,17 +45,17 @@ query_succession's (kept for the callers' signature; no field of it decides), an
 fallback for the heirs when the simulation names none, and then its split is the
 verdict. Pure: no reads, no bridge, so a host test drives the same code.
 
-EVERY CROWN TITLE IS CHECKED (B2, set v3-registered-2 s3). Charles held
+EVERY CROWN TITLE IS CHECKED. In one registered run Charles held
 k_france AND k_aquitaine (observe's de_jure block, read off the same held-title
 array, named both on all 13 of his observes). All 25 of the king's observes said
 "intact" with one eligible heir; at his death k_aquitaine went to Carloman and the
-realm fell 89 -> 44 (e0-s5, with no agents, split the same way). Why the
+realm fell 89 -> 44 (a no-agent episode split the same way). Why the
 simulation said one heir (do_query_succession_simulation, query_handlers.cpp):
 its partition switch is the PRIMARY title's division alone (`is_partition =
 primary_division == 1`), and a kingdom carrying its own law vector whose entries
 leave division unset resolves to "unset" (resolve_effective_succ_rule does not
 fall back to the realm law then), so every other title went to the primary heir.
-Measured on the 867 core dump (ivar867, Charles 12015): k_france and k_aquitaine
+Measured on the 867 core dump (Charles 12015): k_france and k_aquitaine
 each carry a title-law vector resolving (order, division, rank) = (unset, unset,
 unset), and the engine's own per-title heir cache (title+0x290, what
 query_title_succession_map projects) names Louis 14577 first on k_france and
@@ -65,7 +65,7 @@ against the per-title map on every held title of kingdom tier or higher
 (source per_title_map), and a crown title beside the primary that the map could
 not project leaves the verdict undetermined, never intact. Lower tiers keep the
 simulation's answer: there the map's cache names one heir for every county of a
-partitioned duchy (s6 D2 succession_plan: map all Émenon, simulation Uzès to
+partitioned duchy (a recorded duke's succession_plan: map all Émenon, simulation Uzès to
 Arnaut), so it is no check. `crown_titles` carries each crown title with both
 reads' heirs, and `scope` says what no read here can see: a title created,
 usurped or inherited after the read.
@@ -76,7 +76,7 @@ from typing import Any
 
 #: The verdict's three states. "splits" always carries a breaker: a "does not
 #: pass intact" with nobody named is not a reading, it is undetermined
-#: (M-3: the map fallback said false with breaker None and one heir).
+#: (the map fallback once said false with breaker None and one heir).
 OUTCOMES = ("intact", "splits", "undetermined")
 
 #: The tier from which a title is a crown of its own, checked title by title:
@@ -101,7 +101,7 @@ def sim_heirs(sim: dict) -> list[dict]:
     (do_query_succession_simulation): `heirs`, the player heir first, each
     {character_id, name, is_player_heir, title_count, titles[]}. Each becomes
     {id, name, titles}, the player heir first; the others carry `takes` (the titles
-    they would take away). Until the server read `eligible_heirs`, a key the
+    they would take away). At first the server read `eligible_heirs`, a key the
     bridge never emits, so every simulation read as "no heirs" and the verdict
     fell back to the per-title map (or to none)."""
     rows = sim.get("heirs") if isinstance(sim, dict) else None
@@ -234,10 +234,10 @@ def verdict(sim: dict, succ: dict, msum: dict) -> dict[str, Any]:
     sim = sim if isinstance(sim, dict) else {}
     succ = succ if isinstance(succ, dict) else {}
     msum = msum if isinstance(msum, dict) else {}
-    # The simulation's per-heir titles, never is_partition (B2).
+    # The simulation's per-heir titles, never is_partition.
     heirs = sim_heirs(sim)
     eligible_heir_count = len(heirs) if heirs else None
-    # Measured on the 867 save (live867 l4-live-a-t1, ruler 10465): the
+    # Measured on the 867 save: the
     # simulation named no heir while the per-title map projected Karlmann on two titles
     # and Ludwig on k_bavaria. When the simulation is empty and the map is available,
     # the map's projected heirs are the heirs and its split is the verdict.

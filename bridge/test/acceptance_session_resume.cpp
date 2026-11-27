@@ -1,4 +1,4 @@
-// test/acceptance_session_resume.cpp — ACCEPTANCE (R7c / R2a).
+// test/acceptance_session_resume.cpp — ACCEPTANCE.
 //
 // THE CLAIM UNDER TEST, in one sentence: a control session SURVIVES a dropped
 // socket with its claims intact, comes back on a resume token, gets its agent
@@ -11,14 +11,14 @@
 // In an experiment episode that is an uncontrolled change to the FROZEN ARM,
 // produced by a network event — a subscription-cap disconnect silently hands a
 // claimed English earl back to the native AI, and the episode goes on looking
-// clean. stopped the destroy under `episode_pins_claims`; this is
+// clean. The destroy stops under `episode_pins_claims()`; this is
 // the other half, and without it a dropped socket leaves a session nobody can
 // ever reach again.
 //
 // NO GAME. This is a host binary. It links the REAL session.cpp, the REAL
-// world_identity.cpp (— ONE identity rule, not a second copy), the REAL
-// world_epoch.cpp and the REAL unavailability.cpp / episode_policy.cpp
-// And drives world reloads through the documented
+// world_identity.cpp (ONE identity rule, not a second copy), the REAL
+// world_epoch.cpp and the REAL unavailability.cpp / episode_policy.cpp,
+// and drives world reloads through the documented
 // world_epoch_observe() seam. Every decision under test is the shipped one.
 //
 // THE NEGATIVE CONTROLS ARE THE POINT — there are two, and each fails on its own
@@ -30,7 +30,7 @@
 //     never saw. Fails the same-save / different-save lanes.
 //
 //   -DCK3_DETACH_REPORT_COUNTS_OBSERVERS   the detach report counts
-//     EVERY non-attached session, which is what it did before this bead. Fails
+//     EVERY non-attached session, which is what it does without it. Fails
 //     lane 11: a dropped OBSERVE session publishes state/detached-since, the
 //     abort ladder reads it as reason=session_lost, and a healthy arm episode is
 //     aborted because an observer blinked.
@@ -107,8 +107,8 @@ static void check_eq_i64(const char* lane, int64_t actual, int64_t expected,
 // ---------------------------------------------------------------------------
 static const char* kSaveA    = "0c94b59880e0549a5a0c8fbe4dc675a3de171f28d79f7628ad765116de782d5d";
 static const char* kSaveB    = "7f21aa0c1d3e4b5968708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6";
-static const char* kEpisodeA = "ep-20260912T033051Z-e0-paper-9eae1e0e";
-static const char* kEpisodeB = "ep-20260912T104500Z-a-pilot-11112222";
+static const char* kEpisodeA = "ep-20260101T000000Z-null-test-0badf00d";
+static const char* kEpisodeB = "ep-20260102T000000Z-a-test-11112222";
 
 // The English side's characters, as the 1066 arm claims them.
 static const uint32_t kEarlA = 6001;
@@ -200,7 +200,7 @@ static void install_test_purge_hook() {
 }
 
 // A session that has claimed its characters and is bound to a slot — the state
-// every lane starts a drop from.
+// every row starts a drop from.
 struct Bound {
     Session* s = nullptr;
     std::string sid;
@@ -374,9 +374,9 @@ static void lane_same_save() {
     g_session_registry.detach_from_slot(b.sid, 0, 1, 2000);
     world_epoch_observe(world_fp(0xB000, raw_for(1066, 9, 15)));   // pointer moved: a load
     const uint64_t epoch_b = world_epoch();
-    check(LANE, epoch_b != epoch_a, "ck-hxh7 sees the reload (the epoch advanced)");
+    check(LANE, epoch_b != epoch_a, "sees the reload (the epoch advanced)");
     check(LANE, !live_has(kEarlA, 90),
-          "and the live write set was emptied — the ck-hxh7 P1 fix still holds");
+          "and the live write set was emptied — the P1 fix still holds");
     check(LANE, quarantine_has(kEarlA), "the entries are in QUARANTINE, not destroyed");
 
     // The client reconnects and DECLARES the save it loaded — the client half of
@@ -407,7 +407,7 @@ static void lane_same_save() {
 
 // ===========================================================================
 // 5. A DIFFERENT SAVE — the resume is REFUSED and the session is ERASED.
-//    THIS IS THE LANE THE NEGATIVE CONTROL FAILS.
+//    THE NEGATIVE CONTROL FAILS HERE.
 // ===========================================================================
 static void lane_different_save() {
     printf("\n5. DIFFERENT SAVE — claims are released, the session erased, steering purged\n");
@@ -446,7 +446,7 @@ static void lane_different_save() {
     check_eq_i64(LANE, g_purge_calls.load(), 1, "the steering-purge hook fired once");
     check(LANE, !live_has(kEarlA, 90) && !quarantine_has(kEarlA),
           "and the previous world's locks for that id are GONE — this is the "
-          "ck-9fc3 hazard (a stranger's personality rewritten 3x/tick) closed "
+          "hazard (a stranger's personality rewritten 3x/tick) closed "
           "at the claims door");
 
     // The token cannot be replayed to resurrect anything.
@@ -457,7 +457,7 @@ static void lane_different_save() {
 }
 
 // ===========================================================================
-// 6. AN UNVOUCHED WORLD CHANGE — §6.2's bias, inverted from.
+// 6. AN UNVOUCHED WORLD CHANGE — §6.2's bias, inverted from the reload quarantine's.
 // ===========================================================================
 static void lane_unvouched() {
     printf("\n6. UNVOUCHED WORLD CHANGE — no declaration means DISCARD, not benefit of the doubt\n");
@@ -555,21 +555,21 @@ static void lane_unavailability() {
     const char* LANE = "unavail";
     clean_slate();
 
-    // The gate is in WALL-CLOCK (360 s = 3 R3 heartbeats) and X is in
+    // The gate is in WALL-CLOCK (360 s = 3 heartbeats) and X is in
     // GAME-DAYS. A drop lasting minutes is unavailability; ordinary turn-taking
     // is not, however many game-days a fast clock runs through meanwhile.
     unavailability().configure(/*anomaly_wall_s*/360,
                                /*exclusion_days*/kExclusionDaysAtRegisteredHorizon,
                                /*exclusion_armed*/true);   // The
     // RULE's answer at the registered 20-game-year horizon, stated as such.
-    // Armed explicitly, because made that a required question: an
-    // unarmed ledger judges nothing, and a resume lane that inherited a
+    // Armed explicitly, because the exclusion rule made that a required question: an
+    // unarmed ledger judges nothing, and a resume row that inherited a
     // silent default would be asserting against a threshold it never set.
 
-    // The wall clock this lane models: monotonic ms, at the slow condition
+    // The wall clock this acceptance models: monotonic ms, at the slow condition
     // (~0.076 game-days/wall-second) so a gap can sit under X and still be
     // anomalous. Stated because a threshold quoted without its rate is the
-    // defect was filed for.
+    // defect the anomaly gate was written against.
     const uint64_t W0 = 5'000'000;
 
     const std::string sid = "sess-english-1";
@@ -594,7 +594,7 @@ static void lane_unavailability() {
     }
 
     // THE RESUME. This is the exact call the bridge makes on a rebind
-    // (pipeline_note_session_open -> note_session), and wrote it to
+    // (pipeline_note_session_open -> note_session), written to
     // be an ATTACH, never a reset.
     unavailability().note_session(sid, 260, W0 + 2'100'000);
     {
@@ -615,7 +615,7 @@ static void lane_unavailability() {
                      "of 161 game-days, which is what the episode's covariate reports");
         check_eq_i64(LANE, (int64_t)(snap[0].unavailable_wall_seconds + 0.5), 2110,
                      "and of 2110 WALL-seconds, which is what the gate judged — "
-                     "every gap is recorded in both units (ck-ijfa)");
+                     "every gap is recorded in both units ");
         check(LANE, snap[0].spans.size() == 1 && snap[0].spans[0].anomalous,
               "and the itemised span carries the verdict");
         check(LANE, !snap[0].over_threshold,
@@ -704,7 +704,7 @@ static void lane_max_detach() {
 }
 
 // ===========================================================================
-// 10. THE DETACH REPORT — the producer session_lost rung never had.
+// 10. THE DETACH REPORT — the producer the session_lost rung never had.
 // ===========================================================================
 static void lane_detach_report() {
     printf("\n10. THE DETACH REPORT — state/detached-since, in the shape episode_abort.sh parses\n");
@@ -798,8 +798,8 @@ static void lane_detach_report() {
 // ===========================================================================
 // 11. THE OBSERVER — a dropped OBSERVE session is NOT a verdict.
 // ===========================================================================
-// WHY THIS LANE EXISTS. Lane 10 proves the report's SHAPE with control sessions
-// only, because subject is claims and observers have none. That left
+// WHY THIS CHECK EXISTS. Lane 10 proves the report's SHAPE with control sessions
+// only, because the subject is claims and observers have none. That left
 // the report counting every non-attached session, so an observe-mode drop wrote
 // state/detached-since — and episode_abort.sh reads that file as evidence of a
 // dying session. A diagnostic tool that connects in observe mode and disconnects
@@ -810,7 +810,7 @@ static void lane_detach_report() {
 // condition. So its detach is registry state (get_bridge_state stays honest) and
 // nothing more.
 static void lane_observer_report() {
-    printf("\n11. THE OBSERVER (ck-bw1s) — an observe-mode drop publishes NO detach verdict\n");
+    printf("\n11. THE OBSERVER — an observe-mode drop publishes NO detach verdict\n");
     const char* LANE = "observer";
     clean_slate();
 
@@ -906,14 +906,14 @@ int main(int argc, char** argv) {
     control_name = "NEGATIVE CONTROL: resume identity check DISABLED";
 #endif
 #ifdef CK3_DETACH_REPORT_COUNTS_OBSERVERS
-    // The pre-fix report, which counted every non-attached session.
-    control_name = "NEGATIVE CONTROL: the detach report COUNTS OBSERVERS (pre-ck-bw1s)";
+    // The superseded report, which counted every non-attached session.
+    control_name = "NEGATIVE CONTROL: the detach report COUNTS OBSERVERS (before the fix)";
 #endif
     for (int i = 1; i < argc; i++)
         if (strcmp(argv[i], "--expect-fail") == 0 && !control_name)
             control_name = "NEGATIVE CONTROL (asserted on the command line)";
 
-    printf("acceptance_session_resume (ck-6kvq.5 + ck-bw1s): a dropped socket must not "
+    printf("acceptance_session_resume: a dropped socket must not "
            "destroy the session or free its claims, and a dropped OBSERVER is not a "
            "session_lost verdict\n");
     if (control_name)

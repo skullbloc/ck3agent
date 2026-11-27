@@ -155,7 +155,7 @@ class FakeBridge(threading.Thread):
         if act == "set_controlled_character":
             # As dispatch_router.cpp do_set_controlled_character: a session that
             # holds a primary SWITCHES (swap_character) unless `add` is set, which
-            # claims one more ruler and keeps the primary (lane-multi).
+            # claims one more ruler and keeps the primary.
             cid, add = int(p["character_id"]), bool(p.get("add"))
             if self.owner.get(cid, sid) != sid:
                 return {"success": False, "reason": "owned_by_other", "character_id": cid}

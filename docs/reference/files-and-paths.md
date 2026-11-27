@@ -88,9 +88,42 @@ Variables read only by the bridge are in
 | `CK3_SESSION_OUT` | `run` sets it; the MCP server writes its session id and resume token here so `run` can finish the release if the server is killed first |
 | `CK3_EPISODE_ARM` | experiment arm label, stamped into the server's tool-surface record |
 | `CK3_STRICT_BUILD_ID` | `launch --allow-unsupported-build` sets it to `0` for the bridge |
+| `CK3_BRIDGE_ENDPOINT` | the bridge endpoint the MCP server connects to, on any OS; overrides the socket path and the Windows default |
+| `CK3_BRIDGE_ARMY_ORDERS`, `CK3_BRIDGE_ARMY_HOLD` | `1` in the server's environment lists `do`'s `army` intent (orders, and holds); the bridge reads the same switches ([research notes](../research.md#bridge-environment-variables)) |
+| `CK3_NOTES` | `off` at the server's start turns the notes off: `notes` leaves `discover`, the instructions carry no notes line; unset or `on` is on; any other value refuses the start |
+| `CK3_NOTES_SET` | the name of the notes set the server serves (a set in `notes.json`); unset is the default set |
+| `CK3_REPLY_PAGES` | `off` gives back the single-reply size rule: no paged replies and no `inspect(subject="more")` |
+| `CK3_TOOL_PREFIX` | the prefix the client puts before the tool names (for example `mcp__ck3__`); the server writes it into the calls its replies suggest |
+| `CK3_GOAL_TITLE` | the key of the title the run's goal names (for example `k_ireland`): the create_title veto never drops that title's creation, and a cut reply keeps its `formable_titles` row |
+| `CK3_GOAL_KIND` | the goal's kind; under a goal that forbids offensive war the news leaves out the goal-title lines and the calls that offer a war |
+| `CK3_START_BRIEFING`, `CK3_START_BRIEFING_SHA256` | a start briefing handed to the seat (the file and its sha256); the server checks the digest and warns `start_briefing_unread` when it cannot read it |
+| `CK3_GAME_DIR` | the game's `game/` folder; the server reads event, faction and price files from it (default: the Steam path) |
+| `CK3_CLOCK_OWNER` | `env`: an environment owns the game clock, so `session` does not list or serve its clock actions |
+| `CK3_SESSION_ID` | the session id the server stamps into its rows; `run` sets it |
+| `CK3_HOOK_STATE_OUT` | the live-state hook also appends each block it prints to this file |
+| `CK3_PROPOSAL_MOD`, `CK3_SEAT_PROPOSALS_OUT` | `1` when the game runs the proposal mod (`observe` then carries the proposal block), and the file the server records the seat's answers in |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR` | base directories above; an empty value counts as unset |
 | `WAYLAND_DISPLAY`, `SDL_VIDEODRIVER` | when the first is set and the second is not, `launch` runs the game under XWayland |
-| `NO_COLOR` | plain CLI output |
+| `NO_COLOR`, `TERM` | plain CLI output (`NO_COLOR` set, or `TERM=dumb`) |
+| `HOME` | where the MCP server writes a debug log, `~/.ck3-mcp-debug.log`, when it is run directly as a script (`python3 ck3agent/server/mcp_server.py`); `ck3agent serve` writes none |
+
+### Experiment seats
+
+An experiment's launcher sets these for each seat; a seat run with none of them
+behaves as a plain install. `tests/test_files_and_paths_env.py` checks that every
+variable the code names is a row here or above.
+
+| Variable | Effect |
+|----------|--------|
+| `CK3_EPISODE_ID`, `CK3_EPISODE_ARM` | the episode and the arm the seat runs in |
+| `CK3_EPISODE_HORIZON_START`, `CK3_EPISODE_HORIZON_END`, `CK3_CYCLE_GAME_DAYS` | the episode's game-date horizon and the seat's decision cycle in game days; `session(action="wait")` waits to the next cycle boundary |
+| `CK3_EPISODE_LINE_START_ID`, `CK3_EPISODE_R_OPEN`, `CK3_EPISODE_OPEN_DATE` | the goal meter's sample at the episode's open, which the goal block in `observe` reads |
+| `CK3_SEAT_LABEL` | which seat this server is |
+| `CK3_SEAT_DECLARED_CHARACTER_ID`, `CK3_RESERVED_FOR_OTHER_SEATS` | the seat's declared ruler, and the characters declared for the other seats (a claim of one is refused) |
+| `CK3_SEAT_LINEAGE_OUT`, `CK3_SEAT_LINEAGE_TITLE_ID` | the file the seat's lineage rows go to, and the title a king's seat follows |
+| `CK3_CHANNEL_TOPOLOGY`, `CK3_CHANNEL_SEATS`, `CK3_CHANNEL_QUOTA_PER_CYCLE`, `CK3_CHANNEL_MAX_TEXT_BYTES` | the seats' message channel: who may write to whom, the seats, and its per-cycle quota and message size |
+| `CK3_NOTEPAD_PADS`, `CK3_NOTEPAD_PRIVATE_MAX_BYTES`, `CK3_NOTEPAD_COUNCIL_MAX_BYTES`, `CK3_NOTEPAD_MAX_WRITE_BYTES` | the seat's notepads and their size bounds |
+| `CK3_GUIDE_DIR`, `CK3_GUIDE_MANIFEST_SHA256` | the arm's guide directory and its manifest digest |
 
 ## Check it worked
 

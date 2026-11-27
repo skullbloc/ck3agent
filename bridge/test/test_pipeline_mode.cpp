@@ -1,27 +1,25 @@
-// test_pipeline_mode.cpp — R8 host unit tests: what `null` MEANS.
+// test_pipeline_mode.cpp — host unit tests: what `null` MEANS.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §6.3 ("no control
-// sessions, no windows, clock free-runs at a fixed speed, observer lane samples
-// on its game-date cadence, harness stops at the horizon. Zero tokens.").
+// `null` means: no control sessions, no windows, the clock free-runs at a
+// fixed speed, the observer samples on its game-date cadence, the harness stops
+// at the horizon. Zero tokens.
 //
 // No CK3 binary, no game, no socket. Two pure translation units —
-// pipeline_mode.cpp and flush_scheduler.cpp — carry every behaviour this bead
-// had to change, which is why the bead's bridge half is host-testable at all.
+// pipeline_mode.cpp and flush_scheduler.cpp — carry every behaviour this code
+// had to change, which is why the task's bridge half is host-testable at all.
 //
-// DEVIATION FROM 425c20b. As written this file had three pure TUs and
-// a fifth policy column, both involving the CHECKPOINT CLOCK GATE. That gate
-// was withdrawn from the experiment path on 2026-09-12 (G3' reversed by the
-// progenitor — episode_policy.h:14-18), so section 5 and half of section 4
-// tested a subsystem that no longer exists. They are removed rather than
+// There is no CHECKPOINT CLOCK GATE (the clock runs in an experiment,
+// episode_policy.h), so this file tests two pure TUs and no gate
+// column; tests of a subsystem that does not exist are left out rather than
 // stubbed: a test kept alive against a deleted subsystem is a test that can
-// only ever pass. Everything that bears on THIS bead — the downgrade — is
+// only ever pass. Everything that bears on THIS code — the downgrade — is
 // untouched, and the negative control still fails on two independent columns
 // (buffering and control sessions), so removing the gate did not cost the
 // suite its teeth.
 //
 // WHAT THIS PINS, AND WHY EACH ONE HAD TEETH
 // ==========================================
-// Before this bead `null` was `pipeline` with clock ownership switched off:
+// Without it `null` was `pipeline` with clock ownership switched off:
 //
 //   * it buffered and ran the conductor, so the flush plan's Pause / Unpause /
 //     SetSpeed steps drove the clock in the one mode defined by the clock
@@ -31,7 +29,7 @@
 //
 // THE NEGATIVE CONTROL. `test_pipeline_mode_negative_control` is this same
 // source against pipeline_mode.cpp built with -DCK3_NULL_MODE_LEGACY_POLICY=1,
-// which restores the pre-bead policy. It MUST FAIL. Without it, a test of a
+// which restores the earlier policy. It MUST FAIL. Without it, a test of a
 // policy table is just the table written twice.
 
 #include "pipeline_mode.h"
@@ -130,7 +128,7 @@ static void test_names_and_parse() {
 static void test_policy_table() {
     section("policy table");
 
-    // legacy: does nothing new, admits everything. G11's whole promise.
+    // legacy: does nothing new, admits everything. The legacy default's whole promise.
     CHECK(!mode_buffers_calls(PipelineMode::Legacy),   "legacy does not buffer");
     CHECK(!mode_runs_flush_loop(PipelineMode::Legacy), "legacy runs no conductor");
     CHECK(!mode_owns_clock(PipelineMode::Legacy),      "legacy does not own the clock");
@@ -141,12 +139,12 @@ static void test_policy_table() {
     // pipeline: the flush loop, everything on.
     CHECK(mode_buffers_calls(PipelineMode::Pipeline),   "pipeline buffers");
     CHECK(mode_runs_flush_loop(PipelineMode::Pipeline), "pipeline runs the conductor");
-    CHECK(mode_owns_clock(PipelineMode::Pipeline),      "pipeline owns the clock (G1)");
+    CHECK(mode_owns_clock(PipelineMode::Pipeline),      "pipeline owns the clock");
     CHECK(mode_admits_control_sessions(PipelineMode::Pipeline), "pipeline admits control");
     CHECK(!mode_admits_observer_clock_verbs(PipelineMode::Pipeline),
           "pipeline observers do NOT set the clock — the pipeline OWNS it");
 
-    // null: E0. The four NOs are the arm.
+    // null: no agents. The four NOs are the arm.
     // (`may_arm_checkpoint_gate` was the fifth — removed with its subsystem.)
     CHECK(!mode_buffers_calls(PipelineMode::Null),
           "NULL MUST NOT BUFFER — buffering with no conductor is an unbounded "
@@ -158,11 +156,11 @@ static void test_policy_table() {
           "null does not take clock ownership: the harness sets a speed once "
           "and the world free-runs");
     CHECK(!mode_admits_control_sessions(PipelineMode::Null),
-          "NULL MUST ADMIT NO CONTROL SESSION — this IS E0's zero-token arm");
+          "NULL MUST ADMIT NO CONTROL SESSION — this IS null mode's zero-token arm");
     CHECK(mode_admits_observer_clock_verbs(PipelineMode::Null),
           "NULL MUST LET AN OBSERVER SET THE CLOCK — it is the only mode with "
           "no control session to do it, and an episode that cannot pin its own "
-          "declared speed refuses at open (ck-1ek9)");
+          "declared speed refuses at open ");
 
     // Totality: every predicate answers for every mode, no aborts, no UB.
     for (PipelineMode m : kModes) {
@@ -209,7 +207,7 @@ static void test_null_free_runs_because_it_never_buffers() {
     clock.speed  = 3;
     FlushPlan plan = sched.plan_flush(12000, clock, FlushTrigger::Cadence);
 
-    // THIS is what the pre-bead null mode was doing to the world every flush.
+    // THIS is what the earlier null mode was doing to the world every flush.
     CHECK(plan.clock_touched(),
           "a flush carrying PAUSED work DOES touch the clock — so a null mode "
           "that buffers is a null mode that stops the world");
@@ -286,7 +284,7 @@ static void test_clock_pin_is_exactly_complementary() {
 }
 
 static void test_legacy_unchanged() {
-    section("legacy unchanged (G11)");
+    section("legacy unchanged");
 
     // Every column that could make a legacy bridge behave differently is off,
     // and the one that would take something AWAY from it is on.
@@ -298,7 +296,7 @@ static void test_legacy_unchanged() {
 }
 
 int main() {
-    printf("test_pipeline_mode — R8 null-agent mode policy (ck-6kvq.4)\n");
+    printf("test_pipeline_mode — R8 null-agent mode policy\n");
     test_names_and_parse();
     test_policy_table();
     test_null_free_runs_because_it_never_buffers();

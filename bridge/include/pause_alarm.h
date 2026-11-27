@@ -16,7 +16,7 @@
 //     before any day ran, and a past one is a caller's arithmetic error.
 //   * fire: at the first drain pass where today >= target. One CDailyTickCommand
 //     advances the date one day; the main thread dispatches at most one per
-//     frame, so at speeds 1-3 (the bridge caps its own speed writes at 3) the
+//     frame, so at speeds 1-3 (the bridge caps its writes at 3 unless an episode declares 4-5) the
 //     pass after the tick that reaches the target fires and `paused_at` ==
 //     target. When the engine has queued more than one tick before a pass (a
 //     slow frame at speed 4-5, or one already dispatched when the pause lands),

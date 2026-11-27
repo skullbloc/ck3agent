@@ -58,9 +58,9 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("docs/campaign-bug-backlog.md", "Reads need PAUSED / writes"):
         "a dated bug backlog (the 2026-06-14 campaign) recording the behaviour of its time",
     ("docs/live-session-findings.md", "paused-gated tier-2 `query_character`"):
-        "a dated finding (L25, fixed) describing the pre-L13 tier-2 gate",
+        "a dated finding (fixed) describing the earlier tier-2 gate",
     ("docs/live-session-findings.md", "this human-vs-agent game runs mostly UNPAUSED"):
-        "a dated finding (L6, fixed) describing a game the human ran unpaused",
+        "a dated finding (fixed) describing a game the human ran unpaused",
 }
 
 
@@ -104,8 +104,7 @@ def test_the_census_reads_the_doctrine():
     if RESEARCH:
         must = ("ck3agent/knowledge/britannia-campaign.md", "ck3agent/knowledge/levers.md",
                 "ck3agent/CLAUDE.md", "ck3agent/README.md",
-                "release/overlay/ck3agent/protocol/CLAUDE.md", "release/overlay/CHANGELOG.md",
-                "docs/design/multi-agent-control.md")
+                "release/overlay/ck3agent/protocol/CLAUDE.md", "release/overlay/CHANGELOG.md")
         floor = 30
     else:
         must = ("ck3agent/protocol/CLAUDE.md", "CHANGELOG.md",

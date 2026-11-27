@@ -1,4 +1,4 @@
-"""Query(domain="character") names the
+"""query(domain="character") names the
 character, or says the name is pending — never a bare null.
 
 THE SMOKE. probe-paused.jsonl lines 17 and 19 (id.12015, id.11329; 0867.02.20,

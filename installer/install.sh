@@ -130,7 +130,7 @@ if [ -z "$how" ]; then
   copy_bridge
   stage="switching to the new venv"
   drop --only-pipx
-  # An older install (rc1, or by hand) has a real directory here: move it aside.
+  # An older install (an early release, or by hand) has a real directory here: move it aside.
   if [ -d "$data/venv" ] && [ ! -L "$data/venv" ]; then mv -T "$data/venv" "$data/venv.prev.$$"; fi
   livevenv="$newvenv"
   ln -s "${newvenv##*/}" "$data/.venv.$$"

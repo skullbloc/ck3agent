@@ -1,0 +1,702 @@
+{
+ "athlone_holder": {
+  "faith_id": 37,
+  "id": 29585
+ },
+ "athlone_reads": [
+  {
+   "date": "1066.09.15",
+   "gold": null,
+   "line": 17,
+   "progress": 0.0
+  },
+  {
+   "date": "1066.10.20",
+   "gold": null,
+   "line": 22,
+   "progress": 7.02
+  },
+  {
+   "date": "1066.11.24",
+   "gold": null,
+   "line": 27,
+   "progress": 14.04
+  },
+  {
+   "date": "1066.11.24",
+   "gold": 89.29,
+   "line": 32,
+   "progress": 14.04
+  },
+  {
+   "date": "1067.02.22",
+   "gold": 96.99,
+   "line": 37,
+   "progress": 35.1
+  },
+  {
+   "date": "1067.05.23",
+   "gold": 104.23,
+   "line": 42,
+   "progress": 56.16
+  },
+  {
+   "date": "1067.08.21",
+   "gold": 230.35,
+   "line": 47,
+   "progress": 77.22
+  },
+  {
+   "date": "1067.11.19",
+   "gold": 141.01,
+   "line": 52,
+   "progress": 98.28
+  },
+  {
+   "date": "1067.11.20",
+   "gold": 141.01,
+   "line": 57,
+   "progress": 98.28
+  },
+  {
+   "date": "1067.11.21",
+   "gold": 141.01,
+   "line": 62,
+   "progress": 98.28
+  },
+  {
+   "date": "1067.11.22",
+   "gold": 141.01,
+   "line": 67,
+   "progress": 98.28
+  },
+  {
+   "date": "1067.11.23",
+   "gold": 141.01,
+   "line": 72,
+   "progress": 98.28
+  },
+  {
+   "date": "1067.11.24",
+   "gold": 57.01,
+   "line": 77,
+   "progress": null
+  }
+ ],
+ "chaplain": {
+  "faith_id": 23,
+  "id": 56090,
+  "skills": {
+   "diplomacy": 1,
+   "intrigue": 6,
+   "learning": 12,
+   "martial": 8,
+   "prowess": 4,
+   "stewardship": 8
+  }
+ },
+ "claim_date": "1067.11.24",
+ "council_chaplain_row": {
+  "culture": "Irish",
+  "culture_key": "irish",
+  "current_task": "task_religious_relations",
+  "faith": "Catholicism",
+  "faith_key": "catholic",
+  "holder_id": 56090,
+  "holder_source": "seated",
+  "name_key": "Cellach",
+  "name_pending": true,
+  "position_id": 9488,
+  "position_key": "councillor_court_chaplain",
+  "position_name": "councillor_court_chaplain",
+  "skill": 8
+ },
+ "explicit_claims": {
+  "586": [
+   30841,
+   31512,
+   32433,
+   33379,
+   35781
+  ],
+  "596": [
+   30841,
+   32433,
+   33379,
+   35781
+  ]
+ },
+ "family": {
+  "children": [
+   36124,
+   37111,
+   37528
+  ],
+  "father_id": 27052,
+  "mother_id": 28444
+ },
+ "kin_pairs": [
+  {
+   "actor": 30853,
+   "eligible": false,
+   "holder": 27159,
+   "rel": "mother",
+   "title_id": 294
+  },
+  {
+   "actor": 27159,
+   "eligible": true,
+   "holder": 30853,
+   "rel": "child",
+   "title_id": 110
+  },
+  {
+   "actor": 30853,
+   "eligible": true,
+   "holder": 32642,
+   "rel": "sibling",
+   "title_id": 116
+  },
+  {
+   "actor": 30853,
+   "eligible": true,
+   "holder": 33777,
+   "rel": "sibling",
+   "title_id": 259
+  },
+  {
+   "actor": 32642,
+   "eligible": false,
+   "holder": 27159,
+   "rel": "mother",
+   "title_id": 294
+  },
+  {
+   "actor": 27159,
+   "eligible": true,
+   "holder": 32642,
+   "rel": "child",
+   "title_id": 116
+  },
+  {
+   "actor": 32642,
+   "eligible": true,
+   "holder": 30853,
+   "rel": "sibling",
+   "title_id": 110
+  },
+  {
+   "actor": 32642,
+   "eligible": true,
+   "holder": 33777,
+   "rel": "sibling",
+   "title_id": 259
+  },
+  {
+   "actor": 38585,
+   "eligible": false,
+   "holder": 34776,
+   "rel": "father",
+   "title_id": 414
+  },
+  {
+   "actor": 34776,
+   "eligible": true,
+   "holder": 38585,
+   "rel": "child",
+   "title_id": 144
+  },
+  {
+   "actor": 35395,
+   "eligible": true,
+   "holder": 35853,
+   "rel": "sibling",
+   "title_id": 166
+  },
+  {
+   "actor": 35853,
+   "eligible": true,
+   "holder": 35395,
+   "rel": "sibling",
+   "title_id": 150
+  },
+  {
+   "actor": 36557,
+   "eligible": true,
+   "holder": 35575,
+   "rel": "sibling",
+   "title_id": 219
+  },
+  {
+   "actor": 35575,
+   "eligible": true,
+   "holder": 36557,
+   "rel": "sibling",
+   "title_id": 206
+  },
+  {
+   "actor": 33777,
+   "eligible": false,
+   "holder": 27159,
+   "rel": "mother",
+   "title_id": 294
+  },
+  {
+   "actor": 27159,
+   "eligible": true,
+   "holder": 33777,
+   "rel": "child",
+   "title_id": 259
+  },
+  {
+   "actor": 33777,
+   "eligible": true,
+   "holder": 30853,
+   "rel": "sibling",
+   "title_id": 110
+  },
+  {
+   "actor": 33777,
+   "eligible": true,
+   "holder": 32642,
+   "rel": "sibling",
+   "title_id": 116
+  },
+  {
+   "actor": 36552,
+   "eligible": false,
+   "holder": 30853,
+   "rel": "father",
+   "title_id": 110
+  },
+  {
+   "actor": 30853,
+   "eligible": true,
+   "holder": 36552,
+   "rel": "child",
+   "title_id": 283
+  },
+  {
+   "actor": 36552,
+   "eligible": false,
+   "holder": 31519,
+   "rel": "mother",
+   "title_id": 121
+  },
+  {
+   "actor": 31519,
+   "eligible": true,
+   "holder": 36552,
+   "rel": "child",
+   "title_id": 283
+  },
+  {
+   "actor": 31492,
+   "eligible": true,
+   "holder": 31491,
+   "rel": "sibling",
+   "title_id": 323
+  },
+  {
+   "actor": 31491,
+   "eligible": true,
+   "holder": 31492,
+   "rel": "sibling",
+   "title_id": 308
+  },
+  {
+   "actor": 32624,
+   "eligible": true,
+   "holder": 34959,
+   "rel": "sibling",
+   "title_id": 365
+  },
+  {
+   "actor": 34959,
+   "eligible": true,
+   "holder": 32624,
+   "rel": "sibling",
+   "title_id": 353
+  },
+  {
+   "actor": 30984,
+   "eligible": false,
+   "holder": 28290,
+   "rel": "father",
+   "title_id": 377
+  },
+  {
+   "actor": 28290,
+   "eligible": true,
+   "holder": 30984,
+   "rel": "child",
+   "title_id": 385
+  },
+  {
+   "actor": 34321,
+   "eligible": false,
+   "holder": 30984,
+   "rel": "father",
+   "title_id": 385
+  },
+  {
+   "actor": 30984,
+   "eligible": true,
+   "holder": 34321,
+   "rel": "child",
+   "title_id": 389
+  },
+  {
+   "actor": 30841,
+   "eligible": false,
+   "holder": 31512,
+   "rel": "sibling",
+   "title_id": 596
+  },
+  {
+   "actor": 35815,
+   "eligible": false,
+   "holder": 30841,
+   "rel": "father",
+   "title_id": 541
+  },
+  {
+   "actor": 30841,
+   "eligible": false,
+   "holder": 35815,
+   "rel": "child",
+   "title_id": 586
+  },
+  {
+   "actor": 31512,
+   "eligible": true,
+   "holder": 30841,
+   "rel": "sibling",
+   "title_id": 541
+  },
+  {
+   "actor": 33999,
+   "eligible": true,
+   "holder": 33998,
+   "rel": "sibling",
+   "title_id": 826
+  },
+  {
+   "actor": 33998,
+   "eligible": true,
+   "holder": 33999,
+   "rel": "sibling",
+   "title_id": 815
+  },
+  {
+   "actor": 33997,
+   "eligible": false,
+   "holder": 31010,
+   "rel": "father",
+   "title_id": 965
+  },
+  {
+   "actor": 31010,
+   "eligible": true,
+   "holder": 33997,
+   "rel": "child",
+   "title_id": 978
+  },
+  {
+   "actor": 36003,
+   "eligible": true,
+   "holder": 36911,
+   "rel": "sibling",
+   "title_id": 1011
+  },
+  {
+   "actor": 36911,
+   "eligible": true,
+   "holder": 36003,
+   "rel": "sibling",
+   "title_id": 1000
+  }
+ ],
+ "leinster": {
+  "claimants_of_c_leinster": 0,
+  "claims_of_murchad": 0,
+  "in_diplomatic_range": true,
+  "native_reply": {
+   "applied": false,
+   "assignable": false,
+   "reason": "target_rejected",
+   "success": false,
+   "target_province_id": 37
+  },
+  "script_reply_guard": "ran",
+  "script_watch": [
+   {
+    "date": "1066.09.20",
+    "progress": 0.0,
+    "target_title_id": 508,
+    "task": "task_fabricate_claim",
+    "verdict": {
+     "assignable": false,
+     "eligible": false,
+     "holder_id": 27052,
+     "target_province_id": 37,
+     "title_id": 508
+    }
+   },
+   {
+    "date": "1066.09.25",
+    "progress": 0.0,
+    "target_title_id": 508,
+    "task": "task_fabricate_claim",
+    "verdict": {
+     "assignable": false,
+     "eligible": false,
+     "holder_id": 27052,
+     "target_province_id": 37,
+     "title_id": 508
+    }
+   },
+   {
+    "date": "1066.09.30",
+    "progress": null,
+    "target_title_id": null,
+    "task": "task_religious_relations",
+    "verdict": {
+     "assignable": false,
+     "eligible": false,
+     "holder_id": 27052,
+     "target_province_id": 37,
+     "title_id": 508
+    }
+   },
+   {
+    "date": "1066.10.05",
+    "progress": null,
+    "target_title_id": null,
+    "task": "task_religious_relations",
+    "verdict": {
+     "assignable": false,
+     "eligible": false,
+     "holder_id": 27052,
+     "target_province_id": 37,
+     "title_id": 508
+    }
+   },
+   {
+    "date": "1066.10.10",
+    "progress": null,
+    "target_title_id": null,
+    "task": "task_religious_relations",
+    "verdict": {
+     "assignable": false,
+     "eligible": false,
+     "holder_id": 27052,
+     "target_province_id": 37,
+     "title_id": 508
+    }
+   },
+   {
+    "date": "1066.10.15",
+    "progress": null,
+    "target_title_id": null,
+    "task": "task_religious_relations",
+    "verdict": {
+     "assignable": false,
+     "eligible": false,
+     "holder_id": 27052,
+     "target_province_id": 37,
+     "title_id": 508
+    }
+   },
+   {
+    "date": "1066.10.20",
+    "progress": null,
+    "target_title_id": null,
+    "task": "task_religious_relations",
+    "verdict": {
+     "assignable": false,
+     "eligible": false,
+     "holder_id": 27052,
+     "target_province_id": 37,
+     "title_id": 508
+    }
+   },
+   {
+    "date": "1066.10.25",
+    "progress": null,
+    "target_title_id": null,
+    "task": "task_religious_relations",
+    "verdict": {
+     "assignable": false,
+     "eligible": false,
+     "holder_id": 27052,
+     "target_province_id": 37,
+     "title_id": 508
+    }
+   }
+  ]
+ },
+ "letter_pick": {
+  "ai_would_pick": "court_chaplain_task.0301.a",
+  "applied": "court_chaplain_task.0301.a",
+  "date": "1067.11.24",
+  "event": "court_chaplain_task.0301",
+  "gold_at_pick": 141.01,
+  "options": [
+   "court_chaplain_task.0301.a",
+   "court_chaplain_task.0301.b"
+  ],
+  "rule": "option option=0",
+  "why": "same_as_ai"
+ },
+ "murchad_faith_id": 23,
+ "scan": {
+  "irish_rows": [
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 29585,
+    "relevance": 0,
+    "target_province_id": 34,
+    "title_id": 469,
+    "title_key": "Athlone"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 31266,
+    "relevance": 0,
+    "target_province_id": 15,
+    "title_id": 474,
+    "title_key": "Ulster"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 32422,
+    "relevance": 0,
+    "target_province_id": 18,
+    "title_id": 479,
+    "title_key": "Oriel"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 32421,
+    "relevance": 0,
+    "target_province_id": 9,
+    "title_id": 485,
+    "title_key": "Ailech"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 29703,
+    "relevance": 0,
+    "target_province_id": 8745,
+    "title_id": 491,
+    "title_key": "Mayo"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 29703,
+    "relevance": 0,
+    "target_province_id": 20,
+    "title_id": 496,
+    "title_key": "U\u00ed Mh\u00e1ine"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 34579,
+    "relevance": 0,
+    "target_province_id": 24,
+    "title_id": 501,
+    "title_key": "Breifne"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 32287,
+    "relevance": 0,
+    "target_province_id": 43,
+    "title_id": 513,
+    "title_key": "Ossory"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 31762,
+    "relevance": 0,
+    "target_province_id": 45,
+    "title_id": 519,
+    "title_key": "Thomond"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 31762,
+    "relevance": 0,
+    "target_province_id": 46,
+    "title_id": 524,
+    "title_key": "Ennis"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 30822,
+    "relevance": 0,
+    "target_province_id": 49,
+    "title_id": 527,
+    "title_key": "Ormond"
+   },
+   {
+    "assignable": true,
+    "de_jure": true,
+    "holder_id": 31416,
+    "relevance": 0,
+    "target_province_id": 52,
+    "title_id": 531,
+    "title_key": "Desmond"
+   }
+  ],
+  "line": 9,
+  "target_scope": "county_province"
+ },
+ "source": "a live game (CK3 1.18.3.1, the 1066.09.15 bookmark save)",
+ "toolkit_news_day70": {
+  "days_left_measured": 429,
+  "expected": {
+   "borders_your_realm": true,
+   "counted_from": "1066.09.15",
+   "days_left_at_most": 561,
+   "learning": 8,
+   "monthly_pct_at_least": 4.6,
+   "months_at_most": 22,
+   "months_elapsed": 2.3
+  },
+  "letter_price": {
+   "exact": true,
+   "gold": 96.0,
+   "learning": 8
+  },
+  "progress": 14.04
+ },
+ "verdicts": {
+  "469": {
+   "assignable": true,
+   "eligible": true,
+   "holder_id": 29585,
+   "target_province_id": 34,
+   "title_id": 469
+  },
+  "508": {
+   "assignable": false,
+   "eligible": false,
+   "holder_id": 27052,
+   "target_province_id": 37,
+   "title_id": 508
+  }
+ }
+}

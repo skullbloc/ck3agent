@@ -7,9 +7,9 @@
 //
 // WHY IT MATTERS. g_personality_locks is keyed by CHARACTER ID; character ids
 // are reused across saves; apply_personality_locks() pokes the int8 axes into
-// character structs three times per on_tick. stopped the write by
-// emptying the live set on every detected reload and quarantining the entries,
-// which is correct and incomplete: a legitimate same-save resume (R7) then
+// character structs three times per on_tick. Stopping the write by emptying the
+// live set on every detected reload and quarantining the entries is correct and
+// incomplete: a legitimate same-save resume then
 // loses its steering for the rest of the episode. Restoring on the wrong world
 // is worse than not restoring at all, so the rule has to be a PROOF of sameness
 // and not a heuristic.
@@ -82,12 +82,12 @@ static void check_eq_str(const char* lane, const std::string& actual,
 // start-year check alone cannot tell them apart, which is exactly why the
 // identity has to come from the save's bytes.
 // ---------------------------------------------------------------------------
-// The real sha256 of ~/ck3_dumps/william_1066_baseline.save, as verified by
-// scripts/save_verify.py and recorded in run_summary.json.
+// The real sha256 of the 1066 baseline save (a research dump), as verified by
+// scripts/save_verify.py and recorded in the run_summary.json.
 static const char* kSaveA = "0c94b59880e0549a5a0c8fbe4dc675a3de171f28d79f7628ad765116de782d5d";
 static const char* kSaveB = "7f21aa0c1d3e4b5968708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6";
-static const char* kEpisodeA = "ep-20260912T033051Z-e0-paper-9eae1e0e";
-static const char* kEpisodeB = "ep-20260912T104500Z-a-pilot-11112222";
+static const char* kEpisodeA = "ep-20260101T000000Z-null-test-0badf00d";
+static const char* kEpisodeB = "ep-20260102T000000Z-a-test-11112222";
 
 static WorldIdentity ident(const char* episode, const char* sha, uint32_t year = 1066) {
     WorldIdentity id;
@@ -185,7 +185,7 @@ static void lane_rule() {
     check(LANE, judge_same_save(A, A, 1066, false, &why) == SameSave::YES,
           "the same save reloaded is the same save");
     check(LANE, judge_same_save(A, B, 1066, false, &why) == SameSave::DIFFERENT_SAVE,
-          "a different save hash is DIFFERENT_SAVE — the ck-9fc3 case");
+          "a different save hash is DIFFERENT_SAVE — the case");
     check(LANE, judge_same_save(A, none, 1066, false, &why) == SameSave::NO_DECLARED_IDENTITY,
           "nobody vouching for the loaded world is NOT a match");
     check(LANE, judge_same_save(none, A, 1066, false, &why) == SameSave::NO_RECORDED_IDENTITY,
@@ -213,7 +213,7 @@ static void lane_rule() {
 
     // The decision strings are a CLOSED vocabulary a harness switches on, and
     // they are formed as "refused_" + same_save_name(v). Pin the whole table so
-    // a rename here cannot silently diverge from the E0 runbook's §2.8 list.
+    // a rename here cannot silently diverge from the episode runbook's list.
     const char* expect[] = {"yes", "no_declared_identity", "no_recorded_identity",
                             "different_save", "different_episode",
                             "world_contradicts_declaration"};
@@ -225,7 +225,7 @@ static void lane_rule() {
         if (std::string(same_save_name(all[i])) != expect[i]) names_ok = false;
     }
     check(LANE, names_ok,
-          "the verdict vocabulary is exactly the six documented names (E0 runbook §2.8)");
+          "the verdict vocabulary is exactly the six documented names (the episode runbook)");
 }
 
 // ===========================================================================
@@ -243,7 +243,7 @@ static void lane_same_save_restores() {
 
     // The reload: same save, new heap address, clock back at the bookmark.
     bool detected = world_epoch_observe(world_fp(0x7f0000009000, raw_for(1066, 9, 15)));
-    check(LANE, detected, "the reload is detected (ck-hxh7)");
+    check(LANE, detected, "the reload is detected ");
     check_eq_sz(LANE, personality_lock_count(), 0,
                 "the live write set is EMPTY across the reload — apply_personality_locks() "
                 "writes nothing into the new world until somebody vouches for it");
@@ -412,8 +412,8 @@ static void lane_disk_carrier() {
     world_epoch_observe(world_fp(0x7f00000d1000, raw_for(1066, 9, 15)));
     rec = world_identity_declare(ident(kEpisodeA, kSaveA));
     check_eq_str(LANE, rec.decision, "nothing_to_restore",
-                 "a file written before ck-9fc3 names no save and can never be restored");
-    check_eq_sz(LANE, personality_lock_count(), 0, "the pre-ck-9fc3 payload does not land");
+                 "a file written before the fix names no save and can never be restored");
+    check_eq_sz(LANE, personality_lock_count(), 0, "the earlier payload does not land");
 
     // --- a live world that is ALREADY steered is never stomped ------------
     // A perfectly matching file (same save, same episode) still loses to
@@ -476,7 +476,7 @@ static void lane_wire() {
     check(LANE, json_has(j, "\"resume_gap\":"), "and the resume-to-steer gap");
     check(LANE, json_has(j, "\"decisions\":["), "and a bounded ledger of prior decisions");
     check(LANE, json_has(j, "\"reload_game_date\":\"1066.09.15\""),
-          "dates render through ck3::game_date — the real 365-day calendar (ck-05mg)");
+          "dates render through ck3::game_date — the real 365-day calendar ");
 
     // The ledger is bounded: a flapping harness cannot grow get_tick_info.
     for (int i = 0; i < 40; i++) world_identity_declare(ident(kEpisodeA, kSaveB));
@@ -507,7 +507,7 @@ static void lane_the_bug_is_reachable() {
     check_eq_sz(LANE, moved, 2, "the unguarded primitive DOES restore");
     check(LANE, live_has(31808, 90) && live_has(30853, 20),
           "and the previous world's axes ARE now sitting in the live write set, aimed at "
-          "whoever holds those ids in the world now loaded — the ck-9fc3 symptom, on demand");
+          "whoever holds those ids in the world now loaded — the symptom, on demand");
     check(LANE, personality_lock_count() == 2,
           "so lane 3's empty write set is the identity gate's doing, not the fixture's");
 
@@ -522,10 +522,10 @@ static void lane_the_bug_is_reachable() {
 // world_identity_declare() takes the identity module's mutex and then
 // g_personality_lock_mutex (to restore). save_personality_locks_locked() runs
 // with g_personality_lock_mutex ALREADY HELD and needs the declared identity.
-// Those are opposite orders, and the first draft of this bead had the writer
+// Those are opposite orders, and a first draft had the writer
 // reach back for world_identity_declared() — a textbook cycle that no
 // single-threaded test can see. The identity is now PUSHED into a leaf-locked
-// copy instead. This lane drives both directions at once and fails LOUDLY on a
+// copy instead. This acceptance drives both directions at once and fails LOUDLY on a
 // hang rather than sitting in CI forever.
 static void lane_lock_order() {
     printf("\n8. LOCK ORDER — both directions, concurrently\n");
@@ -580,7 +580,7 @@ static void lane_lock_order() {
 }
 
 int main() {
-    printf("acceptance_save_identity (ck-9fc3): quarantined steering is restored ONLY on the same save\n");
+    printf("acceptance_save_identity: quarantined steering is restored ONLY on the same save\n");
     printf("no CK3, no bridge socket — host only\n");
 
     lane_rule();

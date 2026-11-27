@@ -1,4 +1,4 @@
-﻿# ck3agent incoming-proposal queue (lane QMOD; docs/design/incoming-proposals.md).
+﻿# ck3agent incoming-proposal queue.
 #
 # One ck3agent_proposal story per held offer, owned by the seated recipient.
 # Story variables:
@@ -19,19 +19,19 @@
 #
 # Every line written to debug.log starts with CK3AGENT_PROPOSAL_; the bridge
 # (bridge/include/script_templates.h, parse_proposal_line) reads them, except
-# CK3AGENT_PROPOSAL_SENT|<kind>|<class>|<actor>|<recipient> (L8: written at the top
-# of the capture for scripts/proposal_overrides.py SENT_LOGGED_CLASSES; only the
+# CK3AGENT_PROPOSAL_SENT|<kind>|<class>|<actor>|<recipient> (written at the top
+# of the capture for proposal_mod/proposal_overrides.py SENT_LOGGED_CLASSES; only the
 # live scenario reads it). Codes:
 #   answer  1 accept, 2 decline, 3 ask_me, 4 native
 #   by      1 seat, 2 rule, 3 boundary, 4 lapse, 5 void, 6 classifier
 #   void    1 void_sender_dead, 2 void_subject_dead, 3 void_war_ended,
 #           4 void_recipient_dead, 5 invalid_now
-# Ids are printed with the Character.GetID data function (live row L3 checks it
+# Ids are printed with the Character.GetID data function (a live check showed it
 # prints the bridge's runtime id).
 #
 # The per-kind and per-class pieces (the lifted bodies, the option lists, the
 # log lines naming a kind) are GENERATED at install from the installed game's
-# own files into zz_ck3agent_proposal_kinds.txt (scripts/proposal_overrides.py);
+# own files into zz_ck3agent_proposal_kinds.txt (proposal_mod/proposal_overrides.py);
 # this file holds only what does not name a kind or a class.
 
 # ── capture: first line of a first-set interaction's on_send (shape 1) ────────
@@ -39,7 +39,7 @@
 # a recipient without the seat marker, which only the bridge's proposal_seat
 # template sets.
 ck3agent_proposal_capture_effect = {
-	# L8: every send of a SENT_LOGGED_CLASSES kind is logged here, before every
+	# Every send of a SENT_LOGGED_CLASSES kind is logged here, before every
 	# exclusion below (generated; empty for the other kinds). It sets the two
 	# global variables it prints and removes them after the line: nothing held,
 	# answered or saved changes, seated or not.
@@ -310,7 +310,7 @@ ck3agent_proposal_check_void_effect = {
 # Void: the state, the line, the sender released. Story scope, scope:ck3a_void set.
 ck3agent_proposal_void_effect = {
 	# the line prints from variables on scope:recipient (proposal_overrides _carry);
-	# the story's own re-check has no saved recipient (live i11p6: VOID|0|0|...|0.0.0)
+	# the story's own re-check has no saved recipient (seen live: VOID|0|0|...|0.0.0)
 	if = { limit = { NOT = { exists = scope:recipient } } var:ck3agent_proposal_recipient ?= { save_scope_as = recipient } }
 	set_variable = { name = ck3agent_proposal_state value = 3 }
 	set_variable = { name = ck3agent_proposal_void_reason value = scope:ck3a_void }
@@ -360,8 +360,8 @@ ck3agent_proposal_log_void_outcome_effect = {
 # is_valid_showing_failures_only, has_valid_target, has_valid_target_showing_failures_only
 # and can_send, lifted from the game's file, evaluated with the actor as root as
 # the engine does). An offer that no longer meets them is VOID (invalid_now): the
-# sender released, the VOID line, OUTCOME refused|invalid_now; nothing is run. Live
-# i11p9 / i11s4: the engine refused run_interaction ("cannot get betrothed",
+# sender released, the VOID line, OUTCOME refused|invalid_now; nothing is run. In
+# live games the engine refused run_interaction ("cannot get betrothed",
 # "cannot be sent") while this effect, which did not check, wrote applied_accept.
 ck3agent_proposal_answer_effect = {
 	ck3agent_proposal_restore_scopes_effect = yes

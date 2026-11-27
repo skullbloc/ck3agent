@@ -47,7 +47,7 @@ def test_setup_env_turns_off_mcp_auto_background():
 def test_hook_unbound_seat_is_not_a_succession_emergency():
     hook = load_hook()
     # Paused, nothing bound: the bridge answers query_character(0) with a declined
-    # but non-empty reply, which used to read as "not landed".
+    # but non-empty reply, which does not read as "not landed".
     out = report(hook, {"get_tick_info": {"paused": True, "game_date": "900.1.1",
                                           "controlled_character_id": 0},
                         "query_character": {"success": False, "action": "query_character"}})

@@ -3,7 +3,7 @@
 **Date:** 2026-04-21
 **Confidence:** HIGH (Ghidra function.at cross-ref + core-dump probes)
 **Binary BuildID:** `e61ff2642f07094defd140fcc98e078d42541275`
-**Core dump:** `ck3_20260404_093841.core` (13 Jan 867, Duke Adalberto; research host, not published)
+**Core dump:** an 867 dump (13 Jan 867, Duke Adalberto; not published)
 **Ghidra project:** CK3_new (image base `0x00100000`)
 
 ## Executive Summary
@@ -130,7 +130,7 @@ Added a canonical explanation:
 
 ```cpp
 // ═══════════════════════════════════════════════════════════════════════════
-// ADDRESS CONVENTION (canonical — audited 2026-04-21)
+// ADDRESS CONVENTION (canonical — audited)
 // ═══════════════════════════════════════════════════════════════════════════
 // All uintptr_t values in this header are RAW (ASLR-base-relative /
 // file-offset-relative), NOT Ghidra virtual addresses. Ghidra's image base
@@ -138,7 +138,7 @@ Added a canonical explanation:
 //   raw       = ghidra_va - 0x00100000
 //   ghidra_va = raw + 0x00100000
 //
-// The CoreReader (re/coredump/core_reader.py) and the bridge code both
+// The core-dump reader (a research-tree tool) and the bridge code both
 // assume raw: CoreReader.resolve(val) = base_addr + val. When adding a new
 // entry, always convert from the Ghidra VA via `val - 0x00100000`.
 ```

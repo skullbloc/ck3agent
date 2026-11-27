@@ -1,20 +1,20 @@
 """
-CK3 Agent MCP API — the redesigned 8-tool goal-shaped surface.
+CK3 Agent MCP API: the goal-shaped tools of the 13-tool surface.
 
-Implements docs/notes/mcp-redesign/SPEC.md. This module is a CONSUMER layer: it
-composes only bridge action names the router already dispatches (inv_bridge-map.md
-§3). It invents NO bridge capability. Where the bridge does not expose a datum, the
-tool degrades to a typed honest code (the §7 O-list), never a guess.
+This module is a CONSUMER layer: it composes only bridge action names the router
+already dispatches. It invents NO bridge capability. Where the bridge does not
+expose a datum, the tool degrades to a typed honest code, never a guess.
 
-The 8 tools (SPEC §2):
-  observe        — goal scalar + kill_zone + delta (the once-per-cycle situation report)
+The tools built here (mcp_server.py registers all 13):
+  observe        — goal scalar + kill_zone + news (the once-per-cycle situation report)
   plan_war       — ranked, declarable, ally-free, goal-advancing war targets
   declare_war    — declare ONE war (the only irreversible high-stakes verb)
   succession_plan— passes_intact verdict + the lever that actually works + the per-title
                    partition map (which heir gets which title under which law)
-  set_phase      — assert a named strategic posture (10-axis genome + toggles)
+  set_phase      — assert a named strategic posture (a personality genome + toggles)
   do             — one non-war write OR enumerate-what-can-I-do (with handed-back do_call)
   inspect        — deep typed read of ONE subject
+  cbs            — the casus belli on one target, judged by the game's own check
   session        — game flow + identity + liveness
 
 Design notes:
@@ -31,6 +31,7 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 from typing import Any, Optional
 
@@ -38,7 +39,20 @@ from typing import Any, Optional
 # agent<->bridge contract (inv_bridge-map.md) stays single-sourced.
 import tools as _tools
 import factions as _factions
+import seat_events as _seat_events  # event_rule, gold_reserve
+import activities as _activities  # host_activity, action_class activities
+import army_orders as _army_orders  # Army (default off)
 import proposals as _proposals  # The incoming-proposal queue
+import news as _news  # Observe's news block (the diff between two observes)
+import declare_gates as _dg
+import truces as _truces  # The ruler's truces as the game holds them, and what else refuses a declaration (debt, cost, truce)
+import cb_labels as _cbl  # What a casus belli takes and grants, from the game files
+import partition_forecast as _pf  # who takes land under partition, the levers
+import heir_dynasty as _hd  # Whose dynasty inherits; marriages whose children leave it
+import ruler_death as _rd  # the death estimate from the health read
+import law_reach as _lr  # The succession laws the game allows now or one step away
+import diarchy as _diarchy  # The ruler's diarch, what it blocks, how it ends
+import task_goal as _task_goal  # The task's goal kind
 #: THE pre-dispatch validator, not a second copy of it: the
 #: legacy `act` tool in mcp_server.py calls this same function, so the two
 #: surfaces cannot disagree about which field a verb requires.
@@ -64,21 +78,28 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "vassal_cannot_change_realm_law": {"class": "resource",  "severity": "invalid", "retryable": False},
     "cooldown_active":           {"class": "timing",         "severity": "transient", "retryable": True},
     "claim_not_pressed":         {"class": "target_state",   "severity": "blocked", "retryable": True},
-    # lane peace: do(intent='end_war') named terms the game's guard did not open
+    # do(intent='end_war') named terms the game's guard did not open
     # now (we_win under our war score 100, white_peace with the enemy at 25 or
     # more). War score moves within a month, so `timing`: the refusal memo
     # (GAME_CLASSES) never answers a later ask from memory.
     "peace_terms_not_open":      {"class": "timing",         "severity": "blocked", "retryable": True},
-    # fix10: plan_war's exclusion of a declaration the game refused this game-month
-    # (refusal_memo.py); its own class, so the memo never remembers it as the game's
-    "refused_this_month":        {"class": "repeat",         "severity": "blocked", "retryable": True},
+    # plan_war's exclusion of a declaration the game refused at this tick, nothing
+    # changed since (refusal_memo.py); its own class, so the memo never remembers it as the game's
+    "refused_unchanged":         {"class": "repeat",         "severity": "blocked", "retryable": True},
+    # A priced write that would leave the ruler in debt, sent without args.confirm_debt=true;
+    # the server's refusal (not the game's: the game allows a hire into debt down to 24 months of income), so the
+    # memo never keeps it
+    "debt_unconfirmed":          {"class": "confirm",        "severity": "blocked", "retryable": True},
     "target_allied":             {"class": "target_state",   "severity": "blocked", "retryable": True},
     "target_truced":             {"class": "target_state",   "severity": "blocked", "retryable": True},
     "target_imprisoned":         {"class": "target_state",   "severity": "transient", "retryable": True},
     "target_not_independent":    {"class": "target_state",   "severity": "blocked", "retryable": True},
     "target_not_assignable":     {"class": "target_state",   "severity": "transient", "retryable": True},
     "not_at_peace":              {"class": "timing",         "severity": "blocked", "retryable": True},
-    # create_title engine gate (#113): the bridge already de-jure-pre-checks, so an
+    # The game refuses a declaration while the declarer's armies are raised
+    # (declare_war_interaction: NOT has_raised_armies, every government but nomads)
+    "armies_raised":             {"class": "timing",         "severity": "blocked", "retryable": True},
+    # create_title engine gate: the bridge already de-jure-pre-checks, so an
     # engine-gate refusal here is almost always the gold/peace gate (or not-extant). Map
     # to a loud distinct gate carrying the raw reason rather than silently bucketing.
     "create_title_engine_gate":  {"class": "resource",       "severity": "blocked", "retryable": True},
@@ -100,7 +121,10 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # a half-resolved refusal, which is worse than an honest `unknown`.
     "target_ineligible":         {"class": "target_state",   "severity": "invalid", "retryable": False},
     "experimental_write_disabled": {"class": "bridge",       "severity": "invalid", "retryable": False, "is_known_limitation": True},
-    # lane-scheme 2026-10-18: the scheme_action (do(intent="scheme")) refusals.
+    # This build of the bridge cannot make the write on this OS (its game function has no
+    # address there); the bridge refused before anything reached the game.
+    "not_on_this_platform":      {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    # 2026-10-18: the scheme_action (do(intent="scheme")) refusals.
     # Before these, every one of them reached the seat as gate "unknown", and the
     # timeout ones as `drain_timeout` through the substring pass ("timeout").
     #   scheme_start_refused    the ENGINE's own start checks said no: CanStartScheme
@@ -116,9 +140,11 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     #                           and not something a retry fixes.
     "scheme_start_refused":      {"class": "target_state",   "severity": "invalid", "retryable": False},
     "scheme_type_unsupported":   {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    # The bridge's council write swaps occupied seats only; it cannot fill a vacant one
+    "council_seat_vacant":       {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "scheme_bridge_fault":       {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "cannot_act_as_player":      {"class": "bridge",         "severity": "invalid", "retryable": False},
-    # / Ruling Three: the control refusals. Without these eight,
+    # The control refusals. Without these eight,
     # why_blocked() falls to GATE_TABLE["unknown"] — severity "blocked",
     # retryable TRUE — so a seat refused because another seat HOLDS the
     # character would be told to try again forever. The raw spelling is carried
@@ -133,30 +159,34 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "watchlist_full":            {"class": "resource",       "severity": "blocked", "retryable": True},
     "character_not_found":       {"class": "target_state",   "severity": "invalid", "retryable": False},
     "character_dead":            {"class": "target_state",   "severity": "invalid", "retryable": False},
-    # The registry contradicting itself (§7.3g). Not the agent's to retry.
+    # The realm guard
+    # on a control made while the seat's ruler is dead (dispatch_router.cpp, played_line.h realm_check_name)
+    "realm_unresolved":          {"class": "target_state",   "severity": "invalid", "retryable": False},
+    "heir_outside_realm":        {"class": "target_state",   "severity": "invalid", "retryable": False},
+    # The registry contradicting itself. Not the agent's to retry.
     "ownership_divergence":      {"class": "bridge",         "severity": "invalid", "retryable": False},
     # A spelling the code returned and this list does not name. NEVER bucketed
     # into one of the nine: an unforeseen refusal reads as unforeseen.
     "refusal_reason_unknown":    {"class": "bridge",         "severity": "invalid", "retryable": False},
-    # Release_character's OWN vocabulary — four reasons, and only
+    # release_character's OWN vocabulary — four reasons, and only
     # `observe_mode` is shared with control's nine. A release is not a control
     # call with the sign flipped and it does not refuse for the same causes.
     "missing_character_id":      {"class": "bridge",         "severity": "invalid", "retryable": False},
     "not_in_roster":             {"class": "bridge",         "severity": "invalid", "retryable": False},
     "not_owned_by_session":      {"class": "bridge",         "severity": "invalid", "retryable": False},
-    # And the row above it is why it is here: I added this reason to
-    # RELEASE_REFUSAL_REASONS with a summary and wrote at that site that "the
-    # gate already degrades correctly for an unknown code". It does not. An
+    # And the row above it is why it is here: a reason in
+    # RELEASE_REFUSAL_REASONS with a summary does not make "the
+    # gate already degrades correctly for an unknown code" true. An
     # unmapped code falls to GATE_TABLE["unknown"] — severity "blocked",
     # retryable TRUE — and this refusal is PERMANENT, so the agent would have
     # been told to retry, forever, the one release the bridge will never grant.
     # `is_known_limitation` matches `observe_mode`, the sibling that is also a
     # standing rule about what a seat may do rather than a state that passes.
     "last_claim_of_control_session": {"class": "bridge",     "severity": "invalid", "retryable": False, "is_known_limitation": True},
-    # lane-multi: session(action="add") against a bridge whose reply lacks
+    # session(action="add") against a bridge whose reply lacks
     # `added`: it predates the add path and treated the call as a SWITCH.
     "add_unsupported_by_bridge": {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
-    # 2026.12.7 (v3pilot5 weak_orders/weak_intent): the
+    # 2026.12.7 (a pilot run, two of its cells): the
     # SERVER's own claim refusals, decided before any bridge call
     # (seat_reservations.py). Not bridge reasons: no set_controlled_character
     # reply carries them, so they are not members of CONTROL_REFUSAL_REASONS.
@@ -172,10 +202,10 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # claimed while it stands (refuse rather than default to "no reservations").
     "seat_reservations_unreadable": {"class": "steer_vs_control", "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "actor_required":            {"class": "bridge",         "severity": "invalid", "retryable": False},
-    # Character_id=0 and the bridge resolved NO character, or this
+    # character_id=0 and the bridge resolved NO character, or this
     # seat's own row holds no primary. Not retryable as sent: bind first.
     "no_ruler_bound":            {"class": "bridge",         "severity": "invalid", "retryable": False},
-    # Character_id=0 and no usable reply (timeout, fault, error). We
+    # character_id=0 and no usable reply (timeout, fault, error). We
     # looked and could not see, which is not "nothing is bound".
     "actor_unresolved":          {"class": "bridge",         "severity": "transient", "retryable": True},
     "unbounded_eval_refused":    {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
@@ -183,8 +213,8 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "drain_timeout":             {"class": "bridge",         "severity": "frozen",  "retryable": True},
     # CB-validity single-flight slot collision (engine AI eval vs our query). TRANSIENT,
     # retryable — NOT a verdict on the target. Distinct from drain_timeout (frozen) so
-    # the agent re-plans instead of HOLDING (the #95 hold-on-collision pathology).
-    # deploy-51 item (6): the clause the retired skill carried, kept
+    # the agent re-plans instead of HOLDING (the hold-on-collision pathology).
+    # the clause the retired skill carried, kept
     # because the surface never said it. VERIFIED against the loop as it is:
     # `cb_query_acquire_slot` (ai_eval_hook.cpp) polls kAttempts=3 x
     # kBusyWaitMs=500 (~1.5s, inside the >=2000ms strict-query timeout),
@@ -192,7 +222,7 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # service start is older than the staleness window, and returns busy "only
     # when the slot stayed genuinely busy across the whole budget". The wrong
     # reading is expensive and named in that file: an agent treating it as a
-    # degraded subsystem HOLDS and misses expansion (the #95 class).
+    # degraded subsystem HOLDS and misses expansion (the hold-and-miss class).
     "cb_query_busy":             {"class": "timing",         "severity": "transient", "retryable": True,
                                   "note": "the bridge already retried this internally "
                                           "(3 attempts over ~1.5s, reclaiming a wedged slot); "
@@ -203,7 +233,7 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # and nothing in the episode clears that — so "retry" would cost the seat a
     # cycle every time it believed it. The note says how long, because a seat
     # that reads "unavailable" without "for the rest of this episode" will
-    # re-plan around a wait that never ends (the #95 hold-and-miss class).
+    # re-plan around a wait that never ends (the hold-and-miss class).
     "rng_scope_latched":         {"class": "bridge",         "severity": "invalid",  "retryable": False,
                                   "is_known_limitation": True,
                                   "note": "unavailable for the REST OF THIS EPISODE: the bridge "
@@ -222,7 +252,7 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "confirmation_pending":      {"class": "timing",         "severity": "pending", "retryable": False, "is_known_limitation": True},
     # ── THE 37 CAUSES THE CENSUS FOUND FALLING THROUGH ──────────
     #
-    # Four copied bundles (d39 slot01/slot02, arm-B smokes d41/d42) carried 390
+    # Four recorded bundles carried 390
     # blocked results with gate "unknown" and 37 distinct causes between them —
     # every one telling the agent RETRY, because the fallback said so. The
     # comments on `owned_by_other` and `last_claim_of_control_session` above are
@@ -240,7 +270,7 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # agent is told which kind of wall it is, so "wait until richer" and "this
     # will never work" stop reading identically.
     "decision_unavailable":      {"class": "target_state",   "severity": "invalid", "retryable": False},
-    # Do(action_class="decisions") named a decision the engine
+    # do(action_class="decisions") named a decision the engine
     # has no entry for (the bridge's `unmatched`); another name may work, this never.
     "unknown_decision":          {"class": "target_state",   "severity": "invalid", "retryable": False},
     # The engine's evaluation of a named decision faulted or is skip-listed
@@ -248,7 +278,7 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "decision_eval_faulted":     {"class": "bridge",         "severity": "blocked", "retryable": False,
                                   "is_known_limitation": True,
                                   "note": "no verdict was reached; the decision may or may not be takeable"},
-    # integration (x): the engine judged the decision not takeable,
+    # Integration: the engine judged the decision not takeable,
     # and the bridge refused to read the failed requirement's name because it could
     # not witness the diag record's destructor (diag_dtor.h resolve_diag_dtor() == 0;
     # the row's `failure_key_unwitnessed`). A verdict WAS reached; its reason was not read.
@@ -267,11 +297,11 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # The call named something the game has no such thing as. A different name
     # may work; THIS one never will.
     "name_not_found":            {"class": "target_state",   "severity": "invalid", "retryable": False},
-    # family. Typed here too, because a call can still reach the
+    # The family. Typed here too, because a call can still reach the
     # bridge malformed even after the client validates up front — and a refusal
     # for a missing field is never won by sending the same call again.
     "missing_required_argument": {"class": "bridge",         "severity": "invalid", "retryable": False},
-    # ruling (a): the call named an argument the tool's schema does not declare
+    # The call named an argument the tool's schema does not declare
     # (mcp_server._StrictArgumentsFastMCP); refused before the tool ran, never dropped.
     "unknown_argument":          {"class": "bridge",         "severity": "invalid", "retryable": False},
     # A safety refusal, not a verdict on the move: the character's AI controller
@@ -287,19 +317,19 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # have. A different name may work; this one is not in the vocabulary.
     "unknown_verb":              {"class": "bridge",         "severity": "invalid", "retryable": False},
     # The bridge answered that it had not run the evaluation at all.
-    # deploy-51 item (6): a seat reading this as "no" abandons an action
+    # a seat reading this as "no" abandons an action
     # the engine never judged.
     "not_evaluated":             {"class": "bridge",         "severity": "blocked", "retryable": True,
                                   "note": "no verdict was reached; this is not a refusal"},
     # The flush loop owns the clock in pipeline mode and excludes every
-    # session from it — "by G1's own design" (flush_scheduler.h). A seat's
+    # session from it — by the pipeline mode's own design (flush_scheduler.h). A seat's
     # set_speed/set_pause is refused for the whole episode, so this is a
     # standing rule and not a state that passes.
     "clock_owned_by_pipeline":   {"class": "pause",          "severity": "invalid", "retryable": False, "is_known_limitation": True},
     # ── THE FALLBACK, AND CHANGED ITS RETRYABILITY ────────────────
     # It was `retryable: True`. An unforeseen refusal is exactly the one nobody
     # has established can be won by trying again, and telling the agent to retry
-    # it is how and then 390 results in four bundles all went
+    # it is how 390 results in four bundles all went
     # wrong in the same direction. An unmapped cause is now NOT retryable: the
     # agent re-plans instead of looping, and the cause still reads as UNKNOWN so
     # it is visible as unforeseen rather than bucketed into a neighbour.
@@ -307,16 +337,22 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # ── Every refusal this server builds itself has a name.
     # Before these, each reached the seat as gate "unknown" with the cause in prose.
     "invalid_argument":          {"class": "bridge",         "severity": "invalid", "retryable": False},
+    # An interaction sent through the game's AI decision found no target
+    "ai_path_no_target":         {"class": "bridge",         "severity": "blocked", "retryable": False},
+    # Two of the bridge's reads of one thing disagree, so the write refused
+    "bridge_read_disagrees":     {"class": "bridge",         "severity": "blocked", "retryable": False},
+    # A tool call that raised inside the server (mcp_server.raised_reply)
+    "server_error":              {"class": "bridge",         "severity": "blocked", "retryable": False},
     "unknown_subject":           {"class": "bridge",         "severity": "invalid", "retryable": False},
     "unknown_domain":            {"class": "bridge",         "severity": "invalid", "retryable": False},
-    # ── Study 0 (channel lane), pre-registration v3 section 5.2: the channel's
+    # ── The channel's
     # three ledger verdicts as the gate a refused msg_send carries, and the one
     # tool-call refusal that precedes any ledger (no episode id to namespace it).
     "topology_denied":           {"class": "channel",        "severity": "invalid", "retryable": False},
     "quota_exceeded":            {"class": "channel",        "severity": "transient", "retryable": True},
     "text_too_long":             {"class": "channel",        "severity": "invalid", "retryable": True},
     "channel_unavailable":       {"class": "channel",        "severity": "blocked", "retryable": True},
-    # ── v4: the notepads' log verdicts as the gate a refused
+    # ── The notepads' log verdicts as the gate a refused
     # note_read / note_write carries (notepad.REFUSALS), and the refusal that
     # precedes any log (notepad.GATE_UNAVAILABLE). Pinned by test_notepad.
     "notepad_pad_unknown":       {"class": "notepad",        "severity": "invalid", "retryable": False},
@@ -335,15 +371,15 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "proposal_closed":           {"class": "proposal",       "severity": "invalid", "retryable": False},
     "native_not_supported":      {"class": "proposal",       "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "class_not_supported":       {"class": "proposal",       "severity": "invalid", "retryable": False, "is_known_limitation": True},
-    # ── v4: the guide (guide.py): no guide declared / no
+    # ── The guide (guide.py): no guide declared / no
     # episode log, and a page whose bytes moved since boot. Pinned by test_guide.
     "guide_unavailable":         {"class": "guide",          "severity": "blocked", "retryable": False, "is_known_limitation": True},
     "guide_page_changed":        {"class": "guide",          "severity": "blocked", "retryable": False},
-    # B1: the cycle authority (channel.send_cycle) could not place the send
+    # The cycle authority (channel.send_cycle) could not place the send
     # (the cell schedule or the game date did not read); nothing was sent.
     "cycle_unknown":             {"class": "channel",        "severity": "transient", "retryable": True},
     "bridge_disconnected":       {"class": "bridge",         "severity": "frozen",  "retryable": True},
-    # int5: the bridge's OWN fault and timeout replies, which carry no
+    # The bridge's OWN fault and timeout replies, which carry no
     # `success`: {"error":"memory_access_fault"} (MEMORY_ACCESS_FAULT_REPLY,
     # bridge/include/bridge.h: every answer_memory_access_fault, and the SIGSEGV
     # recovery in ipc_server.cpp serve_on_game_thread) and
@@ -368,22 +404,24 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "stress_break_risk":         {"class": "target_state",   "severity": "blocked", "retryable": True},
     "stress_climbing":           {"class": "target_state",   "severity": "transient", "retryable": True},
     "game_did_not_unpause":      {"class": "pause",          "severity": "transient", "retryable": True},
-    # v3 §7.2: session(action="wait", game_days=N). An ask over the
+    # session(action="wait", game_days=N). An ask over the
     # registered cadence is refused as sent, never clamped; a cadence env that
     # does not parse is an instrument fault; a loop that stopped short says how far.
     "cycle_game_days_over_cadence": {"class": "timing",      "severity": "invalid", "retryable": False},
     "cycle_cadence_unreadable":  {"class": "bridge",         "severity": "invalid", "retryable": False},
     "cycle_not_reached":         {"class": "pause",          "severity": "transient", "retryable": True},
-    # v3 §7.2 (Study 0 round 2): a wait asked at or past the registered horizon
+    # a wait asked at or past the registered horizon
     # (CK3_EPISODE_HORIZON_END) is refused; the harness ends the seat.
     "horizon_reached":           {"class": "timing",         "severity": "blocked", "retryable": False},
     "episode_horizon_unreadable": {"class": "bridge",        "severity": "invalid", "retryable": False},
-    # 2026.12.4: CK3_EPISODE_HORIZON_START makes the wait a cell wait, and then
+    # CK3_EPISODE_HORIZON_START makes the wait a cell wait, and then
     # the cadence and the horizon end are required (cycle_cadence.cell_schedule).
     "cell_schedule_unreadable":  {"class": "bridge",         "severity": "invalid", "retryable": False},
-    # 2026.12.4: in a cell (CK3_EPISODE_HORIZON_START set) the speed is the
+    # In a cell (CK3_EPISODE_HORIZON_START set) the speed is the
     # registered condition the runner established; session(speed) is refused.
     "speed_registered":          {"class": "pause",          "severity": "invalid", "retryable": False, "is_known_limitation": True},
+    # An environment owns the clock (CK3_CLOCK_OWNER=env); session's clock actions are not served.
+    "clock_owned_by_env":        {"class": "pause",          "severity": "invalid", "retryable": False, "is_known_limitation": True},
     # The war intents (make_peace, call_ally, join_war) and the
     # game's two refusals of a directly sent interaction (ai_eval_hook.cpp
     # execute_tls_pipeline_dispatch): CTX_VALIDATE said no, or the recipient's
@@ -392,7 +430,7 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "recipient_refuses":         {"class": "target_state",   "severity": "blocked", "retryable": True},
     "war_not_found":             {"class": "target_state",   "severity": "invalid", "retryable": False},
     "not_war_leader":            {"class": "target_state",   "severity": "invalid", "retryable": False},
-    # F16: faction management. faction_refused is the GAME's own
+    # Faction management. faction_refused is the GAME's own
     # faction rules saying no (can_create / can_join / can_leave / can press the
     # demand); `summary` carries the game's sentence. Retryable: discontent, power,
     # opinion and cooldowns move, so a later attempt can pass.
@@ -404,6 +442,9 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     "faction_bridge_fault":      {"class": "bridge",         "severity": "invalid", "retryable": False, "is_known_limitation": True},
     "faction_write_not_applied": {"class": "bridge",         "severity": "invalid", "retryable": False},
     "faction_query_busy":        {"class": "bridge",         "severity": "transient", "retryable": True},
+    # One game-thread read slot of its kind (an interaction's acceptance, its gate cascade, the decisions list,
+    # a trigger) was taken by another read of the same kind; the read ran nothing
+    "read_busy":                 {"class": "bridge",         "severity": "transient", "retryable": True},
     # A mint whose price and engine verdict could
     # not both be read (query_create_title_cost failed, or the price functions are
     # unmapped and the engine's IsValid unread). Refused rather than sent: an
@@ -413,6 +454,9 @@ GATE_TABLE: dict[str, dict[str, Any]] = {
     # used against this target now (the strict CB read's cull_reason: the engine's
     # inner verdict, or the family gate the bridge names beside it). A re-plan.
     "cb_invalid_for_target":     {"class": "target_state",   "severity": "invalid", "retryable": False},
+    # The game refuses a declaration while the ruler is in an activity (00_war.txt involved_activity); it
+    # passes when the activity ends
+    "in_activity":               {"class": "timing",         "severity": "blocked", "retryable": True},
     # census: the bridge could not make the call at all — an engine function,
     # table or queue it needs is unmapped, unreadable or full in this build. Nothing
     # reached the game, unlike bridge_fault (a contained fault mid-call).
@@ -452,8 +496,13 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "unknown_policy": "invalid_argument",
     "bad_peace_terms": "invalid_argument",
     "target_not_script_addressable": "target_ineligible",
+    # set_council_task's county target is passed as one of its provinces; a title that
+    # is not a county, or a county none of whose provinces verifies, is refused before the game
+    "not_a_county": "invalid_argument",
+    "no_province": "target_ineligible",
     "primary_title_holder_mismatch": "target_ineligible",
     "effect_handler_not_mapped": "engine_unreachable",
+    "not_on_windows": "not_on_this_platform",   # Bridge win_anchor_refusal.h
     "title_key_unreadable": "engine_unreachable",
     "task_key_unreadable": "engine_unreachable",
     "handler_crashed": "bridge_fault",
@@ -469,7 +518,7 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "claim_not_pressed": "claim_not_pressed",
     "target_not_independent": "target_not_independent",
     # query_conquest_targets' block_reason (query_handlers.cpp) and the strict CB
-    # read's cull_reason: the county's holder is someone's vassal (finding 2:
+    # read's cull_reason: the county's holder is someone's vassal (once
     # plan_war listed it as unmapped_refusal).
     "holder_not_independent": "target_not_independent",
     "holder_allied": "target_allied",
@@ -483,6 +532,10 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "insufficient_prestige": "insufficient_prestige",
     "insufficient_piety": "insufficient_piety",
     "insufficient_gold": "insufficient_gold",
+    # maa_recruit could not read the ruler's government, so not the price's currency
+    "maa_currency_unread": "gate_introspection_unavailable",
+    # The cb_prices read sent with no casus belli (the server always names one)
+    "cbs_required": "missing_required_argument",
     "missing_prerequisite": "missing_prerequisite_law",
     "not_eligible_yet": "cooldown_active",
     "cb_query_timeout": "drain_timeout",
@@ -491,12 +544,12 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "cb_query_busy": "cb_query_busy",
     "busy_deferred": "cb_query_busy",
     "no_valid_targets": "no_valid_targets",
-    # The bridge emits this reason verbatim from scope_latched_reason.
+    # The bridge emits this reason verbatim from scope_latched_reason().
     "rng_scope_latched": "rng_scope_latched",
     "timeout": "drain_timeout",
     "bridge_disconnected": "bridge_disconnected",
-    # int5: the bridge's own fault and timeout replies (GATE_TABLE bridge_fault).
-    # Exact keys, so game_thread_timeout no longer reaches the "timeout" substring.
+    # The bridge's own fault and timeout replies (GATE_TABLE bridge_fault).
+    # Exact keys, so game_thread_timeout never reaches the "timeout" substring.
     "memory_access_fault": "bridge_fault",
     "game_thread_timeout": "bridge_fault",
     # A write in flight when the connection dropped may have landed
@@ -519,11 +572,11 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     # path mislabels an async-landing war as a hard rejection.
     "intent_not_completed_within_5s": "confirmation_pending",
     "sent_no_confirmation": "confirmation_pending",
-    # Call_war_create_core / create_title on the game thread wait for
+    # call_war_create_core / create_title on the game thread wait for
     # nothing (the drain runs the intent after the handler returns) and say so,
     # with drains_when "next_pass": the verdict has not arrived yet.
     "no_poll_on_game_thread": "confirmation_pending",
-    # create_title (#113) typed rejections — the bridge self-polls 12s then reports
+    # create_title typed rejections — the bridge self-polls 12s then reports
     # status:"rejected" + one of these reasons (intent_dispatch.cpp). The de-jure-control
     # refusal carries the measured X_of_Y counts (parsed in _confirm_create_title).
     "create_title_refused_insufficient_de_jure_control": "de_jure_control",
@@ -555,7 +608,7 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "unrun": "not_evaluated",
     # The clock verbs in pipeline mode.
     "clock_owned_by_pipeline": "clock_owned_by_pipeline",
-    # family — every field the census saw named. Mapped here as well
+    # The family — every field the census saw named. Mapped here as well
     # as validated up front, because a malformed call can still reach the
     # bridge and must not come back "retry".
     "target_required": "missing_required_argument",
@@ -575,7 +628,7 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "missing_building": "missing_required_argument",
     # Five codes the BRIDGE emits (action_handlers.cpp) that nothing
     # mapped, so they reached the agent as gate "unknown" with the real code
-    # buried in `summary`. Measured over d45-d50: target_rejected 90,
+    # buried in `summary`. Measured over the recorded episodes: target_rejected 90,
     # seat_holder_unchanged 27, no_matching_position 24, capital_validate_failed
     # 15, councillor_dead 15.
     "target_rejected": "target_ineligible",
@@ -583,12 +636,12 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "no_matching_position": "name_not_found",
     "capital_validate_failed": "target_ineligible",
     "councillor_dead": "target_ineligible",
-    # lane-scheme 2026-10-18: scheme_action's own codes (action_handlers.cpp
+    # 2026-10-18: scheme_action's own codes (action_handlers.cpp
     # do_dispatch_scheme_intent, intent_dispatch.cpp execute_scheme_intent /
     # execute_scheme_cancel_intent). Several arrive as `code:detail`; the prefix
     # resolution in map_raw_reason keys those on the code.
     "engine_refused_scheme_null_sentinel": "scheme_start_refused",
-    # l3-schemes: CanStartScheme said no; the reply's result.engine_reasons names
+    # CanStartScheme said no; the reply's result.engine_reasons names
     # the failing triggers (scheme_engine.cpp).
     "engine_refused_can_start_scheme": "scheme_start_refused",
     "scheme_check_failed": "scheme_bridge_fault",
@@ -623,16 +676,16 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "intent_timeout_cancelled_not_executed": "drain_timeout",
     "intent_timeout_no_result": "confirmation_pending",
     "scheme_not_owned_after_call": "confirmation_pending",
-    # lane-query item 1: an explicit `seat` that is not the task's own seat.
+    # An explicit `seat` that is not the task's own seat.
     "seat_cannot_take_task": "target_ineligible",
     # The direct interaction path's two game refusals.
     "interaction_not_valid_for_target": "interaction_invalid",
     "target_would_reject": "recipient_refuses",
-    # F16: the send pipeline's other two refusals (query_interaction_check's
+    # The send pipeline's other two refusals (query_interaction_check's
     # refused_by and a direct send): the game's can_send, and the cost.
     "send_conditions_not_met": "interaction_invalid",
     "send_cost_unaffordable": "cannot_afford",
-    # F16: faction_action (factions.cpp execute_faction_intent / do_dispatch_faction_intent),
+    # faction_action (factions.cpp execute_faction_intent / do_dispatch_faction_intent),
     # set_faction_demand_response and query_joinable_factions.
     "engine_refused_create": "faction_refused",
     "engine_refused_join": "faction_refused",
@@ -648,8 +701,101 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "faction_id_required": "missing_required_argument",
     "unknown_faction_action": "invalid_argument",
     "response_must_be_accept_refuse_or_ai": "invalid_argument",
+    # set_event_rule, query_ai_budget, the gold_reserve template (seat_events.REFUSALS
+    # mirrors these; test_seat_events.py checks the two agree)
+    "event_rules_disabled": "experimental_write_disabled",
+    "event_hook_not_installed": "bridge_fault",
+    "event_required": "missing_required_argument",
+    "option_required": "missing_required_argument",
+    "amount_required": "missing_required_argument",
+    "bad_event_key": "invalid_argument",
+    "bad_option_key": "invalid_argument",
+    "bad_option_index": "invalid_argument",
+    "bad_currency": "invalid_argument",
+    "bad_amount": "invalid_argument",
+    "answer_must_be_option_decline_or_pay_if": "invalid_argument",
+    "op_must_be_set_clear_watch_or_unwatch": "invalid_argument",
+    "option_and_option_index_both_given": "invalid_argument",
+    "too_many_seated": "watchlist_full",
+    "too_many_rules": "watchlist_full",
+    "no_rule_for_event": "already_in_that_state",
+    "event_not_found": "name_not_found",
+    "needs_two_options": "invalid_argument",   # Decline/pay_if on a 3+ option event
+    "bad_reserve_amount": "invalid_argument",
+    "bad_move": "invalid_argument",
+    # The activity template's argument refusals (action_handlers.cpp kActivity, script_templates.h)
+    "bad_host": "invalid_argument",
+    "bad_activity": "invalid_argument",
+    "activity_required": "missing_required_argument",
+    "bad_leave": "invalid_argument",                 # The activity template's leave flag
+    "leave_takes_no_activity": "invalid_argument",
+    "no_ai_budget": "engine_unreachable",
+    "no_core_data": "engine_unreachable",
+    # set_ai_veto (seat_events.REFUSALS mirrors these)
+    "ai_veto_disabled": "experimental_write_disabled",
+    "ai_veto_hook_not_installed": "bridge_fault",
+    "what_required": "missing_required_argument",
+    "what_must_be_create_title_law_mercenary_or_construction": "invalid_argument",
+    "what_must_be_a_veto_kind": "invalid_argument",
+    "call_ally_interaction_unresolved": "engine_unreachable",
+    "offer_vassalization_interaction_unresolved": "engine_unreachable",
+    "declare_war_interaction_unresolved": "engine_unreachable",
+    # The call_in kind's interactions; the goal chain's spared title ids
+    "call_in_interactions_unresolved": "engine_unreachable",
+    "bad_spare_title_ids": "invalid_argument",
+    "too_many_spare_titles": "invalid_argument",
+    # The activity veto's spared types
+    "spare_keys_only_with_set_activity": "invalid_argument",
+    "bad_spare_keys": "invalid_argument",
+    # set_ai_veto's decision keys
+    "keys_only_with_set_decision": "invalid_argument",
+    "bad_decision_keys": "invalid_argument",
+    # A key no decision file defines; a keyed set on a veto holding every decision; over 8 keys
+    "unknown_decision_key": "invalid_argument",
+    "keys_would_narrow_every_decision": "invalid_argument",
+    "too_many_decision_keys": "invalid_argument",
+    # unlock_perk (action_handlers.cpp do_unlock_perk; lifestyle_points.h refusal)
+    "unlock_perk_disabled": "experimental_write_disabled",
+    "perk_required": "missing_required_argument",
+    "perk_not_found": "name_not_found",
+    "no_lifestyle_focus": "engine_refused",
+    "perk_points_needed": "engine_refused",
+    "parent_perk_missing": "target_ineligible",
+    "perk_already_held": "already_in_that_state",
+    "game_check_refused_perk_trigger": "engine_refused",
+    "lifestyle_unread": "engine_unreachable",
+    "perk_command_unmapped": "bridge_fault",
+    "not_held_after_execute": "write_unconfirmed",
+    "op_must_be_set_or_clear": "invalid_argument",
+    "too_many_rulers": "watchlist_full",
     "actor_not_found": "character_not_found",
+    # army_disband / army_move / army_hold (army_orders.REFUSALS mirrors these;
+    # test_army_orders.py checks the two agree)
+    "army_orders_off": "experimental_write_disabled",
+    "army_hold_off": "experimental_write_disabled",
+    "unsupported_os": "experimental_write_disabled",
+    "army_id_required": "missing_required_argument",
+    "army_not_found": "name_not_found",
+    "not_your_army": "invalid_argument",
+    "army_unit_unread": "engine_unreachable",
+    "province_required": "missing_required_argument",
+    "province_not_found": "name_not_found",
+    "province_not_a_barony_or_county": "invalid_argument",
+    "already_there": "already_in_that_state",
+    "already_in_that_state": "already_in_that_state",
+    "raid_on_required": "missing_required_argument",
+    "in_combat": "engine_refused",
+    "cannot_be_ordered_there": "engine_refused",
+    "refused_by_game": "engine_refused",
+    "days_required": "missing_required_argument",
+    "bad_days": "invalid_argument",
+    "date_unread": "engine_unreachable",
+    "hold_table_full": "watchlist_full",
+    "army_action_must_be_disband_move_hold_release_or_holds": "invalid_argument",
     "actor_not_alive": "character_dead",
+    # An interaction's secondary character the bridge found dead (ai_eval_hook.cpp "%s_not_living:%u")
+    "secondary_actor_not_living": "character_dead",
+    "secondary_recipient_not_living": "character_dead",
     "not_a_controlled_character": "actor_not_claimed",
     "faction_call_crashed": "faction_bridge_fault",
     "engine_call_faulted": "faction_bridge_fault",
@@ -662,8 +808,8 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "readback_disagrees": "faction_write_not_applied",
     "faction_query_busy": "faction_query_busy",
     # appoint_councillor (action_handlers.cpp): the bridge swaps occupied seats only.
-    "vacant_seat_fill_unsupported": "target_ineligible",
-    # cleanup: codes the steer and discover reads come back with.
+    "vacant_seat_fill_unsupported": "council_seat_vacant",
+    # Codes the steer and discover reads come back with.
     "no_controlled_character": "no_ruler_bound",
     "axis_out_of_range": "invalid_argument",
     "missing interaction_type": "missing_required_argument",
@@ -671,7 +817,7 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     # action_handlers.cpp, intent_dispatch.cpp, scheme_engine.cpp, factions.cpp,
     # ai_eval_hook.cpp and the strict CB read's culls; each code below is one it
     # found that reached a seat as unmapped_refusal). Typed by kind.
-    # The strict CB read (declare_war's pre-check, plan_war, cbs):.
+    # The strict CB read (declare_war's pre-check, plan_war, cbs).
     "engine_cb_validity_check_failed": "cb_invalid_for_target",
     "not_realm_adjacent": "cb_invalid_for_target",
     "de_jure_not_liege": "cb_invalid_for_target",
@@ -768,7 +914,7 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "vtable_validation_crashed": "bridge_fault",
     # nothing reached the game: a function, table or queue the call needs is
     # unmapped, unreadable or full in this build
-    # x (integration): unpause_game {"pause_at"}'s three refusals
+    # X (integration): unpause_game {"pause_at"}'s three refusals
     # (action_handlers.cpp, the pause alarm); each unpauses nothing. A target the
     # bridge cannot parse or that is not after its game date is the argument's
     # fault; a game date it cannot read means the call never reached the clock.
@@ -797,6 +943,116 @@ RAW_REASON_TO_GATE: dict[str, str] = {
     "title_db_unavailable": "engine_unreachable",
     "vtable_validation_failed": "engine_unreachable",
     "war_count_unreadable": "engine_unreachable",
+    # The read handlers' own refusals (query_handlers.cpp, phase3_probes.cpp, map_graph.cpp, personality.cpp,
+    # war_history_hook.cpp, ai_cb_selector_hook.cpp, seat_levers.cpp, dispatch_router.cpp, pipeline.cpp,
+    # flush_apply.cpp, flush_scheduler.cpp, budget_ledger.cpp, session.cpp, script_templates.h), each typed by
+    # what it says (test_refusal_census.py walks every file of the bridge's sources).
+    # A slot of one kind held by another read of that kind
+    "acceptance_query_busy": "read_busy",
+    "cascade_query_busy": "read_busy",
+    "decision_eval_busy": "read_busy",
+    "trigger_query_busy": "read_busy",
+    # An argument the read cannot use as given (RAW_REASON_NOTE says what to send instead where one is known)
+    "actor_capital_unresolved": "invalid_argument",
+    "bad_cb_list": "invalid_argument",
+    "bad_else_option_key": "invalid_argument",
+    "else_is_the_rules_own_option": "invalid_argument",
+    "female_must_be_boolean": "invalid_argument",
+    "invalid_trigger_slot": "invalid_argument",
+    "invalid_enabled_type": "invalid_argument",
+    "county_not_found": "invalid_argument",
+    "title_id_out_of_range": "invalid_argument",
+    "empty_scope": "invalid_argument",
+    "identity_by_target_title_refused": "invalid_argument",
+    "json_too_deep": "invalid_argument",
+    "malformed_envelope": "invalid_argument",
+    "missing_actor_or_target": "missing_required_argument",
+    "missing_actor_target_or_interaction": "missing_required_argument",
+    "missing_interaction_name": "missing_required_argument",
+    "missing_triple": "missing_required_argument",
+    "no_character": "missing_required_argument",
+    "missing_tickets": "missing_required_argument",
+    "save_sha256_required": "missing_required_argument",
+    # The character named holds nothing the read is about (no county, no title, no elective title)
+    "character_holds_no_county": "target_ineligible",
+    "unlanded_character": "target_ineligible",
+    "character_unlanded": "target_ineligible",
+    "no_held_titles": "target_ineligible",
+    "no_title_realm_data": "target_ineligible",
+    "no_elective_title": "target_ineligible",
+    "no_baronies_found": "target_ineligible",
+    "no_pressed_claim_de_jure_only": "claim_not_pressed",
+    "ruler_not_found": "character_not_found",
+    "character_id_invalid": "invalid_character",
+    "no_ai_controller": "ai_controller_unbound",
+    "ai_controller_unreadable": "ai_controller_unbound",
+    "no_client_context": "no_session",
+    # An action sent while the game holds no world (at the menu, or loading a save): ipc_server.cpp answers it
+    # before any handler runs
+    "game_not_loaded": "no_session",
+    # A contained fault or a game thread that did not answer
+    "build_cmd_crash": "bridge_fault",
+    "build_cmd_exception": "bridge_fault",
+    "build_scopes_crashed": "bridge_fault",
+    "game_thread_no_reply": "bridge_fault",
+    "no_reply": "bridge_fault",
+    "ticket_payload_lost": "bridge_fault",
+    # A per-element budget spent before this element was read (query_realm's batch): ask again
+    "not_reached": "read_timeout",
+    # A game function, table or queue the bridge needs, unmapped, unreadable or full
+    "build_scopes_not_mapped": "engine_unreachable",
+    "debug_flags_base_not_mapped": "engine_unreachable",
+    "function_not_mapped": "engine_unreachable",
+    "casus_belli_db_empty": "engine_unreachable",
+    "casus_belli_db_not_found": "engine_unreachable",
+    "title_db_empty": "engine_unreachable",
+    "title_db_not_found": "engine_unreachable",
+    "realm_law_db_empty": "engine_unreachable",
+    "war_db_null": "engine_unreachable",
+    "war_db_invalid": "engine_unreachable",
+    "pending_manager_singleton_not_resolved": "engine_unreachable",
+    "title_array_unreadable": "engine_unreachable",
+    "title_count_clamped": "engine_unreachable",
+    "title_id_mismatch": "engine_unreachable",
+    "title_lookup_failed": "engine_unreachable",
+    "map_artifact_missing": "engine_unreachable",
+    "before_tag_not_found": "engine_unreachable",
+    "no_cb_options": "engine_unreachable",
+    "watch_capacity": "engine_unreachable",
+    "drain_enqueue_failed": "engine_unreachable",
+    "buffer_full": "engine_unreachable",
+    "no_personality_data": "engine_unreachable",
+    # A verb this build does not serve (a debug verb in a release build, a name no handler has)
+    "unavailable_in_release": "unknown_verb",
+    "unknown_action": "unknown_verb",
+    # The bridge's per-episode action budget, and its ceiling set by the environment
+    "budget_exhausted": "quota_exceeded",
+    "budget_config_pinned": "experimental_write_disabled",
+    # A queued write's ticket: withdrawn before it ran, already running, or not known
+    "cancelled": "write_not_applied",
+    "already_running": "write_unconfirmed",
+    "unknown_ticket": "write_unconfirmed",
+}
+
+#: What a refusal code means for the seat and what to send instead, where the code alone does not say it (one
+#: sentence each; map_raw_reason puts it in the refusal's `note`)
+RAW_REASON_NOTE: dict[str, str] = {
+    "actor_capital_unresolved": (
+        "the character named has no capital (a child or a courtier holding no land), so the diplomatic range the "
+        "marriage listing filters by has no place to be measured from; nothing was read. Ask again with "
+        "require_in_range=false: query(domain='marriage_candidates', character_id=<the same id>, "
+        "require_in_range=false) lists candidates anywhere"),
+    "character_holds_no_county": (
+        "the character named holds no county, so he has no neighbours to list; pass title_id (a county) instead"),
+    "no_held_titles": "the character named holds no title, so this read has nothing to answer for him",
+    "unlanded_character": "the character named holds no land, so this read has nothing to answer for him",
+    "character_unlanded": "the character named holds no land, so this read has nothing to answer for him",
+    "no_title_realm_data": "the character named holds no landed title, so this read has nothing to answer for him",
+    "no_elective_title": "the character named holds no title with an elective succession",
+    "game_not_loaded": ("the game holds no world now (at the menu, or loading a save), so nothing was read or sent; "
+                        "the bridge answers once a world is loaded"),
+    "not_reached": ("the bridge spent its time budget on the elements before this one; nothing is wrong with it: "
+                    "ask for it again, alone or in a shorter list"),
 }
 
 #: ENGINE PROSE, ORDERED, AND CHECKED AFTER THE EXACT MAP.
@@ -825,7 +1081,7 @@ ENGINE_PROSE_TO_GATE: tuple = (
 
 # ═══ A REFUSAL SAYS WHAT WOULD WORK ═════════════════════════════════
 #
-# THE EVIDENCE. 655 refused acts across the arm-A registered sets; 454 retries
+# THE EVIDENCE. 655 refused acts across a set of recorded episodes; 454 retries
 # of the same verb within 15 minutes, of which only 29% succeeded and 80 were
 # BYTE-IDENTICAL. Per intent: take_decision 17/251 (7%), change_law 0/24,
 # declare_war 0/19. A seat that cannot tell "you cannot afford this" from "this
@@ -842,7 +1098,7 @@ ENGINE_PROSE_TO_GATE: tuple = (
 # DERIVABLE from the gate's own mechanics. Where it is not, the key is ABSENT
 # rather than filled with a guess: a refusal that invents a plausible next step
 # is worse than one that says nothing, because the seat will spend a call on it.
-# That is the same rule as the typed absence in and it is why there is
+# That is the same rule as the typed absence elsewhere, and it is why there is
 # no catch-all sentence here.
 
 #: One plain sentence per gate, stating the MECHANIC and nothing about strategy.
@@ -853,6 +1109,7 @@ GATE_WHY: dict[str, str] = {
     "insufficient_gold": "the action has a gold price and the character cannot pay it now",
     "insufficient_piety": "the action has a piety price and the character cannot pay it now",
     "insufficient_prestige": "the action has a prestige price and the character cannot pay it now",
+    "armies_raised": "the game refuses a war declaration while the declarer's armies are raised",
     "missing_required_argument": "a required argument for this intent was absent",
     "unknown_argument": "the call named an argument this tool does not take; it was not run",
     "name_not_found": "the name given does not exist in the game's database",
@@ -861,10 +1118,15 @@ GATE_WHY: dict[str, str] = {
     "no_change_already_set": "the write was a no-op: the state already matched",
     "already_in_that_state": "the write was a no-op: the state already matched",
     "experimental_write_disabled": "this write is off by default in the bridge and an agent cannot enable it",
+    "not_on_this_platform": "this build of the bridge has no address for the game function this write calls on "
+                            "this operating system; nothing was sent to the game, and no retry or argument changes it",
     "unknown_verb": "no tool wraps that action, so it is not callable however it is named elsewhere",
     "unknown_subject": "the tool has no subject or target by that name",
     "unknown_domain": "query has no domain by that name",
     "invalid_argument": "an argument was present but its value is not one this call accepts",
+    "server_error": "the call raised inside the server before it answered; whether anything was sent is not known",
+    "bridge_read_disagrees": "two of the bridge's reads of the same thing disagree, so the write refused; it is the bridge's defect, not the game's refusal",
+    "ai_path_no_target": "the interaction went through the game's AI decision, which found no target it would send to; the target given was not used",
     "bridge_disconnected": "the server has no connection to the bridge in the game",
     "read_timeout": "the bridge did not answer the read within its deadline",
     "bridge_fault": "the bridge's own read or call into the game faulted (memory_access_fault) or the game thread did not finish it in time (game_thread_timeout); it was contained, and the effect may or may not have landed",
@@ -876,10 +1138,13 @@ GATE_WHY: dict[str, str] = {
     "horizon_reached": "the game date is at or past the episode's registered horizon; no further wait is made and the harness ends the seat",
     "episode_horizon_unreadable": "CK3_EPISODE_HORIZON_END is set to something that is not a game date; nothing was waited",
     "cell_schedule_unreadable": "CK3_EPISODE_HORIZON_START is set, and the cycle cadence or the horizon end it needs is missing or unreadable; nothing was waited",
-    "speed_registered": "in an experiment cell the game speed is the registered condition, set by the harness before the seats start; no seat may change it",
+    "speed_registered": "in a scheduled run the game speed is the run's declared condition, set by the harness before the seats start; no seat may change it",
+    "clock_owned_by_env": "the environment running this seat owns the clock: end your turn and the environment advances the game; this server does not pause, unpause, set the speed or wait",
     "unmapped_refusal": "the bridge refused with a code this server does not map; raw_reason carries it",
     "owned_by_other": "another control session already holds that character",
-    "reserved_for_another_seat": "that character belongs to another seat in this experiment; this seat must not claim it",
+    "realm_unresolved": "your ruler is dead and that character's place in your seat's realm could not be read",
+    "heir_outside_realm": "your ruler is dead and that character rules outside your seat's realm",
+    "reserved_for_another_seat": "that character belongs to another seat in this run; this seat must not claim it",
     "seat_reservations_unreadable": "CK3_RESERVED_FOR_OTHER_SEATS is set and this server cannot read it (malformed, no CK3_SEAT_DECLARED_CHARACTER_ID beside it, or it names that id); no character was claimed",
     "last_claim_of_control_session": "this is the seat's last character and releasing it is refused",
     "clock_owned_by_pipeline": "the clock belongs to the harness; a session cannot pause, unpause or set speed",
@@ -894,22 +1159,26 @@ GATE_WHY: dict[str, str] = {
     "interaction_invalid": "the game's own validity check for this interaction, actor and recipient said no",
     "recipient_refuses": "the recipient's own acceptance check says they would refuse, so nothing was sent",
     "war_not_found": "the character is not in a war with that id",
-    "target_not_independent": "the target is someone's vassal, not an independent ruler, so this war cannot be declared on him",
-    "refused_this_month": "the game refused this exact declaration earlier this game-month; it is not offered again until the month turns or the blocking condition clears",
+    "target_not_independent": "the target is someone's vassal, not an independent ruler: a war on a title in his realm names the realm's ruler (his top liege) as target_id",
+    "debt_unconfirmed": "the write's price is more than your gold: it would leave you in debt, and in debt the game refuses every war declaration; nothing was sent. Send again with args.confirm_debt=true to accept that",
+    "refused_unchanged": "the game refused this exact declaration at this game tick and no write of yours applied since; it is offered again after a game day or a write of yours",
     "claim_not_pressed": "a claim casus belli needs a claim on the target's title: the actor's own claim (pressed or not), or another claimant's PRESSED claim; none was read",
     "succession_straddle": "the ruler is old enough that a war opened now is expected to run across his succession",
     "not_war_leader": "only a war's leader (its primary attacker or defender) can do this",
     "peace_terms_not_open": "the game's guard did not open these terms now: we_win needs your side's war score at 100, white_peace needs the enemy's below 25; we_yield is always open; measured has your score and the open terms",
     "scheme_start_refused": "the game's own scheme-start checks refused it; measured.engine_reasons has one row per failing check (the scheme type's allow or valid trigger, an existing scheme or cooldown on that target, or an invalid target), each with the game's words, or for an allow/valid trigger that the bridge does not read the game's words for it",
     "scheme_type_unsupported": "the game only starts this scheme type with a task contract or artifact, which the bridge cannot supply",
+    "council_seat_vacant": "the bridge's council write only swaps two occupied seats; it cannot fill a vacant one",
     "scheme_bridge_fault": "the bridge's call into the game's scheme code faulted or could not be prepared; it was contained, so check query(domain='schemes') before assuming nothing changed",
     "faction_refused": "the game's own faction rules refused it; the summary is the game's reason",
     "faction_precondition": "the bridge's own check before asking the game refused it (you are not the faction's leader, not a member, or have no liege); the summary says which",
     "faction_bridge_fault": "the bridge's call into the game's faction code faulted or could not be made; it was contained, so read do(action_class='factions_to_join') before assuming nothing changed",
     "faction_write_not_applied": "the game ran the call and reading the faction back shows it did not take effect",
     "faction_query_busy": "another faction read was being computed on the game's thread",
+    "read_busy": "another read of the same kind was being computed on the game's thread; nothing was read: ask again",
     "mint_cost_unverified": "the game's price for this title could not be read, so the mint was not sent",
     "cb_invalid_for_target": "the game's own casus-belli check says this casus belli cannot be used against this target now",
+    "in_activity": "the game refuses a war declaration while your ruler is in an activity (a coronation, a feast, a tour...)",
     "engine_unreachable": "the bridge could not make this call: a game function, table or queue it needs is unmapped, unreadable or full in this build; nothing was sent to the game",
     "write_not_applied": "the game ran the write and reading it back shows it did not take effect",
     "unknown_decision": "the game has no decision by that name",
@@ -940,6 +1209,8 @@ GATE_NEXT: dict[str, str] = {
     "no_ruler_bound": "bind one: session(action='control', character_id=<id>), then session(action='whoami')",
     "actor_unresolved": "check session(action='health'), then session(action='whoami')",
     "owned_by_other": "that character is not free; choose one this seat holds",
+    "realm_unresolved": "do not retry him: the seat moves by itself to whoever holds your late ruler's title; read session(action='whoami') next turn",
+    "heir_outside_realm": "claim a character inside your seat's realm, or read session(action='whoami') next turn",
     "reserved_for_another_seat": "do not claim it: play the rulers this seat holds (session(action='whoami'))",
     "seat_reservations_unreadable": "do not retry: report it; the harness must fix CK3_RESERVED_FOR_OTHER_SEATS or CK3_SEAT_DECLARED_CHARACTER_ID. Play the rulers this seat already holds (session(action='whoami'))",
     "write_unconfirmed": "read the state back before sending the write again",
@@ -950,13 +1221,15 @@ GATE_NEXT: dict[str, str] = {
     "faction_precondition": "call do(action_class='factions_to_join') for the factions you are in and who leads them",
     "faction_query_busy": "retry the read once",
     "cb_invalid_for_target": "call cbs(target_id=<the target>) for every casus belli against him with the game's verdict, or plan_war() for the wars you can declare now",
+    "in_activity": ("the declaration passes once the activity ends or a guest leaves it (do host_activity "
+                    "activity=leave): do(action_class='activities') shows whether he is still in it"),
     "unknown_decision": "call discover(what='decisions') for the decision names",
 }
 
 #: Said in full rather than implied, for the gates where nothing will ever work.
 NOT_POSSIBLE = "not possible for this character in this episode"
 
-#: lane-query item 2: THE PLACEHOLDER WAS SHIPPED. GATE_NEXT says "call
+#: THE PLACEHOLDER WAS SHIPPED. GATE_NEXT says "call
 #: do(action_class=<this intent's class>)" and that text reached the agent
 #: verbatim, including for men_at_arms, which had no class at all. do() knows
 #: the intent, so it names the class; an intent with no enumerate says so.
@@ -973,7 +1246,7 @@ INTENT_ENUMERATE_CLASS: dict[str, str] = {
 }
 _NEXT_PLACEHOLDER = "<this intent's class>"
 
-#: do(action_class="men_at_arms") row cap (lane-query live: 109 rows = 47 KB).
+#: do(action_class="men_at_arms") row cap (live: 109 rows = 47 KB).
 MAA_ENUMERATE_CAP = 30
 #: do(action_class="buildings") row cap: the type list is the whole building database.
 BUILDING_ENUMERATE_CAP = 40
@@ -1048,13 +1321,13 @@ def why_blocked(gate: str, summary: str = "", *, fix: Optional[dict] = None,
     name carried in `raw_reason`: there is no unnamed gate.
 
     A LATE `unmapped_refusal` IS RESOLVED HERE, at the choke point, because not
-    every refusal path routes through `map_raw_reason`. Measured over d45-d50:
+    every refusal path routes through `map_raw_reason`. Measured over the recorded episodes:
     936 refusals reached the agent with `gate: "unknown"` while `summary` and
     `raw_reason` carried the real code — target_required (99), target_rejected
     (90), not_allowed_or_unaffordable (33), seat_holder_unchanged (27),
     no_matching_position (24), maa_type_required (18), capital_validate_failed
     (15), councillor_dead (15). Four of those were ALREADY in
-    RAW_REASON_TO_GATE at deploy-49 and deploy-50, so the map was never the
+    RAW_REASON_TO_GATE, so the map was never the
     defect: a caller that builds the envelope itself skips the mapper, and
     adding entries could not have reached it. Resolving at the single place
     every envelope is built does.
@@ -1085,7 +1358,7 @@ def why_blocked(gate: str, summary: str = "", *, fix: Optional[dict] = None,
         "is_known_limitation": bool(meta.get("is_known_limitation", False)),
         "summary": summary or (raw_reason if gate == "unmapped_refusal" else gate),
     }
-    # deploy-51 item (6): a gate may carry one seat-facing sentence
+    # a gate may carry one seat-facing sentence
     # explaining what the code MEANS, for the few where the code alone has
     # misled. Absent for every other gate, so this costs nothing on the ~500
     # refusals a transcript carries.
@@ -1100,7 +1373,20 @@ def why_blocked(gate: str, summary: str = "", *, fix: Optional[dict] = None,
     if resolved_from:
         out["gate_resolved_from"] = resolved_from
     out.update(_actionable(gate, out, fix=fix, measured=measured))
+    if "actor_id_required" in (raw_reason, summary):
+        out.update(ACTOR_ID_REQUIRED_ANSWER)
     return out
+
+
+#: The bridge's `actor_id_required` (a write that reached it with no acting character)
+#: answered with what to send, not `retry: never` and an enumerate that offers the same call.
+ACTOR_ID_REQUIRED_ANSWER: dict = {
+    "why": ("the write reached the bridge with no acting character (actor 0) and this bridge handler takes "
+            "no default; nothing was done"),
+    "retryable": True,
+    "retry": "now, naming your ruler",
+    "next": {"send_again_with": {"character_id": "your ruler's id (actor.id in this reply)"}},
+}
 
 
 #: The bridge's default-off write list (dispatch_router.cpp experimental_write_enabled,
@@ -1108,15 +1394,15 @@ def why_blocked(gate: str, summary: str = "", *, fix: Optional[dict] = None,
 #: test_experimental_gate_contract.py reads kExperimental out of the source and the
 #: operator docs (docs/research.md) and fails if any of the three disagree.
 EXPERIMENTAL_WRITES: tuple = ()
-# scheme_action left the list 2026-10-18 after live validation (lane-scheme);
-# faction_action left it 2026-10-21 after live validation from both seats (F16,
-# live867 runs l10-p6 and l10-p7).
+# scheme_action left the list 2026-10-18 after live validation;
+# faction_action left it 2026-10-21 after live validation from both seats
+# (two faction test runs).
 
 
 def experimental_gate_blocked(raw: Any, bridge_action: str) -> dict[str, Any]:
     """The `experimental_write_disabled` refusal, carrying what an OPERATOR needs.
 
-    lane-scheme 2026-10-18. The persona test got a summary pointing at
+    A persona test got a summary pointing at
     "enabled_writes_file in this reply" from a reply that did not carry it: the
     bridge sends the path, and this envelope dropped it. The path and the exact
     line now ride in `fix`, marked operator-only, because the seat cannot and
@@ -1245,20 +1531,23 @@ def map_raw_reason(raw_reason: str, summary: str = "") -> dict[str, Any]:
                 gate = g
                 break
     if gate is None and ":" in key:
-        # lane-scheme: `code:detail` (scheme_type_not_found:murder,
+        # `code:detail` (scheme_type_not_found:murder,
         # scheme_call_crashed:SIGSEGV). Key on the code BEFORE the substring
         # pass, which would otherwise let any short code that happens to occur
         # inside the detail win.
         gate = RAW_REASON_TO_GATE.get(key.split(":", 1)[0].strip())
     if gate is None:
-        # try a prefix/substring match for the #109 reason family.
+        # try a prefix/substring match for the reason family.
         for raw, g in RAW_REASON_TO_GATE.items():
             if raw in key:
                 gate = g
                 break
     if gate is None:
         return why_blocked("unmapped_refusal", summary=summary or key, raw_reason=key)
-    return why_blocked(gate, summary=summary or key, raw_reason=key)
+    out = why_blocked(gate, summary=summary or key, raw_reason=key)
+    if key in RAW_REASON_NOTE and not out.get("note"):
+        out["note"] = RAW_REASON_NOTE[key]
+    return out
 
 
 # ===========================================================================
@@ -1334,9 +1623,53 @@ def envelope(tool: str, *, ok: bool = True, result: Any = None,
         env["delta"] = delta
     if pending is not None:
         env["pending"] = pending
+    if blocked is None and env["ok"]:
+        # A reply is never ok while it carries a handler's error. The bridge
+        # answers a refused read with {"error": "..."} and no success flag (live:
+        # inspect opinion -> "missing actor_id or target_id" under ok true).
+        said = handler_error_of(env["result"])
+        if said:
+            env["blocked"] = blocked = map_raw_reason(said, summary=f"the bridge refused the read: {said}")
     if blocked is not None:
         env["ok"] = False
+    for part in ("result", "blocked", "pending"):
+        one_call_shape(env.get(part))
     return env
+
+
+#: The fields a reply hands the seat a ready call in. Every one is {tool, args}
+#: (a scripted driver broke on title rows' {do: {...}} beside news' {tool, args}).
+READY_CALL_KEYS = frozenset({"do_call", "next_call", "next", "fix", "check_first", "enumerate"})
+
+
+def _as_ready_call(v: Any) -> Any:
+    """A ready call in the one shape: do's own arguments ({intent|action_class, ...})
+    become {tool: "do", args: ...}; anything else is returned as it is."""
+    if isinstance(v, dict) and "tool" not in v and ("intent" in v or "action_class" in v):
+        return {"tool": "do", "args": v}
+    return v
+
+
+def one_call_shape(obj: Any) -> None:
+    """In place: every READY_CALL_KEYS value in `obj` (at any depth) in the one shape.
+    envelope() runs it on every reply, so no builder can hand out another shape."""
+    if isinstance(obj, dict):
+        for k, v in list(obj.items()):
+            if k in READY_CALL_KEYS:
+                obj[k] = v = _as_ready_call(v)
+            one_call_shape(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            one_call_shape(v)
+
+
+def handler_error_of(result: Any) -> Optional[str]:
+    """The error a bridge handler put at the top of its reply, when it did not also say
+    success: the one test envelope() applies to every result."""
+    if not isinstance(result, dict) or result.get("success") is True:
+        return None
+    err = result.get("error")
+    return err.strip() if isinstance(err, str) and err.strip() else None
 
 
 # ===========================================================================
@@ -1365,7 +1698,7 @@ def actor_echo(char: dict | None, requested_id: int, is_player: bool = False,
         name = sect.get("name")
         if "alive" in sect:
             alive = bool(sect.get("alive"))
-        # lane-namekey: a name the bridge has not localized yet is PENDING, not
+        # A name the bridge has not localized yet is PENDING, not
         # absent. The bridge omits `name` and sends `name_key` (the game's
         # localization key, `E_thelred` for Æthelred — not a name) plus
         # `name_pending: true` until the game thread resolves it (the bridge's
@@ -1449,7 +1782,7 @@ def unbound_summary(row: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Scale-as-king legibility (AL-12 / re_scale_as_king_lever.md). The whole-duchy
+# Scale-as-king legibility (the scale-as-king lever). The whole-duchy
 # expansion engine is the NATIVE AI self-declaring duchy_conquest_cb wars — it
 # only runs when TWO preconditions hold:
 #   (1) the controlled king's per-char AI tick is ENABLED. Taking control with
@@ -1458,7 +1791,7 @@ def unbound_summary(row: dict) -> str:
 #       neither self-declares nor sieges → occupation_score stays 0 FOREVER.
 #       agent_mode==true (from get_bridge_state) is the proxy: it is set whenever
 #       a controlled char took control with native AI disabled.
-#   (2) the ruler is a genuine CONQUEROR with a credible army (AL-12): a content/
+#   (2) the ruler is a genuine CONQUEROR with a credible army: a content/
 #       shy/low-martial heir self-declares NOTHING even on a pinned expansion
 #       genome. A high genome pin is necessary but NOT sufficient.
 # This is a PURE-PYTHON advisory synthesized from already-fetched reads — no
@@ -1472,7 +1805,7 @@ _PASSIVE_TRAITS = {
 }
 
 
-# ── deploy-51: `expansion_engine_health` IS GONE. ─────────────────────
+# ── `expansion_engine_health` IS GONE. ─────────────────────
 # It returned an `advisory` list that prescribed the previous project's strategy
 # ("PRESERVE the realm + shield and survive to a conqueror heir", "engineer a
 # conqueror heir", "let the king self-declare whole-petty-kingdom
@@ -1537,12 +1870,27 @@ PHASE_GENOME: dict[str, dict[str, int]] = {
 PHASES = list(PHASE_GENOME.keys())
 
 #: observe(depth=...) values.
-OBSERVE_DEPTHS = ("brief", "full")
+OBSERVE_DEPTHS = ("brief", "full", "news")
 
 #: session(action=...) values: the branches of _session_impl_branches, in the order
 #: the tool description lists them (test_surface_contract checks the two agree).
 SESSION_ACTIONS = ("control", "add", "release", "whoami", "speed", "pause", "unpause",
                    "wait", "health", "experimental_flags", "set_experimental")
+
+#: session's actions that move the clock. The rest are clock-free.
+SESSION_CLOCK_ACTIONS = ("speed", "pause", "unpause", "wait")
+#: Set by an environment that owns the clock (one turn = the game paused, the
+#: seat calls tools, then submits). With it set to CLOCK_OWNER_ENV the session tool
+#: does not list the clock actions and refuses them (clock_owned_by_env).
+CLOCK_OWNER_ENV_VAR = "CK3_CLOCK_OWNER"
+CLOCK_OWNER_ENV = "env"
+
+
+def clock_owned_by_env(environ=None) -> bool:
+    import os as _o
+    env = _o.environ if environ is None else environ
+    return str(env.get(CLOCK_OWNER_ENV_VAR) or "").strip().lower() == CLOCK_OWNER_ENV
+
 
 #: The game speed range. THE DEFINITION IS THE BRIDGE'S: game_set_speed
 #: (bridge/src/event_handler.cpp) clamps every speed write to 1..3, and
@@ -1576,7 +1924,7 @@ INTENT_TO_ACT: dict[str, dict[str, Any]] = {
     "move_capital":   {"type": "move_capital"},
     "set_obligation": {"type": "contract"},
     "scheme":         {"type": "scheme"},
-    # The war intents (F8): each sends one character interaction and has
+    # The war intents: each sends one character interaction and has
     # a dedicated branch in do_impl that finds the war and the recipient, sends,
     # and reads the war back (_do_war_intent).
     "make_peace":     {"type": "interaction"},
@@ -1591,7 +1939,7 @@ INTENT_TO_ACT: dict[str, dict[str, Any]] = {
 _CANCEL_PENDING_INTENT = "cancel_pending"
 
 # do(intent="faction", args={action: create|join|leave|press_demand|respond_demand})
-# is served by factions.do_faction (F16): it composes the bridge
+# is served by factions.do_faction: it composes the bridge
 # write with a second read of the game's member list, which resolve_act cannot.
 _FACTION_INTENT = "faction"
 
@@ -1599,19 +1947,34 @@ _FACTION_INTENT = "faction"
 # on: true|false}) is served by _do_set_policy: a standing policy the
 # game holds between the seat's turns (the policy mod, ck3agent/policy_mod/).
 _POLICY_INTENT = "set_policy"
-# Do(intent="answer_proposal", args={proposal_id, answer}) answers one
-# offer observe listed under incoming_proposals (proposals.py; design
-# docs/design/incoming-proposals.md). set_policy with policy="proposals" sets a
+# do(intent="answer_proposal", args={proposal_id, answer}) answers one
+# offer observe listed under incoming_proposals (proposals.py);
+# set_policy with policy="proposals" sets a
 # class's standing answer.
 _PROPOSAL_INTENT = "answer_proposal"
 
 # do(intent="end_war", args={enemy_id, terms: we_win|white_peace|we_yield, check})
-# is served by _do_end_war (lane peace): the script layer's end_war template ENDS a
+# is served by _do_end_war: the script layer's end_war template ENDS a
 # war the actor leads against that enemy leader with the casus belli's own outcome.
 # It is not an offer and the enemy is not asked (make_peace is the native offer).
 _END_WAR_INTENT = "end_war"
+# Standing answers to the ruler's own events (the bridge's
+# event-option hook) and the AI budget's reserved-gold maximum (the gold_reserve template).
+_EVENT_RULE_INTENT = "event_rule"
+_GOLD_RESERVE_INTENT = "gold_reserve"
+# The seat's veto of the AI's create_title / law / mercenary /
+# construction posts for its ruler (the bridge's GameCommandDispatch hook, ai_veto.cpp).
+_AI_VETO_INTENT = "ai_veto"
+# One activity type put to the game's AI for the ruler (the activity template)
+_HOST_ACTIVITY_INTENT = "host_activity"
+# Disband / move / hold, listed ONLY when this server booted
+# with CK3_BRIDGE_ARMY_ORDERS=1 or CK3_BRIDGE_ARMY_HOLD=1; do_impl answers it either way
+# (army_orders_off / army_hold_off when off).
+_ARMY_INTENT = "army"
 INTENTS = list(INTENT_TO_ACT.keys()) + [_CANCEL_PENDING_INTENT, _FACTION_INTENT, _POLICY_INTENT,
-                                        _PROPOSAL_INTENT, _END_WAR_INTENT]
+                                        _PROPOSAL_INTENT, _END_WAR_INTENT, _EVENT_RULE_INTENT,
+                                        _GOLD_RESERVE_INTENT, _AI_VETO_INTENT, _HOST_ACTIVITY_INTENT] \
+    + ([_ARMY_INTENT] if _army_orders.listed() else [])
 
 # enumerate-mode action_class → the bridge enumeration call(s).
 #: FROM tools.py, which is where the agent-facing schema is built, so
@@ -1666,6 +2029,230 @@ async def _own_descendants(gw, actor_id: int, depth: int = KIN_GUARD_DEPTH) -> s
     return found
 
 
+#: The bridge's council write (appoint_councillor) swaps two OCCUPIED seats;
+#: it has no path that fills a vacant one (re/findings/re_council_vacant_fill_status.md).
+APPOINT_VACANT = ("this seat is vacant; the game's AI fills a vacant seat itself, in its own time (not read)")
+
+
+async def _appoint_seat(gw, a: dict, actor_id: int) -> Optional[dict]:
+    """do(intent='appoint'): `seat` named as the council reads it (councillor_steward, or
+    steward) becomes the seat's position_id from query_council, in place in `a`. A refusal
+    before anything is sent: no such seat, or a vacant one (APPOINT_VACANT)."""
+    seat = a.get("seat") if a.get("seat") is not None else a.get("position_id")
+    if seat is None or _as_int(seat):
+        return None
+    name = str(seat).strip().lower()
+    rows = (await gw.read("query_council", {"character_id": actor_id}) or {}).get("council")
+    if not isinstance(rows, list):
+        return why_blocked("gate_introspection_unavailable", raw_reason="query_council_unanswered",
+                           summary="the council read did not answer, so the seat could not be found")
+    row = next((r for r in rows if isinstance(r, dict) and str(r.get("position_key") or "").lower()
+                in (name, "councillor_" + name)), None)
+    if row is None:
+        return why_blocked("name_not_found", raw_reason="seat_not_on_council",
+                           summary=f"no council seat {seat!r}; seats: " + ", ".join(
+                               str(r.get("position_key")) for r in rows if isinstance(r, dict)))
+    holder = _as_int(row.get("holder_id"))
+    if row.get("vacant") is True or holder in (0, 0xFFFFFF):
+        return why_blocked("council_seat_vacant", raw_reason="vacant_seat_fill_unsupported",
+                           summary=APPOINT_VACANT)
+    # The bridge's write is the game's seat SWAP
+    # (both characters already on the council, do_appoint_councillor); a courtier who is
+    # not a councillor cannot be seated by it, so that is refused here, naming the rule
+    who = _as_int(a.get("character_id"))
+    seated = {_as_int(r.get("holder_id")) for r in rows if isinstance(r, dict)} - {0, 0xFFFFFF}
+    if who and who not in seated:
+        return why_blocked("target_ineligible", raw_reason="appointee_not_on_council",
+                           summary=APPOINT_SWAP_ONLY.format(who=who),
+                           measured={"seated": sorted(seated)})
+    a.pop("seat", None)
+    a["position_id"] = _as_int(row.get("position_id"))
+    _APPOINT_HOLDER[(actor_id, a["position_id"])] = holder
+    return None
+
+
+#: (actor, position_id) -> the holder query_council read before the last appoint
+_APPOINT_HOLDER: dict = {}
+
+#: What the bridge's appoint write is (bridge/src/action_handlers.cpp
+#: do_appoint_councillor: the game's swap leaf, two seated councillors trade seats).
+APPOINT_SWAP_ONLY = ("{who} is not on your council: the bridge's appoint is the game's seat swap, so it "
+                     "only trades seats between two councillors already seated; a courtier joins the "
+                     "council when the game's AI seats him. Nothing was sent")
+#: The bridge read an occupied seat as vacant (its holder read at
+#: the position object disagrees with query_council's); said as that, never as "vacant".
+APPOINT_READ_DISAGREES = ("query_council reads this seat held by {holder}, and the bridge's own seat read "
+                          "in the appoint write found it empty, so the write refused it as vacant: the two "
+                          "reads disagree (a bridge defect, not the game's refusal). Nothing changed")
+
+
+async def _hof_claim_guard(gw, actor_id: int, holder_id: int, title_id: Any) -> dict | None:
+    """Hof_ask_for_claim_interaction is refused here when the game would not
+    show it: no title, or the holder (target_id) of another faith than the actor
+    (query_character faith_key of both; the interaction's is_shown). None to send."""
+    if not holder_id or not _as_int(title_id):
+        return why_blocked("missing_required_argument",
+                           summary=("hof_ask_for_claim_interaction needs target_id (the title's holder) and "
+                                    "title_id (a county or higher in his domain); your head of faith "
+                                    "becomes the recipient by the interaction's redirect"))
+    me, him = await gw.read_many([("query_character", {"character_id": actor_id}),
+                                  ("query_character", {"character_id": holder_id})])
+    fa, fb = (me or {}).get("faith_key"), (him or {}).get("faith_key")
+    if fa and fb and fa != fb:
+        return why_blocked("target_ineligible", raw_reason="faith_differs",
+                           summary=(f"the game shows this interaction only when the holder shares your faith: "
+                                    f"you are {fa}, {holder_id} is {fb}"),
+                           measured={"actor_faith": fa, "holder_faith": fb})
+    return None
+
+
+GRANT_TITLES_INTERACTION = "grant_titles_interaction"
+
+#: What grant_titles_interaction's is_shown / is_valid_showing_failures_only
+#: ask (common/character_interactions/00_grant_titles_interaction.txt) that no read here
+#: gives, named on its refusal and on the game's word-less one.
+GRANT_NOT_CHECKED = ("an unlanded recipient's court: he must be your courtier or a guest of your "
+                     "pool (no read gives a courtier's court)",
+                     "can_be_granted_titles_by (his government, gender and faith laws)",
+                     "that you hold more than one title (baronies included)")
+#: Traits the interaction refuses a recipient for (is_valid_showing_failures_only).
+GRANT_BARRING_TRAITS = frozenset({"devoted", "gallivanter"})
+
+
+#: The most lieges _liege_chain reads above a recipient (count, duke, king, emperor, and a margin)
+GRANT_CHAIN_MAX = 6
+
+
+async def _liege_chain(gw, target_id: int, him: dict) -> Optional[list]:
+    """The recipient's lieges, nearest first, up to his top liege; None when a link did not read or the walk did not
+    reach the top within GRANT_CHAIN_MAX (then nothing is decided from it)."""
+    top = _as_int(him.get("top_liege_id"))
+    cur, out = _as_int(him.get("liege_id")), []
+    for _ in range(GRANT_CHAIN_MAX):
+        if not cur or cur == target_id or cur in out:
+            return None
+        out.append(cur)
+        if cur == top:
+            return out
+        nxt = _char_section(await gw.read("query_character", {"character_id": cur}))
+        cur = _as_int(nxt.get("liege_id")) if nxt else 0
+    return None
+
+
+async def _grant_guard(gw, actor_id: int, target_id: int) -> dict | None:
+    """A recorded case (1073-1074: three grants of Dublin to a brother refused
+    "the game gives no detail"; the brothers were a prisoner and a courtier elsewhere).
+    grant_titles_interaction refused before sending for what the reads show: a recipient
+    who is the actor, a landed recipient outside the actor's realm (his liege chain does
+    not reach the actor: is_shown's target_is_liege_or_above), an unlanded recipient in
+    prison (is_imprisoned = no for one who is not a ruler), or a barring trait. None to
+    send; what it cannot read is GRANT_NOT_CHECKED."""
+    if not target_id or not actor_id:
+        return None
+    if target_id == actor_id:
+        return why_blocked("target_ineligible", raw_reason="grant_to_self",
+                           summary="grant_titles_interaction is not shown towards yourself")
+    me = _char_section(await gw.read("query_character", {"character_id": actor_id}))
+    him = _char_section(await gw.read("query_character", {"character_id": target_id}))
+    if not him:
+        return None
+    measured = {k: him.get(k) for k in ("liege_id", "top_liege_id", "has_realm", "is_imprisoned",
+                                        "imprisoner_id")}
+    landed = him.get("has_realm") is True or bool(_as_int(him.get("primary_title_id")))
+    if landed:
+        lieges = {_as_int(him.get("liege_id")), _as_int(him.get("top_liege_id"))} - {0}
+        my_top = _as_int(me.get("top_liege_id"))
+        # independent actor: his whole realm walks up to him (top_liege). A vassal actor:
+        # only a direct vassal is provable (liege_id); a deeper one is left to the game.
+        chain = None
+        if lieges and actor_id not in lieges and my_top != actor_id:
+            # (a Carinthia test run: Berthold, a vassal of the emperor, sent a county to his son, a landed vassal of
+            # Rudolf of Swabia; the game refused it with no words): a vassal actor's realm is the recipient's liege
+            # chain up to him; walk it (at most GRANT_CHAIN_MAX lieges) and refuse when it ends without him
+            chain = await _liege_chain(gw, target_id, him)
+        if lieges and actor_id not in lieges and (my_top == actor_id or (chain is not None and actor_id not in chain)):
+            return why_blocked("target_ineligible", raw_reason="grant_recipient_not_in_realm",
+                               summary=(f"{target_id} is landed and not in your realm (liege "
+                                        f"{him.get('liege_id')}, top liege {him.get('top_liege_id')}"
+                                        + (f"; his lieges up to the top: {chain}" if chain else "") + "): "
+                                        "the game shows grant_titles only towards your vassals, "
+                                        "courtiers and guests, so it refuses this with no words"),
+                               measured=dict(measured, **({"liege_chain": chain} if chain else {})))
+    elif him.get("is_imprisoned") is True:
+        return why_blocked("target_imprisoned", raw_reason="grant_recipient_imprisoned",
+                           summary=(f"{target_id} is unlanded and imprisoned (by "
+                                    f"{him.get('imprisoner_id')}): the game refuses a grant to an "
+                                    "unlanded prisoner; free or ransom him first"),
+                           measured=measured)
+    traits = {str((t or {}).get("name") if isinstance(t, dict) else t) for t in him.get("traits") or []}
+    bar = sorted(traits & GRANT_BARRING_TRAITS)
+    if bar:
+        return why_blocked("target_ineligible", raw_reason="grant_recipient_trait",
+                           summary=f"{target_id} has {', '.join(bar)}: the game refuses him titles",
+                           measured=dict(measured, traits=bar))
+    return None
+
+
+#: (two Carinthia test runs: Gebhard priced 300 prestige + 300 renown to disinherit while landless; a county
+#: granted to him, the send took 900 + 450; the grant's replies said nothing): disinherit_interaction's price for a
+#: landed recipient (00_dynast_interactions.txt; 00_basic_values.txt: prestige 150 + 750 landed; renown 75 + 150
+#: landed, x the era factor), and take_vows_interaction asks only courtiers
+DISINHERIT_LANDED = {"prestige": 900, "renown": (75 + 150) * _pf.ERA_FACTOR_EARLY}
+GRANT_PRICE_NOTE = ("landing him raises what disinheriting him costs: {now} now, {after} once he holds land "
+                    "(disinherit_interaction: +750 prestige and +150 renown x the era factor for a landed child; "
+                    "the era is not read, early medieval assumed); and vows are asked of courtiers only, so "
+                    "take_vows_interaction is closed to him once landed")
+
+
+async def grant_price_effects(gw, actor_id: int, target_id: int) -> Optional[dict]:
+    """What a title granted to this recipient changes in a price the seat may pay later: for an unlanded
+    member of the actor's dynasty, disinherit's price now (the game's own check) and once landed. None otherwise."""
+    if not actor_id or not target_id or actor_id == target_id:
+        return None
+    me = _char_section(await gw.read("query_character", {"character_id": actor_id}))
+    him = _char_section(await gw.read("query_character", {"character_id": target_id}))
+    if not him or him.get("has_realm") is True or _as_int(him.get("primary_title_id")):
+        return None
+    if not _as_int(me.get("dynasty_id")) or _as_int(me.get("dynasty_id")) != _as_int(him.get("dynasty_id")):
+        return None
+    chk = await gw.read("query_interaction_check", {"actor_id": actor_id, "interaction_type": "disinherit_interaction",
+                                                    "candidates": [target_id]})
+    rows = [c for c in (((chk or {}).get("result") or {}).get("results") or []) if isinstance(c, dict)] \
+        if isinstance(chk, dict) else []
+    now = next((c.get("engine_cost") for c in rows if _as_int(c.get("target_id")) == target_id
+                and isinstance(c.get("engine_cost"), dict)), None)
+    words = lambda p: " + ".join(f"{round(v)} {k}" for k, v in p.items() if isinstance(v, (int, float)))  # noqa: E731
+    return {"disinherit": {"now": now or "unread", "once_landed": DISINHERIT_LANDED},
+            "note": GRANT_PRICE_NOTE.format(now=words(now) if now else "unread",
+                                            after=words(DISINHERIT_LANDED))}
+
+
+#: (1079.09: Count Murchad granted c_leinster to his son; the
+#: son, a count, could not be a count's vassal and became independent; succession_plan then
+#: read "intact"). A vassal must rank below his liege: a title of the granter's own tier or
+#: higher makes the grantee independent, and the title leaves the realm.
+GRANT_LEAVES_REALM = ("{key} is a {tier} title and you rank no higher (your highest title is a {mine}): "
+                      "its new holder cannot be your vassal, so the title LEAVES your realm with him. "
+                      "Send again with args.confirm_leaves_realm=true to give it away")
+_TIER_WORD = {1: "barony", 2: "county", 3: "duchy", 4: "kingdom", 5: "empire"}
+
+
+async def _grant_leaves_realm(gw, actor_id: int, a: dict) -> dict | None:
+    """A grant that takes the title out of the realm is refused unless confirmed."""
+    if a.get("confirm_leaves_realm") is True or not _as_int(a.get("title_id")):
+        return None
+    me = _char_section(await gw.read("query_character", {"character_id": actor_id}))
+    t = (await _read_dict(gw, "query_title_hierarchy", {"title_id": _as_int(a["title_id"])})).get("title") or {}
+    mine, tier = _as_int(me.get("ruler_tier")), _as_int(t.get("tier"))
+    if not mine or not tier or tier < mine:
+        return None
+    return why_blocked("target_ineligible", raw_reason="leaves_realm",
+                       summary=GRANT_LEAVES_REALM.format(key=t.get("key") or a["title_id"],
+                                                        tier=_TIER_WORD.get(tier, tier), mine=_TIER_WORD.get(mine, mine)),
+                       measured={"title_tier": tier, "your_tier": mine},
+                       fix={"tool": "do", "args": {"intent": "interact", "args": dict(a, confirm_leaves_realm=True)}})
+
+
 async def _kin_guard(gw, itype: str, actor_id: int, target_id: int) -> dict | None:
     """None when the interaction may be sent; otherwise the why_blocked refusal."""
     if itype not in KIN_GUARDED_INTERACTIONS:
@@ -1684,11 +2271,22 @@ async def _kin_guard(gw, itype: str, actor_id: int, target_id: int) -> dict | No
                                  "own_descendants": sorted(line)})
 
 
-#: Intents on the generic dispatch path whose bridge handler requires an explicit
-#: actor_id > 0 (no controlled-primary fallback): do_dispatch_scheme_intent.
-#: (do_dispatch_faction_intent refuses actor 0 too; factions.do_faction always sends
-#: the resolved actor.)
-_EXPLICIT_ACTOR_INTENTS: frozenset = frozenset({"scheme"})
+def dispatch_actor_of(character_id: Any, actor: Optional[dict]) -> int:
+    """THE actor a generic-path write (every INTENT_TO_ACT intent) carries to the bridge: the
+    seat's explicit character_id when given, else the ruler this call already resolved
+    (_resolve_actor: the seat's bound ruler). Never 0.
+
+    It is not 0 for every intent but two (a two-name set, scheme and appoint),
+    leaving each bridge handler to resolve 0 its own way. Several refuse it outright
+    (do_create_title, do_move_capital, do_set_obligation_level, as scheme and appoint did:
+    `actor_id_required`), so the call every reply offers, do(intent="mint_title",
+    args={title_key}) with no character_id, was refused live from a save with 325 gold in
+    hand; the same call naming character_id created k_ireland. The specialised intents
+    (faction, end_war, set_policy, answer_proposal, ai_veto, event_rule, gold_reserve,
+    host_activity, army, the war intents) already send this same `character_id or actor.id`.
+    With actor 0 the bridge's ownership gate took appoint's
+    `character_id`, the COURTIER, for the actor (actor_not_claimed)."""
+    return _as_int(character_id) or _as_int((actor or {}).get("id"))
 
 
 def _war_id_arg(v) -> Optional[int]:
@@ -1715,8 +2313,7 @@ def _intent_to_act_params(intent: str, args: dict, actor_id: int) -> dict[str, A
     base["actor_id"] = actor_id
 
     if intent == "mint_title":
-        base["title_key"] = a.get("title_key") or a.get("title")
-        base["title_id"] = _as_int(a.get("title_id"))
+        base["title_key"] = a.get("title_key")
     elif intent == "take_decision":
         base["decision_type"] = a.get("decision")
     elif intent == "interact":
@@ -1748,18 +2345,18 @@ def _intent_to_act_params(intent: str, args: dict, actor_id: int) -> dict[str, A
         # `json_get_int(params_json, "target_title_id") <= 0` -> "target_required"
         # and NEVER reads `title_id`, so sending `title_id` dropped the target
         # before it left this process and no agent-side spelling could work:
-        # five seats, twenty-five attempts, zero successes in the deploy-43
+        # five seats, twenty-five attempts, zero successes in a
         # smoke. The legacy tools.py path always sent the right key; only this
         # surface was wrong, and this surface is the only write path the seats
         # have. `target_character_id` is read by the same handler, so it is
         # forwarded rather than dropped for the character-scoped tasks.
         #
-        # ONE NAME (finding 8): the enumerator's do_call rows, the docs and
+        # ONE NAME: the enumerator's do_call rows, the docs and
         # the bridge all say target_title_id. The `target_id` alias the rows used
         # to print is gone (test_council_task_target_key compares the three).
         base["target_title_id"] = _as_int(a.get("target_title_id"))
         base["target_character_id"] = _as_int(a.get("target_character_id"))
-        # lane-query item 1: `seat` was accepted, documented in the do_call rows
+        # `seat` was accepted, documented in the do_call rows
         # this module prints, and then dropped. It now reaches the bridge, which
         # refuses a seat that cannot take the task (seat_cannot_take_task).
         if a.get("seat"):
@@ -1770,6 +2367,9 @@ def _intent_to_act_params(intent: str, args: dict, actor_id: int) -> dict[str, A
         base["replace"] = True
     elif intent == "lifestyle":
         base["focus"] = a.get("focus")
+        # A perk instead of a focus spends one of the ruler's own points (unlock_perk)
+        if a.get("perk"):
+            base["perk"] = str(a.get("perk"))
     elif intent == "set_education_focus":
         # §2: actor is the CHILD whose childhood focus is being set.
         base["focus"] = a.get("focus")
@@ -1782,8 +2382,13 @@ def _intent_to_act_params(intent: str, args: dict, actor_id: int) -> dict[str, A
         base["maa_type"] = a.get("maa_type")
         base["location_id"] = _as_int(a.get("location_id"))
         base["regiment_id"] = _as_int(a.get("regiment_id"))
+        if a.get("check") is not None:
+            base["check"] = a.get("check")      # men_at_arms disband check=true asks only
     elif intent == "hire_merc":
         base["company_id"] = _as_int(a.get("company_id"))
+        # Check and confirm_debt are answered by _hire_debt_guard (do_impl) before anything is
+        # sent; neither reaches the bridge
+        _ = (a.get("check"), a.get("confirm_debt"))
     elif intent == "move_capital":
         base["title_id"] = _as_int(a.get("title_id"))
     elif intent == "set_obligation":
@@ -1799,6 +2404,8 @@ def _intent_to_act_params(intent: str, args: dict, actor_id: int) -> dict[str, A
         # war_id: the war; terms: white_peace | surrender | enforce_demands.
         base["war_id"] = _war_id_arg(a.get("war_id"))
         base["terms"] = a.get("terms")
+        # A preview that sends nothing (what the terms would give up)
+        base["check"] = a.get("check") is True
     elif intent == "call_ally":
         base["war_id"] = _war_id_arg(a.get("war_id"))
         base["target_id"] = _as_int(a.get("ally_id"))
@@ -1844,14 +2451,13 @@ def _f(v, default=0.0):
 
 
 async def agency_block(gw, character_id: int) -> dict[str, Any]:
-    """What this seat controls, stated once and TRUTHFULLY. deploy-51
-    item (4), on the designer's proposal 6.
+    """What this seat controls, stated once and TRUTHFULLY.
 
-    WHY IT EXISTS. d49's king wrote "I never had hands on the army" in its own
-    retrospective, and d50 read `native_ai_disabled: true` 210 times. That field
+    WHY IT EXISTS. A recorded king wrote "I never had hands on the army" in its own
+    retrospective, and one recorded episode read `native_ai_disabled: true` 210 times. That field
     is `bool(disable_native_ai)` — THE PARAMETER THE CALLER PASSED, echoed back
     as though it were state. Seats then spent cycles on it: 188 `control` and
-    183 `whoami` calls in arm A, 4-9% of all calls, asking a question the
+    183 `whoami` calls in one recorded set, 4-9% of all calls, asking a question the
     instrument kept answering with their own input.
 
     EVERY FIELD HERE IS MEASURED OR STATIC FACT, and `ai_tick` is the one that
@@ -1890,7 +2496,7 @@ async def agency_block(gw, character_id: int) -> dict[str, Any]:
                     "why_not": "not read"},
     }
     try:
-        ws = await gw.read("query_war_stance", {"character_id": character_id})
+        ws = await seat_read(gw, "query_war_stance", {}, character_id)
         ws = ws if isinstance(ws, dict) else {}
         en, su = ws.get("ai_enabled"), ws.get("ai_suspended")
         if isinstance(en, bool):
@@ -1911,12 +2517,11 @@ async def agency_block(gw, character_id: int) -> dict[str, Any]:
 def dejure_keys_for(realm: dict | None, hierarchy: dict | None = None) -> list[str]:
     """Title keys to report de-jure county progress for: the ones this seat HOLDS.
 
-    deploy-51. `observe_impl` used to read exactly two meters,
+    `observe_impl` used to read exactly two meters,
     `k_ireland` and `e_britannia`, chosen by the harness for every seat in every
-    arm — so an earl of Kent was shown its progress toward Ireland. Found by
-    reading 9762aef4: that commit renamed the OUTPUT (`goal` ->
-    `de_jure`) and left the objective in the INPUT, which is the half my own
-    lane could not see because it asserted on key names.
+    arm — so an earl of Kent was shown its progress toward Ireland. Renaming the
+    OUTPUT (`goal` -> `de_jure`) left the objective in the INPUT, which a test
+    that asserts on key names cannot see.
 
     Keyed on what the seat holds, which is what a player's screen shows. NO
     FALLBACK LITERAL: an undetermined set returns empty and the caller reports
@@ -1954,7 +2559,7 @@ def hierarchy_was_read(hierarchy, realm) -> bool:
     [0, 500] answers `error: "title_count_clamped"` with `raw_count` (and a held
     title whose lookup fails answers `error: "title_lookup_failed"`), never an
     empty list (query_handlers.cpp title_count_clamped / do_query_title_hierarchy).
-    stays as the second line of defence: an EMPTY list is not
+    Witness n6 stays as the second line of defence: an EMPTY list is not
     read when `realm` (the same seat's query_realm reply, which writes
     TITLE_ARRAY_COUNT as `held_title_count`) counts held titles: unread, never
     "holds none". Every reader of the list calls this, with the realm."""
@@ -1984,8 +2589,42 @@ async def _dejure_pair(gw, cid: int, keys: tuple[str, ...]) -> list[dict[str, An
     return [g if isinstance(g, dict) else {} for g in batch]
 
 
+def next_title_key(realm: Any, hierarchy: Any) -> Optional[str]:
+    """The first title up the primary title's de-jure chain that the seat does not hold,
+    from query_title_hierarchy's held_titles (key, de_jure_parent_key) and query_realm's
+    primary_title_key; None when the chain does not read back."""
+    held = {t.get("key"): t for t in ((hierarchy or {}).get("held_titles") or [])
+            if isinstance(t, dict) and isinstance(t.get("key"), str)} if isinstance(hierarchy, dict) else {}
+    key = (realm or {}).get("primary_title_key") if isinstance(realm, dict) else None
+    seen: set = set()
+    while isinstance(key, str) and key in held and key not in seen:
+        seen.add(key)
+        key = held[key].get("de_jure_parent_key")
+    return key if isinstance(key, str) and key and key not in held else None
+
+
+async def next_title_block(gw, character_id: int, realm: Any, hierarchy: Any,
+                           news_actor: int = 0) -> dict[str, Any]:
+    """observe's de_jure.next_title. `news_actor`: the ruler's own id when `character_id` is 0 (title_requirements)."""
+    key = next_title_key(realm, hierarchy)
+    if key is None:
+        return {"title": None, "unread": "the primary title's de-jure parent did not read back "
+                                          "(query_title_hierarchy held_titles)"}
+    row, blk = await title_requirements(gw, character_id, key, news_actor=news_actor)
+    out = {"title": key, "creatable_now": blk is None, "requirements": row.get("requirements")}
+    if blk is None:
+        out["do_call"] = row.get("do_call")
+    else:
+        out["first_gate"] = {"gate": blk.get("gate"), "summary": blk.get("summary")}
+        mt = next((r.get("months_to_target") for r in row.get("requirements") or []
+                   if isinstance(r, dict) and r.get("requirement") == "price"), None)
+        if blk.get("gate") == "cannot_afford" and isinstance(mt, dict):
+            out["first_gate"]["months_to_target"] = mt
+    return out
+
+
 # --------------------------------------------------------------------------- succession verdict
-# One definition (finding 8): succession_verdict.verdict, called
+# One definition: succession_verdict.verdict, called
 # by succession_plan, observe's succession block and the live-state hook.
 import succession_verdict  # noqa: E402
 
@@ -2029,6 +2668,40 @@ async def _dead_actor_blocked(gw, actor_id: int, war_id: Optional[int] = None) -
                            f"it reads now; its leaders are attacker {w['attacker_id']} and defender "
                            f"{w['defender_id']}: ask from the seat of the one on your side")
     return why_blocked("character_dead", summary=summary, measured=measured)
+
+
+#: what a read of a dead character says of his death's date: the bridge's profile carries none
+DEATH_DATE_UNREAD = "the bridge reads no date of death"
+
+
+def dead_character_blocked(cid: Any, sect: Optional[dict], field: str) -> dict[str, Any]:
+    """The refusal for a call naming a dead character (other than the acting ruler) in `field`: character_dead,
+    first, before any other check, with the date the news first read him dead when it did (news.death_seen)."""
+    s = sect if isinstance(sect, dict) else {}
+    name = s.get("name")
+    seen = _news.death_seen(_as_int(cid))
+    when = f"; your news read him dead on {seen}" if seen else ""
+    return why_blocked("character_dead",
+                       summary=(f"{name + ' ' if name else ''}({_as_int(cid)}) is dead ({field}; query_character "
+                                f"alive=false; {DEATH_DATE_UNREAD}{when}): nothing was sent and nothing else was "
+                                "checked"),
+                       measured={"character_id": _as_int(cid), "alive": False, "field": field,
+                                 **({"read_dead_on": seen} if seen else {})})
+
+
+async def dead_among(read, ids: dict) -> Optional[dict]:
+    """The first of `ids` ({field: id}) a query_character read says is dead: {field, id, sect}; None when every
+    one reads alive or unread. `read` is an async (action, params) -> reply."""
+    for field, cid in ids.items():
+        if not _as_int(cid):
+            continue
+        try:
+            s = _char_section(await read("query_character", {"character_id": _as_int(cid)}))
+        except Exception:                                   # noqa: BLE001
+            continue
+        if s.get("alive") is False:
+            return {"field": field, "id": _as_int(cid), "sect": s}
+    return None
 
 
 def _war_id_or_none(v) -> Optional[int]:
@@ -2077,8 +2750,38 @@ async def _resolve_actor(gw, character_id: int, tool: str, war_id: Optional[int]
 from actor_doors import ACTOR_PARAM_KEYS, about_the_bound_ruler  # noqa: E402,F401
 
 
+#: (a live check, a test run's start, a tribal ruler: light_footmen listed 90 prestige, the game took 81 and
+#: no gold): the listed price is the type's base before the ruler's own cost modifiers, which no read gives.
+#: The 10% is men_at_arms_recruitment_cost -0.1 of his culture's ethos_bellicose (kanuri; 00_ethos.txt):
+#: 45 x 2 x 0.9 = 81. The modifier's total (ethos, perks, buildings, contracts) has no bridge read
+#: (re/findings/re_maa_price_modifier.md), so every row says "before modifiers", in gold or prestige.
+MAA_PRICE_LABEL_SUFFIX = " before modifiers"
+MAA_PRICE_BEFORE_MODIFIERS = ("; the listed price is the base before your own cost modifiers (men_at_arms_recruitment_"
+                              "cost, not read; e.g. a bellicose culture -10%: 90 listed, 81 charged), and the recruit "
+                              "is refused below the base")
+
+
+#: The reads whose bridge handler, given no actor, answers about the game's controlled character
+#: (query_handlers.cpp do_query_maa_types, do_query_war_stance: get_controlled_character), and the key each reads.
+#: The server names the seat's ruler in them, as dispatch_actor_of does for a write: one place (seat_read).
+READS_NAMING_THE_RULER = {"query_maa_types": "actor_id", "query_war_stance": "character_id"}
+
+
+async def seat_read(gw, action: str, params: dict, character_id: Any = 0) -> Any:
+    """THE call for a READS_NAMING_THE_RULER read: its actor key carries `character_id` when given, else the
+    ruler this seat is bound to (_resolve_actor), never 0. With no ruler resolved the read is not sent: {}."""
+    key = READS_NAMING_THE_RULER[action]
+    cid = _as_int(params.get(key)) or _as_int(character_id)
+    if not cid:
+        a, _err = await _resolve_actor(gw, 0, action)
+        cid = _as_int((a or {}).get("id"))
+    if not cid:
+        return {}
+    return await gw.read(action, dict(params, **{key: cid}))
+
+
 async def unbound_refusal(gw, tool: str, action: str, bridge_params: dict) -> Optional[dict]:
-    """THE unbound answer for a read about the bound ruler (finding 6).
+    """THE unbound answer for a read about the bound ruler.
 
     Whether `action` with `bridge_params` asks about the bound ruler is the one
     declared table's answer (actor_doors.about_the_bound_ruler: the bridge handler
@@ -2103,7 +2806,7 @@ async def unbound_refusal(gw, tool: str, action: str, bridge_params: dict) -> Op
 #: emits per war.
 _ACTIVE_WAR_PASSTHROUGH = ("war_id", "name", "attacker_id", "defender_id", "cb_type",
                            "target_titles", "war_score", "favored_side", "war_score_stale",
-                           # fix10: every participant on each side (war_side.h ids), so a
+                           # Every participant on each side (war_side.h ids), so a
                            # seat can read whether a vassal joined its liege's war
                            "attackers", "defenders")
 
@@ -2116,6 +2819,642 @@ _WAR_BREAKDOWN_NOT_READ = (
 #: Observe's read-failure codes (an error: none answered; a warning: some).
 OBSERVE_BRIDGE_UNANSWERED = "bridge_unanswered"
 OBSERVE_READS_UNANSWERED = "reads_unanswered"
+
+
+#: The war score's range and sign, as the bridge emits it (query_handlers.cpp: the
+#: fallback is clamped to [-100, 100] and favored_side is "attacker" when it is > 0;
+#: test_tool_surface_listing reads both).
+WAR_SCORE_MIN = -100
+WAR_SCORE_MAX = 100
+
+#: do(action_class="income_levers"). `do_call` is the write with
+#: placeholders in <>, `enumerate` the call whose rows carry it ready to send.
+INCOME_LEVERS: tuple = (
+    {"lever": "build", "label": "Construct a building in a holding you hold (pays its price at once, "
+                                "adds to that holding once built)",
+     "enumerate": {"tool": "do", "args": {"action_class": "buildings", "args": {"location_id": "<barony title id>"}}},
+     "do_call": {"intent": "build", "args": {"location_id": "<barony title id>", "building": "<key>"}}},
+    {"lever": "change_law", "label": "Change a realm law (crown authority sets what vassals owe you)",
+     "enumerate": {"tool": "do", "args": {"action_class": "laws"}},
+     "do_call": {"intent": "change_law", "args": {"law": "<law key>"}}},
+    {"lever": "council_task", "label": "Set a councillor's task (the steward's tasks work the realm's economy); "
+                                       "no enumerator lists the tasks other than fabricate-claim targets, so the "
+                                       "task key is the game's",
+     "enumerate": {"tool": "inspect", "args": {"subject": "council"}},
+     "do_call": {"intent": "council_task", "args": {"seat": "<seat>", "task": "<task key>"}}},
+    {"lever": "end_war", "label": "Win a war you lead (the casus belli's outcome: titles, and gold where it "
+                                  "takes any); read the war first",
+     "enumerate": {"tool": "do", "args": {"intent": "end_war", "args": {"enemy_id": "<enemy leader>"}}},
+     "do_call": {"intent": "end_war", "args": {"enemy_id": "<enemy leader>", "terms": "we_win"}}},
+    # The prestige and gold sources this surface can send now, each with the game's gate
+    # as its file states it (1.18.3.1); the enumerator's rows carry the game's own check.
+    {"lever": "host_activity", "label": ("Host a feast or a hunt (prestige) or go on pilgrimage (piety): put to "
+                                         "the game's AI for your ruler, which hosts it at its monthly pass and pays"),
+     "enumerate": {"tool": "do", "args": {"action_class": "activities"}},
+     "do_call": {"intent": "host_activity", "args": {"activity": "<feast|hunt|pilgrimage>"}}},
+    {"lever": "commission_epic_decision", "label": ("Decision: +150 prestige when the epic is done "
+                                                    "(medium_prestige_gain) for gold (medium_gold_value); shown only "
+                                                    "with the writing_history perk (00_lifestyle_decisions.txt)"),
+     "enumerate": {"tool": "do", "args": {"action_class": "decisions", "candidates": ["commission_epic_decision"]}},
+     "do_call": {"intent": "take_decision", "args": {"decision": "commission_epic_decision"}}},
+    {"lever": "sale_of_titles_decision", "label": ("Decision: gold (major_gold_value) for selling minor titles; "
+                                                   "shown with the at_any_cost perk or a kingdom "
+                                                   "(00_lifestyle_decisions.txt)"),
+     "enumerate": {"tool": "do", "args": {"action_class": "decisions", "candidates": ["sale_of_titles_decision"]}},
+     "do_call": {"intent": "take_decision", "args": {"decision": "sale_of_titles_decision"}}},
+    {"lever": "ransom", "label": ("Offer a prisoner you hold for ransom: his liege pays gold if his AI accepts "
+                                  "(ransom_interaction, 00_prison_interactions.txt); no read lists your prisoners, "
+                                  "and this send has not been run live"),
+     "do_call": {"intent": "interact", "args": {"interaction": "ransom_interaction", "target_id": "<prisoner>"}}},
+)
+#: (1074.09.15: the game's AI asked the Pope for gold for Murchad: gold +136.46,
+#: piety -241.9 in the step): hof_ask_for_gold_interaction (common/character_interactions/
+#: 00_religious_interactions.txt; its effect in common/scripted_effects/00_interaction_effects.txt):
+#: the head of faith pays head_of_faith_gold_value = 18 x your monthly income (at least 100,
+#: 01_dynamic_values.txt) for major_piety_loss (250); valid with piety >= 250, not
+#: excommunicated, not at war with him, a faith with a spiritual head; 3 years between asks.
+HOF_GOLD_PIETY = 250
+HOF_GOLD_INTERACTION = "hof_ask_for_gold_interaction"
+HOF_GOLD_MONTHS = 18
+HOF_GOLD_MIN = 100
+
+
+#: The head of
+#: faith's answer, hof_ask_for_gold_interaction's ai_accept (common/character_interactions/00_religious_interactions.txt,
+#: 1.18.3.1), a sum taken when above 0. The rich bands are your gold against the treasury values
+#: (01_dynamic_values.txt: 3 / 6 / 12 months of treasury income, at least 150 / 225 / 300; 00_basic_values.txt).
+HOF_GOLD_SOURCE = "common/character_interactions/00_religious_interactions.txt (hof_ask_for_gold_interaction ai_accept)"
+HOF_GOLD_ACCEPT = ("base -40; his opinion of you x0.5; -50 while you are the attacker of a war on a ruler of your "
+                   "faith (not excommunicated); +30 your offensive holy war, +50 a holy war on you; -25 / -50 / -75 "
+                   "when your gold reaches 3 / 6 / 12 months of treasury income (at least 150 / 225 / 300); -20 a "
+                   "greedy head of faith; your sins -25 to -50, your piety level +5 to +10, kin and friendship +5 "
+                   "to +50, rivals -100; above 0 he accepts")
+HOF_GOLD_RICH = ((150, 3, -25), (225, 6, -50), (300, 12, -75))
+
+
+async def hof_gold_terms(gw, me: Optional[int], hof: Optional[int] = None) -> dict:
+    """The file's acceptance terms with the readable ones put in: his opinion of you, the wars you attack
+    a ruler of your faith in, your gold against the rich bands (from your monthly income: the treasury income is
+    unread). Each unread one says so."""
+    out: dict = {"terms": HOF_GOLD_ACCEPT, "source": HOF_GOLD_SOURCE}
+    if not me:
+        return dict(out, now="unread: no ruler")
+    ch = _char_section(await gw.read("query_character", {"character_id": me}))
+    mine = ch.get("faith_key")
+    wars = await gw.read("query_wars", {"character_id": me})
+    rows = [w for w in _war_rows(wars)] if isinstance(wars, dict) and isinstance(wars.get("wars"), list) else None
+    if rows is None or not mine:
+        out["attacking_your_faith"] = "unread"
+    else:
+        hits = []
+        for w in rows:
+            if _as_int(w.get("primary_attacker")) == me and _as_int(w.get("primary_defender")):
+                d = _char_section(await gw.read("query_character", {"character_id": _as_int(w["primary_defender"])}))
+                if d.get("faith_key") == mine:
+                    hits.append(w.get("war_id"))
+                elif not d.get("faith_key"):
+                    hits.append(f"{w.get('war_id')}: his faith unread")
+        out["attacking_your_faith"] = {"wars": hits, "term": -50 if any(isinstance(h, int) for h in hits) else 0}
+    pu = _dg.purse_of(ch) or {}
+    g, inc = pu.get("gold"), pu.get("monthly_income")
+    if isinstance(g, (int, float)) and isinstance(inc, (int, float)):
+        band = 0
+        for floor, months, term in HOF_GOLD_RICH:
+            if g >= max(floor, months * inc):
+                band = term
+        out["rich"] = {"gold": round(g, 1), "term_if_treasury_income_is_your_income": band}
+    else:
+        out["rich"] = "unread"
+    if hof:
+        op = await gw.read("query_opinion", {"actor_id": hof, "target_id": me})
+        v = op.get("opinion") if isinstance(op, dict) and not op.get("error") else None
+        out["opinion_term"] = round(0.5 * v, 1) if isinstance(v, (int, float)) else "unread"
+    return out
+
+
+def hof_gold_lever(purse: Optional[dict]) -> dict:
+    """The income_levers row for the head of faith's gold, priced from the ruler's purse."""
+    p = purse or {}
+    inc, pi = p.get("monthly_income"), p.get("piety")
+    row = {"lever": "hof_gold",
+           "label": (f"Ask your head of faith for gold: {HOF_GOLD_MONTHS} months of your income (at least "
+                     f"{HOF_GOLD_MIN}) for {HOF_GOLD_PIETY} piety; one ask per 3 years; only a faith with a "
+                     "spiritual head (catholic: the Pope)"),
+           "gold": (round(max(HOF_GOLD_MIN, HOF_GOLD_MONTHS * inc), 1) if isinstance(inc, (int, float)) else
+                    "unknown: no monthly income read"),
+           "piety_cost": HOF_GOLD_PIETY, "piety_have": round(pi, 1) if isinstance(pi, (int, float)) else None,
+           "do_call": {"intent": "interact", "args": {"interaction": "hof_ask_for_gold_interaction",
+                                                      "target_id": "<your head of faith>"}},
+           "head_of_faith": ("the holder of your faith's head title: query(domain='titles', "
+                             "title_id='k_papal_state') for catholic"),
+           "not_checked": "his treasury (he must hold the sum), the 3-year wait, excommunication",
+           # Why he says no (4 accepted of 44 sends in 20 runs); discover acceptance puts in your values
+           "he_accepts_when": HOF_GOLD_ACCEPT,
+           "measured": "the game's AI can make this ask for your ruler: gold in, piety out"}
+    if isinstance(pi, (int, float)) and pi < HOF_GOLD_PIETY:
+        row["blocked"] = why_blocked("insufficient_piety", summary=f"piety {round(pi)} of {HOF_GOLD_PIETY}")
+    return row
+
+
+INCOME_NOT_LEVERS: tuple = (
+    {"lever": "set_obligation", "label": "Raising a vassal's obligations is refused "
+                                         "(raise_requires_negotiation: the game asks the vassal's consent); "
+                                         "lowering them costs income",
+     "do_call": {"intent": "set_obligation", "args": {"vassal_id": "<vassal>", "level": "<lower level>",
+                                                      "obligation": "<obligation>"}},
+     "blocked": {"gate": "target_ineligible", "raw_reason": "raise_requires_negotiation"}},
+    # demand_payment_interaction (00_perk_interactions.txt: the golden_obligations perk, a hook on
+    # the recipient) is not one the bridge sends to a named recipient (DIRECT_DISPATCH_INTERACTIONS): it
+    # would go through the game's AI decision, which picks its own target.
+    {"lever": "demand_payment", "label": ("Demand payment through a hook (needs the golden_obligations perk): the "
+                                          "bridge does not send it to a named recipient, so no call reaches it"),
+     "do_call": {"intent": "interact", "args": {"interaction": "demand_payment_interaction",
+                                                "target_id": "<a ruler you hold a hook on>"}},
+     "blocked": {"gate": "ai_path_no_target", "raw_reason": "not_direct_dispatch"}},
+)
+
+
+#: The interaction a marriage candidate row's do_call sends.
+MARRIAGE_INTERACTION = "arrange_marriage_interaction"
+
+
+#: The most paired candidate rows a marriage listing shows (30 rows were 17 KB live).
+MARRIAGE_ROWS_SHOWN = 10
+#: The most of the ruler's children read for a spouse-to-be on his side.
+MARRIAGE_KIN_READ = 8
+#: The age from which the listing treats a character as marriageable (the bridge's
+#: likely_adult is age >= 16; a younger one is betrothed, which this row does not send).
+MARRIAGE_ADULT_AGE = 16
+#: Finding (live 1066.09.15): the game's send check took no spouse-to-be, so for a marriage it answered
+#: 'No target selected' whatever the pair. The bridge's query_interaction_check now takes the pair
+#: (`pairs`, or secondary_actor_id / secondary_recipient_id), and the listing checks every row with its own.
+MARRIAGE_CHECKED = ("each row passed the game's own send check with its pair (validity, send conditions, his "
+                    "answer, the cost), nothing sent; his answer is his now and he answers again when the offer "
+                    "arrives")
+MARRIAGE_CHECK_UNREAD = ("the game's send check did not answer, so the rows are not judged: a refusal comes back "
+                         "with the game's reason when sent")
+#: The most rows put to the game's check (one query_interaction_check; the bridge takes up to 64). A live game
+#: (1068.01.01) at 16 every checked row answered no and the 14 unchecked rows were dropped unread ("beyond the row
+#: cap"), so the listing was empty; every row the bridge returns (30 by default) is checked now.
+MARRIAGE_ROWS_CHECKED = 48
+#: The age above which a woman's fertility is x0.1 (common/defines/00_defines.txt FEMALE_FERTILITY_MULTIPLIER_LIMITS
+#: { 45 40 35 30 25 }, FEMALE_FERTILITY_MULTIPLIER { 0.1 0.33 0.5 0.7 0.9 1.0 }); a match with her is listed after.
+MARRIAGE_NO_CHILDREN_AGE = 45
+#: The most excluded rows named with their reason (each is also counted in not_listed).
+MARRIAGE_EXCLUDED_SHOWN = 6
+#: 00_marriage_triggers.txt marriage_between_characters_unlocks_alliance_of_min_tier_trigger.
+MARRIAGE_ALLIANCE_RULE = ("an alliance comes only when each side is the ruler or his close family (child, "
+                          "parent, sibling): kin_of_court names it for a courtier; after a send the readback "
+                          "reads query_alliances")
+#: The send check's refusal codes for a marriage, as a player reads them.
+MARRIAGE_REFUSAL_WORDS = {
+    "interaction_not_valid_for_target": "the game does not allow this match",
+    "send_conditions_not_met": "the game will not let you send it now",
+    "target_would_reject": "he would refuse",
+    "send_cost_unaffordable": "you cannot pay what it costs",
+    "target_not_found": "this character no longer exists",
+}
+#: The validity check's stage that said no when the game gave no words (the bridge's
+#: validity_failed_stage, ai_eval_hook.cpp; the stages by the decompile of FUN_06b41a50 / FUN_06b41e70).
+FAILED_CHECK_WORDS = {
+    "is_shown": ("its is_shown check is false for this pair (for a marriage: the one to marry cannot be picked: "
+                 "married with no room for another spouse, betrothed, a trait or faith that bars marriage, a "
+                 "hostage or a prisoner; or the offer goes to someone who is not who decides)"),
+    "actor_or_recipient_unavailable": "you or the recipient is not available (dead, or not a valid character)",
+    "hardcoded": ("its fixed checks said no (a cooldown after a recent offer, a relation or hostility block, "
+                  "or the interaction's own data check)"),
+    "is_valid_showing_failures_only": "its is_valid_showing_failures_only check is false (it gave no words)",
+    "is_valid": "its is_valid check is false (it gave no words)",
+    "unattributed": "every stage the bridge can call passes (an offer of the same kind already pending?)",
+    "unread": "the bridge could not read which check said no on this build",
+    "ai_accept": "the recipient's answer is no",
+}
+
+
+#: Traits with flag can_not_marry (common/traits/00_traits.txt: eunuch_1, beardless_eunuch, devoted,
+#: order_member); the game's marriage offer refuses a holder ("belongs to the clergy").
+CAN_NOT_MARRY_TRAITS = frozenset({"devoted", "order_member", "eunuch_1", "beardless_eunuch"})
+
+
+#: (nine marriage sends, none accepted; three named no interaction at all and four were
+#: refused "the game gives no detail"): who the game's marriage offer is sent to and what it refuses, from
+#: common/character_interactions/00_marriage_interactions.txt (is_shown / is_valid_showing_failures_only).
+MARRIAGE_RULE = ("arrange_marriage_interaction goes to the one who decides the match: the candidate himself when "
+                 "he is a ruler (target_id = secondary_recipient_id = his id), else the ruler whose court he is "
+                 "in (target_id = that ruler, secondary_recipient_id = the candidate); secondary_actor_id is you or "
+                 "your unmarried child. The game refuses a prisoner, the clergy and a holy order (devoted, "
+                 "order_member), a eunuch, either side married, and a recipient you are at war with")
+#: (1078.02.03: three of four marriage sends refused "Mayor X's Government Is unplayable", each a
+#: row of the listing): 00_marriage_interactions.txt has_valid_target_showing_failures_only bars an AI actor that is not
+#: a republic from a recipient whose government carries government_is_republic (republic_government only,
+#: 00_government_types.txt), and a seat's ruler is an AI ruler. The bridge's scan drops those rows (skip_republics).
+MARRIAGE_REPUBLIC_WHY = ("a republic's ruler (a mayor): the game bars an AI-run ruler, as yours is, from marrying one "
+                         "unless he is a republic himself")
+MARRIAGE_REPUBLIC_UNFILTERED = ("not filtered: this bridge's listing does not read government, and the game refuses "
+                                "a republic's ruler (a mayor) for your ruler")
+MARRIAGE_LISTING_CALL = {"tool": "query", "args": {"domain": "marriage_candidates"},
+                         "read": "each row's do_call is a pair the listing's own reads allow (sex, age, both "
+                                 "unmarried, not imprisoned, no trait that cannot marry)"}
+
+
+def _explain_marriage_refusal(env: dict, args: dict) -> None:
+    """A refused marriage send names who the offer goes to and the listing of pairs it allows; a name
+    that is no interaction names the marriage interaction."""
+    if not isinstance(env, dict) or env.get("verdict") != "rejected":
+        return
+    name = str(args.get("interaction") or args.get("interaction_type") or "")
+    blk = env.get("blocked") if isinstance(env.get("blocked"), dict) else None
+    if blk is None:
+        return
+    if name == MARRIAGE_INTERACTION:
+        blk["marriage_rule"] = MARRIAGE_RULE
+        blk["who_can_be_asked"] = MARRIAGE_LISTING_CALL  # The listing allows a pair; it does not say he accepts
+    elif blk.get("raw_reason") == "interaction_not_found" and ("marr" in name or "betroth" in name):
+        blk["did_you_mean"] = MARRIAGE_INTERACTION
+        blk["marriage_rule"] = MARRIAGE_RULE
+
+
+async def marriage_refusal_reads(env: dict, args: dict, read) -> None:
+    """A refused marriage send names what the reads show bars the pair.
+
+    c: 8 sends paired the ruler's sons with two women of his court,
+    each refused "the game gives no detail"; both women were the ruler's own wives
+    (query_character 31762 spouses [50191, 47793]; 50191 the mother of 15611). The game's
+    is_shown (marriage_interaction_can_be_picked_trigger on the secondary recipient) says no
+    and gives no words. This reads the two to marry (query_character) and lists under
+    `blocked.pair_bars` each condition of the game's marriage triggers the reads show
+    failing (married, betrothed elsewhere, a prisoner, a trait that cannot marry, the same
+    sex, the spouse of the other's parent), with the ids read; `pair_bars_read` is what was
+    read when none shows (the game's own check decides then: faith, kinship, cooldowns)."""
+    if not isinstance(env, dict) or env.get("verdict") != "rejected":
+        return
+    if str(args.get("interaction") or args.get("interaction_type") or "") != MARRIAGE_INTERACTION:
+        return
+    blk = env.get("blocked") if isinstance(env.get("blocked"), dict) else None
+    sa, sr = _as_int(args.get("secondary_actor_id")), _as_int(args.get("secondary_recipient_id"))
+    if blk is None or not sa or not sr or blk.get("gate") in ("recipient_refuses",):
+        return
+    people = {}
+    for cid in (sa, sr):
+        try:
+            got = await read("query_character", {"character_id": cid})
+        except Exception:                                   # noqa: BLE001
+            got = None
+        people[cid] = got if isinstance(got, dict) and got.get("id") is not None else {}
+    bars, seen = [], []
+    for me_, other in ((sa, sr), (sr, sa)):
+        p, o = people[me_], people[other]
+        if not p:
+            continue
+        seen.append(me_)
+        if p.get("alive") is False:
+            # A dead character first, and alone: his spouses and traits are a corpse's (one read said "married")
+            seen_on = _news.death_seen(me_)
+            bars.insert(0, f"{me_} is dead (query_character alive=false; {DEATH_DATE_UNREAD}"
+                           + (f"; your news read him dead on {seen_on}" if seen_on else "") + ")")
+            continue
+        wives = [_as_int(x.get("id")) for x in (p.get("spouses") or []) if isinstance(x, dict)
+                 and x.get("alive") is not False]
+        if wives:
+            parents = {_as_int(o.get("father_id")), _as_int(o.get("mother_id"))} - {0}
+            kin = [w for w in wives if w in parents]
+            bars.append(f"{me_} is married (spouses {wives})"
+                        + (f", the spouse of {kin[0]}, a parent of {other}" if kin else
+                           "; another spouse only if the faith allows more"))
+        bet = _betrothed_to(p)
+        if bet and bet != other:
+            bars.append(f"{me_} is betrothed to {bet}")
+        if p.get("is_imprisoned") is True:
+            bars.append(f"{me_} is imprisoned")
+        barred = sorted(_trait_names_of(p) & CAN_NOT_MARRY_TRAITS)
+        if barred:
+            bars.append(f"{me_} has a trait that cannot marry ({', '.join(barred)})")
+    # the other's parents: a parent, or a parent's spouse (the 8 c sends: the son's father's wives)
+    for me_, other in ((sa, sr), (sr, sa)):
+        for rel, par in (("father", _as_int(people[me_].get("father_id"))),
+                         ("mother", _as_int(people[me_].get("mother_id")))):
+            if not par:
+                continue
+            if par == other:
+                bars.append(f"{other} is the {rel} of {me_}")
+                continue
+            if par not in people:
+                try:
+                    got = await read("query_character", {"character_id": par})
+                except Exception:                           # noqa: BLE001
+                    got = None
+                people[par] = got if isinstance(got, dict) and got.get("id") is not None else {}
+            wives = [_as_int(x.get("id")) for x in (people[par].get("spouses") or []) if isinstance(x, dict)
+                     and x.get("alive") is not False]
+            if other in wives:
+                bars.append(f"{other} is a spouse of {par}, the {rel} of {me_}")
+    a, b = people[sa], people[sr]
+    if isinstance(a.get("is_female"), bool) and a.get("is_female") is b.get("is_female"):
+        bars.append(f"{sa} and {sr} are of the same sex")
+    if bars:
+        blk["pair_bars"] = list(dict.fromkeys(bars))
+    elif seen:
+        blk["pair_bars_read"] = (f"read {seen}: unmarried, unbetrothed, free, no trait that cannot marry, two sexes; "
+                                 "the game's own check said no on what these reads do not show (faith, kinship, "
+                                 "a recent offer's cooldown, range)")
+
+
+def _trait_names_of(p: dict) -> set:
+    out = set()
+    for t in p.get("traits") or []:
+        n = t.get("name") if isinstance(t, dict) else t
+        if isinstance(n, str):
+            out.add(n)
+    return out
+
+
+def _betrothed_to(p: dict) -> int:
+    """The id a profile is betrothed to, 0 when none or not read."""
+    b = p.get("betrothed") if isinstance(p, dict) else None
+    return _as_int(b.get("id")) if isinstance(b, dict) else _as_int(b)
+
+
+def _living_spouse(p: dict) -> bool:
+    sp = p.get("spouses")
+    if isinstance(sp, list):
+        return any(isinstance(x, dict) and x.get("alive") is not False for x in sp)
+    return bool(_as_int(p.get("spouse_id")))
+
+
+async def marriage_rows(reply: Any, read) -> Any:
+    """query_marriage_candidates' rows, each paired with a spouse-to-be on your side and
+    judged by the game itself.
+
+    The bridge's rows are unmarried, unbetrothed rulers in range and (include_courtiers)
+    the kin of a foreign ruler living at his court (`court_of`: the offer goes to that
+    ruler). Every row's do_call married Murchad, himself married,
+    to the ruler, Svend first, a man. `read` (an async (action, params) -> reply) reads
+    the ruler, his children and each listed candidate (query_character: is_female, age,
+    spouses, betrothed), and a row gets a pair the fields allow: both unmarried and
+    unbetrothed, of the two sexes, yours being the ruler or one of his children; two of
+    age marry, a child is betrothed (the same interaction; 00_marriage_triggers.txt
+    marriage_interaction_valid_target_trigger). The rest are counted by why under
+    `not_listed`.
+
+    Then each paired row is put to the game's own send check with its pair
+    (query_interaction_check `pairs`, nothing sent): a row the game would refuse, or whose
+    recipient answers no, leaves the list for `not_listed` and `excluded` with the game's
+    reason; a listed row carries `game` {answer, accept_score}. Two marriage checks:
+    the 34 rows of the old listing all answered no (landed rulers); the check now says so
+    before a send."""
+    if not isinstance(reply, dict) or not isinstance(reply.get("candidates"), list):
+        return reply
+
+    async def profile(cid: int) -> dict:
+        try:
+            got = await read("query_character", {"character_id": cid})
+        except Exception:                                   # noqa: BLE001
+            got = None
+        return got if isinstance(got, dict) and got.get("id") is not None else {}
+
+    me = _as_int(reply.get("actor_id"))
+    mine = await profile(me) if me else {}
+    side, minors, why_none = [], [], []
+    if not mine:
+        why_none.append("your ruler's profile was not read")
+    elif _living_spouse(mine):
+        why_none.append(f"you are married (spouse {mine.get('spouse_id')})")
+    elif _as_int(mine.get("age")) < MARRIAGE_ADULT_AGE:
+        why_none.append("you are under age")
+    else:
+        side.append({"id": me, "name": mine.get("name"), "relation": "you",
+                     "female": mine.get("is_female"), "age": mine.get("age"),
+                     "dyn": _hd.label(mine.get("dynasty_name"), mine.get("dynasty_id"))})
+    for kid in [k for k in (mine.get("children") or []) if _as_int(k)][:MARRIAGE_KIN_READ]:
+        p = await profile(_as_int(kid))
+        if (p and p.get("alive") is not False and not _living_spouse(p) and not _betrothed_to(p)
+                and isinstance(p.get("is_female"), bool)):
+            y = {"id": _as_int(kid), "name": p.get("name"), "relation": "your child",
+                 "female": p.get("is_female"), "age": p.get("age"),
+                 "dyn": _hd.label(p.get("dynasty_name"), p.get("dynasty_id"))}
+            (side if _as_int(p.get("age")) >= MARRIAGE_ADULT_AGE else minors).append(y)
+    rows: list = []
+    not_listed: dict = {}
+
+    def skip(why: str) -> None:
+        not_listed[why] = not_listed.get(why, 0) + 1
+
+    sexes = {y["female"] for y in side + minors if isinstance(y.get("female"), bool)}
+    sex_read = None
+    if len(sexes) == 1 and reply.get("sex") is None and me:
+        # (1083.08.24, 1084.07.29: 266 and 2,900 matched, the ten rows the bridge returned were
+        # all men and a male seat was paired with none): the bridge's scan keeps the other sex only
+        want = "male" if sexes.pop() else "female"
+        again_p = {"character_id": me, "sort": reply.get("sort") or "military", "sex": want, "skip_republics": 1,
+                   "max_results": max(len(reply["candidates"]), MARRIAGE_ROWS_SHOWN),
+                   "require_in_range": bool(reply.get("require_in_range", True))}
+        if reply.get("include_courtiers"):
+            again_p.update(include_courtiers=1, kin_only=1 if reply.get("kin_only") else 0)
+        try:
+            again = await read("query_marriage_candidates", again_p)
+        except Exception:                                   # noqa: BLE001
+            again = None
+        if isinstance(again, dict) and again.get("sex") == want and isinstance(again.get("candidates"), list):
+            reply = dict(again, request_id=reply.get("request_id"))
+            sex_read = want
+        else:
+            sex_read = "not filtered: this bridge's listing does not filter by sex"
+
+    for c in reply["candidates"]:
+        cid = _as_int((c or {}).get("id")) if isinstance(c, dict) else 0
+        if not cid:
+            skip("no character id")
+            continue
+        if len(rows) >= MARRIAGE_ROWS_CHECKED:
+            skip("beyond the row cap")
+            continue
+        if c.get("has_spouse") is True:
+            skip("married")
+            continue
+        adult = _as_int(c.get("age")) >= MARRIAGE_ADULT_AGE
+        if not side and not minors:
+            skip("no unmarried adult on your side")
+            continue
+        p = await profile(cid)
+        if p.get("alive") is False or (p and _living_spouse(p)):
+            skip("married")
+            continue
+        if _betrothed_to(p):
+            skip("betrothed")
+            continue
+        if not isinstance(p.get("is_female"), bool):
+            skip("sex not read")
+            continue
+        #
+        # the game's own refusals the listing can see before a send (00_marriage_interactions.txt is_imprisoned = no;
+        # 00_traits.txt flag can_not_marry)
+        if p.get("is_imprisoned") is True:
+            skip("imprisoned (the game refuses a marriage offer to a prisoner)")
+            continue
+        barred = sorted(_trait_names_of(p) & CAN_NOT_MARRY_TRAITS)
+        if barred:
+            skip("a trait that cannot marry (" + ", ".join(barred) + "): the clergy, a holy order, a eunuch")
+            continue
+        other = [y for y in side + minors if y["female"] is not p["is_female"]]
+        if adult:
+            pool = [y for y in other if y in side] or [y for y in other if y in minors]
+        else:
+            pool = [y for y in other if y in minors]
+            if not pool:
+                skip("under age")
+                continue
+        if not pool:
+            skip("no unmarried adult of the other sex on your side")
+            continue
+        yours = min(pool, key=lambda y: abs(_as_int(y.get("age")) - _as_int(c.get("age"))))
+        court = _as_int(c.get("court_of"))
+        target = court or cid
+        row = {"id": cid, "name": p.get("name") or c.get("name") or c.get("name_key"),
+               "female": p["is_female"], "age": c.get("age"), "tier": c.get("tier"),
+               "realm_size": c.get("realm_size"), "military": c.get("military"),
+               "distance": c.get("distance"),
+               "tie": "marriage" if adult and yours in side else "betrothal",
+               "pair": {k: yours[k] for k in ("id", "name", "relation", "age")},
+               "do_call": {"tool": "do", "args": {"intent": "interact", "args": {
+                   "interaction": MARRIAGE_INTERACTION, "target_id": target,
+                   "secondary_actor_id": yours["id"], "secondary_recipient_id": cid}}}}
+        # The do_call sends no send_options, so the match is patrilineal: the children are the father's
+        # dynasty. With your side the bride, they are HIS; send_options ['matrilineal'] keeps them yours (the
+        # game's answer then changes: discover acceptance reads it)
+        row["matrilineal"] = False
+        if yours.get("female") is True:
+            row["children_of"] = (f"his dynasty {_hd.label(p.get('dynasty_name'), p.get('dynasty_id'))}; "
+                                  f"send_options ['matrilineal'] makes them hers ({yours.get('dyn')})")
+        else:
+            row["children_of"] = f"his dynasty {yours.get('dyn')}"
+        if court:
+            row["court_of"] = court
+            row["kin_of_court"] = c.get("kin_of_court") or None
+        #
+        # a match whose woman is past 45 is unlikely to bring an heir; listed after the others, and said so
+        her_age = _as_int(c.get("age")) if p["is_female"] else _as_int(yours.get("age"))
+        if her_age > MARRIAGE_NO_CHILDREN_AGE:
+            row["no_children"] = f"she is {her_age}: fertility x0.1 above 45, few or no children of this match"
+        rows.append(row)
+    rows, excluded, checked = await _marriage_rows_checked(rows, me, read, skip)
+    if _as_int(reply.get("skipped_republics")) > 0:
+        not_listed[MARRIAGE_REPUBLIC_WHY] = _as_int(reply.get("skipped_republics"))
+    if _as_int(reply.get("skipped_betrothed")) > 0:
+        not_listed["betrothed"] = not_listed.get("betrothed", 0) + _as_int(reply.get("skipped_betrothed"))
+    out = {k: v for k, v in reply.items() if k not in ("candidates", "note", "skipped_republics",
+                                                       "republics_not_skipped", "skipped_betrothed")}
+    if "skipped_republics" not in reply:
+        out["republics"] = (str(reply["republics_not_skipped"]) if reply.get("republics_not_skipped")
+                            else MARRIAGE_REPUBLIC_UNFILTERED)
+    out.update(candidates=rows, not_listed=not_listed,
+               your_side=[{k: y[k] for k in ("id", "name", "relation", "female", "age")} for y in side],
+               check=MARRIAGE_CHECKED if checked else MARRIAGE_CHECK_UNREAD,
+               alliance=MARRIAGE_ALLIANCE_RULE)
+    if minors:
+        out["betrothal_side"] = [{k: y[k] for k in ("id", "name", "female", "age")} for y in minors]
+    if excluded:
+        out["excluded"] = excluded
+    if sex_read:
+        out["sex"] = sex_read
+    if not side and not minors:
+        out["your_side_empty"] = "; ".join(why_none + [
+            f"no unmarried child among the {min(len(mine.get('children') or []), MARRIAGE_KIN_READ)} read"])
+    out["faith_and_kinship"] = ("applied by the game's check of each row" if checked else
+                                "not applied by this listing (the game applies them when the offer is sent)")
+    return out
+
+
+async def _marriage_rows_checked(rows: list, me: int, read, skip) -> tuple:
+    """The paired rows put to the game's send check with their pairs (one
+    query_interaction_check, nothing sent). Returns (rows listed, excluded, checked): a
+    row the game refuses or whose recipient answers no is counted under its reason and
+    named in `excluded` (at most MARRIAGE_EXCLUDED_SHOWN); the rest are listed best
+    answer first, with `game`. A check that did not answer lists the rows unjudged
+    (checked False): never a refusal nobody read."""
+    def unjudged() -> tuple:
+        for _ in rows[MARRIAGE_ROWS_SHOWN:]:
+            skip("beyond the row cap")
+        return rows[:MARRIAGE_ROWS_SHOWN], [], False
+    if not rows or not me:
+        return unjudged()
+    pairs = [{"target_id": r["do_call"]["args"]["args"]["target_id"], "secondary_actor_id": r["pair"]["id"],
+              "secondary_recipient_id": r["id"]} for r in rows]
+    try:
+        res = await read("query_interaction_check", {"actor_id": me, "interaction_type": MARRIAGE_INTERACTION,
+                                                     "pairs": pairs})
+    except Exception:                                       # noqa: BLE001
+        res = None
+    got = ((res.get("result") or {}).get("results") or []) if isinstance(res, dict) else []
+    by = {(_as_int(g.get("target_id")), _as_int(g.get("secondary_recipient_id"))): g
+          for g in got if isinstance(g, dict)}
+    if not by:
+        return unjudged()
+    listed, excluded = [], []
+    for r in rows:
+        g = by.get((pairs[rows.index(r)]["target_id"], r["id"]))
+        if g is None:
+            r["game"] = {"unread": "the game's check gave no row for this pair"}
+            listed.append(r)
+            continue
+        why = marriage_check_refusal(g)
+        if why:
+            skip(why.split(":")[0])
+            if len(excluded) < MARRIAGE_EXCLUDED_SHOWN:
+                excluded.append({"id": r["id"], "pair": r["pair"]["id"], "why": why})
+            continue
+        r["game"] = {k: g[k] for k in ("answer", "accept_score") if k in g}
+        chance = _maybe_chance_pct(g)
+        if chance is not None:
+            r["game"]["chance_pct"] = chance
+        listed.append(r)
+    rank = {"yes": 0, "maybe": 1}
+    listed.sort(key=lambda r: (rank.get((r.get("game") or {}).get("answer"), 2), "no_children" in r,
+                               -float((r.get("game") or {}).get("accept_score") or 0)))
+    for _ in listed[MARRIAGE_ROWS_SHOWN:]:
+        skip("beyond the row cap")
+    return listed[:MARRIAGE_ROWS_SHOWN], excluded, True
+
+
+def marriage_check_refusal(g: dict) -> str:
+    """The reason a send check's row says the game would not take this match ("" when
+    it would): the refusal code in words with the game's own sentence, the stage of the
+    validity check that said no when the game gave none (failed_check), or his "no"
+    with the ai_accept sum."""
+    if g.get("sendable") is not True:
+        code = str(g.get("refused_by") or "unknown")
+        said = MARRIAGE_REFUSAL_WORDS.get(code, f"the game's check refused it ({code})")
+        detail = g.get("engine_reason") or FAILED_CHECK_WORDS.get(str(g.get("failed_check") or ""), "")
+        return f"{said}: {detail}" if detail else said
+    if g.get("answer") == "no":
+        score = g.get("accept_score")
+        text = g.get("answer_text")
+        return ("he would refuse: ai_accept " + (f"{score}" if score is not None else "unread")
+                + (f" ({text})" if text else ""))
+    return ""
+
+
+#: What observe's `military` reports, read from query_levy_readiness
+#: (query_handlers.cpp do_query_levy_readiness).
+MILITARY_UNIT = ("the game's soldier-strength figure (the number the game compares "
+                 "between armies), not a head count")
+
+
+def military_block(levy: Any) -> dict[str, Any]:
+    """observe's `military`: levies and men-at-arms. Men-at-arms are the regiments
+    whose type is not 'levy'; their men are summed from each regiment's `current`."""
+    if not isinstance(levy, dict) or "military_current" not in levy:
+        return {"unread": "query_levy_readiness did not answer"}
+    regs = [r for r in (levy.get("regiments") or []) if isinstance(r, dict)]
+    maa = [r for r in regs if r.get("type") not in (None, "levy")]
+    return {"strength": levy.get("military_current"), "strength_max": levy.get("military_max"),
+            "levy_own_domain_max": levy.get("levy_own_domain_max"),
+            "men_at_arms_regiments": len(maa),
+            "men_at_arms_men": sum(_as_int(r.get("current")) for r in maa),
+            "men_at_arms_by_type": sorted({str(r.get("type")) for r in maa}),
+            "unit": MILITARY_UNIT,
+            "who_commands": ("the game's AI raises and leads your armies; you set the war "
+                             "(declare_war, plan_war), the posture (set_phase) and the "
+                             "men-at-arms you recruit (do intent men_at_arms)")}
 
 
 def observe_read_failures(reads: list, replies: list) -> list:
@@ -2133,6 +3472,97 @@ def observe_read_failures(reads: list, replies: list) -> list:
     return out
 
 
+#: requested character id -> the fabricate_targets `within` the last full observe named
+_NEWS_WITHIN: dict = {}
+
+#: observe(depth="news")'s reads: the ones news.snapshot diffs, in one span.
+_NEWS_READS = ("get_active_wars", "query_character", "query_title_succession_map",
+               "query_succession_simulation", "query_succession", "query_title_hierarchy",
+               "query_realm", "query_claims", "query_council", "query_schemes", "query_council_tasks",
+               # A realm law passed (prestige), the alliances (idle)
+               "query_realm_laws", "query_alliances",
+               # The factions aimed at the ruler and the demands answered
+               "query_faction_threat")
+
+
+async def liege_factions_of(gw, chr_sect: dict) -> Any:
+    """query_factions on the ruler's liege (the factions aimed at the liege, with their member
+    ids), for news' factions_you_are_in; faction_letters.NO_LIEGE for an independent ruler (liege 0, nothing read);
+    None when the character read gave no liege id. Built, not proven live on a vassal's observe."""
+    import faction_letters as _fl  # noqa: PLC0415
+    if not isinstance(chr_sect, dict) or "liege_id" not in chr_sect:
+        return None
+    liege = _as_int(chr_sect.get("liege_id"))
+    if not liege:
+        return _fl.NO_LIEGE
+    try:
+        rep = await gw.read("query_factions", {"character_id": liege})
+    except Exception:  # noqa: BLE001 - a read that raised is a read that did not answer
+        return None
+    return rep if isinstance(rep, dict) else None
+
+
+async def head_and_overliege(gw, chr_sect: dict) -> dict:
+    """What news diffs for the dynasty headship and a liege change: the head of the ruler's dynasty
+    (query_dynasty by its id, as succession_plan's disinherit row reads it) and his liege's own liege. A read
+    that did not answer is None (no row is made from it)."""
+    out: dict = {"dynasty_head": None, "liege_of_liege": None}
+    dyn_id, liege = _as_int(chr_sect.get("dynasty_id")), _as_int(chr_sect.get("liege_id"))
+    try:
+        if dyn_id:
+            d = await gw.read("query_dynasty", {"dynasty_id": dyn_id, "character_id": _as_int(chr_sect.get("id"))})
+            out["dynasty_head"] = _as_int((d or {}).get("head_character_id")) if isinstance(d, dict) else None
+        if liege:
+            c = _char_section(await gw.read("query_character", {"character_id": liege}) or {})
+            out["liege_of_liege"] = _as_int(c.get("liege_id")) if c else None
+    except Exception:  # noqa: BLE001 - a read that raised did not answer
+        pass
+    return {k: (v or None) for k, v in out.items()}
+
+
+async def _observe_news(gw, character_id: int, actor: Optional[dict]) -> dict[str, Any]:
+    """observe(depth="news"): only the news block, compact (news.compact),
+    diffed against the last depth="news" read of this server (news baseline "turn"),
+    so the seat's own observe news is not moved. For a caller that hands the seat its
+    news once per turn (a harness environment). It reads what news diffs and nothing
+    else: no de-jure meters, no `since` records (their baseline stays the seat's)."""
+    got = await gw.read_many([(a, {"character_id": character_id}) for a in _NEWS_READS])
+    (wars, chr_, sp_raw, sim_raw, succ_raw, hier, realm, claims_raw, council_raw, schemes_raw,
+     tasks_raw, laws_raw, allies_raw, ft_raw) = [x if isinstance(x, dict) else None for x in got]
+    errors = []
+    failed = observe_read_failures(list((a, {}) for a in _NEWS_READS), got)
+    if failed and len(failed) == len(_NEWS_READS):
+        errors.append({"code": OBSERVE_BRIDGE_UNANSWERED, "detail": "the bridge answered none of the news reads"})
+    chr_sect = _char_section(chr_ or {})
+    msum = succession_verdict.map_summary(sp_raw or {})
+    sv = succession_verdict.verdict(sim_raw, succ_raw, msum)
+    fc, _kids = await partition_forecast_for(gw, chr_sect, _law_names(laws_raw), sv, sim_raw,
+                                         map_titles=msum.get("titles"))
+    sv = _pf.apply(sv, fc)
+    risk = await line_risk_for(gw, chr_sect, sv["primary"])
+    actor_id = _as_int((actor or {}).get("id")) or character_id
+    ev_raw, bud_raw, veto_raw = await _seat_events.news_reads(gw, actor_id)
+    block = await _news.block(
+        gw, character_id,
+        _news.snapshot(actor_id=actor_id, date=(gw.game() or {}).get("date"), chr_sect=chr_sect,
+                       armies=await gw.read("query_armies", {"character_id": actor_id}),
+                       wars=wars or {}, claims=claims_raw or {}, council=council_raw,
+                       heir=sv["primary"] if sv["primary"] else None, schemes=schemes_raw,
+                       held=hier if hierarchy_was_read(hier, realm or {}) else None,
+                       council_tasks=council_task_seats(tasks_raw), laws=laws_raw, alliances=allies_raw,
+                       event_rules=ev_raw, ai_budget=bud_raw, ai_veto=veto_raw, faction_threat=ft_raw,
+                       legitimacy=await legitimacy_of(gw, actor_id),
+                       chaplain_learning=await _news.chaplain_learning(gw, council_raw), realm=realm,
+                       split=_forecast_brief(fc) if fc.get("partition") or fc.get("refused") else None,
+                       truces=await _truces.truce_map(gw, actor_id),
+                       liege_factions=await liege_factions_of(gw, chr_sect), line_risk=risk,
+                       **(await head_and_overliege(gw, chr_sect))),
+        offers_served=_proposals.declared(), fabricate_within=_NEWS_WITHIN.get(character_id),
+        baseline="turn")
+    return envelope("observe", result={"depth": "news", "news": _news.compact(block)}, actor=actor,
+                    game=gw.game(), errors=errors, bridge_health=gw.health)
+
+
 async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
                        facts_out: Optional[dict] = None) -> dict[str, Any]:
     if depth not in OBSERVE_DEPTHS:
@@ -2143,6 +3573,8 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     actor, err = await _resolve_actor(gw, character_id, "observe")
     if err:
         return err
+    if depth == "news":
+        return await _observe_news(gw, character_id, actor)
 
     warnings: list = []
     errors: list = []
@@ -2150,7 +3582,7 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     # DE-JURE COUNTY COUNTS, for the titles THIS SEAT HOLDS. query_dejure_progress
     # is the meter; both reads go out together through _dejure_pair.
     #
-    # deploy-51: the two keys were the LITERALS "k_ireland" and
+    # the two keys were the LITERALS "k_ireland" and
     # "e_britannia" — the previous project's objective, shown to every seat in
     # every arm whatever it held. They now come from `dejure_keys_for`, and when
     # it yields nothing the block says so instead of falling back to a guess.
@@ -2166,15 +3598,30 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         ("query_succession",           {"character_id": character_id}),
         # `get_ai_personality` was a span of its own on EVERY call,
         # 150 lines below. 93% of observe calls are depth="brief" (539 of
-        # 582 over d45-d50), so it was on the hot path every time. Its params
+        # 582 over the recorded episodes), so it was on the hot path every time. Its params
         # are built from this function's argument and nothing between here and
         # its old site consumed `pers` — read, not assumed.
         ("get_ai_personality",         {"character_id": character_id}),
         # The held titles for the second de-jure meter (dejure_keys_for).
         ("query_title_hierarchy",      {"character_id": character_id}),
+        # The seat's claims and council for `news`, its levies and
+        # men-at-arms for `military`. Same span; a failure of one of these three is
+        # stated in its own section, not in the read-failure warning below.
+        ("query_claims",               {"character_id": character_id}),
+        ("query_council",              {"character_id": character_id}),
+        ("query_levy_readiness",       {"character_id": character_id}),
+        # The seat's schemes, so news can say one ended.
+        ("query_schemes",              {"character_id": character_id}),
+        # The council tasks' targets, so news can say a fabrication runs or stopped
+        ("query_council_tasks",        {"character_id": character_id}),
+        # A realm law passed (prestige), the alliances (idle)
+        ("query_realm_laws",           {"character_id": character_id}),
+        ("query_alliances",            {"character_id": character_id}),
     ])
-    realm, ft, wars, chr, sp_raw, sim_raw, succ_raw, pers, hier = _batch
-    # (carried defect: SMOKE6, `observe returns ok=True during a 93 s
+    (realm, ft, wars, chr, sp_raw, sim_raw, succ_raw, pers, hier, claims_raw, council_raw, levy_raw,
+     schemes_raw, tasks_raw, laws_raw, allies_raw) = _batch
+    _batch, _reads = _batch[:9], _reads[:9]
+    # (A carried defect: `observe returns ok=True during a 93 s
     # stall`, the game process stopped): a read the bridge did not answer comes
     # back `{}` from the gateway (BridgeGateway._dispatch on a timeout), and every
     # guard below reads `{}` as "absent", so a stalled bridge produced an ok
@@ -2202,7 +3649,7 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
 
     # ── THE KEYS COME OUT OF THE BATCH ABOVE, NOT A READ OF THEIR OWN
     #
-    # left this read for me to subsume and said so: its fix needed
+    # This read was left to be subsumed here: its fix needed
     # `query_realm` to derive the held-title keys, and `query_realm` was ALREADY
     # in the batch — so the shipped shape paid a span for a reply it already
     # had. The batch is simply lifted above the meter block; nothing between the
@@ -2215,7 +3662,7 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     _UNAVAIL_ONE = {"title": None, "have": None, "need": None, "total": None,
                     "fraction": None, "met": False,
                     "unavailable": "this seat holds only one resolvable title"}
-    # /n6: a FAILED or CLAMPED held-titles read is not a count. Only
+    # Witness m3/n6: a FAILED or CLAMPED held-titles read is not a count. Only
     # a reply that carries `held_titles` (do_query_title_hierarchy), non-empty
     # whenever query_realm counts titles, says what the seat holds; otherwise
     # nobody looked, and the block says that instead of "only one".
@@ -2237,21 +3684,21 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         sub_goal = (await _dejure_pair(gw, character_id, (_dj_keys[0],)))[0]
         empire = dict(_UNAVAIL_ONE)
     else:
-        # NO FALLBACK LITERAL, which is rule and the reason the
+        # NO FALLBACK LITERAL, which is the rule and the reason the
         # objective got in: an undetermined set reports unavailable.
         sub_goal, empire = dict(_UNAVAIL_NONE), dict(_UNAVAIL_NONE)
     sub_goal = sub_goal if isinstance(sub_goal, dict) else {}
     empire = empire if isinstance(empire, dict) else {}
 
-    def _goal_block(g, need_frac=0.51):
+    def _goal_block(g):
         if g.get("unavailable"):
             # No title to measure: say why, and carry no counts (a 0 would read
             # as "you hold none of it").
             return dict(g)
         total = _as_int(g.get("total"))
         held = _as_int(g.get("held"))
-        need = -(-int(total * need_frac) // 1) if total else 0  # ceil
-        need = int(total * need_frac + 0.999) if total else 0
+        # The game's share for the title's tier (an empire more than 80%), not one fraction for all
+        need = dejure_need(total, title_tier_of_key(g.get("title_key")))
         return {"title": g.get("title_key"), "have": held, "need": need,
                 "total": total, "fraction": round(_f(g.get("fraction")), 3),
                 "met": held >= need and total > 0}
@@ -2269,7 +3716,7 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     #
     # Same discipline as on the meter lane: phase by what is actually
     # dependent, not by the order someone wrote the lines in.
-    # timed the shipped version at ~3 spans and found why: the
+    # A measurement timed the shipped version at ~3 spans and found why: the
     # succession-map read sat OUTSIDE this batch, on its own. VERIFIED before
     # moving it rather than assumed — its params are
     # {"character_id": character_id}, built from this function's argument and
@@ -2290,14 +3737,14 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
 
     # ── THE MONEY, AND WHAT IT CANNOT SAY ──────────────────────────
     #
-    # MEASURED over d45-d50, 1,983 observations carrying `income_breakdown`:
+    # MEASURED over the recorded episodes, 1,983 observations carrying `income_breakdown`:
     #   1,952 (98.4%)  EVERY component is zero -- gross_domain, net_domain,
     #                  total_expenses and net_gold -- while `total_monthly`
     #                  carries a real number. The seat is shown a breakdown
     #                  that breaks nothing down, and four zeros read as "no
     #                  expenses" rather than as "not populated".
     #      761 (38%)   `income_breakdown.total_monthly` DISAGREED with
-    #                  `monthly_income`. found why: query_character's
+    #                  `monthly_income`, because query_character's
     #                  `monthly_income` was core_data+0x170, the MERIT stock (loc
     #                  key TOTAL_MERIT; re/findings/re_core_data_merit_not_income.md),
     #                  not income at all. The bridge now emits it as `merit`, and
@@ -2332,26 +3779,27 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         money["breakdown_absent"] = (
             "income_breakdown was present but every component "
             f"({', '.join(_components)}) was zero — unpopulated, not a realm "
-            "with no costs. Measured on 98.4% of 1,983 observations across "
-            "d45-d50.")
+            "with no costs: nearly every reading has every component zero.")
     else:
         money["breakdown"] = {k: round(_f(_bd.get(k)), 2) for k in _populated}
         money["breakdown_partial"] = sorted(set(_components) - set(_populated))
     money["expenses"] = None
-    # The hub asked for this sentence to live IN THE REPLY, not only in a
-    # commit message, so a seat cannot read the absence as zero spending.
+    # This sentence lives IN THE REPLY, so a seat cannot read the absence as
+    # zero spending.
     money["expenses_absent"] = (
         "NO EXPENSE FIGURE EXISTS IN THIS DATA — this is not a statement that "
-        "spending is zero. total_expenses was 0 in every one of 1,983 "
-        "observations measured across d45-d50, i.e. unpopulated rather than "
+        "spending is zero. total_expenses reads 0 in every reading, "
+        "i.e. unpopulated rather than "
         "measured, so income minus expenses cannot be computed and is not "
         "guessed at here. Treat your balance as unknown on the expense side.")
     stress = _f(chr_sect.get("stress"))
-    faction_max = max([_f(x.get("power_pct_of_liege")) for x in (ft.get("factions") or [])], default=0.0)
+    import faction_letters as _fl  # noqa: PLC0415 - the one faction power (the game's, threshold 80)
+    faction_max = max([_fl.faction_power(x) or 0.0 for x in (ft.get("factions") or [])], default=0.0)
     at_war = bool(wars.get("wars"))
     age = _f(chr_sect.get("age"))
-    # O5 fallback: no engine death-ETA → age heuristic, with a warning.
-    eta = succession_eta_years(age)
+    # Patch C: the death estimate from his health read and the game's death check
+    # (ruler_death.py); the age heuristic when health is not read, said in the basis.
+    eta, eta_basis, death_est = _rd.eta_years(age, chr_sect.get("health"))
     g = gw.game()
     speed = _as_int(g.get("speed"))
     speed_safe = not (speed > SPEED_MAX and (at_war or (eta is not None and eta <= 3)))
@@ -2365,13 +3813,22 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         reasons.append(why_blocked("stress_break_risk", summary=f"stress {int(stress)} (mental break risk)"))
     in_trough = bool(reasons) or (at_war and eta is not None and eta <= 3)
 
-    # deploy-51: `kill_zone` was a single survival VERDICT named after
+    # `kill_zone` was a single survival VERDICT named after
     # the previous project's doctrine ("the trough"). The facts it was computed
     # from are what a ruler can see in the game; the verdict is a conclusion
     # drawn for the seat. Facts stay, under a name that states what they are.
+    # The game's own monthly prestige / piety change (query_character monthly_change)
+    _mc = _dg.monthly_change_of(chr_sect)
     standing = {
+        "prestige": int(_f(chr_sect.get("prestige"))),
+        **({"prestige_monthly": round(_mc["prestige"], 2),
+            "piety_monthly": round(_mc["piety"], 2) if _mc.get("piety") is not None else None} if _mc
+           else {"monthly_unread": "this bridge does not send the monthly change"}),
+        # Every ruler reads 0 / 0 from a load until his own monthly day fills the cache
+        **({"monthly_note": MONTHLY_ZERO_NOTE} if _mc and not _mc["prestige"] and not _mc.get("piety") else {}),
         "succession_eta_years": eta,
-        **({"succession_eta_basis": SUCCESSION_ETA_BASIS} if eta is not None else {}),
+        **({"succession_eta_basis": eta_basis} if eta is not None else {}),
+        **({"health": death_est["health"], "death_years_band": death_est["years"]} if death_est else {}),
         "faction_max_pct": int(faction_max),
         "debt": int(debt), "gold": int(gold),
         "at_war": at_war,
@@ -2379,36 +3836,20 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         "speed_safe": speed_safe,
     }
 
-    # can_mint_now — sub_met && at_peace && gold (the explicit mint signal).
-    can_mint = sub_b["met"] and not at_war and gold >= 0
-    mint_requirements = None
-    if not can_mint:
-        if sub_b.get("unavailable"):
-            mint_requirements = why_blocked(
-                "de_jure_control",
-                summary=f"no de-jure title to measure: {sub_b['unavailable']}")
-        elif not sub_b["met"]:
-            mint_requirements = why_blocked(
-                "de_jure_control",
-                summary=f"hold {sub_b['have']}/{sub_b['need']} de-jure counties of {sub_b['title']}",
-                measured={"held": sub_b["have"], "need": sub_b["need"],
-                          "total": sub_b["total"], "fraction": sub_b["fraction"]},
-                fix={"tool": "plan_war",
-                     "hint": "minting requires de-jure counties of this title; "
-                             "plan_war enumerates which are held and by whom"})
-        elif at_war:
-            mint_requirements = why_blocked("not_at_peace", summary="must be at peace to mint a title")
-        elif gold < 0:
-            mint_requirements = why_blocked("insufficient_gold", summary="in debt — cannot afford the mint cost")
+    # `can_mint_now` was true for the seat's own primary title (live 1066:
+    # c_dublin, held). The block now names the next title up the primary title's
+    # de-jure chain that the seat does not hold, with every creation requirement
+    # from the code formable_titles and mint_title use (title_requirements).
+    next_title = await next_title_block(gw, character_id, realm, hier, news_actor=_as_int((actor or {}).get("id")))
 
-    # deploy-51: NO OBJECTIVE. This block used to carry
+    # NO OBJECTIVE. This block does not carry
     # `"active": "e_britannia"` — the previous project's goal — and every one of
-    # d50's six transcripts contained it, handed over by this field on every
+    # six recorded transcripts contained it, handed over by this field on every
     # cycle. The registered BOOT.md contains the string ZERO times, so §3.1's
     # "No strategy is prescribed to you" was honoured by the prompt and
     # contradicted by the instrument. The FACTS stay; the aim does not.
     de_jure = {
-        # deploy-51: RENAMED, because the old names became false when the
+        # RENAMED, because the old names became false when the
         # meters stopped being the objective's two titles. `nearest_title` and
         # `widest_title` described a sub-goal and an empire — a nearness and a
         # width that existed only relative to e_britannia. They are now simply
@@ -2418,8 +3859,7 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         # now hold, which is the polite version of "they are inaccurate".
         "primary_title": sub_b,
         "second_title": emp_b,
-        "can_mint_now": can_mint,
-        "mint_requirements": mint_requirements,
+        "next_title": next_title,
     }
 
     # ── THE WAR, ON THE PATH THE SEAT ACTUALLY TAKES ───────────────
@@ -2427,17 +3867,17 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     # THE HARM, in the agents' own words. Three kings and an earl reported a
     # stalemate for YEARS on the strength of `war_score: 0` while the Normans
     # took England:
-    #   d46 king-england 01:43:18Z "For 18 months I reported a 'dead-even
+    #   a king of England "For 18 months I reported a 'dead-even
     #     stalemate' on the strength of war_score: 0 ... [it] never credited
     #     William's occupation."
-    #   d45 king-england 15:03:27Z "trusting a war_score and occupation_score
+    #   a king of England "trusting a war_score and occupation_score
     #     frozen at zero — while levy_own_domain_max fell 3,073 -> 2,718 ->
     #     2,576."
-    #   d49 earl-kent 16:36:33Z "war_id 1 read 0-0, 'even' at every check."
+    #   an earl of Kent "war_id 1 read 0-0, 'even' at every check."
     #
     # WHY THEY COULD NOT SEE IT. `war_brief` and `_war_stance_view` are both
     # inside `depth == "full"`, and 93% of observe calls are `brief` (539 of
-    # 582, measured over d45-d50). So the war reached the seat as ONE BOOLEAN,
+    # 582, measured over the recorded episodes). So the war reached the seat as ONE BOOLEAN,
     # `standing.at_war`, on the path it actually took. The information existed;
     # it was off the hot path.
     #
@@ -2457,7 +3897,7 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     # dump) and SIEGE_DB (1024) on the first read of a tick. get_active_wars is
     # bridge-internal (served on the IPC thread) on every observe, so it stays
     # the cheap read.
-    # Until the row filled the unread breakdown in as 0 / None /
+    # The row once filled the unread breakdown in as 0 / None /
     # no sieges, and because the source was always absent, every war at a
     # score of 0 was flagged "do not read 0 as parity" on evidence nobody had
     # read. Now an unread field is absent from the row, and the row says once
@@ -2471,6 +3911,12 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         if isinstance(w.get("is_attacker"), bool):
             # the reader's side; a row that does not say gets no side (never a guess)
             row["my_side"] = "attacker" if w["is_attacker"] else "defender"
+            # The row's war_score is the total (get_active_wars sends it
+            # only when fresh); at what we_win needs, the ready end_war call
+            nc = war_score_view(w, is_attacker=w["is_attacker"], enemy_id=_as_int(
+                w.get("defender_id") if w["is_attacker"] else w.get("attacker_id"))).get("next_call")
+            if nc:
+                row["next_call"] = nc
         row["breakdown"] = _WAR_BREAKDOWN_NOT_READ
         war_rows.append(row)
     war_block = {"count": len(war_rows), "active": war_rows}
@@ -2489,7 +3935,15 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     # interpretation stays here.)
     msum = succession_verdict.map_summary(sp_raw if isinstance(sp_raw, dict) else {})
     sv = succession_verdict.verdict(sim_raw, succ_raw, msum)
+    # Patch A: under partition, the heirs who take land are the ruler's eligible children
+    fc, _fc_kids = await partition_forecast_for(gw, chr_sect, _law_names(laws_raw), sv, sim_raw,
+                                         map_titles=msum.get("titles"))
+    sv = _pf.apply(sv, fc)
+    risk = await line_risk_for(gw, chr_sect, sv["primary"])      # Whose dynasty inherits
     succession_block = {
+        **({"dynasty_warning": risk["warning"]} if (risk or {}).get("warning") else {}),
+        **({"line_risk": {k: v for k, v in risk.items() if k not in ("warning", "levers", "divorce")}}
+           if risk else {}),
         "outcome": sv["outcome"],
         **({"undetermined_reason": sv["undetermined_reason"]}
            if sv["outcome"] == "undetermined" else {}),
@@ -2499,13 +3953,22 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         "primary_heir": {"id": sv["primary"].get("id"), "name": sv["primary"].get("name")}
                         if sv["primary"] else None,
         "heirs_source": sv["heirs_source"],
-        # B2: each held kingdom/empire with the heir each read gives it, and
+        # Each held kingdom/empire with the heir each read gives it, and
         # what no read here covers (succession_verdict.SCOPE).
         "crown_titles": sv["crown_titles"],
         "scope": sv["scope"],
         "succession_eta_years": eta,
         "near_trough": bool(eta is not None and eta <= 3),
     }
+    if sv.get("breaker_simulation"):
+        succession_block["breaker_simulation"] = sv["breaker_simulation"]
+    if fc.get("partition") or fc.get("refused"):
+        succession_block["partition_forecast"] = _forecast_brief(fc)
+    if facts_out is not None:
+        facts_out["partition_forecast"] = fc
+    if (risk or {}).get("warning"):
+        warnings.append({"code": "heir_other_dynasty", "is_known_limitation": False,
+                         "detail": risk["warning"] + "; succession_plan line_risk names the levers"})
     if sv["outcome"] == "undetermined":
         warnings.append(succession_verdict.warning(sv))
     elif sv["outcome"] == "splits":
@@ -2513,18 +3976,44 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         warnings.append({"code": "succession_not_intact", "is_known_limitation": False,
                          "detail": "the next succession does not pass intact: "
                                    f"{sv['eligible_heir_count']} heirs land titles — drive that "
-                                   "toward 1 BEFORE the trough (single_heir law / land spares as "
-                                   "in-realm vassals / consolidate). succession_plan has the levers."})
+                                   "toward 1 BEFORE the death (a son's vows or disinheritance; "
+                                   "land spares as in-realm vassals). succession_plan has the levers "
+                                   "and their prices."})
 
     # posture
     # `pers` came from the batch above; no span of its own.
-    # ruling (b): posture.genome.lock_state, the bridge's word (lock_state_of).
+    # posture.genome.lock_state, the bridge's word (lock_state_of).
     genome_read = dict(pers) if isinstance(pers, dict) else {}
     genome_read["lock_state"] = lock_state_of(genome_read)
+    # The read's envelope fields (the reply's own game block says the
+    # date and tick) and `engine` when it repeats `personality` axis for axis
+    for _k in ("request_id", "tick", "game_date", "success", "action"):
+        genome_read.pop(_k, None)
+    _eng, _per = genome_read.get("engine"), genome_read.get("personality")
+    if isinstance(_eng, dict) and isinstance(_per, dict) and all(_per.get(a) == v for a, v in _eng.items()):
+        genome_read.pop("engine")
     posture = {"genome": genome_read}
+
+    money["unit"] = "gold; monthly_income is gold per game month"
+    # Who the seat answers to, what it can field, who sits its council.
+    _liege = _as_int(chr_sect.get("liege_id"))
+    _actor_id = _as_int((actor or {}).get("id")) or character_id
+    liege_block: dict[str, Any] = {"id": _liege or None, "independent": _liege == 0 if isinstance(
+        chr_sect.get("liege_id"), int) else None}
+    if _liege and _liege != _actor_id:
+        liege_block["name"] = await _news.liege_name(gw, _liege)
+    result_military = military_block(levy_raw)
+    council_rows = council_raw.get("council") if isinstance(council_raw, dict) else None
+    council_block = ([{"seat": c.get("position_key"), "holder_id": None if c.get("vacant") else c.get("holder_id"),
+                       "vacant": bool(c.get("vacant")), "task": c.get("current_task")}
+                      for c in council_rows if isinstance(c, dict)]
+                     if isinstance(council_rows, list) else
+                     {"unread": "query_council did not answer"})
 
     result: dict[str, Any] = {"de_jure": de_jure, "standing": standing,
                               "wars": war_block, "money": money,
+                              "military": result_military, "liege": liege_block,
+                              "council": council_block,
                               "succession": succession_block, "posture": posture}
 
     if depth == "full":
@@ -2543,7 +4032,7 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
             "faith_key": chr_sect.get("faith_key"), "culture_key": chr_sect.get("culture_key"),
         }
         result["war_brief"] = wars.get("wars", [])
-        # war_stance brief (item 3): surface stuck offensive wars (occupation 0 / losing)
+        # war_stance brief: surface stuck offensive wars (occupation 0 / losing)
         # so the agent abandons them via white-peace instead of bleeding its army across a
         # succession. Only the stalled-war shortlist + the flag — the full per-war view is
         # inspect(subject="war_stance"). Synthesized read (crash-safe).
@@ -2557,13 +4046,13 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
         council = await gw.read("query_council", {"character_id": character_id})
         result["council_brief"] = (council.get("council") if isinstance(council, dict) else council) or []
         # The AI's evaluations (the section the retired legacy observe carried;
-        # D14 merged it into this one).
+        # merged into this one).
         evals = await gw.read("get_ai_evaluations", {"character_id": character_id})
         result["evaluations"] = evals if isinstance(evals, dict) else {}
 
     # ── `since` IS ABOUT THE SEAT, AND SAYS WHAT IT WITHHELD ───────
     #
-    # MEASURED over d49+d50: `delta` is 75.5% of observe's BYTES. Of its
+    # MEASURED over two recorded episodes: `delta` is 75.5% of observe's BYTES. Of its
     # 5,640 entries, 14 (0.25%) mention the actor and 100% have empty names —
     # they are Python-repr dicts of foreign wars and schemes
     # ("war: {'tick': 61, 'attacker_id': 30966, ...}") because
@@ -2573,7 +4062,7 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     # TWO FIXES, AND THE SECOND IS THE ONE THAT MATTERS.
     # First, read RECORDS (`delta_records_since_last`) so the thing can be
     # filtered at all; a consumer cannot filter what it cannot parse.
-    # Second, and this is point and it is right: A FILTER THAT DOES
+    # Second, and this is the point and it is right: A FILTER THAT DOES
     # NOT SAY WHAT IT DROPPED IS A CLAIM, NOT A FACT. Returning the 14 entries
     # that touch the seat, silently, asserts that 14 is all there was. So
     # `withheld` carries the count and the kinds, and the seat can ask for more
@@ -2696,6 +4185,36 @@ async def observe_impl(gw, character_id: int = 0, depth: str = "brief",
     if _proposals.declared():
         result["incoming_proposals"] = await _proposals.block(
             gw, character_id or _as_int((actor or {}).get("id")), primary=not character_id)
+    # What changed for the seat since its last observe (news.py).
+    _ev_raw, _bud_raw, _veto_raw = await _seat_events.news_reads(gw, _actor_id)
+    result["news"] = await _news.block(
+        gw, character_id,
+        _news.snapshot(actor_id=_actor_id, date=(gw.game() or {}).get("date"), chr_sect=chr_sect,
+                       armies=await gw.read("query_armies", {"character_id": _actor_id}),
+                       wars=wars, claims=claims_raw if isinstance(claims_raw, dict) else {},
+                       council=council_raw if isinstance(council_raw, dict) else None,
+                       heir=sv["primary"] if sv["primary"] else None,
+                       schemes=schemes_raw if isinstance(schemes_raw, dict) else None,
+                       held=hier if hierarchy_was_read(hier, realm) else None,
+                       council_tasks=council_task_seats(tasks_raw),
+                       laws=laws_raw if isinstance(laws_raw, dict) else None,
+                       alliances=allies_raw if isinstance(allies_raw, dict) else None,
+                       event_rules=_ev_raw, ai_budget=_bud_raw, ai_veto=_veto_raw,
+                       faction_threat=ft if isinstance(ft, dict) else None,
+                       legitimacy=await legitimacy_of(gw, _actor_id),
+                       chaplain_learning=await _news.chaplain_learning(gw, council_raw),
+                       realm=realm if isinstance(realm, dict) else None,
+                       split=_forecast_brief(fc) if fc.get("partition") or fc.get("refused") else None,
+                       truces=await _truces.truce_map(gw, _actor_id),
+                       liege_factions=await liege_factions_of(gw, chr_sect),
+                       **(await head_and_overliege(gw, chr_sect))),
+        offers_served=_proposals.declared(), fabricate_within=next_title.get("title"))
+    refresh_net_realised(result, _actor_id)
+    _NEWS_WITHIN[character_id] = next_title.get("title")
+    if _actor_id:
+        # The ruler's own id too (the claim letter's rule call reads the realm's next title by it)
+        _NEWS_WITHIN[_actor_id] = next_title.get("title")
+    _task_goal.observe(result)   # A peaceful goal's observe names no kingdom to create
     return envelope("observe", result=result, actor=actor, game=gw.game(),
                     delta=delta, warnings=warnings, errors=errors, bridge_health=gw.health)
 
@@ -2711,14 +4230,14 @@ _CB_CLAIM_MODES = {6}
 # (inv_bridge.md §3 / inv_gamecb.md): great_holy_war is religious-head-lifecycle-only.
 _CB_UNSUPPORTED_SUBSTR = ("great_holy_war",)
 
-# FIXPLAN A3 (CB-audit G5): de-jure CB family detector. The real engine names are the
+# De-jure CB family detector. The real engine names are the
 # take-all `de_jure_cb` and the per-title `individual_county_de_jure_cb` /
 # `individual_duchy_de_jure_cb` (cross-checked against bridge cb_semantics_for). The
 # `de_jure` substr captures all three (and any future de-jure variant) in one test.
 #: Mode-0 CBs named outside the subjugation/vassalization substrings.
 #: make_tributary_cb is target_mode 0 (re/findings/re_conquest_subjugation_cb_dispatch.md
-#: §2, idx 49) and its live war rows carry target_titles [] (l15p2 gl5-p/gl5-r
-#: l5_war_outcomes.json).
+#: §2, idx 49) and its live war rows carry target_titles [] (recorded war
+#: outcomes).
 _CB_MODE0_NAMES = frozenset({"make_tributary_cb"})
 
 
@@ -2741,7 +4260,7 @@ STRESS_CLIMBING = 100
 STRESS_BREAK_RISK = 150
 
 #: The succession ETA is 65 minus the ruler's age; no engine estimate is read.
-#: observe and succession_plan used to say so as a `war_duration_unavailable` warning on
+#: observe and succession_plan do not say so as a `war_duration_unavailable` warning on
 #: EVERY reply (391 of 392 pilot observes, at war or not, under a name about wars), a
 #: constant that told a seat nothing new after the first read. The basis is now stated
 #: once, on the field it qualifies.
@@ -2768,8 +4287,13 @@ def _affordability(opt: Optional[dict]) -> dict[str, Any]:
     if affordable is False:
         hint = (f"a {opt.get('cb')} war costs about {cp or 0} prestige and {cpi or 0} piety "
                 "(base cost; the game scales it by target) and you hold less")
-    return {"affordable_now": affordable, "cost_prestige": cp, "cost_piety": cpi,
-            "estimate": True, "hint": hint}
+    out = {"affordable_now": affordable, "cost_prestige": cp, "cost_piety": cpi,
+           "estimate": True, "hint": hint}
+    # The price's multipliers, as the cbs row carries them (claim_cb from the game's formula)
+    for k in ("cost_basis", "cost_multipliers", "cost_legitimacy", "cost_unread_multipliers"):
+        if opt.get(k):
+            out[k] = opt[k]
+    return out
 
 
 def is_claim_cb_name(cb: Any) -> bool:
@@ -2799,10 +4323,15 @@ def _cb_dispatch_shape(cb_row: dict) -> dict[str, Any]:
             "dispatch_supported": not unsupported}
 
 
-def _shape_cb_options(cbs_raw: dict, *, target_id: int) -> tuple[list, list]:
+def _shape_cb_options(cbs_raw: dict, *, target_id: int, purse: Optional[dict] = None,
+                      defender: Optional[dict] = None, prices: Optional[dict] = None) -> tuple[list, list]:
     """Shape a query_cbs_for_target response into (valid_options, all_options) lists,
     each row carrying scope/grants/tradeoffs + the dispatch-marshalling hint so a
-    declare_args can pick the best CB. Returns ([], []) on a degraded/empty read."""
+    declare_args can pick the best CB. Returns ([], []) on a degraded/empty read.
+    Each option the game's check accepts also carries what else refuses a
+    declaration now (declare_gates: debt, the casus belli's cost against the ruler's
+    prestige and piety, a truce), from `purse` (ruler_purse) or, without it, the
+    prestige and piety the cbs read itself reports (gold then unread)."""
     valid_opts: list = []
     all_opts: list = []
     for cb in (cbs_raw.get("cbs") or []):
@@ -2837,16 +4366,613 @@ def _shape_cb_options(cbs_raw: dict, *, target_id: int) -> tuple[list, list]:
             "cost_piety": cb.get("cost_piety"),
             "affordable": cb.get("affordable"),
         }
+        _cbl.relabel(opt)                       # The game file's scope, grants, requires
+        _lr = LAST_REFUSAL.get((_as_int(target_id), opt["cb"]))
+        if _lr:
+            opt["game_refused_last"] = _lr
         all_opts.append(opt)
+    if purse is None:
+        purse = {"prestige": _dg._num(cbs_raw.get("prestige")), "piety": _dg._num(cbs_raw.get("piety"))}
+    _tr = (cbs_raw.get("target_state") or {}).get("truce") if isinstance(cbs_raw.get("target_state"), dict) else None
+    if isinstance(_tr, dict):
+        for o in all_opts:       # The truce's end beside each option the game's check culled for it
+            o["truce"] = _tr
+    _dg.annotate(all_opts, purse, cbs_raw.get("target_state"), defender=defender, prices=prices)
+    for opt in all_opts:
+        # claim_cb's price for THIS target (the game's formula on both rulers' reads)
+        # The game's own price where it was read (cb_game_prices)
+        cost = _dg.cost_of(opt, facts=_dg.facts_for(opt, purse, defender, prices))
+        if cost.get("game"):
+            opt["cost_piety"] = cost.get("piety")
+        if not cost.get("estimate"):
+            # The bridge's row (cb_cost_for) prices claim_cb at 0 and calls it
+            # affordable; where the game's own cost is known (declare_gates) that is the one
+            # number every reply shows, and affordable is its verdict (None: not decidable)
+            opt["cost_prestige"] = cost.get("prestige")
+            opt["cost_source"] = cost.get("source")
+            if cost.get("prestige_high") is not None:
+                # The price is a range (your culture's era is not read). Live
+                # (a live check, 1067.11.27): shown at the low end 62.5, the game charged 125: the
+                # price shown and remembered is the high end; the low end is the least
+                opt["cost_prestige"] = cost["prestige_high"]
+                opt["cost_prestige_low"] = cost["prestige"]
+                have = _dg._num((purse or {}).get("prestige"))
+                if have is not None and cost["prestige"] <= have < cost["prestige_high"]:
+                    opt["may_refuse"] = dict(opt.get("may_refuse") or {}, prestige=(
+                        f"the price is {cost['prestige']}-{cost['prestige_high']} by your culture's era "
+                        f"(not read); you hold {round(have, 2)}"))
+            if any(x.get("factor") == "legitimacy" for x in cost.get("applied") or []) or \
+                    "legitimacy" in str(cost.get("basis") or ""):
+                opt["cost_basis"] = cost.get("basis")
+            if cost.get("multipliers"):
+                # Every multiplier as a
+                # row, the legitimacy level behind its factor, and what is not read
+                opt["cost_basis"] = cost.get("basis")
+                opt["cost_multipliers"] = cost["multipliers"]
+                if cost.get("legitimacy"):
+                    opt["cost_legitimacy"] = cost["legitimacy"]
+                if cost.get("unread_multipliers"):
+                    opt["cost_unread_multipliers"] = cost["unread_multipliers"]
+            bad = [b for b in opt.get("blocked_by") or [] if b.get("condition") in ("prestige", "piety")]
+            chk = (opt.get("checked") or {}).get("prestige")
+            opt["affordable"] = False if bad else (chk.get("ok") if isinstance(chk, dict) else None)
+        if cost.get("prestige") is not None or cost.get("piety") is not None:
+            # What declaring this would cost, for declare_war's reply and news
+            # (claim_cb from the game's own cost table, not the bridge's 0)
+            CB_COST_SEEN[(_as_int(target_id), opt["cb"], opt["cb_title_id"])] = {
+                "prestige": cost.get("prestige_high", cost.get("prestige")), "piety": cost.get("piety"),
+                **({"game": True} if cost.get("game") else {})}
         if cb_option_declarable(opt):
             valid_opts.append(opt)
     return valid_opts, all_opts
 
 
+async def legitimacy_of(gw, actor_id: Any) -> Optional[float]:
+    """The ruler's legitimacy (get_ai_evaluations diplomacy.legitimacy, the read ruler_purse
+    makes for the claim-war price), or None when it did not answer."""
+    if not _as_int(actor_id):
+        return None
+    ev = await gw.read("get_ai_evaluations", {"character_id": _as_int(actor_id)})
+    dip = ev.get("diplomacy") if isinstance(ev, dict) and ev.get("success") is not False else None
+    lg = dip.get("legitimacy") if isinstance(dip, dict) else None
+    return float(lg) if isinstance(lg, (int, float)) and not isinstance(lg, bool) else None
+
+
+#: claim_cb's legitimacy factor by the flag the game holds (00_claim.txt "LEGITIMACY AFFECTS
+#: COST"), the marks of the claim_price_facts template (script_templates.h kLegitimacyUp/Down)
+LEGITIMACY_MARK_X = {"LEGIT_X2_5": 2.5, "LEGIT_X2_0": 2.0, "LEGIT_X1_5": 1.5,
+                     "LEGIT_X0_5": 0.5, "LEGIT_X0_25": 0.25, "LEGIT_X0_15": 0.15}
+_CLAIM_FACTS: dict = {}
+
+
+async def claim_price_facts(gw, actor_id: int) -> Optional[dict]:
+    """The ruler's claim-war price facts as the game holds them, read once per ruler and game date:
+    {legitimacy_x (the product of the two flags, 1.0 with none), flags, is_adult, is_male, faith_gender
+    (male_dominated | female_dominated | none)}; None when the read did not answer."""
+    key = (_as_int(actor_id), (gw.game() or {}).get("date"))
+    if key in _CLAIM_FACTS:
+        return _CLAIM_FACTS[key]
+    sent = await _script_write(gw, "claim_price_facts", {"actor_id": _as_int(actor_id)})
+    marks = set(sent.get("marks") or [])
+    out = None
+    if "READ" in marks and sent.get("guard") == "ran":
+        x = 1.0
+        for m, f in LEGITIMACY_MARK_X.items():
+            if m in marks:
+                x *= f
+        out = {"legitimacy_x": round(x, 4), "flags": sorted(m for m in marks if m in LEGITIMACY_MARK_X),
+               "is_adult": "CHILD" not in marks, "is_male": "MALE" in marks,
+               "faith_gender": ("male_dominated" if "FAITH_MALE_DOMINATED" in marks else
+                                "female_dominated" if "FAITH_FEMALE_DOMINATED" in marks else "none"),
+               "source": "the game's own triggers (has_legitimacy_flag, is_adult, is_male, the faith's doctrine)"}
+    if len(_CLAIM_FACTS) > 64:
+        _CLAIM_FACTS.clear()
+    _CLAIM_FACTS[key] = out
+    return out
+
+
+CB_PRICED_BY_GAME, CB_PRICE_NEEDS_TITLE = _dg.CB_PRICED_BY_GAME, _dg.CB_PRICE_NEEDS_TITLE
+CB_GAME_PRICE_SOURCE = ("the game's own price: the casus belli's cost block (common/casus_belli_types) "
+                        "evaluated by the game for you against this defender")
+#: the template's encoding (script_templates.h price_marks): bits of the whole part and of the fraction x 1024
+_PRICE_INT_BITS, _PRICE_FRAC_BITS = 18, 10
+_CB_PRICES: dict = {}
+
+
+def decode_price(marks: Any, word: str) -> Optional[float]:
+    """One value the cb_prices template (or declare_war's refused branch) wrote as marks <word>_*: None when its
+    SET mark is absent (not evaluated) or it was OVER the encoding's range."""
+    m = {x for x in (marks or []) if isinstance(x, str)}
+    if f"{word}_SET" not in m or f"{word}_OVER" in m:
+        return None
+    v = sum(2 ** k for k in range(_PRICE_INT_BITS) if f"{word}_I{k}" in m)
+    v += sum(2 ** k for k in range(_PRICE_FRAC_BITS) if f"{word}_F{k}" in m) / float(2 ** _PRICE_FRAC_BITS)
+    return round(-v if f"{word}_NEG" in m else v, 2)
+
+
+async def cb_game_prices(gw, actor_id: int, target_id: int, rows: list) -> dict:
+    """{(cb, title_id): {prestige, piety, source}} for the casus belli of `rows` (cbs read rows or
+    shaped options: cb_key/cb, cb_title_id, valid) the game prices (CB_PRICED_BY_GAME), from one cb_prices
+    script read per title (the title-free ones in one), cached per game day. A price the read did not give is
+    absent, never a default."""
+    me, tid = _as_int(actor_id), _as_int(target_id)
+    if not me or not tid:
+        return {}
+    want: dict = {}
+    for r in rows or []:
+        if not isinstance(r, dict) or not r.get("valid"):
+            continue
+        cb = r.get("cb_key") or r.get("cb")
+        if cb not in CB_PRICED_BY_GAME:
+            continue
+        title = _as_int(r.get("cb_title_id") or r.get("title_id")) if cb in CB_PRICE_NEEDS_TITLE else 0
+        if cb in CB_PRICE_NEEDS_TITLE and not title:
+            continue
+        want.setdefault(title, set()).add(cb)
+    date = (gw.game() or {}).get("date")
+    out: dict = {}
+    for title, cbs in sorted(want.items()):
+        cbs = sorted(cbs)[:6]
+        key = (me, tid, title, tuple(cbs), date)
+        if key not in _CB_PRICES:
+            if not callable(getattr(gw, "write", None)):
+                return out          # a read-only gateway: no price read, the rows keep the bridge's estimate
+            try:
+                sent = await _script_write(gw, "cb_prices", {"actor_id": me, "target_id": tid, "cbs": ",".join(cbs),
+                                                             **({"cb_title_id": title} if title else {})})
+            except Exception:  # noqa: BLE001  a failed price read leaves the estimate, said `estimate`
+                sent = {}
+            marks = sent.get("marks") if sent.get("guard") == "ran" else None
+            got = {}
+            if isinstance(marks, list) and "READ" in marks:
+                for j, cb in enumerate(cbs):
+                    p, q = decode_price(marks, f"C{j}P"), decode_price(marks, f"C{j}Q")
+                    if p is not None or q is not None:
+                        got[cb] = {"prestige": p if p is not None else 0.0, "piety": q if q is not None else 0.0,
+                                   "source": CB_GAME_PRICE_SOURCE}
+            if len(_CB_PRICES) > 256:
+                _CB_PRICES.clear()
+            _CB_PRICES[key] = got
+        for cb, v in _CB_PRICES[key].items():
+            out[(cb, title)] = v
+    return out
+
+
+game_price_of = _dg.game_price_of
+
+
+async def ruler_purse(gw, actor_id: int) -> Optional[dict]:
+    """The ruler's gold, prestige, piety and monthly income (query_character),
+    for declare_gates; None when the read did not answer."""
+    if not actor_id:
+        return None
+    chr_ = await gw.read("query_character", {"character_id": actor_id})
+    arm = await gw.read("query_armies", {"character_id": actor_id})
+    clm = await gw.read("query_claims", {"character_id": actor_id})
+    purse = _dg.purse_of(chr_)
+    # The game refuses a declaration while the declarer's armies are raised
+    ar = _dg.armies_raised(arm)
+    if purse is not None or ar is not None:
+        purse = dict(purse or {}, armies=ar)
+    # A pressed claim's war costs 25% less (claim_cb_prestige_cost)
+    # claim_cb's
+    # price carries the attacker's legitimacy level (get_ai_evaluations reads the value)
+    if purse is not None and isinstance(purse.get("me"), dict):
+        ev = await gw.read("get_ai_evaluations", {"character_id": actor_id})
+        dip = ev.get("diplomacy") if isinstance(ev, dict) and ev.get("success") is not False else None
+        lg = dip.get("legitimacy") if isinstance(dip, dict) else None
+        if isinstance(lg, (int, float)) and not isinstance(lg, bool):
+            purse["me"] = dict(purse["me"], legitimacy=float(lg))
+    me_f = purse.get("me") if isinstance(purse, dict) else None
+    if isinstance(me_f, dict):
+        # When the legitimacy
+        # factor is a range (the culture era is not read) or a gender doctrine may apply, the game's own
+        # flags are read (the claim_price_facts template)
+        lf = _dg.legitimacy_factor(me_f.get("legitimacy"), me_f.get("ruler_tier"))
+        if (lf is not None and lf[0] != lf[1]) or me_f.get("is_female") is True:
+            cf = await claim_price_facts(gw, actor_id)
+            if cf is not None:
+                purse["me"] = dict(me_f, claim_legitimacy_x=cf["legitimacy_x"], faith_gender=cf["faith_gender"])
+    rows = clm.get("claims") if isinstance(clm, dict) else None
+    if purse is not None and isinstance(rows, list):
+        purse["claims"] = {_as_int(c.get("title_id")): c.get("type") for c in rows
+                           if isinstance(c, dict) and _as_int(c.get("title_id"))}
+    return purse
+
+
+#: What a ruler's death does to his claims. The chaplain's claim is unpressed
+#: (court_chaplain_task.0301: add_unpressed_claim); the game passes a pressed claim to the
+#: ruler's children and lets an unpressed one die with him (engine rule, not in a script
+#: file). Seen: 1080.07 all four fabricated claims claims_lost at Murchad's death;
+#: 1091.02.08 Ulster and Ailech lost at his. A claim war ended in white peace presses
+#: the claim (claim_cb on_white_peace: make_claim_strong).
+CLAIM_DIES_WITH_RULER = ("unpressed: it dies with you (the game passes only pressed claims to your "
+                         "children); a white peace in its war presses it")
+
+
+def claim_word_pressed(purse: Optional[dict], title_id: Any, fallback: bool) -> bool:
+    """Item j: whether the ruler's claim on `title_id` is pressed by the claims read (query_claims `type`,
+    what cbs' claim_on_target says); `fallback` (the row's own inference) when the claims read does not name it."""
+    w = ((purse or {}).get("claims") or {}).get(_as_int(title_id))
+    return (w == "pressed") if w in ("pressed", "unpressed") else fallback
+
+
+def claim_state_words(tstate: dict, purse: Optional[dict], opts: list) -> dict:
+    """A recorded case (cbs said pressed_claim_on_target true while query_claims read the
+    same claim unpressed): the bridge's flag means "you hold a claim the casus belli can
+    press"; the claim's own state is the claims read's word, one word for both."""
+    t = dict(tstate or {})
+    if "pressed_claim_on_target" in t:
+        held = t.pop("pressed_claim_on_target")
+        types = (purse or {}).get("claims") or {}
+        mine = [types.get(_as_int(o.get("cb_title_id"))) for o in opts or []
+                if o.get("valid") and is_claim_cb_name(o.get("cb")) and types.get(_as_int(o.get("cb_title_id")))]
+        t["claim_on_target"] = (mine[0] if mine else ("held" if held else False))
+        if t["claim_on_target"] == "unpressed":
+            t["claim_note"] = CLAIM_DIES_WITH_RULER
+    return t
+
+
+#: (cbs listed France 3,941 beside the defender's 578 with
+#: `accepts: "not read"`; the seat declared and lost, 176 gold and ten years of debt). The
+#: game's answer to the defender's call is call_ally_interaction's ai_accept
+#: (common/character_interactions/00_alliance.txt), a script value of the war itself
+#: (scope:target): before the war exists the game cannot evaluate it, so it is computed here
+#: from the terms the reads give. A score below 1 is "no", any other "yes" (call_ally has no
+#: ai_maybe; interaction_acceptance_decision mode 1, re/findings/re_imprisonment.md).
+CALL_TO_ARMS_BASE = 20
+CALL_TO_ARMS_DEFENSIVE = 50          # "Tends to join defensive wars": the defender calls
+CALL_TO_ARMS_SAME_LANGUAGE = 5       # read as the same culture (a known language is not read)
+CALL_TO_ARMS_ALLY_OF_ATTACKER = -25  # "Reluctant to defend against another ally"
+CALL_TO_ARMS_MIN_STRENGTH = 100      # is_shown: an AI war leader calls no ally under 100
+CALL_TO_ARMS_SOURCE = ("an estimate: the game's call_ally_interaction ai_accept "
+                       "(common/character_interactions/00_alliance.txt) from the reads; the game runs "
+                       "it on the war itself, which does not exist before you declare")
+CALL_TO_ARMS_NOT_READ = (
+    "court-language terms (+10/+30) and a language he speaks without sharing the culture (+5)",
+    "-1000 when he is a conqueror, or saves gold for his capital's buildings while the defender is "
+    "a lesser AI ruler in a war between AI rulers (your ruler is an AI ruler in the game)",
+    "-50 to -200 for a friend, best friend, lover or soulmate of yours; -100 a bloc member; "
+    "hostages; -200 when the defender is his tributary",
+    "whether the defender's AI calls him at all (it calls while it wants more strength)",
+    "his being at war already with a side of this war")
+
+
+def _tier_of(chr_sect: dict) -> int:
+    t = chr_sect.get("ruler_tier") if isinstance(chr_sect, dict) else None
+    return t if isinstance(t, int) and not isinstance(t, bool) else 0
+
+
+#: (a test run, 1092.05.02: cbs counted Mainchine 71775, liege_id the seat's ruler, as a defender's ally who
+#: would join, 570 strength, "outnumbered_with_likely_allies"): call_ally_interaction's can_be_picked runs
+#: can_join_war_liege_vassal_check_trigger (00_war_and_peace_triggers.txt): a joiner on the defender's side has no
+#: liege or above, and no vassal or below, among the attackers
+CALL_TO_ARMS_LIEGE_BAR = ("{rel}: the game's can_join_war_liege_vassal_check_trigger (call_ally_interaction "
+                          "can_be_picked) lets no one join against his own liege or vassal")
+
+
+def liege_bar(ally_lieges: Any, attacker_id: Any, attacker_lieges: Any, ally_id: Any) -> Optional[str]:
+    """Why the defender's ally cannot join against this attacker by the liege-vassal rule, else None.
+    `ally_lieges` / `attacker_lieges`: the ids above each in his realm (liege, liege's liege, ...)."""
+    me, aid = _as_int(attacker_id), _as_int(ally_id)
+    if me and me in {_as_int(x) for x in ally_lieges or []}:
+        return CALL_TO_ARMS_LIEGE_BAR.format(rel="your vassal")
+    if aid and aid in {_as_int(x) for x in attacker_lieges or []}:
+        return CALL_TO_ARMS_LIEGE_BAR.format(rel="your liege")
+    return None
+
+
+async def liege_chain(gw, chr_sect: Any, limit: int = 6) -> list:
+    """The ids above a character in his realm, from his liege_id up to his top_liege_id (one query_character
+    a level, at most `limit`); [] for an independent ruler or an unread one."""
+    c = chr_sect if isinstance(chr_sect, dict) else {}
+    me, top = _as_int(c.get("id")), _as_int(c.get("top_liege_id"))
+    out: list = []
+    cur = _as_int(c.get("liege_id"))
+    while cur and cur != me and cur not in out and len(out) < limit:
+        out.append(cur)
+        if cur == top:
+            break
+        nxt = _char_section(await gw.read("query_character", {"character_id": cur}))
+        cur = _as_int(nxt.get("liege_id"))
+        if cur == out[-1]:
+            break
+    if top and top != me and top not in out:
+        out.append(top)
+    return out
+
+
+def call_to_arms_estimate(ally: dict, *, strength: int, opinion: Any, defender: dict,
+                          attacker: Optional[dict], allied_to_attacker: bool,
+                          liege_bar_why: Optional[str] = None) -> dict:
+    """One defender ally's answer to the defender's call, computed from call_ally_interaction's
+    terms (CALL_TO_ARMS_*): `would_join` true/false/"unknown", `score` when every read term
+    is there, `terms` the ones read, `may_refuse` a -1000 term whose readable conditions hold.
+    `liege_bar_why` (liege_bar) is the game's own bar: he cannot join at all."""
+    a, d, me = ally or {}, defender or {}, attacker or {}
+    row: dict = {}
+    if liege_bar_why:
+        return {"would_join": False, "why": liege_bar_why}
+    if d.get("is_ai") is not False and strength < CALL_TO_ARMS_MIN_STRENGTH:
+        return {"would_join": False, "why": f"under {CALL_TO_ARMS_MIN_STRENGTH} strength: an AI war "
+                                           "leader cannot call him (call_ally_interaction is_shown)"}
+    spouses = {_as_int(x) for x in (a.get("spouses") or []) if _as_int(x)} | (
+        {_as_int(a.get("spouse_id"))} if _as_int(a.get("spouse_id")) else set())
+    if me.get("id") and _as_int(me.get("id")) in spouses:
+        return {"would_join": False, "score": -1000, "why": "your spouse: -1000 (WONT_FIGHT_SPOUSE)"}
+    if _as_int(d.get("id")) in spouses and a.get("is_ai") is not False:
+        return {"would_join": True, "why": "the defender's spouse: always accepts (auto_accept)"}
+    honor = (a.get("personality") or {}).get("honor") if isinstance(a.get("personality"), dict) else None
+    terms = {"base": CALL_TO_ARMS_BASE, "defensive_war": CALL_TO_ARMS_DEFENSIVE}
+    if isinstance(honor, (int, float)) and not isinstance(honor, bool):
+        terms["honor"] = max(0, int(honor))
+    if a.get("culture_id") is not None and a.get("culture_id") == d.get("culture_id"):
+        terms["same_culture"] = CALL_TO_ARMS_SAME_LANGUAGE
+    if allied_to_attacker:
+        terms["allied_to_you"] = CALL_TO_ARMS_ALLY_OF_ATTACKER
+    op = opinion if isinstance(opinion, (int, float)) and not isinstance(opinion, bool) else None
+    if op is not None:
+        terms["opinion_of_defender"] = int(op)
+    unread = [k for k, ok in (("opinion_of_defender", op is not None), ("honor", "honor" in terms)) if not ok]
+    total = sum(terms.values())
+    row["terms"] = terms
+    if not unread:
+        row["score"] = total
+        row["would_join"] = total >= 1
+    else:
+        # an unread opinion spans -100..100, an unread honor 0..100
+        lo = total - (100 if "opinion_of_defender" in unread else 0)
+        hi = total + 100 * len(unread)
+        row["would_join"] = True if lo >= 1 else (False if hi < 1 else "unknown")
+        row["unread"] = unread
+    if (d.get("is_ai") is not False and me.get("is_ai") is not False and _tier_of(a) > _tier_of(d) > 0):
+        row["may_refuse"] = ("-1000 if he saves gold for his capital's buildings (not read): the defender is "
+                             "a lesser AI ruler and both sides are AI rulers")
+    return row
+
+
+async def defender_allies(gw, target_id: int, *, attacker_id: int = 0) -> dict:
+    """The defender's own strength, what his allies add (the
+    worst case, query_alliances: the read plan_war's strength comes from), and for each ally
+    whether he answers the defender's call (call_to_arms_estimate) with `likely_strength`
+    counting only the likely joiners."""
+    th = await gw.read("query_alliances", {"character_id": _as_int(target_id)})
+    th = th if isinstance(th, dict) else {}
+    rows = [a for a in (th.get("alliances") or []) + (th.get("forced_allies") or []) if isinstance(a, dict)]
+    if not th or ("alliances" not in th and "own_military_strength" not in th):
+        return {"unread": "the alliance read did not answer"}
+    own = _as_int(th.get("own_military_strength"))
+    out: dict = {"his_own": own,
+                 "with_allies": _as_int(th.get("total_callable_strength") or th.get("own_military_strength"))}
+    if not rows:
+        out.update(allies=[], likely_strength=own)
+        return out
+    defender = _char_section(await gw.read("query_character", {"character_id": _as_int(target_id)}))
+    attacker, mine, above_me = None, set(), []
+    if attacker_id:
+        attacker = _char_section(await gw.read("query_character", {"character_id": _as_int(attacker_id)}))
+        above_me = await liege_chain(gw, attacker)
+        al = await gw.read("query_alliances", {"character_id": _as_int(attacker_id)})
+        al = al if isinstance(al, dict) else {}
+        mine = {_as_int(x.get("ally_id")) for x in (al.get("alliances") or []) + (al.get("forced_allies") or [])
+                if isinstance(x, dict)}
+    allies, likely, unknown = [], own, 0
+    for a in rows[:8]:
+        aid, st = _as_int(a.get("ally_id")), _as_int(a.get("military_strength"))
+        r: dict = {"id": aid, "strength": st, **({"forced": True} if a.get("is_forced") else {})}
+        if st >= CALL_TO_ARMS_MIN_STRENGTH or defender.get("is_ai") is False:
+            ach = _char_section(await gw.read("query_character", {"character_id": aid}))
+            op = await gw.read("query_opinion", {"actor_id": aid, "target_id": _as_int(target_id)})
+            op = op.get("opinion") if isinstance(op, dict) and not op.get("error") else None
+        else:
+            ach, op = {}, None
+        bar = (liege_bar(await liege_chain(gw, ach) if ach else [], attacker_id, above_me, aid)
+               if attacker_id else None)
+        r.update(call_to_arms_estimate(ach, strength=st, opinion=op, defender=defender,
+                                       attacker=attacker, allied_to_attacker=aid in mine, liege_bar_why=bar))
+        if r.get("would_join") is True:
+            likely += st
+        elif r.get("would_join") == "unknown":
+            unknown += st
+        if bar and isinstance(out.get("with_allies"), int):
+            out["with_allies"] = max(own or 0, out["with_allies"] - st)      # He cannot join at all
+            out["barred_strength"] = out.get("barred_strength", 0) + st
+        allies.append(r)
+    out.update(likely_strength=likely, allies=allies, basis=CALL_TO_ARMS_SOURCE,
+               estimate_not_read=list(CALL_TO_ARMS_NOT_READ))
+    if unknown:
+        out["unknown_strength"] = unknown
+    return out
+
+
+def war_verdict(mine: Any, theirs: dict) -> Optional[str]:
+    """One word from the numbers: your own strength against the defender's
+    likely joiners (likely_strength) and against all his allies (with_allies). No advice."""
+    m = _as_int(mine)
+    likely, worst = theirs.get("likely_strength"), theirs.get("with_allies")
+    if not m or not isinstance(worst, int):
+        return None
+    likely = likely if isinstance(likely, int) else worst
+    if m < likely:
+        return "outnumbered_with_likely_allies"
+    if m < worst:
+        return "outnumbered_only_if_every_ally_joins"
+    return "stronger_than_all_his_allies"
+
+
+#: (four of six Munster runs declared a second offensive war while the first ran and lost it: about
+#: 570 gold and 1,480 prestige): plan_war, cbs and declare_war ranked targets against the ruler's whole strength.
+#: The armies are one: what an open war's enemy holds against you is already spoken for.
+COMMITTED_BASIS = ("each open war of yours: the strength of the side against you (each participant's own "
+                   "military strength, query_character) less your co-belligerents' on your side, at most what "
+                   "you have left; `left` is your strength less all of it. Information only: no war is refused")
+
+
+def my_war_side(w: Any, me: int) -> Optional[str]:
+    """A recorded case (a test run, defect 5: war 5 read "attacker" in war_stance and "defender" in cbs, declare_war's
+    committed strength and plan_war): which side of a get_active_wars row `me` is on, the one definition every
+    reader asks. The bridge's is_attacker (war_side.h: the war's participant arrays) when the row carries it; else
+    the primary attacker / defender id; else None (not read). The committed-strength reader does not call a
+    co-attacker who is not the primary attacker a defender."""
+    if not isinstance(w, dict):
+        return None
+    if isinstance(w.get("is_attacker"), bool):
+        return "attacker" if w["is_attacker"] else "defender"
+    if me and _as_int(w.get("attacker_id")) == me:
+        return "attacker"
+    if me and _as_int(w.get("defender_id")) == me:
+        return "defender"
+    return None
+
+
+async def committed_strength(gw, actor_id: int, wars_reply: Any = None) -> Optional[dict]:
+    """The strength already committed to the ruler's open wars and what is left. {yours, wars: [{war_id,
+    name, side, enemy_leader, against_you, with_you, committed}], committed, left, offensive_open: [war ids], basis};
+    None when the ruler's own strength was not read. A war whose sides were not read says so and commits nothing
+    it cannot count (`unread`)."""
+    me = _as_int(actor_id)
+    if not me:
+        return None
+    wr = wars_reply if isinstance(wars_reply, dict) else await gw.read("get_active_wars", {"character_id": me})
+    wars = [w for w in ((wr or {}).get("wars") or []) if isinstance(w, dict)] if isinstance(wr, dict) else []
+    ids = {me}
+    for w in wars:
+        for k in ("attackers", "defenders"):
+            ids |= {_as_int(x) for x in (w.get(k) or []) if _as_int(x)}
+    ids |= {_as_int(w.get(k)) for w in wars for k in ("attacker_id", "defender_id") if _as_int(w.get(k))}
+    order = sorted(ids)
+    reads = await gw.read_many([("query_character", {"character_id": c}) for c in order]) if hasattr(gw, "read_many") \
+        else [await gw.read("query_character", {"character_id": c}) for c in order]
+    st = {}
+    for c, r in zip(order, reads):
+        s = _char_section(r).get("military_strength") if isinstance(r, dict) else None
+        st[c] = s if isinstance(s, int) and not isinstance(s, bool) else None
+    mine = st.get(me)
+    if mine is None:
+        return None
+    left = mine
+    rows, offensive = [], []
+    for w in wars:
+        side = my_war_side(w, me)
+        if side is None:
+            rows.append({"war_id": w.get("war_id"), "name": w.get("name"), "side": None,
+                         "unread": "your side of this war was not read: nothing counted for it"})
+            continue
+        att = side == "attacker"
+        side_mine = "attackers" if att else "defenders"
+        side_theirs = "defenders" if att else "attackers"
+        lead = _as_int(w.get("defender_id") if att else w.get("attacker_id"))
+        theirs = [_as_int(x) for x in (w.get(side_theirs) or []) if _as_int(x)] or ([lead] if lead else [])
+        ours = [_as_int(x) for x in (w.get(side_mine) or []) if _as_int(x) and _as_int(x) != me]
+        row = {"war_id": w.get("war_id"), "name": w.get("name"), "side": "attacker" if att else "defender",
+               "enemy_leader": lead}
+        if att:
+            offensive.append(w.get("war_id"))
+        if not theirs or any(st.get(x) is None for x in theirs):
+            row["unread"] = "the strength of the side against you was not read: nothing counted for this war"
+            rows.append(row)
+            continue
+        against = sum(st[x] for x in theirs)
+        with_you = sum(st.get(x) or 0 for x in ours)
+        c = max(0, min(max(left, 0), against - with_you))
+        left -= c
+        row.update(against_you=against, with_you=with_you, committed=c)
+        rows.append(row)
+    return {"yours": mine, "wars": rows, "committed": mine - left, "left": left,
+            "offensive_open": offensive, "basis": COMMITTED_BASIS}
+
+
+def offensive_open_words(cs: Optional[dict]) -> Optional[str]:
+    """The plain sentence when the ruler already leads an offensive war, with the numbers."""
+    if not isinstance(cs, dict) or not cs.get("offensive_open"):
+        return None
+    parts = [f"war {r.get('war_id')} ({r.get('name') or 'unnamed'}): {r.get('against_you')} against you"
+             + (f", {r.get('with_you')} with you" if r.get("with_you") else "")
+             for r in cs["wars"] if r.get("side") == "attacker" and "against_you" in r]
+    return (f"you already lead {len(cs['offensive_open'])} offensive war(s)"
+            + (f" ({'; '.join(parts)})" if parts else "")
+            + f": of your {cs['yours']} strength {cs['committed']} is committed to your open wars and "
+              f"{cs['left']} is left for a new one; a new war is compared with {cs['left']}, not {cs['yours']}")
+
+
+def war_verdict_left(cs: Optional[dict], mine: Any, theirs: dict) -> Optional[str]:
+    """war_verdict against what is LEFT when the ruler is at war, else against his whole strength."""
+    if isinstance(cs, dict) and cs.get("committed"):
+        worst = theirs.get("with_allies") if isinstance(theirs, dict) else None
+        if cs["left"] <= 0 and isinstance(worst, int) and worst > 0:
+            return "outnumbered_with_likely_allies"
+        return war_verdict(cs["left"], theirs)
+    return war_verdict(mine, theirs)
+
+
+def loss_price(cb: Any, monthly_income: Any) -> dict:
+    """What LOSING a war of casus belli `cb` costs you as its attacker: the
+    peace-price table's we_yield row (peace_prices, the same as end_war check)."""
+    p = peace_prices(cb, "attacker", monthly_income, ["we_yield"]).get("we_yield") or {}
+    if p.get("price") == "unknown":
+        return {"gold": "unknown", "why": p.get("why")}
+    out = {k: p[k] for k in ("gold", "you", "truce_days") if k in p}
+    if isinstance(p.get("prestige"), (int, float)) and not isinstance(p.get("prestige"), bool):
+        # (1083.09.14: plan_war's ducal rows read "loses prestige" while the declaration's
+        # prestige_if said defeat -150): the defeat's prestige, the number the declaration shows
+        out["prestige"] = p["prestige"]
+        if out.get("you") == "loses prestige":
+            out.pop("you")
+    elif isinstance(p.get("prestige"), str):
+        # The defeat's prestige is a multiple of a factor the engine sets for each war (claim_cb, the de jure wars):
+        # the rule in words and what is not read, never a number that stands for the factor
+        out["prestige"] = p["prestige"]
+        out["prestige_not_read"] = "cb_prestige_factor (no file or read gives it)"
+    if not PEACE_PRICE[str(cb)]["gold_years"]:
+        out["gold_basis"] = p.get("gold_basis")
+    elif isinstance(out.get("gold"), (int, float)):
+        # (read -119.9 at the declare, charged -202.32 when Leinster's income
+        # came mid-war): the game charges it from your income on the day you lose
+        yrs = PEACE_PRICE[str(cb)]["gold_years"]
+        out["gold_basis"] = (f"the game charges {yrs} years of its yearly income on the day you lose "
+                             f"(pay_short_term_gold yearly_income, the casus belli's on_defeat); this figure is this "
+                             f"tool's estimate of it, {yrs} x 12 x your monthly income read ({round(monthly_income, 2)} "
+                             f"a month now: each +1 a month adds {yrs * 12} to it), and can differ")
+    return out
+
+
+async def empty_cbs_reason(gw, actor_id: int, target_id: int) -> Optional[str]:
+    """Why the game's casus-belli read gave no row against a target, as far as
+    his character read says: dead, landless, in your realm, a vassal of another ruler."""
+    t = _char_section(await gw.read("query_character", {"character_id": _as_int(target_id)}))
+    if not t:
+        return "his character read did not answer"
+    if t.get("alive") is False:
+        return "he is dead"
+    if t.get("has_realm") is False or (not _as_int(t.get("primary_title_id")) and "has_realm" not in t):
+        return "he holds no land, so no war can be declared on him; a claim on a title he held is fought against its holder now"
+    top = _as_int(t.get("top_liege_id"))
+    if top and top == _as_int(actor_id):
+        return "he is in your own realm"
+    if top and top != _as_int(target_id):
+        return f"he is a vassal: a war on his land is declared on his realm's ruler, {top}"
+    return None
+
+
+async def defender_facts(gw, target_id: int) -> Optional[dict]:
+    """The defender's query_character fields claim_cb's price reads."""
+    if not _as_int(target_id):
+        return None
+    return _dg.ruler_facts(_char_section(await gw.read("query_character", {"character_id": _as_int(target_id)})))
+
+
+#: (target id, cb, cb_title_id) -> the bridge's base declaration cost a cbs or
+#: plan_war read showed (an estimate: the game scales it by target).
+CB_COST_SEEN: dict = {}
+DECLARE_COST_BASIS = ("the cost the cbs read showed before the war: claim_cb the game's own formula "
+                      "for this target (its unread multipliers named on the cbs row), any other "
+                      "casus belli the bridge's base for its family, which the game scales by target")
+
+
 def cb_option_declarable(opt: dict) -> bool:
-    """A shaped cbs option a player can declare: the game's check accepts it and
-    declare_war can send it."""
-    return bool(opt.get("valid")) and bool(opt.get("dispatch_supported"))
+    """A shaped cbs option a player can declare: the game's check accepts it, declare_war
+    can send it, and nothing declare_gates checks refuses it now."""
+    return bool(opt.get("valid")) and bool(opt.get("dispatch_supported")) and not opt.get("blocked_by")
 
 
 def cb_options_by_family(all_opts: list) -> dict:
@@ -2864,7 +4990,7 @@ def cb_options_by_family(all_opts: list) -> dict:
 # {status:"busy", error:"cb_query_busy"} (or a bare cb_query_busy/cb_query_timeout
 # error). The bridge already rides out most of these with bounded retry + stale-slot
 # reclaim, but a hot run can still surface a transient collision. Treating that as a
-# hard "degraded" makes the agent HOLD and miss expansion (the #95 class) — so we
+# hard "degraded" makes the agent HOLD and miss expansion (the hold-and-miss class) — so we
 # RETRY a few times with a short backoff before surfacing it, and we DISTINGUISH a
 # genuinely-empty drained result (no_valid_targets) from a tooling-busy failure.
 
@@ -2900,6 +5026,9 @@ async def _cb_read_with_retry(gw, action: str, params: dict,
         raw = await gw.read(action, params)
         res = raw if isinstance(raw, dict) else {}
         if not _cb_read_is_busy(res):
+            if action == "query_cbs_for_target":
+                # The ruler's truces (relation slots) on every casus-belli read
+                await _truces.overlay_raw(gw, params.get("attacker_id"), params.get("target_id"), res)
             return res
         if i + 1 < attempts:
             await asyncio.sleep(backoff_s)
@@ -2935,10 +5064,12 @@ async def _cbs_for_targets_batched(gw, character_id: int, target_ids: list[int])
         for entry in rows:
             if isinstance(entry, dict):
                 out[_as_int(entry.get("target_id"))] = entry
+                await _truces.overlay_raw(gw, character_id, entry.get("target_id"), entry)
     return out
 
 
-async def _cb_options_for(gw, character_id: int, target_id: int) -> tuple[list, list, dict]:
+async def _cb_options_for(gw, character_id: int, target_id: int,
+                          purse: Optional[dict] = None) -> tuple[list, list, dict]:
     """Fetch + shape the CB tradeoff list for ONE (actor,target). query_cbs_for_target
     is serviced on the game thread (g_cb_query slot), like query_cb_validity_strict;
     gw.read single-flights it. Returns (valid_options, all_options, target_state)."""
@@ -2946,8 +5077,392 @@ async def _cb_options_for(gw, character_id: int, target_id: int) -> tuple[list, 
                                         {"attacker_id": character_id, "target_id": target_id,
                                          "timeout_ms": 6000})
     cbs_raw = cbs_raw if isinstance(cbs_raw, dict) else {}
-    valid_opts, all_opts = _shape_cb_options(cbs_raw, target_id=target_id)
+    valid_opts, all_opts = _shape_cb_options(cbs_raw, target_id=target_id, purse=purse,
+                                             prices=await cb_game_prices(gw, character_id, target_id, cbs_raw.get("cbs")),
+                                             defender=await defender_facts(gw, target_id))
     return valid_opts, all_opts, (cbs_raw.get("target_state") or {})
+
+
+#: Whom a war on a title in another realm names (the rule the bridge's claim
+#: reads apply: claim_rule::claim_war_defender).
+WAR_TARGET_RULE = ("a war is declared on the ruler of the realm the title lies in: the holder "
+                   "when he is independent, else his top liege (realm_ruler_id); the holder or "
+                   "his top liege may be passed as target_id")
+
+
+async def realm_war_target(gw, actor_id: int, target_id: int) -> tuple[int, Optional[dict]]:
+    """A recorded case (1076.04.22): declare_war(target_id=29585), the vassal holder of
+    c_athlone, was refused target_not_independent; the war is declared on his top liege
+    (68530). (target to use, warning or None): a target who is someone's vassal, in a
+    realm the actor is not part of, becomes his top liege (query_character
+    top_liege_id), and the warning says so. Anything else is left as given: an
+    independent target, one in the actor's own realm (the game decides), and one whose
+    liege walk did not finish (top_liege_id 0, never a guess)."""
+    tid, me = _as_int(target_id), _as_int(actor_id)
+    if not tid or not me or tid == me:
+        return tid, None
+    tgt = _char_section(await gw.read("query_character", {"character_id": tid}))
+    top, liege = _as_int(tgt.get("top_liege_id")), _as_int(tgt.get("liege_id"))
+    if not liege or not top or top == tid:
+        return tid, None
+    mine = _char_section(await gw.read("query_character", {"character_id": me}))
+    my_top = _as_int(mine.get("top_liege_id"))
+    if not my_top or my_top == top or top == me:
+        return tid, None
+    return top, {"code": "target_is_realm_ruler",
+                 "detail": (f"{tid} is a vassal (liege {liege}); a war on a title in his realm "
+                            f"is declared on its ruler, {top}: {WAR_TARGET_RULE}"),
+                 "given_target_id": tid, "target_id": top}
+
+
+#: The keys declare_war reads off declare_args (_declare_war_impl), the keys every plan_war / cbs row carries
+DECLARE_ARGS_KEYS = ("target_id", "cb", "cb_title_id", "claimant_id")
+
+
+def declare_args_of(opt: dict, target_id: int) -> dict[str, Any]:
+    """declare_war's declare_args for one declarable cbs option against target_id."""
+    return {"target_id": _as_int(target_id), "cb": opt.get("cb"),
+            "cb_title_id": _as_int(opt.get("cb_title_id")) if opt.get("needs_cb_title_id") else 0,
+            "claimant_id": opt.get("claimant_id") if opt.get("needs_claimant") else None}
+
+
+#: (1074.01.10-05.09: cbs handed `ducal_conquest_cb` with `cb_title_id 0`, declare_war sent it,
+#: the game refused; the same call with c_ulster applied in the same turn): the title rule of a title-scoped casus
+#: belli the cbs read names no title for. The game's can_declare_war refuses the casus belli without its title.
+DUCAL_TITLE_RULE = ("00_conquest.txt ducal_conquest_cb: target_titles = neighbor_land, a county (tier county) of "
+                    "his realm that borders your land, in a de jure duchy that is not created and in which your "
+                    "realm holds a county (valid_to_start)")
+TITLE_RULES = {"ducal_conquest_cb": DUCAL_TITLE_RULE}
+#: (1066.09.15: cbs gave Desmond's individual_county_de_jure_cb no ready call, "no title rule";
+#: plan_war carried cb_title_id 531 by its own row): the de jure casus belli fought for one title. The rule
+#: (00_dejure_war.txt valid_to_start / should_invalidate): a title of that tier held in his realm (by him or a vassal
+#: of his) whose de jure liege title above it (duchy, kingdom or empire) is held by you or a vassal of yours.
+DEJURE_TITLE_RULES = {
+    "individual_county_de_jure_cb": (2, "00_dejure_war.txt individual_county_de_jure_cb: a county of his realm whose "
+                                        "de jure duchy, kingdom or empire you hold (your vassals' de jure titles also "
+                                        "count; they are not read here)"),
+    "individual_duchy_de_jure_cb": (3, "00_dejure_war.txt individual_duchy_de_jure_cb: a duchy of his realm whose "
+                                       "de jure kingdom or empire you hold (your vassals' de jure titles also count; "
+                                       "they are not read here)"),
+}
+CB_TITLE_REQUIRED = ("the game refuses this casus belli without the title it is fought for "
+                     "(can_declare_war: its target_titles); give cb_title_id")
+
+
+def needs_title_unnamed(opt: Optional[dict]) -> bool:
+    """A shaped option whose casus belli is fought for a title (not a claimant's) and the read names none."""
+    o = opt or {}
+    return bool(o.get("needs_cb_title_id")) and not o.get("needs_claimant") and not _as_int(o.get("cb_title_id"))
+
+
+async def title_rows(gw, actor_id: int, target_id: int, cb: Any) -> dict:
+    """The titles a title-scoped casus belli `cb` can name against `target_id` now, by its rule
+    in the game's files: {"titles": [{title, cb_title_id, duchy}], "rule"} for a rule this code reads (the
+    county's holder in the target's realm, the county next to your realm, its de jure duchy uncreated with a
+    county of your realm in it), else {"titles": "unknown", "why"}. Reads query_conquest_targets (the realm
+    adjacency the conquest casus belli use) and query_title_hierarchy per duchy (its holder: 0 = uncreated)."""
+    if str(cb or "") in DEJURE_TITLE_RULES:
+        return await _dejure_title_rows(gw, actor_id, target_id, str(cb))
+    rule = TITLE_RULES.get(str(cb or ""))
+    if rule is None:
+        return {"titles": "unknown", "why": f"no title rule for {cb} in this code: name the title the war is for"}
+    ct: dict = {}
+    for _ in range(3):
+        ct = await gw.read("query_conquest_targets", {"character_id": actor_id, "include_expansion": False})
+        ct = ct if isinstance(ct, dict) else {}
+        if not _cb_read_is_busy(ct) or ct.get("duchies") is not None:
+            break
+    if not isinstance(ct.get("duchies"), list):
+        return {"titles": "unknown", "why": "query_conquest_targets did not answer", "rule": rule}
+    me, tid = _as_int(actor_id), _as_int(target_id)
+    rows: list = []
+    unread: list = []
+    for d in ct["duchies"]:
+        if not isinstance(d, dict):
+            continue
+        rem = [rc for rc in d.get("remaining_counties") or [] if isinstance(rc, dict)]
+        mine = bool(d.get("partially_held")) or _as_int(d.get("held_by_ruler_count")) > 0 or any(
+            _as_int(rc.get("holder_top_liege_id")) == me for rc in rem)
+        his = [rc for rc in rem if rc.get("adjacent") and tid in (_as_int(rc.get("holder_top_liege_id")),
+                                                                    _as_int(rc.get("holder_id")))]
+        if not mine or not his:
+            continue
+        hr = await gw.read("query_title_hierarchy", {"title_id": _as_int(d.get("duchy_id"))})
+        t = hr.get("title") if isinstance(hr, dict) else None
+        if not isinstance(t, dict):
+            unread.append(d.get("duchy_key") or d.get("duchy_id"))
+            continue
+        if _as_int(t.get("holder_id")):
+            continue                                  # the duchy is created: the rule excludes it
+        for rc in his:
+            rows.append({"title": rc.get("county_key") or rc.get("county_name"),
+                         "cb_title_id": _as_int(rc.get("county_id")), "duchy": d.get("duchy_key")})
+    out: dict = {"titles": rows, "rule": rule}
+    if unread:
+        out["duchy_holder_unread"] = unread
+    return out
+
+
+async def _dejure_title_rows(gw, actor_id: int, target_id: int, cb: str) -> dict:
+    """DEJURE_TITLE_RULES' titles against `target_id`: walk the de jure titles under each title of a
+    higher tier you hold (query_title_hierarchy, two levels at most) and keep those whose holder is the target or
+    in his realm (query_character top_liege_id)."""
+    want, rule = DEJURE_TITLE_RULES[cb]
+    me, tid = _as_int(actor_id), _as_int(target_id)
+    mine = await gw.read("query_title_hierarchy", {"character_id": me})
+    held = mine.get("held_titles") if isinstance(mine, dict) else None
+    if not isinstance(held, list):
+        return {"titles": "unknown", "why": "the titles you hold were not read (query_title_hierarchy)", "rule": rule}
+    rows, seen, unread = [], set(), []
+    tops: dict = {}
+
+    async def realm_of(h: int) -> int:
+        if h not in tops:
+            c = _char_section(await gw.read("query_character", {"character_id": h}))
+            tops[h] = _as_int(c.get("top_liege_id")) or (h if c else 0)
+        return tops[h]
+
+    async def walk(title_id: int, parent_key: Any, depth: int) -> None:
+        hr = await gw.read("query_title_hierarchy", {"title_id": title_id})
+        t = hr.get("title") if isinstance(hr, dict) else None
+        if not isinstance(t, dict):
+            unread.append(parent_key or title_id)
+            return
+        for sub in t.get("sub_titles") or []:
+            if not isinstance(sub, dict):
+                continue
+            st, sid = _as_int(sub.get("tier")), _as_int(sub.get("title_id"))
+            if st == want and sid and sid not in seen:
+                seen.add(sid)
+                h = _as_int(sub.get("holder_id"))
+                if h and h != me and (h == tid or await realm_of(h) == tid):
+                    rows.append({"title": sub.get("key"), "cb_title_id": sid,
+                                 "de_jure_of": t.get("key"), "holder_id": h})
+            elif st > want and depth < 2 and sid:
+                await walk(sid, sub.get("key"), depth + 1)
+
+    for t in held:
+        if isinstance(t, dict) and _as_int(t.get("tier")) > want and _as_int(t.get("title_id")):
+            await walk(_as_int(t.get("title_id")), t.get("key"), 1)
+    out: dict = {"titles": rows, "rule": rule}
+    if unread:
+        out["hierarchy_unread"] = unread
+    return out
+
+
+def title_declare_rows(opt: dict, target_id: int, tr: dict, loss: Optional[dict] = None,
+                       strength: Optional[dict] = None) -> dict:
+    """The option's `by_title` rows from title_rows (each with its declare_args, the defender's strength with
+    his likely allies and if_you_lose) and its declare_args set to the first; with no title the option carries
+    `declare_args_unavailable` and no declare_args."""
+    titles = tr.get("titles")
+    if not isinstance(titles, list) or not titles:
+        opt.pop("declare_args", None)
+        opt["declare_args_unavailable"] = (
+            f"{CB_TITLE_REQUIRED}; " + (tr.get("why") or "no county of his meets the rule now: " + str(tr.get("rule"))))
+        return opt
+    rows = []
+    for t in titles:
+        r = dict(t, declare_args={"target_id": _as_int(target_id), "cb": opt.get("cb"),
+                                  "cb_title_id": t["cb_title_id"], "claimant_id": None})
+        if strength is not None:
+            r["his_likely"] = strength
+        if loss is not None:
+            r["if_you_lose"] = loss
+        rows.append(r)
+        if (_as_int(target_id), opt.get("cb"), 0) in CB_COST_SEEN:
+            CB_COST_SEEN[(_as_int(target_id), opt.get("cb"), t["cb_title_id"])] = \
+                CB_COST_SEEN[(_as_int(target_id), opt.get("cb"), 0)]
+    opt["by_title"] = rows
+    opt["title_rule"] = tr.get("rule")
+    opt["declare_args"] = rows[0]["declare_args"]
+    opt["cb_title_id"] = rows[0]["cb_title_id"]
+    return opt
+
+
+def unmet_gate(opt: dict) -> dict:
+    """The blocked block of a cbs option that is not declarable now: its first unmet
+    requirement as the gate, every unmet requirement in measured."""
+    unmet = [str(x) for x in (opt.get("requirements_unmet") or [])]
+    if opt.get("valid") and opt.get("blocked_by"):
+        return declare_gate_blocked(opt)
+    if opt.get("valid") and not opt.get("dispatch_supported"):
+        return why_blocked("engine_refused", raw_reason="dispatch_unsupported",
+                           summary=f"{opt.get('cb')} is valid but declare_war cannot send it")
+    key = unmet[0] if unmet else "cb_invalid"
+    tw = _truces.blocked_words(key, opt.get("truce"))
+    blk = map_raw_reason(key, summary=f"{opt.get('cb')}: " + (tw or ", ".join(unmet) or "the game's check said no"))
+    if unmet:
+        blk["measured"] = {"requirements_unmet": unmet}
+    return blk
+
+
+def declare_gate_blocked(opt: dict) -> dict:
+    """The blocked block of an option the game's casus-belli check accepts and a
+    declare_gates condition refuses: the first failing condition is the gate, its summary
+    says what is missing, every failing condition and what was checked are in measured."""
+    bad = opt.get("blocked_by") or []
+    first = bad[0]
+    blk = why_blocked(first["gate"], raw_reason=first["condition"],
+                      summary=f"{opt.get('cb')}: " + "; ".join(b["fix"] for b in bad),
+                      measured={"blocked_by": [{k: v for k, v in b.items() if k not in ("gate", "fix", "next")}
+                                               for b in bad],
+                                "checked": opt.get("checked")})
+    if first.get("next"):
+        blk["fix"] = first["next"]
+    return blk
+
+
+def blocked_now_rows(all_opts: list, target_id: int) -> list:
+    """The options the game's check accepts that a declare_gates condition
+    refuses now, each with its declare_args for when the condition clears."""
+    return [{"cb": o.get("cb"), "cb_title_id": o.get("cb_title_id"),
+             "blocked_by": [{k: v for k, v in b.items() if k not in ("next", "cost_source", "measured")}
+                            for b in o["blocked_by"]],
+             "declare_args": declare_args_of(o, target_id)}
+            for o in all_opts if o.get("valid") and o.get("dispatch_supported") and o.get("blocked_by")]
+
+
+async def declarable_now(gw, actor_id: int, target_ids: list) -> dict[int, Optional[list]]:
+    """THE answer to "which wars can this ruler declare on these targets now":
+    the cbs read (query_cbs_for_target(s), the game's casus-belli check, the read cbs()
+    answers from), shaped by _shape_cb_options. {target_id: [shaped options]} with None
+    for a target whose read did not answer. cbs, discover(war_targets), inspect(title)'s
+    next_call and observe's news call this; an option is declarable by
+    cb_option_declarable, the one predicate."""
+    ids = sorted({_as_int(t) for t in target_ids if _as_int(t)})
+    out: dict[int, Optional[list]] = {t: None for t in ids}
+    if not ids:
+        return out
+    batched = await _cbs_for_targets_batched(gw, actor_id, ids)
+    purse = await ruler_purse(gw, actor_id)
+    for t in ids:
+        raw = (batched or {}).get(t)
+        if not isinstance(raw, dict) or _cb_read_is_busy(raw) and not raw.get("cbs"):
+            raw = await _cb_read_with_retry(gw, "query_cbs_for_target",
+                                            {"attacker_id": actor_id, "target_id": t, "timeout_ms": 6000})
+        if isinstance(raw, dict) and isinstance(raw.get("cbs"), list):
+            out[t] = _shape_cb_options(raw, target_id=t, purse=purse,
+                                       prices=await cb_game_prices(gw, actor_id, t, raw.get("cbs")),
+                                       defender=await defender_facts(gw, t))[1]
+    return out
+
+
+def cb_option_for(opts: list, cb: Any, title_id: Any) -> Optional[dict]:
+    """The cbs option a war-target row names. The bridge's target list names a claim
+    war `claim` (its cb_type for a claim row) where the cbs read names the casus belli
+    claim_cb (live 1067.11.27: the row read "no claim" while cbs offered claim_cb
+    on the same county): a `claim` row is any claim casus belli (is_claim_cb_name). An
+    option naming this title (cb_title_id) is taken before one naming none, and a
+    declarable one before the rest."""
+    want = str(cb or "")
+    named = [o for o in opts if o.get("cb") == want
+             or (want == "claim" and is_claim_cb_name(o.get("cb")))]
+    tid = _as_int(title_id)
+    named.sort(key=lambda o: (not cb_option_declarable(o),
+                              _as_int(o.get("cb_title_id")) not in (tid, 0)))
+    return next((o for o in named if _as_int(o.get("cb_title_id")) in (tid, 0)), None)
+
+
+#: The most rows discover(what="war_targets") lists (the rest are counted).
+WAR_TARGETS_CAP = 24
+
+
+async def war_targets_impl(gw, actor_id: int = 0) -> dict[str, Any]:
+    """discover(what="war_targets"): query_valid_war_targets' candidates, each judged by
+    the casus-belli read cbs() answers from (declarable_now). Live 1066.09.15
+    the bridge's list said county_conquest_cb declarable (declarable_authoritative
+    false) against Athlone, Oriel, ... and cbs() and declare_war refused it
+    (engine_cb_validity_check_failed). A row says declarable only when that read does,
+    with its declare_args; otherwise the gate; null when the read did not answer."""
+    actor, err = await _resolve_actor(gw, actor_id, "discover")
+    if err:
+        return err
+    me = _as_int(actor_id) or _as_int((actor or {}).get("id"))
+    raw = await gw.read("query_valid_war_targets", {"actor_id": me})
+    raw = raw if isinstance(raw, dict) else {}
+    refused = read_refusal(raw, "query_valid_war_targets")
+    if refused is not None or not isinstance(raw.get("targets"), list):
+        return envelope("discover", ok=False, actor=actor, game=gw.game(), bridge_health=gw.health,
+                        blocked=refused or why_blocked("read_timeout",
+                                                       summary="query_valid_war_targets did not answer"))
+    cands = [t for t in raw["targets"] if isinstance(t, dict)]
+    verdicts = await declarable_now(gw, me, [t.get("target_char_id") for t in cands])
+    # a claim row carries no key; another row on the same title does
+    keys = {t.get("title_id"): t.get("title_key") for t in cands if t.get("title_key")}
+    rows, n_decl = [], 0
+    for t in cands:
+        tid, cb = _as_int(t.get("target_char_id")), t.get("cb_type")
+        opts = verdicts.get(tid)
+        row = {"target_id": tid, "target_name": t.get("target_name"), "title_id": t.get("title_id"),
+               "title_key": t.get("title_key") or keys.get(t.get("title_id")), "cb": cb}
+        if opts is None:
+            row["declarable"] = None
+            row["unread"] = "the casus-belli read for this target did not answer"
+        else:
+            opt = cb_option_for(opts, cb, t.get("title_id"))
+            if opt is not None:
+                row["cb"] = opt.get("cb")
+            if opt is not None and cb_option_declarable(opt):
+                row["declarable"] = True
+                row["declare_args"] = declare_args_of(opt, tid)
+                n_decl += 1
+            else:
+                row["declarable"] = False
+                blk = (unmet_gate(opt) if opt is not None else
+                       why_blocked("cb_invalid_for_target", raw_reason="cb_not_offered",
+                                   summary=f"the game's casus-belli list for {tid} has no {cb}"))
+                # The gate and its words; cbs(target_id) has the whole option
+                row["blocked"] = {"gate": blk["gate"], "summary": blk["summary"]}
+        rows.append(row)
+    # The list names
+    # one casus belli per row; one the game's check accepts for a listed target that no row names is listed apart
+    also = []
+    for tid in sorted({r["target_id"] for r in rows if r.get("target_id")}):
+        named = {r.get("cb") for r in rows if r.get("target_id") == tid}
+        for o in verdicts.get(tid) or []:
+            if not cb_option_declarable(o) or o.get("cb") in named:
+                continue
+            if needs_title_unnamed(o):
+                tr = await title_rows(gw, me, tid, o.get("cb"))
+                if not (isinstance(tr.get("titles"), list) and tr["titles"]):
+                    continue
+                o = dict(o, cb_title_id=tr["titles"][0]["cb_title_id"])
+            also.append({"target_id": tid, "cb": o.get("cb"), "declare_args": declare_args_of(o, tid)})
+    rows.sort(key=lambda r: (r["declarable"] is not True, r["declarable"] is None))
+    # What each would face: his strength with the allies likely to answer his call (the
+    # read cbs' strength_verdict uses, defender_allies), beside yours, one read per target
+    mine = await gw.read("query_alliances", {"character_id": me})
+    mine = _as_int(mine.get("own_military_strength")) if isinstance(mine, dict) else 0
+    _seen: dict = {}
+    for row in rows[:WAR_TARGETS_CAP]:
+        tid = row["target_id"]
+        if tid and tid not in _seen:
+            _seen[tid] = await defender_allies(gw, tid, attacker_id=me)
+        da = _seen.get(tid) or {}
+        if isinstance(da.get("his_own"), int):
+            row["his_own"], row["his_likely"] = da["his_own"], da.get("likely_strength")
+            v = war_verdict(mine, da)
+            if v:
+                row["verdict"] = v
+    # The rows a declaration can use first, so a cut leaves out only rows the game's check refuses
+    rows.sort(key=lambda r: {True: 0, None: 1}.get(r.get("declarable"), 2))
+    result = {"actor_id": me, "declarable_count": n_decl, "targets": rows[:WAR_TARGETS_CAP],
+              "your_strength": mine or None,
+              "judged_by": "cbs: the game's casus-belli check for each target (the read cbs() answers)"}
+    if also:
+        result["also_declarable"] = also[:WAR_TARGETS_CAP]
+        result["also_declarable_note"] = ("casus belli the game's check accepts against a listed target that its row "
+                                          "does not name (cbs(target_id) shows each with its price)")
+    if len(rows) > WAR_TARGETS_CAP:
+        # What the rows left out are
+        rest = rows[WAR_TARGETS_CAP:]
+        result["truncated"] = {"shown": WAR_TARGETS_CAP, "of": len(rows),
+                               "declarable_not_shown": sum(1 for r in rest if r.get("declarable")),
+                               "targets_not_shown": sorted({r["target_id"] for r in rest if r.get("target_id")}
+                                                           - {r["target_id"] for r in rows[:WAR_TARGETS_CAP]}),
+                               "narrow": "cbs target_id=<a target> reads every casus belli against him"}
+    return envelope("discover", result=result, actor=actor, game=gw.game(), bridge_health=gw.health)
 
 
 # --------------------------------------------------------------------------- war stance / lifecycle
@@ -2958,8 +5473,8 @@ async def _cb_options_for(gw, character_id: int, target_id: int) -> tuple[list, 
 # landed / read-side-unexposed" note was WRONG. The handler ALWAYS serves a per-war
 # occupation view (success:true + a `wars` array, built from the war-score cache) — the
 # record walk that adds engine STANCE LABELS sits behind the bridge flag
-# `set_war_stance_record_walk`, DEFAULT ON since WSTANCE (it was OFF until rec+0x18 matched
-# live, smokes 17/19/21; re_query_war_stance.md §10). This Python layer does NOT arm that
+# `set_war_stance_record_walk`, DEFAULT ON (it was OFF until rec+0x18 matched
+# live in three test runs; re_query_war_stance.md §10). This Python layer does NOT arm that
 # flag. A row the bridge could not label (walk off or unmatched) is not the engine's word:
 # _stance_unread_reason names why, and we layer occupation onto the SYNTHESIZED agent-facing
 # "war stance" view from the two reads the bridge serves UNGATED: get_active_wars (side +
@@ -2980,9 +5495,6 @@ async def _cb_options_for(gw, character_id: int, target_id: int) -> tuple[list, 
 # instead of bleeding its army across a succession. This is a PURE read (no engine hook,
 # no write) — crash-safe by construction.
 
-# A war that an ATTACKER has held with occupation_score==0 past this many game-DAYS is
-# "stalled" (the siege never started). Bounded so a freshly-declared war isn't flagged.
-_WAR_STALL_OCC0_DAYS = 365         # ~1 game year of zero occupation = stuck siege
 _WAR_STALL_LOSING_SCORE = -25      # losing badly as attacker → also exit-worthy
 
 
@@ -2992,14 +5504,14 @@ _WAR_STALL_LOSING_SCORE = -25      # losing badly as attacker → also exit-wort
 # serves a `wars` array with occupation, just without the stance label until B2 arms the
 # flag.) On such a build we fall back to the synthesized occupation view.
 # Cache the one-time capability verdict per gateway: once query_war_stance comes back
-# unserved (None) on a build, skip the wasted round-trip on every later plan_war (R5).
+# unserved (None) on a build, skip the wasted round-trip on every later plan_war.
 # Keyed on id(gw) so a fresh gateway re-probes; cleared implicitly when the gw is GC'd.
 # NOTE: query_war_stance is is_game_state_query, served paused or running, so the
 # timeout branch below no longer false-caches a capable build into synthesis-only.
 _WAR_STANCE_UNSERVED: set = set()
 
 
-#: Why a war row carries no engine stance (WSTANCE). Each names the step that did not
+#: Why a war row carries no engine stance. Each names the step that did not
 #: run or did not see, so "nobody looked" is told from "looked and could not see".
 _STANCE_UNREAD_DETAIL = {
     "query_war_stance_unserved": "this bridge does not serve query_war_stance; stance inferred from occupation",
@@ -3051,11 +5563,11 @@ async def _native_war_stance(gw, character_id: int) -> Optional[dict]:
     Returns the raw dict on success, None when the bridge does not serve it (so the
     caller falls back to the synthesized occupation view). Honest — never invents data.
     One-time capability probe: after the first None on a gateway the call is skipped
-    (cached in _WAR_STANCE_UNSERVED) so it is not re-paid every plan_war (R5)."""
+    (cached in _WAR_STANCE_UNSERVED) so it is not re-paid every plan_war."""
     if id(gw) in _WAR_STANCE_UNSERVED:
         return None
     try:
-        raw = await gw.read("query_war_stance", {"character_id": character_id})
+        raw = await seat_read(gw, "query_war_stance", {}, character_id)
     except Exception:
         _WAR_STANCE_UNSERVED.add(id(gw))
         return None
@@ -3073,6 +5585,66 @@ async def _native_war_stance(gw, character_id: int) -> Optional[dict]:
     return raw
 
 
+#: (a test run, defect 1: three wars white-peaced on "progress 20 for months"; b_donegal 22 months
+#: "won"): at first the bridge read a siege's progress at CSiege+0x1b0, which is the NEXT pooled siege's
+#: phase length (a CSiege is 0x190 bytes; 1097 dump 41/41 neighbours), so 20 meant "another siege has intact walls".
+#: A row from such a bridge (it carries progress_max / state) has no progress; it says so and is never judged.
+SIEGE_PROGRESS_MISREAD = ("this bridge's siege progress is another siege's 20-day event timer, not progress: "
+                          "unread; a fallen holding shows as occupation in the war score")
+
+#: The bridge's per-siege verdict (siege_view.h): what holds a blocked siege, and what moves it.
+SIEGE_BLOCKER_NEXT = {
+    "garrison_larger": "no progress: the garrison ({garrison}) outnumbers your {men} men on the holding; bring more men",
+    "in_battle": "paused: a battle is being fought at the holding; it resumes when the battle ends",
+    "moving": "paused: your armies there are marching on; a siege moves only while an army stays on the holding",
+    "no_besieger": ("paused: no army of yours stands idle on the holding (a held army sieges only where it "
+                    "stands): move one onto it"),
+    "not_read": "paused by the game; why was not read",
+}
+
+
+def _siege_next(x: dict) -> Optional[str]:
+    st, b = x.get("status"), x.get("blocker")
+    if st == "blocked":
+        return SIEGE_BLOCKER_NEXT.get(b, SIEGE_BLOCKER_NEXT["not_read"]).format(
+            garrison=x.get("garrison", "?"), men=x.get("men", "?"))
+    if st == "starting":
+        return "not evaluated yet today (a siege just begun, or a game just loaded): read it again tomorrow"
+    if st != "progressing":
+        return None
+    eta, tn, tier = x.get("eta_days"), x.get("tier_needed"), x.get("siege_tier")
+    out = (f"falls in at most about {eta} days at the base rate (sooner with siege events)"
+           if isinstance(eta, int) else "progressing")
+    if isinstance(tn, int) and isinstance(tier, int) and tier < tn:
+        out += (f"; fort level {x.get('fort_level')} wants siege tier {tn} (onager 1, mangonel 2 men-at-arms), "
+                f"yours {tier}: speed x{x.get('fort_speed')}")
+    return out
+
+
+def siege_rows(sieges: Any, my_occ: Any = None) -> tuple[Any, Optional[str]]:
+    """Each siege row with `next` (what holds it or when it falls, from the bridge's verdict). A row from
+    a bridge that read the wrong field (progress_max / state, before the siege fix) drops its progress fields and says
+    so. Returns (rows, verdict): "all_blocked" when every siege of yours makes no progress, "unread" when none was
+    read, else None."""
+    if not isinstance(sieges, list):
+        return sieges, None
+    out, blocked, unread = [], 0, 0
+    for x in sieges:
+        if isinstance(x, dict) and "progress_needed_max" not in x and ("progress_max" in x or "state" in x):
+            x = {k: v for k, v in x.items() if k not in ("progress", "progress_max", "progress_pct", "state",
+                                                          "active", "status")}
+            x["progress_unread"] = SIEGE_PROGRESS_MISREAD
+            unread += 1
+        elif isinstance(x, dict):
+            nxt = _siege_next(x)
+            x = dict(x, **({"next": nxt} if nxt else {}))
+            blocked += x.get("status") == "blocked"
+        out.append(x)
+    verdict = ("all_blocked" if out and blocked == len(out) else
+               "unread" if out and unread == len(out) else None)
+    return out, verdict
+
+
 async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
     """Per-active-war stance view for `character_id`: side (attacker/defender),
     war_score, occupation_score, and a STALL verdict + recommended exit lever for stuck
@@ -3080,8 +5652,22 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
     re_query_war_stance.md) when served; otherwise SYNTHESIZES from get_active_wars +
     query_war_score_breakdown (pure reads, crash-safe). Returns
     {wars:[...], stalled:[...], any_stalled:bool}."""
+    # Every read below names the seat's ruler (inspect war_stance sends 0 when no id is given)
+    if not _as_int(character_id):
+        _a, _err = await _resolve_actor(gw, 0, "inspect")
+        character_id = _as_int((_a or {}).get("id"))
     wars_raw = await gw.read("get_active_wars", {"character_id": character_id})
     wars_raw = wars_raw if isinstance(wars_raw, dict) else {}
+    # The sieges come from the read inspect(subject="wars") answers (query_wars,
+    # emit_war_entry's per-war siege rows). Live 1068.07.04 this view said "siege never
+    # started" while inspect wars listed a won siege of holding 470 (occupation_score 0
+    # in the breakdown cache all the while); the war was won.
+    qw = await gw.read("query_wars", {"character_id": character_id}) if wars_raw.get("wars") else {}
+    qw_rows = {_as_int(x.get("war_id")): x for x in ((qw or {}).get("wars") or [])
+               if isinstance(x, dict)} if isinstance(qw, dict) else {}
+    # A siege row names its barony and county beside the holding's id
+    import map_view as _mv
+    await _mv.name_sieges(gw, [s for x in qw_rows.values() for s in (x.get("sieges") or [])])
     out_wars: list = []
     stalled: list = []
     g = gw.game()
@@ -3094,12 +5680,18 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
             native_by_war[_as_int(ns.get("war_id"))] = ns
     for w in (wars_raw.get("wars") or []):
         wid = _as_int(w.get("war_id"))
-        is_attacker = bool(w.get("is_attacker")) or (_as_int(w.get("attacker_id")) == character_id)
-        war_score = _as_int(w.get("war_score"))
+        is_attacker = my_war_side(w, character_id) == "attacker"
         # Per-war breakdown for the occupation signal (the siege-progress tell).
         occ = None
         wsb = await gw.read("query_war_score_breakdown", {"character_id": character_id, "war_id": wid})
         wsb = wsb if isinstance(wsb, dict) else {}
+        # The total (war_score_view), never the battle part
+        enemy = _as_int(w.get("defender_id") if is_attacker else w.get("attacker_id"))
+        score = war_score_view(wsb if "total_warscore" in wsb else w, is_attacker=is_attacker, enemy_id=enemy)
+        if score["war_score"] is None and "total_warscore" in wsb and w.get("war_score") is not None:
+            score = dict(war_score_view(w, is_attacker=is_attacker, enemy_id=enemy),
+                         **({"war_score_parts": score["war_score_parts"]} if "war_score_parts" in score else {}))
+        war_score = score["war_score"] if score["war_score"] is not None else 0
         # the handler nests the live numbers under a flat row or a `breakdowns` list.
         occ = wsb.get("occupation_score")
         if occ is None:
@@ -3122,7 +5714,7 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
         side_mismatch = bool(ns) and "is_attacker" in ns and bool(ns["is_attacker"]) != is_attacker
         if side_mismatch:
             ns = {}
-        # WSTANCE (v3 pilot, 8/8 K-seat reads): the bridge answers a row it could not
+        # (8 of 8 reads in one test series): the bridge answers a row it could not
         # label with stance "unavailable" (record walk off or unmatched) or "unknown"
         # (pointer outside the 7 slots), and its will_siege is then occupation > 0,
         # not a stance bit. Those rows were shown as stance_source engine_stance_db.
@@ -3143,25 +5735,48 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
             stance = "defending"
             stance_source = "inferred_from_occupation"
 
-        # Stall verdict: an ATTACKER war with occupation 0 (no siege) OR losing badly.
-        # When the native will_siege bit is present, prefer it (an attacker stance that
-        # will NOT siege at occupation 0 is the definitive stuck case). A losing attacker
-        # is exit-worthy too.
-        occ0 = is_attacker and (my_occ == 0) and (will_siege is not True)
+        # Stall verdict: true only on what the reads support. Losing badly as
+        # attacker is a stall. A siege on my side (query_wars, the inspect wars read)
+        # or occupation above 0 or the engine's will_siege is not. Occupation 0 with no
+        # siege is UNKNOWN: no read gives the war's start date, so "never sieged in a
+        # year" cannot be told from "declared last month", and the engine's stance
+        # label is no verdict (live w2: attacker_defensive, will_siege false, while
+        # the siege of 470 was won).
+        qrow = qw_rows.get(wid)
+        my_side = "attacker" if is_attacker else "defender"
+        my_sieges = ([x for x in (qrow.get("sieges") or []) if isinstance(x, dict)
+                      and x.get("besieger_side") == my_side] if isinstance(qrow, dict) else None)
         losing = is_attacker and (war_score <= _WAR_STALL_LOSING_SCORE)
-        stall_suspect = occ0 or losing
+        occ0 = False
+        my_sieges, siege_verdict = siege_rows(my_sieges, my_occ)
+        if losing:
+            stall_suspect = True
+        elif is_attacker and siege_verdict in ("all_blocked", "unread") and not (my_occ and my_occ > 0):
+            # Every siege of yours blocked (each row's `next` names why and the lever), or its
+            # progress unread on an older bridge: not a stall the reads can call, and not progress either
+            stall_suspect = None
+        elif not is_attacker or my_sieges or (my_occ and my_occ > 0) or will_siege is True:
+            stall_suspect = False
+        else:
+            stall_suspect = None
         exit_lever = None
         if stall_suspect:
             # The two exits a war leader has: white peace (the enemy leader must
             # accept it) and surrender (the enemy accepts it; it is a DEFEAT and
-            # costs the CB's penalty, which `surrender_cost` says:).
+            # costs the CB's penalty, which `surrender_cost` says).
             exit_lever = {
                 "white_peace": {"intent": "make_peace", "args": {"war_id": wid, "terms": "white_peace"}},
                 "surrender": {"intent": "make_peace", "args": {"war_id": wid, "terms": "surrender"}},
-                "surrender_cost": ("your defeat: the casus belli's penalty in prestige and often "
-                                   "gold (2026.11 pilots: 15-350 prestige, up to 590 gold); not free"),
-                "why": ("attacker occupation_score=0 (siege never started — the controlled-ruler "
-                        "impasse / defensive stance)" if occ0 else f"losing as attacker (war_score {war_score})"),
+                "surrender_cost": ("your defeat: the casus belli's own penalty, which differs by casus belli "
+                                   "(a claim or de jure war: 10 x the war's prestige factor in prestige, legitimacy "
+                                   "and 3 years of your income, and a claim war's claim is lost; a conquest: 150 or "
+                                   "350 prestige, legitimacy and 2 or 3 years by its casus belli; a vassalization "
+                                   "war: 350 prestige and 3 years; a tributary war: 350 prestige; a holy war: no "
+                                   "prestige, legitimacy and 2 to 4 years of income; other casus belli are not "
+                                   "listed here); "
+                                   "end_war with terms we_yield and check gives this war's price (its "
+                                   "peace_prices row); not free"),
+                "why": f"losing as attacker (war_score {war_score})",
             }
 
         # The engine's offensive stance is a strength gate (the attacker goes
@@ -3174,12 +5789,24 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
                 "code": "stance_side_mismatch", "is_known_limitation": True,
                 "detail": ("the bridge's stance read named the other side of this war; "
                            "the stance shown is inferred from occupation instead")})
-        if stance == "attacker_not_sieging" and stance_source == "inferred_from_occupation":
+        if stance == "attacker_not_sieging" and stance_source == "inferred_from_occupation" and not my_sieges:
             limitations.append({
                 "code": "war_stalled_no_lever", "is_known_limitation": True,
                 "detail": ("the AI sieges only when it is above 1.33x the enemy's strength "
                            "(an engine constant; no personality axis or phase moves it); "
                            "call allies into the war (do(intent=\"call_ally\")), or leave it open")})
+        if siege_verdict == "all_blocked" and not losing:
+            limitations.append({"code": "sieges_blocked",
+                                "detail": "no siege of yours is progressing: each siege's `next` says what holds it"})
+        elif siege_verdict == "unread" and not losing:
+            limitations.append({"code": "siege_progress_unread", "is_known_limitation": True,
+                                "detail": SIEGE_PROGRESS_MISREAD})
+        elif stall_suspect is None:
+            limitations.append({
+                "code": "stall_unknown", "is_known_limitation": True,
+                "detail": ("no siege of yours is listed and occupation is 0, but no read gives the "
+                           "war's start date, so a war just declared and one stuck for a year read "
+                           "the same; read inspect(subject='wars') sieges again next turn")})
         if stance_unread:
             limitations.append({
                 "code": "stance_unread", "reason_code": stance_unread,
@@ -3193,18 +5820,20 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
             "stance_source": stance_source,   # engine_stance_db (authoritative) or inferred_from_occupation
             "stance_unread": stance_unread,   # why the engine stance is absent (None when read or not asked)
             "will_siege": will_siege,         # native bit when served, else None
-            "war_score": war_score,
+            **score,                          # war_score (the total), its parts, next_call
             "occupation_score": my_occ,
             "defender_id": _as_int(w.get("defender_id")),
             "attacker_id": _as_int(w.get("attacker_id")),
             "stall_suspect": stall_suspect,
             "exit_lever": exit_lever,
-            "sieges": w.get("sieges", []),  # per-siege detail from emit_war_entry (county/progress/status)
+            # My side's sieges from query_wars (the inspect wars read); null when
+            # that read did not answer.
+            "sieges": my_sieges,
             "limitations": limitations,
         }
         out_wars.append(row)
         if stall_suspect:
-            stalled.append(row)
+            stalled.append(wid)
     return {
         "wars": out_wars,
         "stalled": stalled,
@@ -3213,31 +5842,30 @@ async def _war_stance_view(gw, character_id: int) -> dict[str, Any]:
         "stance_source": ("engine_stance_db"
                           if any(r["stance_source"] == "engine_stance_db" for r in out_wars)
                           else "inferred_from_occupation"),
-        "note": ("Per-war stance: from the engine CAIWarStance DB when the bridge read it "
-                 "(stance_source=engine_stance_db), else INFERRED from occupation_score "
-                 "(stance_source=inferred_from_occupation; the row's stance_unread names why "
-                 "the engine stance is absent). An "
-                 "attacker_not_sieging war (occupation 0, will_siege!=true) is the documented "
-                 "impasse — abandon it via the exit_lever (white-peace) rather than bleeding your "
-                 "army across a succession. A controlled ruler whose native AI is disabled "
-                 "never sieges: keep disable_native_ai off (the default) or RELEASE control "
-                 "for the war's duration (re_control_suppresses_war.md)."),
+        "note": ("stance: the engine's label when the bridge read it, else inferred from "
+                 "occupation; a label is not a verdict. stall_suspect: true only when losing as "
+                 "attacker (war_score <= " + str(_WAR_STALL_LOSING_SCORE) + "), false when your "
+                 "side has a siege (sieges, the inspect wars read) or occupation, null when "
+                 "neither shows (the war's age is not read) or when every siege of yours is blocked (each "
+                 "siege's `next` says why). war_score: the war's total, the "
+                 "number peace terms use (positive favours the attacker); war_score_parts "
+                 "are its parts."),
     }
 
 
 # --------------------------------------------------------------------------- cbs
 def cb_actor_id(character_id: int, actor: Optional[dict]) -> int:
     """The actor id every casus-belli read is made for: the id asked for, else the
-    bound ruler's id from _resolve_actor (as declare_war resolves it, F1).
+    bound ruler's id from _resolve_actor (as declare_war resolves it).
 
-    B3. The CB reads (query_cb_validity_strict, query_cbs_for_target(s))
+    The CB reads (query_cb_validity_strict, query_cbs_for_target(s))
     fall back to the bridge's GLOBAL controlled primary when sent actor 0
     (query_handlers.cpp: `g_controlled_primary.load` in each), not to the calling
     seat's ruler, while query_valid_war_targets and declare_war resolve the seat's
     own. In a multi-seat episode the global primary is one seat's ruler, so a duke
-    calling plan_war() or cbs() was offered the KING's wars: in set
-    v3-registered-2, s1 D1 and D2 (make_tributary_cb x3), s6 D2
-    (minor_religious_war) and s1 D2's claim_cb row naming the king 12015 as
+    calling plan_war() or cbs() was offered the KING's wars: in a recorded set,
+    two dukes' make_tributary_cb rows (x3), a third duke's
+    minor_religious_war and a claim_cb row naming the king 12015 as
     claimant (the cbs emitter writes the read's actor as claimant_id) were all
     offered by a plan_war() or cbs() sent without character_id, and declare_war,
     which checks as the duke, refused each one."""
@@ -3254,7 +5882,7 @@ async def _claimant_court_blocked(gw, claimant: int, actor_id: int) -> Optional[
     another liege, or none with `top_liege_id` his own id (an independent ruler,
     get_top_realm_ruler_id), is claimant_not_in_court; anything else (a courtier
     whose host this read does not give, a failed read) is unverified and not
-    offered (B3: s1 D2 was offered a claim_cb row naming the king, its own
+    offered (a test seat was offered a claim_cb row naming the king, its own
     liege, as claimant)."""
     raw = await gw.read("query_character", {"character_id": claimant})
     sect = _char_section(raw)
@@ -3284,7 +5912,7 @@ def cb_precheck(strict: Any, cb_name: str) -> dict[str, Any]:
     """declare_war's pre-check of ONE casus belli, from a query_cb_validity_strict
     reply for the actor and target: {"passed": True|False|None, "reason": str|None}.
 
-    ONE definition (B3). declare_war refuses on it before it dispatches, and
+    ONE definition. declare_war refuses on it before it dispatches, and
     plan_war offers a row only when it passed for the row's own CB. The row is the
     strict read's `results[]` entry with this `cb_name`; a row that carries
     `declarable` (do_query_cb_validity_strict writes it for every CB the outer
@@ -3293,7 +5921,7 @@ def cb_precheck(strict: Any, cb_name: str) -> dict[str, Any]:
     outer + inner verdict. No row for the CB is None: the pre-check did not see it
     (reason "cb_not_in_precheck"), which is not a pass.
 
-    Until the two readers had two rules: declare_war passed a row whose
+    At first the two readers had two rules: declare_war passed a row whose
     `declarable` was false when its outer and inner verdicts passed, and plan_war
     checked the strict read's FIRST declarable CB and could then offer another one
     (the widest-scope cbs option) under the note "declarable per strict-CB inner
@@ -3318,7 +5946,36 @@ PRECHECK_LIMIT = ("the game's own start check runs only when declare_war dispatc
                   "war; a refusal there comes back with its reason")
 
 
-async def cbs_impl(gw, target_id: int = 0, character_id: int = 0) -> dict[str, Any]:
+def invalid_by_gate(opts: list) -> dict:
+    """{first unmet requirement: count} over the options that are not declarable."""
+    out: dict = {}
+    for o in opts:
+        if not cb_option_declarable(o):
+            k = str(o["blocked_by"][0]["gate"]) if o.get("blocked_by") else \
+                str((o.get("requirements_unmet") or ["dispatch_unsupported" if o.get("valid") else "invalid"])[0])
+            out[k] = out.get(k, 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+#: Item e: per ruler, per target, the casus belli the game's check accepted at his last cbs read
+_CBS_SEEN: dict = {}
+
+
+def engine_valid_cbs(raw: Any) -> Optional[list]:
+    """The cb keys a query_cbs_for_target reply marks valid (the game's check), sorted; None when it did not read."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("cbs"), list) or _cb_read_is_busy(raw):
+        return None
+    return sorted({str(c.get("cb_key")) for c in raw["cbs"] if isinstance(c, dict) and c.get("valid")
+                   and c.get("cb_key")})
+
+
+def cbs_seen(ruler: Any) -> dict:
+    """{target_id: (date, [cb keys valid])} from this ruler's cbs reads, oldest first."""
+    return dict(_CBS_SEEN.get(_as_int(ruler)) or {})
+
+
+async def cbs_impl(gw, target_id: int = 0, character_id: int = 0,
+                   include_invalid: bool = False) -> dict[str, Any]:
     """'Show me EVERY casus belli I can use against this target, with tradeoffs.'
     Returns the full curated CB list (county/duchy/realm/faith_counties scope, what each
     GRANTS on victory, why-unmet, dispatch-marshalling hint) so the agent can weigh
@@ -3334,6 +5991,8 @@ async def cbs_impl(gw, target_id: int = 0, character_id: int = 0) -> dict[str, A
     character_id = cb_actor_id(character_id, actor)
     if not character_id:
         return _actor_unresolved("cbs", actor, gw)
+    # A vassal holder named as the target reads his realm's ruler (the war's defender)
+    target_id, _realm_note = await realm_war_target(gw, character_id, target_id)
     # Use the busy-aware read directly so we can distinguish a transient slot
     # collision (cb_query_busy — retry) from a genuinely-empty drained result
     # (no_valid_targets — the target is truced-out / no usable CB, not a tooling
@@ -3342,9 +6001,17 @@ async def cbs_impl(gw, target_id: int = 0, character_id: int = 0) -> dict[str, A
                                         {"attacker_id": character_id, "target_id": target_id,
                                          "timeout_ms": 6000})
     cbs_raw = cbs_raw if isinstance(cbs_raw, dict) else {}
-    valid_opts, all_opts = _shape_cb_options(cbs_raw, target_id=target_id)
-    tstate = cbs_raw.get("target_state") or {}
-    warnings: list = []
+    _ev = engine_valid_cbs(cbs_raw)
+    if _ev is not None:
+        _seen = _CBS_SEEN.setdefault(_as_int(character_id), {})
+        _seen.pop(_as_int(target_id), None)
+        _seen[_as_int(target_id)] = ((gw.game() or {}).get("date"), _ev)
+    _purse = await ruler_purse(gw, character_id)
+    valid_opts, all_opts = _shape_cb_options(cbs_raw, target_id=target_id, purse=_purse,
+                                             prices=await cb_game_prices(gw, character_id, target_id, cbs_raw.get("cbs")),
+                                             defender=await defender_facts(gw, target_id))
+    tstate = claim_state_words(cbs_raw.get("target_state") or {}, _purse, all_opts)
+    warnings: list = [_realm_note] if _realm_note else []
     if not all_opts:
         if _cb_read_is_busy(cbs_raw):
             warnings.append({"code": "cb_query_busy", "is_transient": True, "retryable": True,
@@ -3354,22 +6021,95 @@ async def cbs_impl(gw, target_id: int = 0, character_id: int = 0) -> dict[str, A
             warnings.append({"code": "no_valid_targets", "is_transient": False, "retryable": False,
                              "detail": "engine drained 0 CB rows for this target — no usable casus belli "
                                        "(truced/allied/ineligible). Not a tooling failure; pick another target"})
+            # (1081.02.08: cbs(29703) answered target_state {} and no options;
+            # 29703 no longer held the claimed county): an empty reply says what the target is
+            why = await empty_cbs_reason(gw, character_id, target_id)
+            if why:
+                warnings[-1]["why_empty"] = why
+    # Live the reply was 36-38 KB for 55 options of which 2 were valid. The
+    # declarable options come whole with their declare_args; the rest are counted by
+    # their first unmet requirement, whole only with include_invalid.
+    for o in valid_opts:
+        o["declare_args"] = declare_args_of(o, target_id)
     result = {
         "target_id": target_id,
         "target_state": tstate,
-        "options": all_opts,
-        "valid_options": valid_opts,
-        "best": (valid_opts[0] if valid_opts else None),
+        # `checked` (declare_gates' readings) stays off the listing: refusals carry it
+        "valid_options": [{k: v for k, v in o.items() if k not in ("checked", "truce")} for o in valid_opts],
+        "best": (valid_opts[0]["cb"] if valid_opts else None),
+        "invalid_count": len(all_opts) - len(valid_opts),
+        "invalid_by_gate": invalid_by_gate(all_opts),
         # every family the engine was asked about, with the CBs it accepts now
         "by_family": cb_options_by_family(all_opts),
-        # lane-query item 6: this is the game's own CB check, and it wins over
-        # discover(what="war_targets"), whose `declarable` is a relation-gate
-        # heuristic (that reply now says so too).
+        # discover(war_targets), inspect(title) next_call and observe news
+        # judge by this same read (declarable_now).
         "authority": "engine",
-        "authority_note": ("valid_options come from the game's strict casus-belli check; "
-                           "discover(what='war_targets') lists candidates only and is "
-                           "overruled by this answer when they disagree"),
     }
+    # Valid by the game's casus-belli check, refused now by what it does not
+    # ask (debt, the cost against prestige or piety, a truce)
+    _blocked = blocked_now_rows(all_opts, target_id)
+    if _blocked:
+        result["blocked_now"] = _blocked
+    # (France, then Bavaria joined the defender; both wars yielded)
+    if all_opts:
+        da = await defender_allies(gw, target_id, attacker_id=character_id)
+        result["defender_allies"] = da
+        # The price of losing each declarable war, and the numbers' one word
+        inc = (_purse or {}).get("monthly_income")
+        for o in result["valid_options"]:
+            o["if_you_lose"] = loss_price(o.get("cb"), inc)
+        mine = await gw.read("query_alliances", {"character_id": character_id})
+        mine = _as_int(mine.get("own_military_strength")) if isinstance(mine, dict) else 0
+        # Against what is left after your open wars
+        _cs = await committed_strength(gw, character_id)
+        v = war_verdict_left(_cs, mine, da)
+        if v:
+            result["strength_verdict"] = {"verdict": v, "yours": mine, "his_likely": da.get("likely_strength"),
+                                          "his_worst": da.get("with_allies")}
+            if isinstance(_cs, dict) and _cs.get("committed"):
+                result["strength_verdict"].update(committed=_cs["committed"], left=_cs["left"])
+        if isinstance(_cs, dict) and _cs.get("wars"):
+            result["committed_strength"] = _cs
+            if _cs.get("offensive_open"):
+                result["offensive_war_open"] = offensive_open_words(_cs)
+            if v.startswith("outnumbered"):
+                # The cost of losing in the same reply as the odds
+                for o in result["valid_options"]:
+                    la = _dg.loss_after(o.get("prestige_if"), o.get("cb"))
+                    if la is not None:
+                        o["if_you_lose"].update(la)
+    # A title-scoped casus belli the read names no title for: one row per title its rule allows
+    _sv = result.get("strength_verdict")
+    _his = ({"his_likely": _sv.get("his_likely"), "yours": _sv.get("yours"), "verdict": _sv.get("verdict")}
+            if isinstance(_sv, dict) else None)
+    _tr_cache: dict = {}
+    for o in result["valid_options"]:
+        if needs_title_unnamed(o):
+            _tr_cache[o["cb"]] = _tr_cache.get(o["cb"]) or await title_rows(gw, character_id, target_id, o["cb"])
+            title_declare_rows(o, target_id, _tr_cache[o["cb"]], loss=o.get("if_you_lose"), strength=_his)
+    for b in result.get("blocked_now") or []:
+        src = next((o for o in all_opts if o.get("cb") == b.get("cb")), None)
+        if needs_title_unnamed(src):
+            _tr_cache[b["cb"]] = _tr_cache.get(b["cb"]) or await title_rows(gw, character_id, target_id, b["cb"])
+            tr = _tr_cache[b["cb"]]
+            if isinstance(tr.get("titles"), list) and tr["titles"]:
+                b["by_title"] = [dict(t, declare_args=dict(b["declare_args"], cb_title_id=t["cb_title_id"]))
+                                 for t in tr["titles"]]
+                b["declare_args"] = b["by_title"][0]["declare_args"]
+                b["cb_title_id"] = b["declare_args"]["cb_title_id"]
+            else:
+                b.pop("declare_args", None)
+                b["declare_args_unavailable"] = f"{CB_TITLE_REQUIRED}; " + (
+                    tr.get("why") or "no county of his meets the rule now: " + str(tr.get("rule")))
+    # The Ducal Conquest row, listed and not declarable, says what it needs and what is missing
+    _dc = await _cbl.ducal_conquest_row(gw, character_id, all_opts)
+    if _dc is not None:
+        result["ducal_conquest"] = _dc
+    _ef = await _cbl.engine_failed_rows(gw, character_id, all_opts)
+    if _ef is not None:
+        result["engine_failed_why"] = _ef
+    if include_invalid:
+        result["options"] = [{k: v for k, v in o.items() if k not in ("checked", "truce")} for o in all_opts]
     return envelope("cbs", result=result, actor=actor, game=gw.game(),
                     warnings=warnings, bridge_health=gw.health)
 
@@ -3409,7 +6149,7 @@ def remember_empty_reason(ruler_id: int, empty_reason: Optional[dict], date: Any
 def plan_war_empty_reason(excluded: list, *, ally_free_only: bool,
                           exclude_straddling: bool, own_realm_counties: int = 0,
                           goal_scoped: bool = False) -> dict[str, Any]:
-    """Why plan_war has no row: what ACTUALLY excluded the candidates (finding 2).
+    """Why plan_war has no row: what ACTUALLY excluded the candidates.
 
     The gate is the commonest `excluded` gate, with its count; a tie goes to the
     retryable gate, then to the gate's name (said in `measured.tied`). Every gate
@@ -3475,9 +6215,9 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
 
     _chr = await gw.read("query_character", {"character_id": character_id})
     _chr_sect = _char_section(_chr)
-    # B3: a war on the actor's own liege is never offered (set
-    # v3-registered-2: plan_war ranked claim_cb on Charles first for his duke Hugo
-    # 13586, s3 D5 and s1 D5). query_character writes liege_id and top_liege_id
+    # A war on the actor's own liege is never offered (set
+    # a recorded set: plan_war ranked claim_cb on Charles first for his duke Hugo
+    # 13586 and another duke). query_character writes liege_id and top_liege_id
     # (build_char_profile, query_handlers.cpp); a read without either says so.
     own_lieges = {_as_int(_chr_sect.get(k)) for k in ("liege_id", "top_liege_id")} - {0, character_id}
     if "liege_id" not in _chr_sect and "top_liege_id" not in _chr_sect:
@@ -3485,7 +6225,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
                          "detail": "the actor's liege was not read, so a row against him "
                                    "could not be held back; check a target is not your liege"})
 
-    # ── War lifecycle gates (item 2): succession-trough + stress-aware pacing ───
+    # ── War lifecycle gates: succession-trough + stress-aware pacing ───
     # Reuse the same character read for stress/age (no extra read). The planner does
     # NOT fire interactions — it produces an HONEST lifecycle advisory + a declare-gate
     # the agent honors: never declare across a succession trough; back off when stress
@@ -3509,13 +6249,13 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
     declare_discouraged = near_succession or stress_break_risk or has_stalled_war
 
     # Enumerate candidate (target,title,CB) rows. query_valid_war_targets is the base
-    # surface; O1: it omits conquest/subjugation CB classes → degrade with a warning
+    # surface; it omits conquest/subjugation CB classes → degrade with a warning
     # and lean on the strict-CB validator (the authoritative inner declarability gate).
     vt = await gw.read("query_valid_war_targets", {"actor_id": character_id})
     vt = vt if isinstance(vt, dict) else {}
-    # Do_query_valid_war_targets writes the war's target as
+    # do_query_valid_war_targets writes the war's target as
     # r.key("target_char_id") (query_handlers.cpp), never target_id, so every
-    # enumerator row used to reach the loop below with target 0 and be dropped:
+    # enumerator row does not reach the loop below with target 0 and be dropped:
     # the actor's own claims never seeded a row. Read the emitter's key; a pressed
     # row sorts ahead so the per-target dedup keeps it over an unpressed one.
     rows = [dict(t, target_id=_as_int(t.get("target_id") or t.get("target_char_id")))
@@ -3559,10 +6299,10 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
             # The county is the CB title for county_conquest_cb (engine-authoritative
             # via the declare block; fall back to county_id when not conquerable_now).
             county_cb_title = _as_int(decl.get("cb_title_id") or rc.get("county_id"))
-            # The war is against the holder's TOP liege.: when the bridge could
+            # The war is against the holder's TOP liege. When the bridge could
             # not finish that walk it writes holder_top_liege_unresolved and no
             # holder_top_liege_id (do_query_conquest_targets; liege_walk.h answers 0,
-            # never the holder's own id). The target is then UNMEASURED: it used to
+            # never the holder's own id). The target is then UNMEASURED: it does not
             # fall back to holder_id, so a vassal county's war went to the vassal.
             war_target = _as_int(decl.get("target_id") or rc.get("holder_top_liege_id"))
             if war_target and war_target == _as_int(character_id or (actor or {}).get("id")):
@@ -3683,11 +6423,13 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
 
     probe_tids = [_as_int(r.get("target_id")) for r in pruned_rows]
 
-    # ── Batched cbs prefetch (R3), graceful fallback to per-target ──────────────
+    # ── Batched cbs prefetch, graceful fallback to per-target ──────────────
     # One query_cbs_for_targets round-trip for all kept targets when served; else
     # per-target below. Prefetch for ALL pruned targets (cheap when batched);
     # the per-target shaping consumes whichever is available.
     cbs_by_tid = await _cbs_for_targets_batched(gw, character_id, probe_tids)
+    # The ruler's purse once, for every row's declare_gates
+    _purse = await ruler_purse(gw, character_id) if probe_tids else None
 
     for r in pruned_rows:
         tid = _as_int(r.get("target_id"))
@@ -3699,7 +6441,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
         strict = strict if isinstance(strict, dict) else {}
         # A transiently-busy slot (engine AI eval collision) is NOT a verdict on this
         # target — after bounded retry it's still busy, so surface it as transient and
-        # do NOT exclude the target permanently (the #95 hold-on-collision pathology).
+        # do NOT exclude the target permanently (the hold-on-collision pathology).
         if _cb_read_is_busy(strict):
             excluded.append({"target_name": r.get("target_name"),
                              "blocked": map_raw_reason("cb_query_busy",
@@ -3708,7 +6450,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
         results = strict.get("results") or []
         # pick the best declarable CB row. A row that carries `declarable` is decided
         # by it: the engine's inner verdict passes claim_cb with no pressed claim,
-        # and the war is then refused claim_not_pressed (live867 l5-r8/r10: plan_war
+        # and the war is then refused claim_not_pressed (two test runs: plan_war
         # offered 13495, who holds no pressed claim, two claim_cb wars). Only a row
         # without the key falls back to the engine's outer+inner verdict.
         best = None
@@ -3725,10 +6467,12 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
         # Batched prefetch when served; else one read per target.
         if cbs_by_tid is not None and tid in cbs_by_tid:
             _craw = cbs_by_tid.get(tid) or {}
-            cb_options, _all_cb = _shape_cb_options(_craw, target_id=tid)
+            cb_options, _all_cb = _shape_cb_options(_craw, target_id=tid, purse=_purse,
+                                                    prices=await cb_game_prices(gw, character_id, tid, _craw.get("cbs")),
+                                                    defender=await defender_facts(gw, tid))
             tstate = _craw.get("target_state") or {}
         else:
-            cb_options, _all_cb, tstate = await _cb_options_for(gw, character_id, tid)
+            cb_options, _all_cb, tstate = await _cb_options_for(gw, character_id, tid, purse=_purse)
 
         if best is None:
             # ★ Adjacency steer (directive 1): a county_conquest_cb row that came back
@@ -3785,7 +6529,8 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
                     cull = "no_valid_targets"
                 excluded.append({"target_name": r.get("target_name"),
                                  "blocked": map_raw_reason(cull or "target_ineligible",
-                                                           summary=cull or "no declarable CB")})
+                                                           summary=(_truces.blocked_words(cull, (tstate or {}).get("truce"))
+                                                                    or cull or "no declarable CB"))})
                 continue
         ally_free = not r.get("target_in_alliance") and not best.get("target_in_alliance")
         if ally_free_only and not ally_free:
@@ -3810,14 +6555,14 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
         # Pick the default declare_args CB: prefer the strict-CB `best` if it is in the
         # valid CB-options (so cb_title_id / claimant marshalling is correct), else the
         # widest-scope valid option. Scope rank: realm > kingdom > duchy > county.
-        _scope_rank = {"realm": 4, "kingdom": 3, "duchy": 2, "faith_counties": 1, "county": 0}
+        _scope_rank = {"realm": 4, "kingdom": 3, "titles": 3, "duchy": 2, "faith_counties": 1, "county": 0}
         best_cb_name = best.get("cb_name") or r.get("cb_type")
         chosen = next((o for o in cb_options if o["cb"] == best_cb_name), None)
         if chosen is None and cb_options:
             chosen = max(cb_options, key=lambda o: _scope_rank.get(o.get("scope"), -1))
             best_cb_name = chosen["cb"]
 
-        # ★ cb_title_id baking (item 1): the row's declare_args.cb_title_id must be the
+        # ★ cb_title_id baking: the row's declare_args.cb_title_id must be the
         # EXACT title the chosen CB targets, so declare_war(declare_args=row) fires
         # first-try without a second cbs/strict call.
         #   • title-targeted CBs (county/duchy/de_jure/holy_war) REQUIRE a cb_title_id.
@@ -3829,8 +6574,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
         cb_title_id = _as_int(r.get("title_id") or best.get("cb_title_id"))
         claimant = _as_int(r.get("claimant_id")) or None
         claim_pressed = bool(r.get("pressed") or best.get("claim_pressed"))
-        # The
-        # game's can_declare_war ran claim_cb on the actor's OWN unpressed claim, so the
+        # The game's can_declare_war ran claim_cb on the actor's OWN unpressed claim, so the
         # enumerator's own-claim row the bridge reads declarable is usable unpressed
         own_claim_ok = (r.get("cb_type") == "claim" and r.get("declarable") is True
                         and not r.get("_from_conquest_targets"))
@@ -3840,7 +6584,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
             # county (c_venaissin 7448) and the CB the game accepts against its holder
             # is a CLAIM CB, valid on the title the actor holds a PRESSED claim on
             # (k_italy 2189: the cbs row's cb_title_id, resolve_pressed_claim_title).
-            # The row used to keep the county as cb_title_id and declare_war refused
+            # The row does not keep the county as cb_title_id and declare_war refused
             # it claim_not_pressed. A claim row's title and claimant are the cbs
             # row's; with none, the row is not declarable.
             cb_title_id = _as_int(chosen.get("cb_title_id"))
@@ -3871,9 +6615,16 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
             if court is not None:
                 excluded.append({"target_name": r.get("target_name"), "blocked": court})
                 continue
-        # B3: the row is offered only when declare_war's own pre-check
+        # The row is offered only when declare_war's own pre-check
         # (cb_precheck, ONE definition) passed for THIS CB, the one in declare_args.
         pc = cb_precheck(strict, best_cb_name)
+        # The game's casus-belli check passes a war the ruler cannot pay for
+        # (debt, prestige below the cost) or is truced from: not offered, the gate named
+        _gated = next((o for o in _all_cb if o.get("cb") == best_cb_name and o.get("blocked_by")), None)
+        if pc["passed"] is True and _gated is not None:
+            excluded.append({"target_name": r.get("target_name"),
+                             "blocked": declare_gate_blocked(_gated)})
+            continue
         if pc["passed"] is not True:
             excluded.append({"target_name": r.get("target_name"),
                              "blocked": (map_raw_reason(pc["reason"], summary=(
@@ -3901,12 +6652,16 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
                     "not_checked": list(strict.get("gates_unchecked") or []),
                     "limit": PRECHECK_LIMIT}
 
-        # ── truce tag (item 1) ─────────────────────────────────────────────────
+        # ── truce tag ─────────────────────────────────────────────────
         # Surface whether this target is truced so the agent plans AROUND it instead of
         # "no targets" stalling. (ally_free_only already excludes alliances; a truce is
         # carried here both from the enumerator row flag and the strict-CB target_state.)
         in_truce = bool(r.get("target_in_truce") or best.get("target_in_truce")
                         or (tstate.get("in_truce") if isinstance(tstate, dict) else False))
+        _truce = tstate.get("truce") if isinstance(tstate, dict) else None
+        if isinstance(tstate, dict) and tstate.get("truce_source") == "relation_slot":
+            # The ruler's relation slots decide (a seated game, read false three times)
+            in_truce = bool(tstate.get("in_truce"))
 
         # ── cost (the cbs row's base cost for the chosen CB; an estimate) ───────
         affordability = _affordability(chosen)
@@ -3916,10 +6671,18 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
         notes = (f"{best_cb_name} passed declare_war's pre-check for you against this target "
                  "(see precheck); see cb_options to weigh scope.")
         if in_truce:
-            notes += " ⚠ TRUCE active — wait for expiry or pick another target."
+            notes += " ⚠ TRUCE: " + _truces.fix_words(_truce) + "."
         if affordability.get("affordable_now") is False:
             notes += f" ⚠ {affordability['hint']}."
 
+        primary_dj = _is_de_jure_cb(best_cb_name)
+        if primary_dj:
+            # (a test run, turn 1: the de jure county row read "title": null, "dejure_gain": 0 beside its
+            # cb_title_id 531): the title the war is for, by the cbs row's by_title, else its id; one county at least
+            bt = next((t for t in ((chosen or {}).get("by_title") or []) if isinstance(t, dict)
+                       and _as_int(t.get("cb_title_id")) == _as_int(cb_title_id)), None)
+            row_title = row_title or (bt or {}).get("title") or (cb_title_id or None)
+            dejure_gain = max(dejure_gain, 1)
         targets.append({
             "declare_args": {
                 "target_id": tid,
@@ -3930,18 +6693,23 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
             "target_name": r.get("target_name"),
             "title": row_title,
             "dejure_gain": dejure_gain,
+            **({"is_de_jure": True} if primary_dj else {}),
             "ally_free": ally_free,
             "truce": in_truce,
+            **({"truce_until": _truce.get("until")} if in_truce and isinstance(_truce, dict) else {}),
             "affordability": affordability,
-            # lane peace (v4 pilot 2, K1 1083): a row whose CB is not a claim CB
+            # A row whose CB is not a claim CB
             # does not read claims, so it says null, never false (William's de
             # jure rows said claim_pressed:false while the bridge read a PRESSED
             # claim on d_normandy, the claim war the king then declared).
-            "claim_pressed": claim_pressed if row_needs_claimant(chosen, best_cb_name) else None,
+            # Item j (a seated game, step 45: cbs read title 501's claim unpressed, plan_war pressed): the claim's
+            # own state is the claims read's word, one word for both tools (claim_state_words)
+            "claim_pressed": (claim_word_pressed(_purse, cb_title_id, claim_pressed)
+                              if row_needs_claimant(chosen, best_cb_name) else None),
             "straddles_succession": straddles,
             # The full CB tradeoff list — weigh scope/grants and re-point declare_args.cb
             # at any option here (the marshalling fields tell you what each CB needs).
-            "cb_options": cb_options,
+            "cb_options": [{k: v for k, v in o.items() if k not in ("checked", "truce")} for o in cb_options],
             # ready_to_declare: engine-declarable AND not truced.
             # (ready_to_declare_by_cb stays the raw per-CB valid set.)
             "ready_to_declare": declare_ready,
@@ -3950,7 +6718,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
             "notes": notes,
         })
 
-        # ── FIXPLAN A3 (CB-audit G5): surface de-jure CB rows in the planner ─────
+        # ── surface de-jure CB rows in the planner ─────
         # "USURP k_england by de-jure plurality" is the documented win-line, but the
         # base enumerator (claims) + conquest_targets (county_conquest) never seed a
         # de_jure declare row — de-jure options were reachable ONLY via per-target
@@ -3997,9 +6765,9 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
                 "ally_free": ally_free,
                 "truce": in_truce,
                 "affordability": dj_aff,
-                "claim_pressed": None,       # a de jure row reads no claims (lane peace)
+                "claim_pressed": None,       # a de jure row reads no claims
                 "straddles_succession": straddles,
-                "cb_options": cb_options,
+                "cb_options": [{k: v for k, v in o.items() if k not in ("checked", "truce")} for o in cb_options],
                 "ready_to_declare": dj_ready,
                 "precheck": precheck,
                 "precheck_by_cb": precheck_by_cb,
@@ -4013,7 +6781,16 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
     # ratio of your callable strength to the target's (capped at 3).
     mine = await gw.read("query_alliances", {"character_id": character_id})
     mine = mine if isinstance(mine, dict) else {}
+    # What the open wars already hold against you; targets are compared with what is left
+    _cs = await committed_strength(gw, character_id) if targets else None
+    _committed = _cs["committed"] if isinstance(_cs, dict) else 0
     strength_cache: dict = {}
+    # (claim_cb on c_breifne, de jure k_ireland, read dejure_gain 0 under toward=k_ireland; the
+    # seat skipped that war for several turns): with a goal title (toward, else the task's), a row's gain is the goal's
+    # de jure counties the war takes and your realm does not hold, from the read the goal's county metric counts
+    goal = str(toward or _seat_events.goal_title() or "")
+    goal_map = await goal_dejure_map(gw, character_id, goal) if goal[:2] in ("d_", "k_", "e_", "h_") else None
+    county_cache: dict = {}
     for t in targets:
         tid = _as_int((t.get("declare_args") or {}).get("target_id"))
         if tid not in strength_cache:
@@ -4028,7 +6805,16 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
                          "theirs": _as_int(th.get("own_military_strength")),
                          "theirs_with_allies": th_call,
                          "ratio": ratio}
-        if t.get("is_de_jure"):
+        if _committed:
+            # The ratio and the score from what is left after your open wars
+            ratio = round(max(0, my_call - _committed) / max(1, th_call), 2)
+            t["strength"].update(committed=_committed, mine_left=_cs["left"], ratio_left=ratio)
+        ids = (await war_county_ids(gw, tid, _as_int((t.get("declare_args") or {}).get("cb_title_id")),
+                                    county_cache) if goal_map is not None else None)
+        if ids is not None:
+            t["dejure_gain"] = dejure_gain_of(ids, goal_map)
+            t["dejure_of"] = goal
+        elif t.get("is_de_jure"):
             # the counties a de jure war takes: the target realm's counties under the
             # CB's title (query_dejure_progress measured from the target's seat)
             ttl = _as_int((t.get("declare_args") or {}).get("cb_title_id"))
@@ -4045,6 +6831,27 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
     for i, t in enumerate(targets[:max_results]):
         t["rank"] = i + 1
     targets = targets[:max_results]
+    # The defender's likely joiners and the price of losing, on each row kept
+    _da_cache: dict = {}
+    _inc = (_dg.purse_of(await gw.read("query_character", {"character_id": character_id})) or {}).get(
+        "monthly_income") if targets else None
+    for t in targets:
+        tid = _as_int((t.get("declare_args") or {}).get("target_id"))
+        if tid not in _da_cache:
+            _da_cache[tid] = await defender_allies(gw, tid, attacker_id=character_id)
+        da = _da_cache[tid]
+        v = war_verdict_left(_cs, (t.get("strength") or {}).get("mine"), da)
+        if v:
+            t["strength_verdict"] = {"verdict": v, "theirs_likely": da.get("likely_strength"),
+                                     **({"against_left": _cs["left"]} if _committed else {})}
+        t["if_you_lose"] = loss_price((t.get("declare_args") or {}).get("cb"), _inc)
+        if v and v.startswith("outnumbered"):
+            # The cost of losing beside the odds (the chosen option's prestige_if)
+            _cb = (t.get("declare_args") or {}).get("cb")
+            _o = next((o for o in t.get("cb_options") or [] if o.get("cb") == _cb), None)
+            la = _dg.loss_after((_o or {}).get("prestige_if"), _cb)
+            if la is not None:
+                t["if_you_lose"].update(la)
 
     empty_reason = None
     if not targets:
@@ -4062,8 +6869,8 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
                           empty_reason, gw.game().get("date"),
                           (goal_scoped, ally_free_only, exclude_straddling, toward))
 
-    # ── Lifecycle advisory (item 2): war-exit + succession + stress pacing ──────
-    # deploy-51: this was "an HONEST recommendation layer" telling the
+    # ── Lifecycle advisory: war-exit + succession + stress pacing ──────
+    # this was "an HONEST recommendation layer" telling the
     # agent what to do before declaring — abandon stalled wars first, not across
     # a succession, back off when stress climbs. Honest it was; prescriptive it
     # also was. The facts are published and the recommendation is not: a stalled
@@ -4072,7 +6879,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
     lifecycle_reasons: list = []
     exit_levers: list = []
     if has_stalled_war:
-        for sw in stance_view.get("stalled", []):
+        for sw in [w for w in stance_view.get("wars", []) if w.get("stall_suspect") is True]:
             exit_levers.append({
                 "war_id": sw.get("war_id"), "name": sw.get("name"),
                 "why": (sw.get("exit_lever") or {}).get("why"),
@@ -4080,9 +6887,8 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
             })
         lifecycle_reasons.append(
             why_blocked("not_at_peace",
-                        summary=f"{len(stance_view.get('stalled', []))} stalled attacker war(s) at "
-                                "occupation 0 / losing; white-peace levers for them are "
-                                "listed in lifecycle.exit_levers"))
+                        summary=f"{len(stance_view.get('stalled', []))} attacker war(s) losing; "
+                                "their exit levers are listed in lifecycle.exit_levers"))
     if near_succession:
         lifecycle_reasons.append(
             why_blocked("succession_straddle",
@@ -4101,7 +6907,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
                                 "one war at a time until it falls"))
 
     lifecycle = {
-        # deploy-51: the recommend/discourage pair told the seat what to
+        # the recommend/discourage pair told the seat what to
         # do. The three facts it was derived from are published instead, so the
         # seat draws its own conclusion from the same inputs.
         "near_succession": near_succession,
@@ -4126,6 +6932,10 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
 
     result = {"targets": targets, "excluded": excluded, "empty_reason": empty_reason,
               "lifecycle": lifecycle}
+    if isinstance(_cs, dict) and _cs.get("wars"):
+        result["committed_strength"] = _cs
+        if _cs.get("offensive_open"):
+            result["offensive_war_open"] = offensive_open_words(_cs)
     if declare_discouraged:
         warnings.append({
             # the CODE stays a stable identifier for readers; the TEXT no longer
@@ -4138,7 +6948,7 @@ async def plan_war_impl(gw, character_id: int = 0, goal_scoped: bool = True,
 
 
 # ===========================================================================
-# FIX 1 — deferred-write confirmation (#113): the reusable confirm-by-readback.
+# Deferred-write confirmation: the reusable confirm-by-readback.
 #
 # A write the engine actually executed NEVER returns a bare success:false, and a
 # deferred write NEVER terminates as a surfaced dispatched_pending — it auto-polls to
@@ -4153,14 +6963,14 @@ async def _read_dict(gw, action: str, params: dict) -> dict:
 
 
 # ===========================================================================
-# The clock, and the two waits of a write (contract D5 as amended by
-# amendment 3). ONE definition of each, read by both gateways
+# The clock, and the two waits of a write (the drain, then the effect
+# under a running clock). ONE definition of each, read by both gateways
 # (mcp_server.BridgeGateway, agent._AgentGateway) and by every write below.
 # ===========================================================================
 
 def _unwrap_reply(reply) -> dict:
     """A bridge reply as a dict ({} for anything else). No bridge reply carries a
-    `data` sub-dict; deleted the merge that looked for one."""
+    `data` sub-dict, so nothing merges one."""
     return reply if isinstance(reply, dict) else {}
 
 
@@ -4202,8 +7012,8 @@ DRAIN_SCHEDULE_S = (0.05, 0.1, 0.2, 0.4, 0.5, 0.5, 0.5, 0.5)
 
 #: query_dispatch_result's terminal statuses (action_handlers.cpp
 #: do_query_dispatch_result). Only "success" is an executed write; "rejected"
-#: and "crashed" are the drain's refusal. "not_found" is NOT terminal (witness
-#: R3): the drain marks an intent consumed while it runs it and stores it in the
+#: and "crashed" are the drain's refusal. "not_found" is NOT terminal:
+#: the drain marks an intent consumed while it runs it and stores it in the
 #: completed ring later in the same pass, so a read in between finds neither.
 #: It is re-read on the schedule like "pending"; still not found when the
 #: schedule ends is a verdict not read (next_pass), never a refusal.
@@ -4227,7 +7037,7 @@ DRAINS_WHEN = ("next_pass", "clock_advances", "readback")
 #:                   paired read straddled a daily tick, the reply naming what to read
 #:                   never came, the executor returned no verdict): read it where
 #:                   verify_with says before sending again. ok:true, never rejected
-#:                   (ruling: a write the drain ran is never `rejected` for a
+#:                   (the rule: a write the drain ran is never `rejected` for a
 #:                   reading the server could not make).
 
 
@@ -4248,7 +7058,7 @@ UNREAD = _Unread()
 DRAIN_RAN_NO_VERDICT = frozenset({"executor_returned_no_verdict"})
 
 #: A write reply's statuses that mean "later": the write was queued (or its
-#: reply never came), not executed. deploy-51 item (3): "queued" and
+#: reply never came), not executed. "queued" and
 #: "pending" read as applied before they were named here.
 PENDING_STATUSES = ("dispatched_pending", "sent_no_confirmation", "queued", "pending")
 
@@ -4260,6 +7070,10 @@ def queued_expected_change(intent: str, bridge_params: dict) -> str:
     if intent == "interact":
         what = p.get("interaction_type") or p.get("interaction") or "the interaction"
         tgt = p.get("target_id")
+        sa, sr = _marriage_pair(p)
+        if what == MARRIAGE_INTERACTION and sa:
+            return (f"{what} to {tgt}: {sr} is listed in inspect(subject='character', character_id={sa})"
+                    f".spouses (or as its betrothed) once {tgt} accepts; an AI answers within days")
         return (f"{what} to {tgt} takes effect, or its recipient answers (an AI answers "
                 f"within days; inspect the target and the pending list)" if tgt else
                 f"{what} takes effect")
@@ -4316,7 +7130,7 @@ DRAIN_DETAIL_WINDOW = 32
 
 
 async def _drain_detail(read, rid: str, row) -> Optional[str]:
-    """The game's own words for a refused drain (finding 1), cleaned.
+    """The game's own words for a refused drain, cleaned.
 
     query_dispatch_result carries no detail (action_handlers.cpp
     do_query_dispatch_result); the completed ring does (query_intent_results'
@@ -4325,21 +7139,33 @@ async def _drain_detail(read, rid: str, row) -> Optional[str]:
     nothing; None when it could not be looked at (no reply, or the row is no
     longer in the window) -- "nobody could look" is not "the game said nothing"."""
     own = (row or {}).get("detail") if isinstance(row, dict) else None
+    own_check = (row or {}).get("failed_check") if isinstance(row, dict) else None
     if isinstance(own, str) and own:
-        return engine_text(own) or NO_GAME_DETAIL
+        return engine_text(own) or _failed_check_words(own_check) or NO_GAME_DETAIL
     try:
         got = _unwrap_reply(await read("query_intent_results",
                                        {"max_count": DRAIN_DETAIL_WINDOW}))
     except Exception:  # noqa: BLE001
-        return None
+        return _failed_check_words(own_check)
     rows = got.get("results", got.get("completed")) if isinstance(got, dict) else None
     if not isinstance(rows, list):
-        return None
+        return _failed_check_words(own_check)
     for r in reversed(rows):            # newest last: the most recent match wins
         if isinstance(r, dict) and str(r.get("intent_id") or r.get("request_id") or "") == rid:
             d = r.get("detail")
-            return (engine_text(d) if isinstance(d, str) else "") or NO_GAME_DETAIL
-    return None
+            return ((engine_text(d) if isinstance(d, str) else "")
+                    or _failed_check_words(r.get("failed_check") or own_check) or NO_GAME_DETAIL)
+    return _failed_check_words(own_check)
+
+
+def _failed_check_words(check) -> Optional[str]:
+    """A wordless refusal's stage (the bridge's failed_check) in words, None
+    when the bridge named none: the game gave no sentence, the bridge read which check
+    said no (a test run, c: 8 sends refused with "the game gives no detail")."""
+    if not check:
+        return None
+    what = FAILED_CHECK_WORDS.get(str(check), f"its {check} check said no")
+    return f"the game gives no words; {what} [failed_check {check}]"
 
 
 def drain_refusal(drain: dict) -> str:
@@ -4351,7 +7177,7 @@ def drain_refusal(drain: dict) -> str:
 def refusal_summary(conf: dict) -> str:
     """The summary for a settle_write refusal. A CRASHED drain stays a refusal
     (the gate names the crash), but the write may have landed before the fault:
-    say so, and to read before sending again (ruling)."""
+    say so, and to read before sending again."""
     why = str(conf.get("refused") or "")
     if (conf.get("drain") or {}).get("status") == "crashed":
         return (f"{why}: the drain crashed while running it, so its effect MAY have landed; "
@@ -4369,7 +7195,7 @@ _REPLY_REFUSAL_WORDS_MAX = 128
 #: An engine refusal line that is only a price (engine_text form): "Missing prestige 960".
 _COST_LINE = re.compile(r"^Missing (prestige|gold|piety) (\d[\d.,]*)$")
 
-#: The engine-refusal gates a cost-only refusal is re-typed from (minor 11): the
+#: The engine-refusal gates a cost-only refusal is re-typed from: the
 #: game's no, read as "never", when its only line is a price that can be earned.
 _COST_REMAPPABLE = frozenset({"engine_refused", "interaction_invalid", "target_ineligible",
                               "unmapped_refusal"})
@@ -4403,7 +7229,7 @@ def write_blocked(reason: str = "", *, summary: str = "", conf: Optional[dict] =
                   drain: Optional[dict] = None, raw: Any = None,
                   intent: str = "", gate: str = "", raw_reason: str = "",
                   measured: Optional[dict] = None, fix: Optional[dict] = None) -> dict[str, Any]:
-    """THE `blocked` block of a refused write (finding 1): every write path in
+    """THE `blocked` block of a refused write: every write path in
     this module builds its refusal here (test_write_refusal_words enumerates them).
 
     `blocked.gate`/`summary` stay the typed refusal (map_raw_reason). `detail`
@@ -4413,7 +7239,7 @@ def write_blocked(reason: str = "", *, summary: str = "", conf: Optional[dict] =
     NO_GAME_DETAIL when the game was asked and said nothing, and absent when the
     refusal is not the game's (an argument code) or the ring could not be read.
     A refusal whose only words are a price is the resource gate, retryable
-    (minor 11). `intent` names do()'s enumerate class in `next`.
+    `intent` names do()'s enumerate class in `next`.
 
     `gate` is a refusal the caller already typed (a readback that disagrees, a
     bridge switch's own refusal, a faction pre-check): the block is that gate
@@ -4436,6 +7262,14 @@ def write_blocked(reason: str = "", *, summary: str = "", conf: Optional[dict] =
     blk = map_raw_reason(reason, summary=summary or reason)
     if measured is not None:
         blk["measured"] = measured
+    _r = raw if isinstance(raw, dict) else ((conf or {}).get("raw") if isinstance(conf, dict) else None)
+    if summary in ("", reason) and reason in ("insufficient_prestige", "insufficient_gold") and isinstance(_r, dict) \
+            and isinstance(_r.get("cost"), (int, float)) and not isinstance(_r.get("cost"), bool):
+        # The bridge's price and what is held
+        cur = "prestige" if reason == "insufficient_prestige" else "gold"
+        blk["summary"] = (f"{_r.get('maa_type') or 'the purchase'}: the price is {round(_r['cost'], 2)} {cur}, "
+                          f"you hold {_r.get(cur)}")
+        blk["measured"] = dict(blk.get("measured") or {}, cost=_r["cost"], have=_r.get(cur), currency=cur)
     if fix is not None:
         blk["fix"] = fix
     if words and words != NO_GAME_DETAIL and blk["gate"] in _COST_REMAPPABLE:
@@ -4506,9 +7340,8 @@ def _refusal_shape(raw, error_counts) -> Optional[str]:
     A reply refuses when it does not say "later" (PENDING_STATUSES), does not say
     `success: true`, and says no in one of the shapes the bridge really sends:
       - `success: false`, or status "rejected" (a handler's own refusal);
-      - a string `error` with no `success` that `error_counts` accepts
-        (N-MAJ-1): the bridge's fault and timeout replies carry no `success` at
-        all — `{"error":"memory_access_fault"}` (MEMORY_ACCESS_FAULT_REPLY,
+      - a string `error` with no `success` that `error_counts` accepts: the
+        bridge's fault and timeout replies carry no `success` at all — `{"error":"memory_access_fault"}` (MEMORY_ACCESS_FAULT_REPLY,
         bridge.h, every answer_memory_access_fault and the SIGSEGV recovery in
         ipc_server.cpp serve_on_game_thread) and
         `{"error":"game_thread_timeout",...}` (the same function, job not run in
@@ -4535,7 +7368,7 @@ def reply_refusal(raw) -> str:
 
     The listener's in-flight disconnect (no `reason`, `error`
     "bridge_disconnected") is DISCONNECTED_IN_FLIGHT: the write may have landed
-   A reason that means "not confirmed yet" (RAW_REASON_TO_GATE
+    and a reason that means "not confirmed yet" (RAW_REASON_TO_GATE
     -> confirmation_pending) is a verdict not read, never a refusal."""
     reason = _refusal_shape(raw, lambda e: True)
     if reason is None:
@@ -4569,8 +7402,8 @@ def read_refusal(raw, name: str = "the read") -> Optional[dict[str, Any]]:
 async def settle_write(clock, read, raw, readback, *, game_date_at_submit,
                        deadline_s: float = 12.0, max_polls: int = 8,
                        poll_interval_s: Optional[float] = None) -> dict:
-    """THE rule for what a write's reply may claim (contract D5, amendment 3,
-    and the ruling): ONE definition, for confirm_write and the do tail.
+    """THE rule for what a write's reply may claim: ONE definition, for
+    confirm_write and the do() tail.
 
     `applied` needs an EFFECT the server read back. A write has two waits:
 
@@ -4617,7 +7450,7 @@ async def settle_write(clock, read, raw, readback, *, game_date_at_submit,
     ran = drain["status"] == DRAIN_DONE or sync_verdict is True or no_verdict
     out["sent"] = ran
     out["unread"] = no_verdict
-    # The drain's refusal comes FIRST (m1): a refused write's readback
+    # The drain's refusal comes FIRST: a refused write's readback
     # can still "resolve" on something else (an expense on the sender's purse, a
     # law already listed), and that must never outrank the game's own no.
     if drain["status"] in DRAIN_REFUSED and not no_verdict:
@@ -4652,7 +7485,7 @@ async def settle_write(clock, read, raw, readback, *, game_date_at_submit,
         out["drains_when"] = "next_pass"
         return out
     if out["unread"]:
-        # it ran, and the reading that would show it was never made (ruling)
+        # it ran, and the reading that would show it was never made
         out["drains_when"] = "readback"
         return out
     if readback is None:
@@ -4687,7 +7520,7 @@ async def _confirm_write(gw, action: str, params: dict, *, readback,
 
 def write_pending(drains_when: str, *, game_date_at_submit, intent_id: str = "",
                   **fields) -> dict:
-    """THE pending block for a write (contract D5, amendment 3). `drains_when`
+    """THE pending block for a write. `drains_when`
     names the wait: "next_pass" (stage 1, the drain's verdict was not read in its
     budget) or "clock_advances" (stage 2, the outcome needs game days), beside the
     game date the write was submitted on and the intent id when it queued one.
@@ -4699,7 +7532,7 @@ def write_pending(drains_when: str, *, game_date_at_submit, intent_id: str = "",
     out = {**fields, "drains_when": drains_when, "game_date_at_submit": game_date_at_submit}
     if intent_id:
         out["intent_id"] = intent_id
-    # minor 13: the token IS intent_id; a poll_token that repeats it (or is
+    # Minor 13: the token IS intent_id; a poll_token that repeats it (or is
     # empty) is noise, kept only when it names something else.
     if not out.get("poll_token") or out.get("poll_token") == intent_id:
         out.pop("poll_token", None)
@@ -4713,18 +7546,27 @@ def conf_pending(conf: dict, **fields) -> dict:
                          intent_id=conf.get("intent_id") or "", **fields)
 
 
-#: THE #131 de-jure bar (one statement): a KINGDOM/EMPIRE mint
-#: (tier >= MINT_DEJURE_MIN_TIER) needs the realm to hold >= MINT_DEJURE_MIN_FRAC of
-#: the title's de-jure counties; a duchy or county is the game's own can_create
-#: rule alone. Mirrors bridge/src/intent_dispatch.cpp CREATE_TITLE_DEJURE_MIN_TIER
-#: and CREATE_TITLE_DEJURE_MIN_FRAC (test_mint_price checks the mirror). The
+#: THE de-jure bar (one statement): the bridge's gate on a KINGDOM/EMPIRE mint
+#: (tier >= MINT_DEJURE_MIN_TIER); a duchy or county is the game's own can_create rule alone.
+#: the gate's share is the game's (GAME_DEJURE_SHARE below); MINT_DEJURE_MIN_FRAC (51%) is left only for a
+#: tier the game's text gives no share for (a hegemony) or a key that names no tier. Mirrors
+#: bridge/include/dejure_bar.h (test_kingdom_dejure_bar checks the mirror and grades the C++ test's rows). The
 #: warning text, the formable_titles rows and the mint pre-check all read these.
 MINT_DEJURE_MIN_TIER = 4
 MINT_DEJURE_MIN_FRAC = 0.51
-MINT_DEJURE_RULE = (f"KINGDOM/EMPIRE tier (>={MINT_DEJURE_MIN_TIER}) also needs "
-                    f">={round(MINT_DEJURE_MIN_FRAC * 100)}% REALM-inclusive de-jure control "
-                    "(ruler + transitive vassals); a duchy or county needs only the game's own "
-                    "can_create rules")
+#: (a pre-flight run 867: e_france read "need 60 of 117, met" beside the game's own "You only have 89 of 94
+#: required Counties"): the game's own share by tier, from its files (1.18.3.1,
+#: localization/english/game_concepts_l_english.yml): game_concept_duchy_desc and game_concept_kingdom_desc "controls
+#: at least half of its counties", game_concept_empire_desc "controls more than 80% of the counties within" (live:
+#: 94 of 117 = floor(0.8 x 117) + 1). (strict, numerator, denominator); no text for a hegemony, so none here.
+#: The bridge's gate applies these rows (dejure_bar.h; built and ctest-run, not proven live).
+#: (inspect title k_ireland read "need 7 of 14" beside the game's own "You only have 6 of 8 required
+#: Counties"): the localisation's "at least half" is not the check. The game's own lines in the recorded runs: d_meath 2
+#: counties -> 2 required, d_ulster 3 -> 2, d_don_valley 4 -> 3, d_moldova 6 -> 4, k_ireland 14 -> 8, e_france 117 -> 94:
+#: more than half (floor(total / 2) + 1) for a duchy and a kingdom. Mirrored by bridge/include/dejure_bar.h.
+GAME_DEJURE_SHARE = {3: (True, 1, 2), 4: (True, 1, 2), 5: (True, 4, 5)}
+MINT_DEJURE_RULE = ("counties of its de jure land in your realm (yours and your vassals'): a duchy or kingdom more "
+                    "than half, an empire more than 80% (the game's rule)")
 #: A landed title's tier from its key's prefix: CK3's own naming convention, the
 #: fallback the bridge uses too (query_handlers.cpp do_query_title_hierarchy).
 _TIER_BY_KEY_PREFIX = {"b": 1, "c": 2, "d": 3, "k": 4, "e": 5}
@@ -4736,31 +7578,48 @@ def title_tier_of_key(key) -> Optional[int]:
     return _TIER_BY_KEY_PREFIX.get(k[0]) if len(k) > 2 and k[1] == "_" else None
 
 
-def dejure_need(total: int) -> int:
-    """Counties the bar needs of `total` (the bridge refuses held/total < the FRAC)."""
-    return int(total * MINT_DEJURE_MIN_FRAC + 0.999) if total else 0
+def game_dejure_need(total: int, tier: Optional[int]) -> Optional[int]:
+    """The counties the game's own rule needs of `total` at `tier` (GAME_DEJURE_SHARE), None for a tier it has no
+    row for."""
+    rule = GAME_DEJURE_SHARE.get(tier) if isinstance(tier, int) else None
+    if rule is None or not total:
+        return None if rule is None else 0
+    strict, num, den = rule
+    return total * num // den + 1 if strict else -(-total * num // den)
+
+
+def dejure_need(total: int, tier: Optional[int] = None) -> int:
+    """Counties a creation needs of `total`: the game's share for the tier (GAME_DEJURE_SHARE), which the bridge's
+    gate applies too; for a tier with no game share from a kingdom up, or a tier not given, the
+    bridge's 51% bar (held * 100 >= total * 51, dejure_bar.h)."""
+    if not total:
+        return 0
+    game = game_dejure_need(total, tier)
+    if game is not None:
+        return game
+    return -(-total * round(MINT_DEJURE_MIN_FRAC * 100) // 100) if tier is None or tier >= MINT_DEJURE_MIN_TIER else 0
 
 
 def mint_dejure_shortfall(tkey, held: int, total: int) -> Optional[dict]:
-    """{held, need, total} when the #131 bar applies to tkey and is not met; else
+    """{held, need, total} when the bar applies to tkey and is not met; else
     None. A title whose tier the key does not name, or a titular title (total 0),
     is left to the bridge's gate, which reads the title's own tier."""
     tier = title_tier_of_key(tkey)
     if tier is None or tier < MINT_DEJURE_MIN_TIER or total <= 0:
         return None
-    need = dejure_need(total)
+    need = dejure_need(total, tier)
     return {"held": held, "need": need, "total": total} if held < need else None
 
 
-def _parse_dejure_counts(reason: str) -> Optional[dict]:
+def _parse_dejure_counts(reason: str, tkey=None) -> Optional[dict]:
     """Parse 'create_title_refused_insufficient_de_jure_control_<held>_of_<total>_counties'
-    → {'held': h, 'need': ceil(0.51*total), 'total': t}."""
+    → {'held': h, 'need': dejure_need(total, the title's tier), 'total': t}."""
     import re
     m = re.search(r"de_jure_control_(\d+)_of_(\d+)", str(reason or ""))
     if not m:
         return None
     held, total = int(m.group(1)), int(m.group(2))
-    return {"held": held, "need": dejure_need(total), "total": total}
+    return {"held": held, "need": dejure_need(total, title_tier_of_key(tkey)), "total": total}
 
 
 # --------------------------------------------------------------------------- declare_war
@@ -4769,7 +7628,7 @@ def war_pre_read_blocked(reply) -> Optional[dict[str, Any]]:
     (do_get_active_wars writes `wars`), else the typed refusal. A reply the
     bridge refused is read_refusal's gate; no reply at all (both gateways answer
     {} on a timeout or a dropped connection) is read_timeout; a reply without
-    the list is unmapped. Never "no wars" ."""
+    the list is unmapped. Never "no wars"."""
     blocked = read_refusal(reply, "get_active_wars (declare_war's pre-read)")
     if blocked is not None:
         return blocked
@@ -4792,19 +7651,212 @@ def war_targets_title(war_row, title_id: int) -> bool:
     return isinstance(tt, list) and _as_int(title_id) in {_as_int(t) for t in tt}
 
 
+#: The conditions of the game's can_declare_war this server reads none of, named
+#: on a refusal the game gives without a word (the casus-belli read's own gates_unchecked
+#: plus what the bridge's war-validity read marks unchecked).
+#: A casus belli's valid_to_start in the game's words, named on a refusal the
+#: game gives without a word (common/casus_belli_types/00_conquest.txt).
+CB_START_RULES = {
+    "ducal_conquest_cb": ("valid_to_start: the target title must be a county, and you must hold a "
+                          "county in an uncreated duchy whose de-jure lands include it"),
+}
+
+DECLARE_NOT_CHECKED = ("valid_to_start", "per_cb_allowed_against_character", "sworn_peace",
+                       "hook", "the casus belli's own cost multipliers")
+#: The declaration's refusal while the ruler is in an activity (00_war.txt
+#: declare_war_interaction is_valid: `exists = involved_activity`)
+IN_ACTIVITY_RULE = ("the game refuses a declaration while your ruler is in an activity "
+                    "(declare_war_interaction: involved_activity); when it ends is not read; "
+                    # The way out, and what it does not block
+                    "a guest can leave it (do host_activity activity=leave, built, not proven live); the game's AI "
+                    "accepts invitations for him and no ai_veto kind stops that")
+
+#: The conditions the declare template's refused branch asks the game
+#: (bridge/include/script_templates.h kDeclareWhy: declare_war_interaction's is_valid in
+#: common/character_interactions/00_war.txt), each mark -> (gate, the game's condition).
+DECLARE_WHY: dict = {
+    "RAISED_ARMIES": ("armies_raised", "your armies are raised (has_raised_armies)"),
+    "IN_DEBT": ("insufficient_gold", "you are in debt (is_in_debt)"),
+    "IN_ACTIVITY": ("cb_invalid_for_target", "you are in an activity (involved_activity)"),
+    "IMPRISONED": ("cb_invalid_for_target", "you are imprisoned"),
+    "INCAPABLE": ("cb_invalid_for_target", "you are incapable"),
+    "SWORN_PEACE": ("cb_invalid_for_target", "you swore peace (sworn_peace flag)"),
+    "AT_WAR_WITH": ("cb_invalid_for_target", "you are already at war with the defender"),
+    "ALLIED_IN_WAR": ("target_allied", "you and the defender are allies in a war"),
+    "TRUCE": ("target_truced", "a truce with the defender (refuses only for some cultures)"),
+    "HIERARCHY": ("cb_invalid_for_target", "the realm hierarchy forbids attacking him (can_attack_in_hierarchy)"),
+    "NO_DISPLAY_CB": ("cb_invalid_for_target", "no casus belli on him the game would display"),
+    "PRESTIGE_BELOW_0": ("insufficient_prestige", "your prestige is below 0: no prestige price can be paid"),
+    # The rest of the interaction's script conditions
+    "ALLIED_NO_ATTACK": ("target_allied", "you are allied to him and your culture cannot attack allies"),
+    "SUBJUGATION_OFFER": ("cb_invalid_for_target", "you are considering his offer of subjugation"),
+    "LIEGE_AT_WAR": ("cb_invalid_for_target", "your liege is already at war with him"),
+    "CONFEDERATION": ("cb_invalid_for_target", "he is in your confederation"),
+    "TARGET_HERDER": ("cb_invalid_for_target", "he is a herder: herders cannot be attacked"),
+    "TARGET_TRIBUTARY": ("cb_invalid_for_target", "he is your tributary (or your tributary's)"),
+    "TARGET_STRONG_HOOK": ("cb_invalid_for_target", "he holds a strong hook on you"),
+    "TARGET_YOUR_PRISONER": ("cb_invalid_for_target", "he is your prisoner"),
+    "TARGET_NOT_PLAYABLE": ("cb_invalid_for_target", "he is not a ruler the game lets you attack (is_playable_character)"),
+}
+#: The casus belli's own part, probed by the game (script_templates.h kDeclareWar's probes,
+#: not kDeclareWhy: the interaction's conditions stay one list with DECLARE_WHY)
+CB_PROBE_WHY = {"NO_CB_ON": ("cb_invalid_for_target", "the game gives you no such casus belli on him now (has_cb_on)"),
+                # (1080.07): the casus belli's own price, read by the game in the refused branch
+                "PRESTIGE_BELOW_COST": ("insufficient_prestige", "your prestige is below this casus belli's price"),
+                "PIETY_BELOW_COST": ("insufficient_piety", "your piety is below this casus belli's price")}
+#: The casus belli part's words when the game read the price in the refused branch and you hold it
+CB_PART_CB_PRICE_HELD = ("can_declare_war refuses with the casus belli alone though has_cb_on holds and you hold "
+                         "its price (read by the game in the same script): the engine's own rule for this pair, "
+                         "which no read names")
+
+#: What the game's
+#: probes of the casus belli's part narrow a refusal to (script_templates.h kDeclareWar: PROBED always,
+#: WHY_NO_CB_ON when has_cb_on says no, PROBE_BARE_OK / PROBE_TITLE_OK when can_declare_war passes without
+#: the claimant and title / without the claimant)
+CB_PART_NO_CB_ON = "the game gives you no such casus belli on him now (has_cb_on)"
+CB_PART_CLAIMANT = ("can_declare_war passes with the casus belli and the title, not with the claimant: the "
+                    "claimant's part refuses (claim_cb is_allowed_claim_title on him)")
+CB_PART_TITLE = ("can_declare_war passes with the casus belli alone, not with this title: the title's part "
+                 "refuses (is_allowed_claim_title: who holds it, the claim on it)")
+CB_PART_CB = ("can_declare_war refuses with the casus belli alone though has_cb_on holds: its cost against "
+              "your prestige or piety, or the engine's own rule for this pair, which no read names")
+#: can_declare_war is the declare_war interaction's own send check
+#: (CCanDeclareWarOnTrigger 0x5409bf0 builds it and calls InteractionTrySend). What it checks beyond the
+#: script conditions the refused branch asks: nothing the toolkit reads names these
+ENGINE_RULES = ("the engine's own checks no read names: a hostile interaction's diplomatic range, an "
+                "interaction cooldown (yours, his, or the pair's), an equivalent interaction already "
+                "pending, the casus belli's own validator, the send's cost")
+
+
+#: {(target_id, cb): {date, game_says}}: the game's last refusal of a declaration, which cbs and
+#: plan_war rows carry beside an option the casus-belli read calls valid (36 sends of the same war)
+LAST_REFUSAL: dict = {}
+
+
+def cb_part(marks: Any) -> Optional[str]:
+    """The probes' reading, None from a template that did not probe (an older bridge)."""
+    m = set(x for x in (marks or []) if isinstance(x, str))
+    if "PROBED" not in m:
+        return None
+    if "WHY_NO_CB_ON" in m:
+        return CB_PART_NO_CB_ON
+    if "PROBE_TITLE_OK" in m:
+        return CB_PART_CLAIMANT
+    if "PROBE_BARE_OK" in m:
+        return CB_PART_TITLE
+    return CB_PART_CB
+DECLARE_WHY_ASKED = ("the game was asked, in the refused declaration's own script, each condition of "
+                     "declare_war_interaction's validity: raised armies, debt, an activity, prison, "
+                     "incapable, sworn peace, already at war, allied in a war, a truce, the realm "
+                     "hierarchy, a casus belli to display, prestige below 0; and an ally your "
+                     "culture cannot attack, a subjugation offer, your liege's war, a confederation, and on "
+                     "his side: a herder, your tributary, a strong hook on you, your prisoner, not playable")
+
+
+def declare_game_says(marks: Any) -> Optional[dict]:
+    """What the game said of a refused declaration's conditions, from the
+    template's WHY marks; None when the refused branch's reading was not seen (a script
+    without the listing, or a log not read)."""
+    if not isinstance(marks, list):
+        return None
+    words = [m[len("WHY_"):] for m in marks if isinstance(m, str) and m.startswith("WHY_")]
+    _why = {**DECLARE_WHY, **CB_PROBE_WHY}
+    failed = [{"condition": w.lower(), "gate": _why[w][0], "game_says": _why[w][1]}
+              for w in words if w in _why]
+    out = {"failed": failed, "asked": DECLARE_WHY_ASKED,
+           **({} if failed else {"none_failed": (
+               "none of those conditions failed: the game's refusal is in the casus belli's own "
+               "part of can_declare_war (its cost against your prestige or piety, valid_to_start, "
+               "the per-casus-belli rules), which the game does not name"),
+               # A template that asked the whole list leaves only the engine's part
+               **({"remaining": ENGINE_RULES} if isinstance(marks, list) and "PROBED" in marks else {})})}
+    cp = cb_part(marks)
+    # The price the game read in the refused branch (declare template, kCbPrices)
+    price = {k: v for k, v in (("prestige", decode_price(marks, "COSTP")), ("piety", decode_price(marks, "COSTQ")))
+             if v is not None}
+    if price:
+        out["price"] = dict(price, source=CB_GAME_PRICE_SOURCE)
+        if cp == CB_PART_CB and not any(f["gate"] in ("insufficient_prestige", "insufficient_piety")
+                                        for f in failed):
+            # a live check: armies raised and the price (125) held; the old words still blamed the cost
+            cp = CB_PART_CB_PRICE_HELD
+    if cp:
+        out["cb_part"] = cp
+    return out
+
+
 async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
-                           target_id: int = 0, cb: str = "", cb_title_id: int = 0,
+                           target_id: int = 0, cb: str = "", cb_title_id: Any = 0,
                            claimant_id: int = 0, confirm_straddle: bool = False) -> dict[str, Any]:
+    """declare_war: a cb_title_id given as a title key becomes its id
+    first, and the reply names it under result.titles_named."""
+    import title_refs as _trefs
+    echo: list = []
+    bad = sorted(str(k) for k in declare_args if k not in DECLARE_ARGS_KEYS) if isinstance(declare_args, dict) else []
+    if bad:
+        # declare_args carries exactly a plan_war row's keys (declare_args_of); another is refused
+        return envelope("declare_war", ok=False, verdict="rejected", game=gw.game(), bridge_health=gw.health,
+                        blocked=why_blocked("unknown_argument",
+                                            summary=(f"declare_args takes no {', '.join(bad)}; it takes "
+                                                     f"{', '.join(DECLARE_ARGS_KEYS)}. Nothing was sent"),
+                                            fix={"rejected_fields": bad, "accepted_fields": list(DECLARE_ARGS_KEYS)}))
+    if isinstance(declare_args, dict) and isinstance(declare_args.get("cb_title_id"), str):
+        declare_args, echo, blk = await _trefs.resolve_args(gw, declare_args, ("cb_title_id",))
+        if blk is not None:
+            return envelope("declare_war", ok=False, game=gw.game(), blocked=blk, bridge_health=gw.health)
+    if isinstance(cb_title_id, str):
+        cb_title_id, row, blk = await _trefs.resolve(gw, cb_title_id, "cb_title_id")
+        if blk is not None:
+            return envelope("declare_war", ok=False, game=gw.game(), blocked=blk, bridge_health=gw.health)
+        echo += [row] if row else []
+    # The holder of the title or his top liege, either one names the war's defender
+    note = None
+    given = _as_int((declare_args or {}).get("target_id") if isinstance(declare_args, dict) else 0) \
+        or _as_int(target_id)
+    if given:
+        me = _as_int(character_id)
+        if not me:
+            _a, _err = await _resolve_actor(gw, 0, "declare_war")
+            me = _as_int((_a or {}).get("id"))
+        tid, note = await realm_war_target(gw, me, given)
+        if note is not None:
+            if isinstance(declare_args, dict) and declare_args.get("target_id"):
+                declare_args = dict(declare_args, target_id=tid)
+            else:
+                target_id = tid
+    # The strength your open wars hold, read before the send (information only)
+    _me = _as_int(character_id)
+    if not _me:
+        _a, _err = await _resolve_actor(gw, 0, "declare_war")
+        _me = _as_int((_a or {}).get("id"))
+    _cs = await committed_strength(gw, _me) if _me else None
+    env = await _declare_war_impl(gw, character_id=character_id, declare_args=declare_args,
+                                  target_id=target_id, cb=cb, cb_title_id=cb_title_id or 0,
+                                  claimant_id=claimant_id, confirm_straddle=confirm_straddle)
+    if note is not None and isinstance(env, dict):
+        env["warnings"] = list(env.get("warnings") or []) + [note]
+    if isinstance(env, dict) and isinstance(_cs, dict) and _cs.get("wars"):
+        if isinstance(env.get("result"), dict):
+            env["result"]["committed_strength"] = _cs
+        if _cs.get("offensive_open"):
+            env["warnings"] = list(env.get("warnings") or []) + [
+                {"code": "offensive_war_open", "is_known_limitation": False, "detail": offensive_open_words(_cs)}]
+    return _trefs.attach(env, echo)
+
+
+async def _declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
+                            target_id: int = 0, cb: str = "", cb_title_id: int = 0,
+                            claimant_id: int = 0, confirm_straddle: bool = False) -> dict[str, Any]:
     actor, err = await _resolve_actor(gw, character_id, "declare_war")
     if err:
         return err
-    # F1: character_id=0 means "the bound ruler". Every match below compares a war's
+    # character_id=0 means "the bound ruler". Every match below compares a war's
     # attacker_id against the actor (never 0), and the dispatch carries it as
     # actor_id, so the actor is resolved to its id FIRST. Before this, a 0 actor
     # matched no war (the idempotency check could not fire) and reached the bridge
-    # as actor_id=0, which refused it: live on the 867 save (l1f1m-848f9b20) eight
+    # as actor_id=0, which refused it: live on the 867 save eight
     # plan_war rows across four rulers all came back missing_required_argument and
-    # no war landed; with the fix the same first row (l1f1d-848f9b20) landed.
+    # no war landed; with the actor resolved first the same first row landed.
     character_id = character_id or _as_int((actor or {}).get("id"))
     if not character_id:
         return envelope("declare_war", ok=False, actor=actor, game=gw.game(),
@@ -4824,9 +7876,9 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
 
     # Crash-vector guardrail (inv_bridge-map §5): cap simultaneous wars.
     wars0 = await gw.read("get_active_wars", {"character_id": character_id})
-    #: the war cap and the already-at-war check both stand on this
+    # Witness m7: the war cap and the already-at-war check both stand on this
     # read. When it fails, neither can be made, and a war declared then counts
-    # every war as new in the readback: REFUSE, typed, never skip (it used to
+    # every war as new in the readback: REFUSE, typed, never skip (it does not
     # read the failure as "no wars").
     pre_blocked = war_pre_read_blocked(wars0)
     if pre_blocked is not None:
@@ -4856,8 +7908,8 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
             return False
         # get_active_wars emits cb_type (query_handlers.cpp do_get_active_wars,
         # war_cb_type_name); a row without one is a war of UNREAD CB, which
-        # does not match a named CB (it used to, and any attacker war vs the
-        # target answered `applied`: NIT-3).
+        # does not match a named CB (it does not, and any attacker war vs the
+        # target answered `applied`).
         if cb_match and str(w.get("cb_type") or "") != cb_match:
             return False
         # ... and target_titles (read_war_target_titles, CB_TITLE_ARRAY): a war
@@ -4898,7 +7950,7 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
     pc = cb_precheck(strict, cb_name)
     strict_rows = [r for r in (strict.get("results") or []) if isinstance(r, dict) and r.get("cb_name")]
     if pc["passed"] is None and strict_rows:
-        # lane peace (the other mod's finding): a casus belli GROUP name such as
+        # A casus belli GROUP name such as
         # `claim` satisfies has_cb_on but never can_declare_war, and
         # discover(what='war_targets') prints `cb_type: "claim"` on its claim rows.
         # The strict read lists every CB TYPE the game defines (include_ineligible),
@@ -4915,13 +7967,85 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
                         bridge_health=gw.health)
     if pc["passed"] is False:
         cull = pc["reason"]
-        blk = write_blocked(cull, summary=cull)
+        _tm = await _truces.truce_map(gw, character_id) if cull in _truces.TRUCE_CULLS else None
+        blk = write_blocked(cull, summary=_truces.blocked_words(cull, (_tm or {}).get(_as_int(tid))) or cull)
+        if (_tm or {}).get(_as_int(tid)):
+            blk["truce"] = _tm[_as_int(tid)]
         if blk.get("gate") == "cb_invalid_for_target":
             # The doors that list what CAN be declared
             blk["fix"] = {"tool": "cbs", "args": {"target_id": tid, "character_id": character_id},
                           "or": {"tool": "plan_war", "args": {"character_id": character_id}}}
         return envelope("declare_war", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                         blocked=blk, bridge_health=gw.health)
+
+    # What the game's casus-belli read does not ask and its can_declare_war
+    # refuses without a word (live 1069.04.22, 1069.07.04: in debt; 1075.07.04: prestige
+    # below the claim war's cost), checked by the one read cbs and plan_war use.
+    _gate_opts = (await declarable_now(gw, character_id, [tid])).get(tid)
+    _gate_opt = next((o for o in _gate_opts or [] if o.get("cb") == cb_name
+                      and (not cbt or _as_int(o.get("cb_title_id")) in (0, cbt))), None)
+    if _gate_opt is None and _gate_opts:
+        # The cbs read names ONE claim title per
+        # defender (resolve_pressed_claim_title), so a second claim in his realm has no option
+        # of its own; the same casus belli's purse and truce readings stand for it (the price
+        # by the title's tier is the other title's, said in `checked_on`)
+        _same = next((o for o in _gate_opts if o.get("cb") == cb_name and o.get("valid")), None)
+        if _same is not None:
+            _gate_opt = dict(_same, checked_on={"cb_title_id": _same.get("cb_title_id"),
+                                                "note": "the option the read lists for this casus belli "
+                                                        "against this defender; its title's price"})
+    _title_opt = _gate_opt or next((o for o in _gate_opts or [] if o.get("cb") == cb_name), None)
+    if not cbt and not is_mode0 and _title_opt is not None and _title_opt.get("needs_cb_title_id"):
+        # (1074.05.09: ducal_conquest_cb sent with cb_title_id 0, refused by the game and
+        # blamed on cost or "the engine's own rule"; resent with c_ulster it applied): refused BEFORE sending
+        if _title_opt.get("needs_claimant"):
+            _tr = {"titles": ([{"title": None, "cb_title_id": _as_int(_title_opt.get("cb_title_id"))}]
+                              if _as_int(_title_opt.get("cb_title_id")) else "unknown"),
+                   "why": "the claim the war presses: its title is the cbs row's cb_title_id"}
+        else:
+            _tr = await title_rows(gw, character_id, tid, cb_name)
+        _ts = _tr.get("titles")
+        _names = [t.get("title") or t.get("cb_title_id") for t in _ts] if isinstance(_ts, list) else []
+        _blk = why_blocked(
+            "missing_required_argument", raw_reason="cb_title_required",
+            summary=(f"{cb_name}: {CB_TITLE_REQUIRED}; nothing was sent. "
+                     + (f"Eligible now: {', '.join(str(n) for n in _names)}" if _names else
+                        "No title is eligible now" + (f" ({_tr.get('why')})" if _tr.get("why") else ""))),
+            measured={"title_rule": _tr.get("rule") or _tr.get("why"), "titles": _ts})
+        if _names:
+            _blk["fix"] = {"tool": "declare_war", "args": {"declare_args": {
+                "target_id": tid, "cb": cb_name, "cb_title_id": _ts[0]["cb_title_id"],
+                "claimant_id": (clm or None)}}, "rejected_fields": ["cb_title_id"]}
+        return envelope("declare_war", ok=False, verdict="rejected", actor=actor, game=gw.game(),
+                        blocked=_blk, bridge_health=gw.health)
+    if _gate_opt is not None and _gate_opt.get("blocked_by"):
+        _b = declare_gate_blocked(_gate_opt)
+        if isinstance(_gate_opt.get("prestige_if"), dict) and isinstance(_b, dict):
+            _b["prestige_if"] = _gate_opt["prestige_if"]
+        return envelope("declare_war", ok=False, verdict="rejected", actor=actor, game=gw.game(),
+                        blocked=_b, bridge_health=gw.health)
+    _checked = (_gate_opt or {}).get("checked") if _gate_opt is not None else (
+        "unread: the casus-belli read did not answer" if _gate_opts is None else
+        f"unread: the casus-belli read lists no {cb_name} on this title against this target")
+    # An activity the game's AI started (a coronation) refuses the declaration
+    import activities as _act_mod
+    _act, _act_unread = await _act_mod.current(gw, character_id)
+    if isinstance(_checked, dict):
+        _checked = dict(_checked, activity=(f"unread: {_act_unread}" if _act_unread else
+                                            {"in_activity": _act is not None, "ok": _act is None}))
+    if _act is not None:
+        return envelope("declare_war", ok=False, verdict="rejected", actor=actor, game=gw.game(),
+                        blocked=why_blocked(
+                            # A refusal class of its own (filed as cb_invalid_for_target, not
+                            # retryable, for ten months of a coronation)
+                            "in_activity", raw_reason="involved_activity",
+                            summary=(f"your ruler is in an activity ({_act.get('type')}"
+                                     + (", hosting it" if _act.get("you_host") else "") + "): " + IN_ACTIVITY_RULE),
+                            measured={"in_activity": _act, "checked_before_sending": _checked},
+                            # A guest leaves (do host_activity activity=leave); a host waits for its end
+                            fix=(_act_mod.LEAVE_CALL if not _act.get("you_host") else
+                                 {"tool": "do", "args": {"action_class": "activities"}})),
+                        bridge_health=gw.health)
 
     # confirm_straddle hard guard.
     if not confirm_straddle:
@@ -4952,7 +8076,7 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
     # Which CBs are claim types is the game's (target_mode claim, the strict read's
     # row, the same field the cbs rows' needs_claimant comes from), the name
     # family only when the read has no row: norman_conquest_cb and
-    # norwegian_invasion_cb are claim-targeted and named otherwise (lane peace).
+    # norwegian_invasion_cb are claim-targeted and named otherwise.
     strict_row = next((r for r in strict_rows if r.get("cb_name") == cb_name), None)
     is_claim = (strict_row.get("target_mode") == "claim") if strict_row and "target_mode" in strict_row \
         else is_claim_cb_name(cb_lower)
@@ -4997,6 +8121,10 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
     # can_declare_war for exactly this defender, CB, claimant and title (defect 7
     # of the v3 seat review: plan_war and cbs offered wars the engine refused,
     # and the refusal came back without the game's check).
+    # (1067.08: "-99.8 unexplained" in the step of turn one's two declarations, priced 100 and 50
+    # from the bridge's base; a live read of the 1066 save the same two took 321.84): the prestige before and after the send
+    _decl_char = await gw.read("query_character", {"character_id": character_id})
+    _decl_before = _war_purse(_decl_char)
     sent = await _script_write(gw, "declare_war", {"actor_id": character_id, "target_id": tid,
                                                     "cb": cb_name, "cb_title_id": cbt,
                                                     "claimant_id": clm})
@@ -5016,9 +8144,81 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
             r = v["result"]
             v["result"] = dict(_war_result(r["readback"]), path="script", token=r.get("token"),
                                guard=r.get("guard"))
+            # The declaration's cost as the cbs / plan_war read showed it
+            cost = CB_COST_SEEN.get((tid, cb_name, cbt))
+            if cost is not None:
+                # A price the game computed says so (a live check: 125 shown, 125 charged)
+                _game = bool(cost.get("game"))
+                cost = {k: v_ for k, v_ in cost.items() if k != "game"}
+                v["result"]["declare_cost"] = dict(cost, basis=_dg.GAME_PRICE_BASIS if _game else DECLARE_COST_BASIS)
+            if isinstance((_gate_opt or {}).get("prestige_if"), dict):
+                # What the war can still cost in prestige, read before the send
+                v["result"]["prestige_if"] = _gate_opt["prestige_if"]
+            # (a seated game: a vassalization war declared with prestige_if's defeat -350 and the words "a defeat
+            # also costs 3 years of income in gold", no number; lost three years later, -166.32 gold): the gold a
+            # defeat takes, as cbs and plan_war rows give it (loss_price)
+            v["result"]["if_you_lose"] = loss_price(cb_name, (_dg.purse_of(_char_section(_decl_char)) or {})
+                                                    .get("monthly_income"))
+            charged = war_end_charged(_decl_before, _war_purse(
+                await gw.read("query_character", {"character_id": character_id})))
+            pr = (charged or {}).get("prestige")
+            if isinstance(pr, (int, float)) and pr < 0:
+                v["result"]["declare_cost"] = dict(v["result"].get("declare_cost") or {}, charged={
+                    "prestige": pr, "basis": "read before and after the send, the same game day"})
+                _news.note_act(character_id, (gw.game() or {}).get("date"),
+                               f"declared war {v['result'].get('war_id')} ({cb_name})", cost_known=True,
+                               prestige=pr, measured=True, war_id=v["result"].get("war_id"), war_title_id=cbt)
+            else:
+                _news.note_act(character_id, (gw.game() or {}).get("date"),
+                               f"declared war {v['result'].get('war_id')} ({cb_name})",
+                               **({k: -_f(x) for k, x in cost.items() if x} if cost else {}),
+                               cost_known=cost is not None, war_id=v["result"].get("war_id"), war_title_id=cbt)
         elif v.get("blocked", {}).get("gate") == "cb_invalid_for_target":
             v["blocked"]["fix"] = {"tool": "cbs", "args": {"target_id": tid, "character_id": character_id},
                                    "or": {"tool": "plan_war", "args": {"character_id": character_id}}}
+            # The game names no condition; what this server checked before sending
+            v["blocked"]["checked_before_sending"] = _checked
+            v["blocked"]["not_checked"] = DECLARE_NOT_CHECKED
+            # And what the game said of its own conditions in the refused branch
+            says = declare_game_says(sent.get("marks") if sent.get("guard") == "refused" else None)
+            if says is not None:
+                v["blocked"]["game_checked"] = says
+                if says.get("cb_part"):
+                    # Cbs and plan_war show the game's last refusal on this casus belli
+                    LAST_REFUSAL[(_as_int(tid), cb_name)] = {"date": (gw.game() or {}).get("date"),
+                                                            "game_says": says["cb_part"]}
+                    if not says["failed"]:
+                        v["blocked"]["summary"] = f"the game refused the declaration: {says['cb_part']}"
+                if says["failed"]:
+                    first = says["failed"][0]
+                    _ar_detail = _ar_fix = None
+                    if first["gate"] == "armies_raised":
+                        # The disband call when the army lever is listed, else the armies read
+                        _ar = (_checked or {}).get("armies_raised") if isinstance(_checked, dict) else None
+                        _ar_detail, _ar_fix = _dg.armies_raised_fix(
+                            _ar.get("army_ids") if isinstance(_ar, dict) else None)
+                    nb = write_blocked(gate=first["gate"], raw_reason="can_declare_war_false",
+                                       summary="the game refused the declaration: " +
+                                               "; ".join(f["game_says"] for f in says["failed"]),
+                                       measured={"game_checked": says, "checked_before_sending": _checked},
+                                       fix=_ar_fix)
+                    if first["gate"] == "insufficient_prestige" and (says.get("price") or {}).get("prestige") is not None:
+                        # The price, what is held, and when to retry at the monthly change
+                        _ch = await gw.read("query_character", {"character_id": character_id})
+                        _have = _dg._num((_ch or {}).get("prestige")) if isinstance(_ch, dict) else None
+                        _mc = _dg.monthly_change_of(_ch) or {}
+                        _cost = says["price"]["prestige"]
+                        nb["summary"] = (f"the game refused the declaration: your prestige "
+                                         f"{'' if _have is None else round(_have, 2)} is below {cb_name}'s price "
+                                         f"{_cost} (the game's own cost for this defender)")
+                        nb["retry_when"] = {"price": _cost, "have": None if _have is None else round(_have, 2),
+                                       "monthly": _mc.get("prestige"),
+                                       "in_months": _dg.months_to_afford(_cost, _have, _mc.get("prestige"))}
+                    if _ar_detail:
+                        nb["detail"] = _ar_detail
+                    v["blocked"] = nb
+            if cb_name in CB_START_RULES:
+                v["blocked"]["game_rule"] = CB_START_RULES[cb_name]
         return _script_envelope("declare_war", v, actor, gw)
 
     conf = await _confirm_write(gw, bridge_action, bridge_params,
@@ -5042,7 +8242,7 @@ async def declare_war_impl(gw, character_id: int = 0, declare_args: dict = None,
                         result={"target_id": tid, "cb": cb_name, "raw": raw,
                                 "drain": (conf.get("drain") or {}).get("row")},
                         bridge_health=gw.health)
-    # One pending spelling with do: ok:true, verdict pending, the
+    # One pending spelling with do(): ok:true, verdict pending, the
     # pending block names its wait; no `blocked` beside it. raw_reason only when
     # the reply said one (never a default asserting that no poll ran).
     raw_reason = str(raw.get("reason") or raw.get("error") or raw.get("status") or "")
@@ -5108,7 +8308,7 @@ DESIGNATE_HEIR_ADMIN_INFLUENCE_COST = 150    # designate_heir_admin_influence_co
 
 #: Realm laws only administrative realms carry, for designate_heir's cost: the
 #: bureaucracy groups above plus Ritsuryo's japanese_bureaucracy (an administrative
-#: government that revokes under its own law flag). Live867 l4fix-live-3: 10357
+#: government that revokes under its own law flag). A live 867 game: 10357
 #: (japanese_bureaucracy_1) was refused "does not have influence 150".
 DESIGNATE_HEIR_ADMIN_LAWS = ADMINISTRATIVE_REALM_LAWS | frozenset(
     "japanese_bureaucracy_" + str(level) for level in range(4))
@@ -5191,6 +8391,54 @@ async def _designate_heir_lever(gw, ruler: dict, children: set, designators: lis
     }
 
 
+#: The law lever a count under confederate partition can reach (re/findings/re_partition_levers.md):
+#: plain partition needs a realm law flagged can_change_partition_succession_laws (crown_authority_1,
+#: 00_realm_laws.txt:63) and the culture's innovation_hereditary_rule (00_law_triggers.txt:153); 500 prestige
+#: (change_succession_law_prestige_base). It keeps younger sons' counties only under a duchy or higher primary
+#: title (plain partition creates no new primary-tier titles for them; confederate does).
+SUCCESSION_LAW_PRICE = 500
+
+
+async def law_reach_inputs(gw, character_id: Any, laws: Any, ruler: Optional[dict] = None) -> dict:
+    """What law_reach evaluates the game's law conditions on: {government, laws, innovations}. The government
+    is query_maa_types' read of the ruler's (None when not read); the culture's known innovations
+    (query_innovation_progress), None when not read; `laws`: the realm's law names in force."""
+    cid = _as_int(character_id) or _as_int((ruler or {}).get("id"))
+    if ruler is None:
+        ruler = _char_section(await gw.read("query_character", {"character_id": cid})) if cid else {}
+    try:
+        mt = await seat_read(gw, "query_maa_types", {}, cid)
+    except Exception:  # noqa: BLE001 - a read that raised is a read that did not answer
+        mt = None
+    inn = await gw.read("query_innovation_progress", {"culture_id": _as_int(ruler.get("culture_id")) or 0,
+                                                      "character_id": cid or 0})
+    rows = inn.get("innovations") if isinstance(inn, dict) else None
+    known = ({str(x.get("name")) for x in rows if isinstance(x, dict) and x.get("is_known")}
+             if isinstance(rows, list) else None)
+    names = [str(n) for n in laws or [] if n]
+    return {"government": _lr.government_of((mt or {}).get("government") if isinstance(mt, dict) else None, names),
+            "laws": names, "innovations": known}
+
+
+async def _succession_law_lever(gw, ruler: dict, laws: list) -> Optional[dict]:
+    if "confederate_partition_succession_law" not in laws:
+        return None
+    ins = await law_reach_inputs(gw, ruler.get("id"), laws, ruler)
+    r = _lr.reach("partition_succession_law", **ins)
+    need = r.get("missing") or ([r["not_checked"]] if r.get("not_checked") else [])
+    tier = _as_int(ruler.get("ruler_tier"))
+    pr = _dg._num(ruler.get("prestige"))
+    # The game's conditions first, then the price
+    return {"law": "partition_succession_law",
+            "allowed_now": r.get("possible") if "possible" in r else None, "needs": need or None,
+            "price": {"prestige": SUCCESSION_LAW_PRICE},
+            **({"prestige_short": round(SUCCESSION_LAW_PRICE - pr, 2)} if pr is not None and pr < SUCCESSION_LAW_PRICE
+               else {}),
+            "keeps": ("younger sons' counties stay under a duke or higher" +
+                      ("; you are a count: hold a duchy first" if tier is not None and tier <= 2 else "")),
+            "call": {"tool": "do", "args": {"intent": "change_law", "args": {"law": "partition_succession_law"}}}}
+
+
 async def _succession_levers(gw, ruler_id: int, heirs: list, ruler_raw) -> dict[str, Any]:
     """The succession levers a CK3 player has for this ruler, from stable reads only:
     each heir's age (query_character), the realm's succession laws and whether one of
@@ -5208,7 +8456,11 @@ async def _succession_levers(gw, ruler_id: int, heirs: list, ruler_raw) -> dict[
         heir_rows.append({"id": hid, "name": sect.get("name") or (h or {}).get("name"),
                           "age": age, "adult": age >= 16,
                           "own_child": hid in children,
-                          "is_female": sect.get("is_female")})
+                          "is_female": sect.get("is_female"),
+                          # Each heir's dynasty, flagged when it is not the ruler's
+                          **({"dynasty_id": sect["dynasty_id"]} if sect.get("dynasty_id") else {}),
+                          **({"other_dynasty": True}
+                             if _hd.other_dynasty(ruler.get("dynasty_id"), sect.get("dynasty_id")) else {})})
     laws_raw = await gw.read("query_realm_laws", {"character_id": ruler_id})
     active = [l for l in ((laws_raw or {}).get("active_laws") or []) if isinstance(l, dict)]
     names = [str(l.get("name") or "") for l in active]
@@ -5217,6 +8469,9 @@ async def _succession_levers(gw, ruler_id: int, heirs: list, ruler_raw) -> dict[
     designators = sorted(set(names) & DESIGNATE_HEIR_LAWS)
     revokers = sorted(set(names) & REVOKE_TITLE_LAWS)
     own_heirs = [r["id"] for r in heir_rows if r["own_child"]]
+    # disinherit_interaction is shown only for a member of your dynasty (00_dynast_interactions.txt
+    # is_shown: dynasty = scope:recipient.dynasty); a test run listed Goffredo 69510 of another dynasty
+    dis_out = [r["id"] for r in heir_rows if r["own_child"] and r.get("other_dynasty")]
     designate = await _designate_heir_lever(gw, ruler, children, designators,
                                             admin=bool(set(names) & DESIGNATE_HEIR_ADMIN_LAWS))
     # The engine's disinherit needs the actor to be his dynasty's head. The dynasty is
@@ -5227,6 +8482,19 @@ async def _succession_levers(gw, ruler_id: int, heirs: list, ruler_raw) -> dict[
     if dynasty_id:
         dyn = await gw.read("query_dynasty", {"dynasty_id": dynasty_id, "character_id": ruler_id})
         head = _as_int((dyn or {}).get("head_character_id")) if isinstance(dyn, dict) else None
+    # The game's own check of each candidate's send (the read the lever rows make), so this block and every
+    # lever row give one verdict (partition_forecast.disinherit_allowed)
+    cands = [x for x in own_heirs if x not in dis_out]
+    gcs: list = []
+    if cands and head == ruler_id:
+        chk = await gw.read("query_interaction_check", {"actor_id": ruler_id, "interaction_type": "disinherit_interaction",
+                                                        "candidates": cands})
+        for c in ((chk or {}).get("result") or {}).get("results") or [] if isinstance(chk, dict) else []:
+            gc = _pf._game_check(c, {}) if isinstance(c, dict) and _as_int(c.get("target_id")) in cands else None
+            if gc is not None:
+                gcs.append((_as_int(c.get("target_id")), gc))
+    # each son's own verdict; the reason given names its son (the candidates' prices differ)
+    dis_ok, dis_why, dis_of, dis_for = _pf.disinherit_by_son(head, ruler_id, gcs)
     primary_title = _as_int(ruler.get("primary_title_id"))
     return {
         "heirs": heir_rows,
@@ -5235,12 +8503,15 @@ async def _succession_levers(gw, ruler_id: int, heirs: list, ruler_raw) -> dict[
                       "adult_heirs": sum(1 for r in heir_rows if r["adult"])},
         "designate_heir": designate,
         "disinherit": {
-            "available": (head == ruler_id) if head else None,
+            "available": dis_ok,
             "dynasty_head_id": head or None,
-            "why_not": (None if head == ruler_id else
-                        "only your dynasty's head can disinherit" if head else
-                        "the dynasty head could not be read"),
-            "candidates": own_heirs,
+            "why_not": dis_why,
+            **({"why_not_of": dis_of} if dis_why and dis_of is not None else {}),
+            **({"allowed_for": dis_for} if dis_for else {}),
+            "candidates": cands,
+            **({"not_candidates": {"ids": dis_out, "why": "of another dynasty: the game shows disinherit "
+                                                          "only for your own dynasty's members"}}
+               if dis_out else {}),
             "call": ("do(intent='interact', args={'interaction': 'disinherit_interaction', "
                      "'target_id': <child>}) — sent only down your own line (the kin "
                      "guard); the engine also requires you to be your dynasty's head and, "
@@ -5248,6 +8519,7 @@ async def _succession_levers(gw, ruler_id: int, heirs: list, ruler_raw) -> dict[
             "readback": "inspect(subject='character', character_id=<child>).traits "
                         "has 'disinherited'; succession_plan heirs drop the child",
         },
+        "succession_law": await _succession_law_lever(gw, ruler, names),
         "grant_title": {
             "call": ("do(intent='interact', args={'interaction': 'grant_titles_interaction', "
                      "'target_id': <courtier or child>, 'title_id': <a title you hold>}) — "
@@ -5289,6 +8561,243 @@ async def _succession_levers(gw, ruler_id: int, heirs: list, ruler_raw) -> dict[
     }
 
 
+async def goal_dejure_map(gw, me: int, goal: str) -> Optional[dict]:
+    """{county id: in your realm} for the goal title's de jure counties: the read inspect(subject=title) makes
+    and the task's de-jure county metric counts (query_dejure_progress verbose, the bridge's dejure_share). None
+    unread."""
+    raw = await gw.read("query_dejure_progress", {"character_id": me, "title_key": goal, "verbose": 1})
+    rows = raw.get("counties") if isinstance(raw, dict) and not raw.get("error") else None
+    if not isinstance(rows, list) or not rows:
+        return None
+    return {_as_int(r.get("county_id")): r.get("you_control") is True for r in rows
+            if isinstance(r, dict) and _as_int(r.get("county_id"))}
+
+
+def dejure_gain_of(county_ids: list, goal_map: dict) -> int:
+    """The counties of `county_ids` that are de jure the goal's and not in your realm (goal_dejure_map)."""
+    return sum(1 for c in set(county_ids) if goal_map.get(c) is False)
+
+
+async def war_county_ids(gw, target_id: int, cb_title_id: int, cache: dict) -> Optional[list]:
+    """The counties a war for `cb_title_id` takes from `target_id`: the county itself, or the counties under the
+    title his realm holds (query_dejure_progress from his seat). None when the title is not read (a war for no title)."""
+    if not cb_title_id:
+        return None
+    k = (target_id, cb_title_id)
+    if k not in cache:
+        t = (await _read_dict(gw, "query_title_hierarchy", {"title_id": cb_title_id})).get("title") or {}
+        key = str((t if isinstance(t, dict) else {}).get("key") or "")
+        if key.startswith("c_"):
+            cache[k] = [cb_title_id]
+        elif key[:2] in ("d_", "k_", "e_"):
+            raw = await gw.read("query_dejure_progress", {"character_id": target_id, "title_id": cb_title_id,
+                                                          "verbose": 1})
+            rows = raw.get("counties") if isinstance(raw, dict) else None
+            cache[k] = ([_as_int(r.get("county_id")) for r in rows if isinstance(r, dict) and r.get("you_control")]
+                        if isinstance(rows, list) else None)
+        else:
+            cache[k] = None
+    return cache[k]
+
+
+#: the most children read for the partition forecast (Murchad had 3 sons in 1066; a lustful ruler more)
+FORECAST_MAX_CHILDREN = 16
+
+
+async def partition_forecast_for(gw, ruler_sect: dict, law_names: Any, sv: dict, sim_raw: Any,
+                                 map_titles: Any = None) -> tuple[dict, list]:
+    """Patch A: the partition forecast from reads (the ruler's children read now, his laws, the
+    verdict's primary heir) as (forecast, child rows). The forecast refuses (`refused`, takers
+    'unknown') when a fact it needs is unread; it carries `_inputs` for lever_rows (pop before reply)."""
+    kids = [_as_int(c) for c in (ruler_sect.get("children") or []) if _as_int(c)][:FORECAST_MAX_CHILDREN]
+    got = await gw.read_many([("query_character", {"character_id": c}) for c in kids]) if kids else []
+    rows = [_pf.child_row(g, c) for c, g in zip(kids, got)]
+    names = law_names if isinstance(law_names, list) else []
+    shares = await tier_shares_for(gw, ruler_sect, names, sim_raw)
+    fc = _pf.forecast_from_reads(ruler=ruler_sect, law_names=names, children=rows, sim=sim_raw,
+                 primary_heir_id=_as_int((sv.get("primary") or {}).get("id")) or None, map_titles=map_titles,
+                 tier_shares=shares)
+    # Only the
+    # titles of your tier no younger child takes are listed here; the taken ones are in younger_shares
+    taken = {str((s.get("takes_title") or {}).get("title")) for s in fc.get("younger_shares") or []
+             if isinstance(s, dict) and isinstance(s.get("takes_title"), dict)}
+    left = [t for t in shares or [] if isinstance(t, dict) and str(t.get("title")) not in taken]
+    if left:
+        fc["tier_shares_untaken"] = left
+    return fc, rows
+
+
+async def title_succession_view(gw, res: dict, me: int = 0) -> dict:
+    """Inspect title_succession with each heir's dynasty flagged against the holder's (`other_dynasty`
+    on a row whose dynasty differs), the warning first when the primary heir is of another dynasty, and the
+    stale cache said in words. The line itself is the bridge's (heir_line.h: the holder's children first)."""
+    if not isinstance(res, dict) or not isinstance(res.get("heirs"), list):
+        return res
+    hd = res.get("holder_dynasty_id")
+    for h in res["heirs"]:
+        if isinstance(h, dict) and _hd.other_dynasty(hd, h.get("dynasty_id")) is True:
+            h["other_dynasty"] = True
+    head: dict = {}
+    pid = _as_int(res.get("primary_heir_id"))
+    if pid and _hd.other_dynasty(hd, res.get("primary_heir_dynasty_id")) is True:
+        got = await gw.read_many([("query_character", {"character_id": pid}),
+                                  ("query_character", {"character_id": _as_int(res.get("current_holder_id"))})])
+        heir, holder = (_char_section(g) for g in got)
+        what = res.get("title_name") or res.get("title_key") or "this title"
+        w = _hd.heir_warning(heir_id=pid, heir_name=res.get("primary_heir_name"),
+                             heir_dyn=res.get("primary_heir_dynasty_id"), heir_dyn_name=heir.get("dynasty_name"),
+                             seat_dyn=hd, seat_dyn_name=holder.get("dynasty_name"), what=what,
+                             yours=not me or _as_int(res.get("current_holder_id")) == me)
+        if w:
+            head["dynasty_warning"] = w
+    if isinstance(res.get("heir_cache"), dict):
+        head["heir_cache_note"] = _HEIR_CACHE_WORDS
+    return {**head, **res} if head else res
+
+
+#: What a stale heir cache means, said once where a read found one (bridge heir_line.h)
+_HEIR_CACHE_WORDS = ("the game's cached line for a title you hold was built before a child of yours was born: the "
+                     "heirs here put your living children first, as the game does at your death")
+
+
+def _heir_cache_stale(sp_raw: Any) -> bool:
+    return isinstance(sp_raw, dict) and (sp_raw.get("heir_cache_stale") is True
+                                         or isinstance(sp_raw.get("heir_cache"), dict))
+
+
+async def line_risk_for(gw, ruler_sect: dict, heir: Optional[dict]) -> Optional[dict]:
+    """Whose dynasty inherits (heir_dynasty.py). The primary heir's dynasty against the ruler's, and each
+    living marriage of the ruler or the heir whose children leave the ruler's dynasty. None when nothing is at
+    risk; {warning, heir, marriages, levers} otherwise (`warning` only when the heir himself is of another
+    dynasty). Reads: the heir and each living spouse (query_character)."""
+    if not isinstance(ruler_sect, dict):
+        return None
+    seat_dyn, seat_name = ruler_sect.get("dynasty_id"), ruler_sect.get("dynasty_name")
+    hid = _as_int((heir or {}).get("id"))
+    hrow = _char_section(await gw.read("query_character", {"character_id": hid})) if hid else {}
+    people = [("you", dict(ruler_sect))] + ([("heir", dict(hrow, id=hid))] if hrow else [])
+    sids = sorted({_as_int(s.get("id")) for _w, p in people for s in (p.get("spouses") or [])
+                   if isinstance(s, dict) and s.get("alive") is not False and _as_int(s.get("id"))})[:6]
+    got = await gw.read_many([("query_character", {"character_id": s}) for s in sids]) if sids else []
+    spouses = {s: _char_section(g) for s, g in zip(sids, got)}
+    marriages = []
+    for who, p in people:
+        marriages += _hd.marriage_rows(p, spouses, seat_dyn, who)
+    out: dict = {}
+    if hrow:
+        od = _hd.other_dynasty(seat_dyn, hrow.get("dynasty_id"))
+        w = _hd.heir_warning(heir_id=hid, heir_name=hrow.get("name"), heir_dyn=hrow.get("dynasty_id"),
+                             heir_dyn_name=hrow.get("dynasty_name"), seat_dyn=seat_dyn, seat_dyn_name=seat_name)
+        if w:
+            out["warning"] = w
+            out["heir"] = {"id": hid, "name": hrow.get("name"), "dynasty_id": hrow.get("dynasty_id"),
+                           "dynasty_name": hrow.get("dynasty_name"), "other_dynasty": od}
+            out["levers"] = list(_hd.LEVERS_OTHER_DYNASTY)
+    if marriages:
+        out["marriages"] = marriages
+        out.setdefault("divorce", DIVORCE_RULE)
+    return out or None
+
+
+async def tier_shares_for(gw, ruler_sect: dict, law_names: list, sim_raw: Any) -> Optional[list]:
+    """Under confederate partition, a duke's (or higher) titles of his tier beyond the primary one, held
+    (the simulation's titles) or created by the law at his death (create_primary_tier_titles: each de jure duchy of
+    his kingdom that is not created and whose counties his realm holds to the creation bar, query_dejure_progress).
+    None when the law is not confederate or the tier is below duchy."""
+    succ, _g = _pf.laws_of(law_names)
+    tier = ruler_sect.get("ruler_tier")
+    if succ != _pf.CONFEDERATE or not isinstance(tier, int) or tier < _pf.TIER_DUCHY:
+        return None
+    sim = sim_raw if isinstance(sim_raw, dict) else {}
+    prim = _as_int(sim.get("primary_title_id"))
+    out = []
+    for h in sim.get("heirs") or []:
+        for t in (h.get("titles") or []) if isinstance(h, dict) else []:
+            if isinstance(t, dict) and t.get("tier") == tier and _as_int(t.get("title_id")) != prim:
+                out.append({"title": t.get("key"), "title_id": _as_int(t.get("title_id")), "held": True})
+    if not prim:
+        return out
+    pt = _char_section(await gw.read("query_title_hierarchy", {"title_id": prim})).get("title") or {}
+    pt = pt if isinstance(pt, dict) else {}
+    parent = _as_int(pt.get("de_jure_parent_id"))
+    if not parent or tier != _pf.TIER_DUCHY:
+        return out
+    kt = (await gw.read("query_title_hierarchy", {"title_id": parent}))
+    kt = (kt or {}).get("title") if isinstance(kt, dict) else None
+    me = _as_int(ruler_sect.get("id"))
+    for d in (kt or {}).get("sub_titles") or []:
+        if not isinstance(d, dict) or d.get("tier") != tier or _as_int(d.get("holder_id")) or not me:
+            continue
+        pr = await gw.read("query_dejure_progress", {"character_id": me, "title_id": _as_int(d.get("title_id"))})
+        held, total = (_as_int(pr.get("held")), _as_int(pr.get("total"))) if isinstance(pr, dict) else (0, 0)
+        if held and total and held >= dejure_need(total, tier):
+            out.append({"title": d.get("key"), "title_id": _as_int(d.get("title_id")), "created": True,
+                        "counties": {"in_your_realm": held, "of": total}})
+    return out
+
+
+def _forecast_public(fc: dict) -> dict:
+    """The forecast as a reply shows it: without its inputs, the rule text once."""
+    return {k: v for k, v in fc.items() if k != "_inputs"}
+
+
+def _forecast_brief(fc: dict) -> dict:
+    """observe's form: who takes land, who leaves the realm with his share, and what is undecided."""
+    if fc.get("refused"):
+        return {"takers": "unknown", "refused": fc["refused"]}
+    out = {"takers": fc.get("takers"), "intact": fc.get("intact"),
+           "leaves_realm": [s["id"] for s in fc.get("younger_shares") or [] if s.get("fate") == "leaves_realm"],
+           "may_leave_realm": [s["id"] for s in fc.get("younger_shares") or [] if s.get("fate") == "may_leave_realm"]}
+    if fc.get("undecided"):
+        out["undecided"] = fc["undecided"]
+    # (1072.07.16: the law created d_ulster for Ernán, who left the realm with c_ulster and c_ailech;
+    # no news row named it after the realm met d_ulster's county rule in 1071): what each leaving son takes with him
+    lw = [{"id": s["id"], **({"name": s["name"]} if s.get("name") else {}),
+           "takes": (s.get("takes_title") or {}).get("title") or s.get("takes") or "unread",
+           **({"created_by_the_law": True} if (s.get("takes_title") or {}).get("created") else {}),
+           **({"counties": (s.get("takes_title") or {}).get("counties")}
+              if (s.get("takes_title") or {}).get("counties") else {})}
+          for s in fc.get("younger_shares") or [] if s.get("fate") == "leaves_realm"]
+    if lw:
+        out["leaves_with"] = lw
+    return {k: v for k, v in out.items() if v not in ([], None) or k == "intact"}
+
+
+def _law_names(laws_raw: Any) -> list:
+    rows = (laws_raw or {}).get("active_laws") if isinstance(laws_raw, dict) else None
+    return [str(l.get("name")) for l in rows if isinstance(l, dict) and l.get("name")] if isinstance(rows, list) else []
+
+
+#: (a seated game: the forecast named the duchy a younger son would take out of the realm, on the first page and in
+#: every turn's news, while the levers that keep it, disinherit and vows with their prices, were on page two, which
+#: was never read; the duchy left at the death): the first page carries, for each son who leaves the realm with land,
+#: the lever rows that would keep his share, with the price and the game's own verdict
+PREVENT_SPLIT_WHY = ("he leaves the realm at your death with this land; disinherited, or under vows, he takes no share "
+                     "(the forecast after each: levers.take_out_of_split)")
+_PREVENT_KEYS = ("allowed_now", "price", "you_hold", "why_not", "to_allow", "call")
+
+
+def prevent_split_rows(fc: dict, rows: Optional[dict]) -> list:
+    """For each younger son the forecast has leave the realm with land: what he takes and the disinherit and vows rows
+    of take_out_of_split (price, allowed now, why not, call); [] when none leaves."""
+    if not isinstance(rows, dict):
+        return []
+    by = {k: {r.get("son_id"): r for r in rows.get(k) or [] if isinstance(r, dict)} for k in ("disinherit", "vows")}
+    out = []
+    for s in (fc or {}).get("younger_shares") or []:
+        if not isinstance(s, dict) or s.get("fate") != "leaves_realm":
+            continue
+        tt = s.get("takes_title") if isinstance(s.get("takes_title"), dict) else {}
+        row = {"son_id": s.get("id"), "name": s.get("name"),
+               "takes": tt.get("title") or s.get("takes"), "why": PREVENT_SPLIT_WHY}
+        for k in ("disinherit", "vows"):
+            r = by[k].get(s.get("id"))
+            if r is not None:
+                row[k] = {x: r[x] for x in _PREVENT_KEYS if x in r}
+        out.append(row)
+    return out
+
+
 async def succession_plan_impl(gw, character_id: int = 0) -> dict[str, Any]:
     actor, err = await _resolve_actor(gw, character_id, "succession_plan")
     if err:
@@ -5312,9 +8821,23 @@ async def succession_plan_impl(gw, character_id: int = 0) -> dict[str, Any]:
     age = None
     chr_ = await gw.read("query_character", {"character_id": character_id})
     age = _f(_char_section(chr_).get("age"))
-    eta = succession_eta_years(age)
+    # Patch C: the estimate from his health (ruler_death.py), the age heuristic beside it
+    eta, eta_basis, death_est = _rd.eta_years(age, _char_section(chr_).get("health"))
+    # Patch A: who takes land under partition, from his children and laws (not the title's line)
+    laws_raw = await gw.read("query_realm_laws", {"character_id": character_id})
+    fc, fc_kids = await partition_forecast_for(gw, _char_section(chr_), _law_names(laws_raw), sv, sim,
+                                               map_titles=msum.get("titles"))
+    sv = _pf.apply(sv, fc)
+    if isinstance(fc.get("takers"), list) and fc.get("partition"):
+        heirs = [{"id": t} for t in fc["takers"]]     # the levers' heir rows: who takes land, not the line
+    # Whose dynasty inherits, first in the reply (page one)
+    risk = await line_risk_for(gw, dict(_char_section(chr_), id=character_id or _as_int(actor.get("id"))),
+                               sv["primary"])
 
     result = {
+        **({"dynasty_warning": risk["warning"]} if (risk or {}).get("warning") else {}),
+        **({"line_risk": {k: v for k, v in risk.items() if k != "warning"}} if risk else {}),
+        **({"heir_cache": _HEIR_CACHE_WORDS} if _heir_cache_stale(sp_raw) else {}),
         "outcome": sv["outcome"],
         **({"undetermined_reason": sv["undetermined_reason"]}
            if sv["outcome"] == "undetermined" else {}),
@@ -5324,18 +8847,31 @@ async def succession_plan_impl(gw, character_id: int = 0) -> dict[str, Any]:
         # none) the per-title map's projected heirs.
         "heirs_source": sv["heirs_source"],
         "primary_heir": {"id": primary.get("id"), "name": primary.get("name"),
-                         "keeps_titles": primary.get("keeps_titles") or primary.get("titles") or []},
+                         **({"dynasty_id": sp_raw.get("primary_heir_dynasty_id")}
+                            if isinstance(sp_raw, dict) and sp_raw.get("primary_heir_dynasty_id")
+                            and _as_int(sp_raw.get("primary_heir_id")) == _as_int(primary.get("id")) else {}),
+                         # (a seated game, 1077.08.16: keeps_titles named Athlone while younger_shares gave it to
+                         # Enna): a title a younger share takes is not the primary heir's
+                         "keeps_titles": [t for t in (primary.get("keeps_titles") or primary.get("titles") or [])
+                                          if not isinstance(t, dict) or _as_int(t.get("title_id")) not in
+                                          {_as_int(x) for sh in fc.get("younger_shares") or []
+                                           for x in sh.get("takes") or []}]},
         "breaker": sv["breaker"],
         "crown_titles": sv["crown_titles"],
         "scope": sv["scope"],
         "succession_eta_years": eta,
-        **({"succession_eta_basis": SUCCESSION_ETA_BASIS} if eta is not None else {}),
+        **({"succession_eta_basis": eta_basis} if eta is not None else {}),
+        **({"death_estimate": death_est} if death_est else {}),
+        **({"breaker_simulation": sv["breaker_simulation"]} if sv.get("breaker_simulation") else {}),
+        "partition_forecast": _forecast_public(fc),
         "at_war": at_war,
         # The per-title map: each title with its projected heir, and which
         # titles ride PARTITION law vs single-heir. Detail only: the verdict is above.
         "per_title_map": {
             "available": msum.get("available", False),
-            "titles": msum.get("titles"),
+            # splits_away from the partition forecast (the bridge's field read false on every
+            # title under partition)
+            "titles": _pf.title_fates(msum.get("titles"), fc),
             "partition_titles": msum.get("partition_titles"),
             "single_heir_titles": msum.get("single_heir_titles"),
             "top_title": msum.get("top_title"),
@@ -5345,15 +8881,52 @@ async def succession_plan_impl(gw, character_id: int = 0) -> dict[str, Any]:
         "levers": await _succession_levers(gw, character_id or _as_int(actor.get("id")),
                                            heirs, chr_),
     }
+    # Patch B: vows and disinherit, priced, checked against the reads, with the forecast after
+    if not fc.get("refused"):
+        _dyn_id = _as_int(_char_section(chr_).get("dynasty_id"))
+        _dyn = (await gw.read("query_dynasty", {"dynasty_id": _dyn_id, "character_id": character_id})
+                if _dyn_id else None)
+        _ruler = dict(_char_section(chr_), id=character_id or _as_int(actor.get("id")))
+        # The game's own check of each son's disinherit and vows (the send's checks with its own
+        # price, nothing sent): allowed_now and the price are the game's, not a reconstruction
+        _sons = [_as_int(x.get("id")) for x in fc.get("younger_shares") or [] if _as_int(x.get("id"))]
+        _checks: dict = {}
+        for _it in ("disinherit_interaction", "take_vows_interaction") if _sons else ():
+            _r = await gw.read("query_interaction_check", {"actor_id": _ruler["id"], "interaction_type": _it,
+                                                           "candidates": _sons})
+            for _c in ((_r or {}).get("result") or {}).get("results") or [] if isinstance(_r, dict) else []:
+                if isinstance(_c, dict) and _as_int(_c.get("target_id")):
+                    _checks[(_it, _as_int(_c["target_id"]))] = _c
+        # heirs of a held title: the engine's per-title heir, and every younger son the forecast gives a title
+        # (under partition each title has its own heir; live: the game priced all three sons 300)
+        _heirs_of = {_as_int(t.get("projected_heir_id")) for t in msum.get("titles") or [] if isinstance(t, dict)}
+        # a younger share under partition is a share of the titles: he is heir of at least one
+        _heirs_of |= {_as_int(x.get("id")) for x in fc.get("younger_shares") or []
+                      if x.get("takes") or x.get("fate") in ("leaves_realm", "stays_vassal")}
+        rows = _pf.lever_rows(fc, fc.get("_inputs") or {}, ruler=_ruler, dynasty=_dyn, children=fc_kids,
+                              checks=_checks, title_heirs=_heirs_of)
+        if rows:
+            result["levers"]["take_out_of_split"] = rows
+            if isinstance(_dyn, dict):
+                # the SPENDABLE renown a price is paid from (query_dynasty.renown); `prestige` there is the total
+                result["levers"]["disinherit"]["dynasty_renown"] = _dyn.get("renown")
+            ps = prevent_split_rows(fc, rows)
+            if ps:
+                result["prevent_split"] = ps
     warnings = []
     if sv["outcome"] == "undetermined":
         warnings.append(succession_verdict.warning(sv))
+    # A title granted out of the realm is not in the map: "intact" is of what is left
+    gone = [x for x in _news._ACTS.get(character_id or _as_int(actor.get("id"))) or []
+            if str(x.get("what", "")).startswith("granted out of the realm")]
+    if gone:
+        result["left_realm_by_grant"] = [{"what": x["what"], "date": x.get("date")} for x in gone]
     return envelope("succession_plan", result=result, actor=actor, game=gw.game(),
                     warnings=warnings, bridge_health=gw.health)
 
 
 # ===========================================================================
-# HEIR-PLANNING TOOLCHAIN (AL-13: "engineer a conqueror heir")
+# HEIR-PLANNING TOOLCHAIN ("engineer a conqueror heir")
 # Findings: re_heir_education_mechanic.md, re_heir_guardian_mechanic.md,
 #           re_heir_legibility_gap.md.
 #
@@ -5363,7 +8936,7 @@ async def succession_plan_impl(gw, character_id: int = 0) -> dict[str, Any]:
 # trait), and (2) a martial/viking marriage for congenital base martial. The
 # conqueror gate is the SAME predicate redesign already uses in
 # (the removed expansion_engine_health used a martial>=18 OR conqueror/viking
-# trait predicate; deploy-51 deleted it — see the note at the top.)
+# trait predicate; it was deleted — see the note at the top.)
 #
 # WHAT IS BUILDABLE NOW (Phase 1 of re_heir_legibility_gap.md §Part3): per child /
 # eligible heir, id/name/age/martial/traits/is_primary_heir + the conqueror-gate
@@ -5413,7 +8986,7 @@ def _trait_names(sect: dict) -> set[str]:
 
 
 def _conqueror_gate(sect: dict) -> dict[str, Any]:
-    """The AL-13 conqueror-gate verdict for one character section. Mirrors
+    """The conqueror-gate verdict for one character section. Mirrors
     the same predicate the removed expansion_engine_health used (martial>=18 OR a
     conqueror/viking trait) so the
     heir read and the engine-health read agree on what 'a conqueror' is. Martial is
@@ -5443,13 +9016,13 @@ def _conqueror_gate(sect: dict) -> dict[str, Any]:
 def _heir_row(sect: dict, *, is_primary_heir: bool, is_child: bool,
               in_heir_line: bool, edu: dict | None = None) -> dict[str, Any]:
     """One heir/child row carrying the conqueror-gate inputs. Phase-1 fields are
-    real reads. education_focus is now a REAL read (query_heir_education §1a);
-    guardian_* are null: no read locates a ward's guardian (re_heir_guardian_RE.md §1b)."""
+    real reads. education_focus is now a REAL read (query_heir_education);
+    guardian_* are null: no read locates a ward's guardian."""
     martial = _skill(sect, "martial")
     traits = _trait_names(sect)
     gate = _conqueror_gate(sect)
     affinity = sorted(traits & _MARTIAL_AFFINITY_CHILD_TRAITS)
-    # recommended_action: the single AL-13 lever this child most needs next.
+    # recommended_action: the single heir-planning lever this child most needs next.
     if gate["verdict"] == "conqueror":
         rec = "ready — conqueror gate MET; keep this heir as the primary line"
     elif gate["verdict"] == "passive" and not is_child:
@@ -5582,11 +9155,11 @@ async def heir_plan_impl(gw, character_id: int = 0, max_results: int = 12) -> di
             "phase2_unresolved": ["guardian_id", "guardian_martial",
                                   "projected_adult_martial_estimate"],
             "note": ("education_focus / education_focus_skill are now REAL reads "
-                     "(query_heir_education §1a — childhood focus shares the adult focus "
+                     "(query_heir_education: childhood focus shares the adult focus "
                      "slot). guardian_id/_martial and projected_adult_martial are null: "
-                     "no read locates a ward's guardian (re_heir_guardian_RE.md §1b)."),
+                     "no read locates a ward's guardian."),
         },
-        # The acting half of AL-13 — which levers the agent can actually fire today.
+        # The acting half of heir planning — which levers the agent can actually fire today.
         "levers": {
             "set_childhood_education_focus": {
                 "today": ("do(intent='set_education_focus', character_id=<child>, "
@@ -5594,7 +9167,7 @@ async def heir_plan_impl(gw, character_id: int = 0, max_results: int = 12) -> di
                           "SET_FOCUS_APPLY. Childhood and adult focus share ONE slot, so the "
                           "readback correctly detects success on a child (no false-negative). "
                           "Verify via inspect(subject='heir_education').education_focus."),
-                "build": "re_heir_education_RE.md §2",
+                "build": "the bridge's set_education_focus write",
             },
             "assign_guardian": {
                 "today": ("do(intent='interact', "
@@ -5604,7 +9177,7 @@ async def heir_plan_impl(gw, character_id: int = 0, max_results: int = 12) -> di
                           "as the window does (secondary_actor = guardian, secondary_recipient = "
                           "ward, the script's own mapping). No read shows a ward's guardian: "
                           "inspect(subject='pending') says whether the engine took the send."),
-                "build": "re_heir_guardian_RE.md §3, re_interactions.md §1",
+                "build": "the bridge's interaction send with two secondary characters",
             },
             "martial_marriage": {
                 "today": ("breed a martial heir by marrying a child/courtier to a high-martial "
@@ -5751,14 +9324,14 @@ async def good_guardian_candidates_impl(gw, character_id: int = 0,
     result = {
         "ruler_id": actor.get("id"),
         "scoring": "guardian_score = 0.4*martial + 0.2*learning + intellect_nudge "
-                   "(re_heir_guardian_mechanic.md §1c) — rank by martial first",
+                   "(the game's guardian score) — rank by martial first",
         "in_court_candidates": in_court,
         "aspirational_global": aspirational,
         "court_roster_gap": {
             "issue": ("in-court candidates come from the council, the ruler's spouses and "
                       "search_characters(court_of=<ruler>), the immediate-liege predicate "
                       "over the character database (source='court')"),
-            "built": "re_heir_guardian_RE.md §4 (search_characters court_of=)",
+            "built": "search_characters court_of=",
         },
         "assign_lever_status": ("UNVALIDATED: appoint a candidate with do(intent=\"interact\", "
                                 "args={\"interaction\": \"educate_child_interaction\", \"target_id\": "
@@ -5766,8 +9339,7 @@ async def good_guardian_candidates_impl(gw, character_id: int = 0,
                                 "\"secondary_recipient_id\": <ward>}). The bridge maps the two "
                                 "secondaries to the engine's slots in an order no readback has "
                                 "confirmed, and no read shows a ward's guardian: "
-                                "inspect(subject=\"pending\") says whether the engine took it. "
-                                "re_heir_guardian_RE.md §3/§3b"),
+                                "inspect(subject=\"pending\") says whether the engine took it."),
     }
     return envelope("good_guardian_candidates", result=result, actor=actor,
                     game=gw.game(), bridge_health=gw.health)
@@ -5776,7 +9348,7 @@ async def good_guardian_candidates_impl(gw, character_id: int = 0,
 # --------------------------------------------------------------------------- set_phase
 async def steer_impl(gw, character_id: int = 0, personality: dict = None) -> dict[str, Any]:
     """steer: read the personality weights, or write some of them, in the write
-    envelope every other write answers (finding 5).
+    envelope every other write answers.
 
     The write goes through settle_write like every do() write: set_ai_personality
     is synchronous (no intent), its own reply carries the axes read back after the
@@ -5871,7 +9443,7 @@ def phase_of_genome(pers: dict) -> Optional[str]:
 
 #: The bridge's personality lock states (bridge/src/personality.cpp,
 #: get_ai_personality and set_ai_personality both emit `lock_state`), and the
-#: reading when a reply carries none (a bridge before): never a default.
+#: reading when a reply carries none (an older bridge): never a default.
 LOCK_STATES = ("live", "quarantined", "none")
 LOCK_STATE_NOT_REPORTED = "not_reported"
 
@@ -5927,7 +9499,7 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
     # The personality write IS the phase. Its refusal (a
     # `success: false`, the bridge's {"error":"memory_access_fault"} from
     # set_ai_personality, the hung gateway's bridge_disconnected) is the verdict,
-    # and nothing more is written; it used to become a warning beside "applied".
+    # and nothing more is written; it does not become a warning beside "applied".
     refused = reply_refusal(pres)
     if refused:
         return envelope("set_phase", ok=False, verdict="rejected", actor=actor, game=gw.game(),
@@ -5935,8 +9507,8 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
                         blocked=write_blocked(refused, raw=pres if isinstance(pres, dict) else None),
                         bridge_health=gw.health)
 
-    # ── deploy-51: THE WORLD-WIDE WRITE IS GONE. RULED by the
-    # progenitor, "Remove the world-wide write": `set_phase` no longer calls
+    # ── THE WORLD-WIDE WRITE IS GONE.
+    # `set_phase` no longer calls
     # `toggle_ai_subsystem(DeclareWar)`, and so writes nothing outside the
     # calling seat's own character.
     #
@@ -5946,8 +9518,8 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
     # and surfaced a "⚠ WORLD-WIDE blast radius" note in the result, which is
     # honest labelling of a thing that should not have been on a per-seat verb.
     # Three consequences, all measured or structural:
-    #   - SIX seats in arms A and B called this every cycle and ONE did in arm C,
-    #     so the seats in a multi-seat arm were silently coupled through a global
+    #   - SIX seats in two recorded multi-seat sets called this every cycle and ONE did in a third,
+    #     so the seats in a multi-seat game were silently coupled through a global
     #     byte and were never independent; the coupling ALSO differed by arm.
     #   - it is the only ENGINE-ENFORCED declaration lever, so removing it is a
     #     change in what a seat can DO, not only in what it reads. Seats declare
@@ -5955,16 +9527,16 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
     #   - therefore: disclosed, identical in every arm, and NO POOLING across
     #     this deploy boundary.
     #
-    # The per-character subsystem mask the phase also wrote is deleted too
-    #: the engine never read it.
+    # The per-character subsystem mask the phase also wrote is deleted too:
+    # the engine never read it.
 
-    # ── P2 hardening: re-assert the per-char AI gate (ai_ctrl+0x28) on
+    # ── hardening: re-assert the per-char AI gate (ai_ctrl+0x28) on
     # every phase pin. The gate stays untouched by default takes, but a leaked
     # disable (an earlier take with disable_native_ai=true, or a release/retake
     # race) silently kills ALL war prosecution — armies never re-plan, sieges
-    # never chain (the archived M-003 class). Idempotent write; belt-and-braces.
+    # never chain (a known failure class). Idempotent write; belt-and-braces.
     #
-    # lane-query item 7: THE RE-ASSERT WAS REFUSED ON EVERY DEFAULT CALL, AND
+    # THE RE-ASSERT WAS REFUSED ON EVERY DEFAULT CALL, AND
     # THE REPLY SAID APPLIED. set_phase passes the tool's character_id through,
     # and the default is 0 ("the bound ruler"). set_ai_personality resolves 0
     # to the controlled ruler; the bridge's
@@ -5981,14 +9553,14 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
                                  {"character_id": ai_gate_cid, "enabled": True})
     else:
         ai_gate = {"success": False, "reason": "actor_id_unresolved"}
-    # F11: success is the bridge's read-back of the
+    # Success is the bridge's read-back of the
     # per-character AI byte after the write (`applied`), not the write's return.
     ai_gate_ok = isinstance(ai_gate, dict) and ai_gate.get("success") is True \
         and ai_gate.get("applied") is not False and ai_gate.get("ai_enabled") is not False \
         and not ai_gate.get("error") and not ai_gate.get("blocked")
     if not ai_gate_ok:
         warnings.append({"code": "ai_gate_reassert_failed", "is_known_limitation": True,
-                         # deploy-51: this used to name `set_character_ai`
+                         # this used to name `set_character_ai`
                          # to the SEAT. That verb is not on the seat surface — not
                          # a tool and not a `do` intent — so a seat following it
                          # got `unknown_verb`. The SERVER re-asserts the gate on
@@ -6000,15 +9572,15 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
                                    "session(action='whoami') reports agency.ai_tick.enabled "
                                    "for the bound ruler; if armies park mid-war, that "
                                    "is the field to read."})
-    # finding 4: no phase arms the off-goal veto. It is an unvalidated hook
-    # (the experimental_flags list says so), and neither the pre-registration nor
-    # docs/pre-registration-conditions.md declares a phase genome or the veto, so
+    # No phase arms the off-goal veto. It is an unvalidated hook
+    # (the experimental_flags list says so), and neither the experiment design nor
+    # its conditions declare a phase genome or the veto, so
     # the default posture tool no longer turns it on process-wide; it stays
     # reachable only by session(action="set_experimental", flag="off_goal_veto",
     # enabled=true).
-    # ruling (b): the lock the write left, from the bridge's own reply
+    # The lock the write left, from the bridge's own reply
     # (set_ai_personality says lock_state and the world_epoch it wrote in). The
-    # 2026.11 pilots' first set_phase reverted in 12 of 32 seats while the reply
+    # In one recorded series the first set_phase reverted in 12 of 32 seats while the reply
     # returned the declared genome, so `applied` alone could not show it.
     lock_state = lock_state_of(pres)
     if lock_state in ("quarantined", "none"):     # the bridge SAID it is not held
@@ -6023,7 +9595,7 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
               # Nothing re-applies the phase after a succession
               # (the server has no such path); this said True.
               "auto_repin": False, "repinned_this_reign": True,
-              # lane-query item 7: what the per-character AI re-assert did,
+              # What the per-character AI re-assert did,
               # read from its reply rather than assumed.
               "ai_gate": {"character_id": ai_gate_cid,
                           "reasserted": ai_gate_ok,
@@ -6042,10 +9614,10 @@ async def set_phase_impl(gw, phase: str = None, character_id: int = 0,
 
 
 # --------------------------------------------------------------------------- do
-#: The game's tooltip markup (live l6fix2-live-1): \x16<icon>!
+#: The game's tooltip markup (read live): \x16<icon>!
 #: inserts an icon, \x15TOOLTIP:<ref> / \x15ONCLICK:<ref> open a link (the text
 #: follows a space), \x15<style>[;] sets a style (a letter, \x15X, or a word:
-#: \x15high Serene Doge, l6fin-1 read "igh Serene Doge" while only a letter was
+#: \x15high Serene Doge, a test run read "igh Serene Doge" while only a letter was
 #: removed), \x15! closes one, \x15indent_newline:<n> breaks a line. The icons
 #: that carry a word keep it.
 def _build_refusal_summary(raw: dict) -> str:
@@ -6071,8 +9643,8 @@ IMPRISON_INTERACTION = "imprison_interaction"
 #: game: no character is the player, every actor block reads is_player false), so
 #: imprison_interaction's can_send takes its AI branch: grounds to imprison the
 #: target (has_imprisonment_reason) OR involvement in a character struggle, and no
-#: hostile act in the last 10 days. A ruler in a struggle needs no grounds: in runs
-#: l10fx5-live-2/3 liege 11170 (Abd al-Aziz, an independent clan duke) sent and
+#: hostile act in the last 10 days. A ruler in a struggle needs no grounds: in
+#: two test runs liege 11170 (Abd al-Aziz, an independent clan duke) sent and
 #: jailed vassals he had no grounds against, which only the struggle branch allows
 #: (deduced from can_send; his involvement was not read). The player branch
 #: (is_ai = no: no grounds needed) is never the agent's.
@@ -6099,7 +9671,7 @@ def _send_check_blocked(chk: Optional[dict]) -> Optional[dict]:
         code = str(chk.get("refused_by") or "unknown")
         said = _SEND_CHECK_SENTENCES.get(code, f"the game's check refused it ({code})")
         # The bridge drops a compound header with nothing under it (engine_text.h:
-        # the imprison check's "All of these:", w-l10-factions-6), so an absent or
+        # the imprison check's "All of these:", a faction test run), so an absent or
         # empty engine_reason is a refusal the game gave no detail for.
         why = chk.get("engine_reason") or NO_GAME_DETAIL
         return map_raw_reason(code, summary=f"{said}: {why}")
@@ -6109,6 +9681,239 @@ def _send_check_blocked(chk: Optional[dict]) -> Optional[dict]:
                            summary=f"the game says he would refuse: {why}" if why
                            else "the game says he would refuse", raw_reason="answer_no")
     return None
+
+
+#: The send pipeline's refusal codes for any interaction, as a player reads
+#: them (imprisonment has its own sentences above).
+_SEND_CHECK_WORDS: dict = {
+    "interaction_not_valid_for_target": "the game does not allow this interaction between you and him now",
+    "send_conditions_not_met": "the game will not let you send it now",
+    "target_would_reject": "the game says he would refuse",
+    "send_cost_unaffordable": "you cannot pay what it costs",
+    "target_not_found": "this character no longer exists",
+}
+
+#: What discover(what="acceptance") does NOT check when the send pipeline cannot
+#: check the interaction: the bridge's query_interaction_acceptance reads `valid` off
+#: the interaction type's vtable slot 7, a stub that returns true for every
+#: interaction (ai_eval_hook.cpp process_acceptance_query), and
+#: `would_accept` is the actor's own AI choosing to send it to the forced target.
+ACCEPTANCE_NOT_CHECKED = ("the game's validity check for this actor and recipient (the one the send runs) "
+                          "was not run: valid is the interaction type's own flag, true for every "
+                          "interaction, and your_ai_would_send is your AI's choice to send it, not his answer")
+
+
+#: The interactions whose send names the war it is about (the bridge's war_id, the window's target war):
+#: call_ally_interaction and join_war_interaction, each the war intent that sends it. The game's check of
+#: either without the war is not the send's check (the window has no target: "No target selected"), so
+#: discover(what="acceptance") checks it once for each war the send could name, with that war.
+WAR_SCOPED_INTERACTIONS = {"call_ally_interaction": "call_ally", "join_war_interaction": "join_war"}
+#: The most wars one acceptance read checks (one check each)
+WAR_ACCEPTANCE_MAX = 8
+#: The interactions whose send names a title as the window's target object (revoke, grant, buy a claim, the
+#: head of faith's claim). The bridge's check takes no title, so for these its verdict is not the send's.
+TITLE_SCOPED_INTERACTIONS = frozenset({"revoke_title_interaction", GRANT_TITLES_INTERACTION,
+                                       "buy_claim_interaction", "hof_ask_for_claim_interaction"})
+TITLE_NOT_CHECKED = ("the game's check ran without a title (the check takes none), and this interaction's send "
+                     "names one: the verdict here is not the send's; the send runs the game's check again "
+                     "with its title")
+#: A marriage's send names the two to be married (the pair); acceptance takes no pair
+PAIR_NOT_CHECKED = ("the game's check ran without the two to be married, and a marriage's send names them: the "
+                    "verdict here is not the send's. query(domain='marriage_candidates') checks each row with "
+                    "its own pair")
+#: War 0 is a real war id, but the bridge's check reads a war id of 0 as none
+WAR_ZERO_NOT_CHECKED = ("this war's id is 0, which the game's check reads as no war: the verdict here is not "
+                        "the send's")
+
+
+def _acceptance_fields(chk: dict) -> dict[str, Any]:
+    """One query_interaction_check row as discover(what="acceptance") gives it: sendable, his answer and score,
+    would_accept, the chance of a maybe, the game's price, and the refusal in the game's words."""
+    sendable = chk.get("sendable") is True
+    out: dict[str, Any] = {"sendable": sendable, "answer": chk.get("answer"),
+                           "accept_score": chk.get("accept_score"), "would_accept": would_accept(chk)}
+    chance = _maybe_chance_pct(chk)
+    if chance is not None:
+        out["chance_pct"] = chance
+    if out["would_accept"] is None and sendable:
+        out["he_decides"] = maybe_words(chk)
+    if isinstance(chk.get("engine_cost"), dict):
+        out["price"] = chk["engine_cost"]     # The game's own price for this actor and recipient
+    if not sendable:
+        code = str(chk.get("refused_by") or "unknown")
+        said = _SEND_CHECK_WORDS.get(code, f"the game's check refused it ({code})")
+        out["refused"] = map_raw_reason(code, summary=f"{said}: {chk.get('engine_reason') or NO_GAME_DETAIL}")
+    return out
+
+
+def _check_row(res: Any, target_id: int) -> Optional[dict]:
+    """The checked target's row of one query_interaction_check reply, or None."""
+    rows = (((res.get("result") or {}).get("results") or []) if isinstance(res, dict) else [])
+    return next((c for c in rows if isinstance(c, dict) and _as_int(c.get("target_id")) == _as_int(target_id)),
+                None)
+
+
+def _scope_not_checked(out: dict, note: str) -> None:
+    """A verdict the check gave without the send's own scope: said so, and a refusal is not final."""
+    out["not_checked"] = note
+    if isinstance(out.get("refused"), dict):
+        out["refused"]["retry"] = "the send runs the game's check again with what it names"
+        out["refused"]["not_checked"] = note
+
+
+async def _war_acceptance(gw, interaction_type: str, target_id: int, actor_id: int, base: dict) -> dict[str, Any]:
+    """discover(what="acceptance") for an interaction the send makes about a war (WAR_SCOPED_INTERACTIONS): the
+    game's check with each war the send could name (call_ally: the wars you lead; join_war: the wars he leads),
+    as the send makes it, nothing sent. One war: its verdict at the top; several: one row per war in by_war."""
+    intent = WAR_SCOPED_INTERACTIONS[interaction_type]
+    leader = actor_id if intent == "call_ally" else target_id
+    wars = await _all_wars(gw)
+    led = [w for w in wars if leader in (w.get("attacker_id"), w.get("defender_id"))]
+    if not led:
+        fights = [w for w in wars if leader in (w.get("attackers") or []) + (w.get("defenders") or [])]
+        who = "you" if intent == "call_ally" else str(target_id)
+        gate = "not_war_leader" if fights else "war_not_found"
+        summary = (f"{interaction_type} is sent about a war its sender leads, and {who} lead"
+                   f"{'' if intent == 'call_ally' else 's'} none"
+                   + (f" (fights in {', '.join(str(w.get('war_id')) for w in fights)} without leading it)"
+                      if fights else "")
+                   + ": nothing was checked (the game's check needs the war)")
+        return envelope("discover", ok=False, game=gw.game(), bridge_health=gw.health,
+                        result=dict(base, wars_checked=0), blocked=why_blocked(gate, summary=summary))
+    rows: list = []
+    for w in led[:WAR_ACCEPTANCE_MAX]:
+        wid = _as_int(w.get("war_id"))
+        res = await gw.read("query_interaction_check", {"actor_id": actor_id, "interaction_type": interaction_type,
+                                                        "target_id": target_id, "war_id": wid})
+        chk = _check_row(res, target_id)
+        side = "attacker" if leader == w.get("attacker_id") else "defender"
+        row: dict[str, Any] = {"war_id": wid, "war_name": w.get("name"),
+                               ("your_side" if intent == "call_ally" else "his_side"): side}
+        if chk is None:
+            raw = res if isinstance(res, dict) else {}
+            row["unread"] = ("the game's check did not answer: "
+                             + str(raw.get("reason") or raw.get("error") or "no reply"))
+        else:
+            row.update(_acceptance_fields(chk))
+            if wid == 0:
+                _scope_not_checked(row, WAR_ZERO_NOT_CHECKED)
+            elif row["sendable"]:
+                row["do_call"] = {"intent": intent, "args": {"war_id": wid, ("ally_id" if intent == "call_ally"
+                                                                             else "leader_id"): target_id}}
+        rows.append(row)
+    out = dict(base, checked=("the send's own checks with the war it names (the game's validity, the send "
+                              "conditions, his refusal, the cost) and his pre-answer; nothing was sent"),
+               wars_checked=len(rows))
+    if len(led) > len(rows):
+        out["wars_not_checked"] = [_as_int(w.get("war_id")) for w in led[len(rows):]]
+    if len(rows) == 1:
+        out.update(rows[0])
+    else:
+        out["by_war"] = rows
+        out["sendable"] = any(r.get("sendable") is True for r in rows)
+    ok_any = any(r.get("sendable") is True and r.get("answer") != "no" for r in rows)
+    score = next((r.get("accept_score") for r in rows if r.get("sendable") is True), None)
+    _news.note_acceptance(actor_id, interaction_type, ok_any, score, (gw.game() or {}).get("date"))
+    return envelope("discover", result=out, game=gw.game(), bridge_health=gw.health)
+
+
+async def acceptance_impl(gw, interaction_type: str, target_id: int, actor_id: int) -> dict[str, Any]:
+    """discover(what="acceptance"): the send's own checks for one recipient, nothing sent.
+
+    The old read said
+    negotiate_alliance_interaction valid and would_accept, and the send was rejected
+    interaction_not_valid_for_target. The old read never ran the game's validity (see
+    ACCEPTANCE_NOT_CHECKED). This runs query_interaction_check, the send pipeline's own
+    steps (the game's validity with its sentence, the send conditions, the recipient's
+    refusal, the cost) and the recipient's pre-answer, with what the send names (the war of a
+    call to arms: WAR_SCOPED_INTERACTIONS), so the two cannot disagree. An interaction whose send names
+    what the check cannot take (a title, a marriage's pair) says so beside its verdict. An interaction
+    the pipeline cannot check falls back to the old read, which then says what it did not check."""
+    if not interaction_type or not _as_int(target_id):
+        return envelope("discover", ok=False, game=gw.game(), bridge_health=gw.health,
+                        blocked=why_blocked("missing_required_argument",
+                                            summary="acceptance needs interaction_type (the full "
+                                                    "*_interaction key) and target_id"))
+    actor, err = await _resolve_actor(gw, actor_id, "discover")
+    if err:
+        return err
+    actor_id = _as_int(actor_id) or _as_int((actor or {}).get("id"))
+    base = {"interaction_type": interaction_type, "actor_id": actor_id or None,
+            "target_id": _as_int(target_id)}
+    if interaction_type in WAR_SCOPED_INTERACTIONS:
+        return await _war_acceptance(gw, interaction_type, _as_int(target_id), actor_id, base)
+    res = await gw.read("query_interaction_check",
+                        {"actor_id": actor_id, "interaction_type": interaction_type,
+                         "candidates": [_as_int(target_id)]})
+    res = res if isinstance(res, dict) else {}
+    chk = _check_row(res, target_id)
+    if chk is not None:
+        fields = _acceptance_fields(chk)
+        sendable = fields["sendable"]
+        out = dict(base, checked="the send's own checks (the game's validity, the send conditions, "
+                                 "his refusal, the cost) and his pre-answer; nothing was sent", **fields)
+        if interaction_type in TITLE_SCOPED_INTERACTIONS:
+            _scope_not_checked(out, TITLE_NOT_CHECKED)
+        elif interaction_type == MARRIAGE_INTERACTION:
+            _scope_not_checked(out, PAIR_NOT_CHECKED)
+        if interaction_type == HOF_GOLD_INTERACTION:
+            # The score's terms from the file, with the ones read here put in
+            out["acceptance_terms"] = await hof_gold_terms(gw, actor_id, _as_int(target_id))
+        if interaction_type == GRANT_TITLES_INTERACTION:
+            # The reason the game gives no words for (a landed recipient outside your realm), and what the
+            # grant changes in a later price
+            g = await _grant_guard(gw, actor_id, _as_int(target_id))
+            if g is not None and not sendable:
+                out["why"] = g.get("summary")
+            fx = await grant_price_effects(gw, actor_id, _as_int(target_id))
+            if fx is not None:
+                out["changes_later_prices"] = fx
+        # the idle hint re-arms on any answer but a no (a maybe is worth sending); not a claim of acceptance
+        _news.note_acceptance(actor_id, interaction_type, sendable and chk.get("answer") != "no",
+                              chk.get("accept_score"), (gw.game() or {}).get("date"))
+        if sendable:
+            out["do_call"] = {"intent": "interact",
+                              "args": {"interaction": interaction_type, "target_id": _as_int(target_id)}}
+        return envelope("discover", result=out, game=gw.game(), bridge_health=gw.health)
+    code = str(res.get("reason") or res.get("error") or "")
+    if code and code != "interaction_not_checkable":
+        return envelope("discover", ok=False, game=gw.game(), bridge_health=gw.health,
+                        result=dict(base, raw=res),
+                        blocked=map_raw_reason(code, summary=f"the send check did not run: {code}"))
+    old = await gw.read("query_interaction_acceptance",
+                        {"interaction_type": interaction_type, "target_id": _as_int(target_id),
+                         "actor_id": actor_id})
+    old = old if isinstance(old, dict) else {}
+    # The old read's `would_accept` is the actor's own AI choosing to send it, not the recipient's answer
+    out = dict(base, interaction_known=old.get("valid"), your_ai_would_send=old.get("would_accept"),
+               not_checked=ACCEPTANCE_NOT_CHECKED,
+               checked_by=("the send pipeline cannot check this interaction (interaction_not_checkable)"
+                           if code else "the send check did not answer"))
+    if old.get("error"):
+        out["error"] = old["error"]
+    return envelope("discover", result=out, game=gw.game(), bridge_health=gw.health)
+
+
+def would_accept(chk: dict) -> Optional[bool]:
+    """A recorded case (discover acceptance for vows read `would_accept: true` beside `answer maybe,
+    chance_pct 5.0`, and the seat wrote "the game's check said he'd accept"): the one boolean an acceptance read
+    gives. True only for a sendable "yes"; False when the send is refused or he answers "no"; None for a "maybe"
+    (he decides, at the chance the game gives) or an answer not read. A maybe is never acceptance."""
+    if chk.get("sendable") is not True or chk.get("answer") == "no":
+        return False
+    return True if chk.get("answer") == "yes" else None
+
+
+#: What a sendable "maybe" means, beside its chance
+MAYBE_WORDS = "he decides when it arrives (days later); not an acceptance"
+
+
+def maybe_words(chk: dict) -> str:
+    """'maybe, 5 in 100 he accepts; he decides ...' for a sendable maybe; an answer not read says so."""
+    c = _maybe_chance_pct(chk)
+    if chk.get("answer") == "maybe":
+        return (f"maybe, {c:g} in 100 he accepts; " if c is not None else "maybe; ") + MAYBE_WORDS
+    return "his answer was not read; " + MAYBE_WORDS
 
 
 def _maybe_chance_pct(chk: dict) -> Optional[float]:
@@ -6135,7 +9940,7 @@ async def imprison_rows(gw, actor_id: int, target_ids: list) -> list:
     "maybe" in the maybe band, the one chance the game defines. The answer is the
     target's at check time: the game asks him again when the send arrives and he
     answers 4 to 9 days later on his state then (gifts, opinion, wars and the days
-    between move it), so a "yes" is not a promise (runs l10fx5-live-2/3: 13327 read
+    between move it), so a "yes" is not a promise (two test runs: 13327 read
     "yes" at 239 and stayed free). Check right before sending. `grounds` are the
     reasons the game gives (query_imprisonment_reasons), for the record: the check
     is the game's verdict (an AI-run ruler needs grounds or a struggle, see
@@ -6216,7 +10021,7 @@ def decision_eval_rows(res, requested) -> tuple[list, Optional[dict]]:
     The bridge evaluates only the decisions it is asked about, and its evaluated
     reply says so (`valid_only`, `considered`: enumerate_decisions_annotated). With
     no list it serves the LIGHT name+hash list of every decision instead
-    (enumerate_decisions: `decisions`, `count`, nothing else). In the 2026.11 pilots
+    (enumerate_decisions: `decisions`, `count`, nothing else). In an earlier version
     every framed request reached the bridge as "no list" (submit_decision_eval read
     the list top-level only), so a request for 1 decision came back as 1,0xx
     unevaluated rows: 186K characters through do, 26K through discover, every row
@@ -6251,6 +10056,42 @@ def decision_unmatched(res) -> Optional[list]:
     return [str(x) for x in u] if isinstance(u, list) else None
 
 
+#: Modifiers that cut a ruler's income, each with the decision whose is_shown holds only while he has it (so the
+#: game's own decision list says whether he has it) and what it costs (common/modifiers, 1.18)
+INCOME_MODIFIERS = {"vow_of_poverty_modifier": ("renounce_vow_of_poverty_decision", "monthly income -20%")}
+INCOME_MODIFIER_READ = "the game's own decision list: its removing decision is shown only while you have it"
+
+
+async def income_modifiers(gw, me: Optional[int]) -> list:
+    """[{modifier, effect, removed_by, read, blocked}] for each INCOME_MODIFIERS modifier the ruler has now;
+    [] when none is held or the read did not answer."""
+    if not me:
+        return []
+    names = [d for d, _e in INCOME_MODIFIERS.values()]
+    res = await gw.read("list_decisions_annotated", {"character_id": me, "decisions": names})
+    rows, refused = decision_eval_rows(res, names)
+    if refused is not None:
+        return []
+    out = []
+    for mod, (dec, eff) in INCOME_MODIFIERS.items():
+        d = next((r for r in rows if str(r.get("name") or r.get("id")) == dec), None)
+        if not isinstance(d, dict) or d.get("shown") is not True:
+            continue
+        out.append({"modifier": mod, "effect": eff, "removed_by": dec, "read": INCOME_MODIFIER_READ,
+                    "blocked": _decision_row(d).get("blocked")})
+    return out
+
+
+def ai_potential_words(name: Any) -> str:
+    """Why the game refuses the seat's take of decision `name` on its ai_potential, with that block's conditions
+    from the game's files (one of them is false now)."""
+    import event_prices as _ep  # noqa: PLC0415
+    conds = _ep.decision_ai_potential(name)
+    return (f"{name}: the game refuses your take until its ai_potential holds (your take runs the game's AI check); "
+            + ("one of these is false now: " + "; ".join(conds) if conds else
+               "its conditions were not read from the game's files"))
+
+
 def _decision_row(d: dict) -> dict:
     """One evaluated decision as do(action_class="decisions") lists it: the engine's
     verdict and its reasons (the failed requirement keys), or the fault that kept
@@ -6275,6 +10116,11 @@ def _decision_row(d: dict) -> dict:
                 "decision_reason_unwitnessed",
                 summary=f"{name}: not available; the failed requirement's name was not read",
                 measured={"failures": fails, "failure_key_unwitnessed": True})
+        elif "ai_potential_not_met" in fails:
+            # A recorded game read renounce_vow_of_poverty_decision available and valid, and the take was
+            # refused "Does not fulfill ai_potential" twice: the seat's take runs the game's AI check; its conditions
+            row["blocked"] = why_blocked("ai_potential_not_met", summary=ai_potential_words(name),
+                                         measured={"failures": fails, "ai_potential": False})
         elif fails == ["cannot_afford_decision"]:
             row["blocked"] = why_blocked("cannot_afford", summary=f"{name}: cannot afford it now",
                                          measured={"cost": d.get("cost")})
@@ -6300,13 +10146,16 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
     available: list = []
     unavailable: list = []
     warnings: list = []
+    task_used = None
+    merc_purse = None
+    merc_notes = None
 
     if action_class == "decisions":
-        # #64 SAFETY: bounded only. Unbounded ⇒ refuse with unbounded_eval_refused.
+        # Bounded only. Unbounded ⇒ refuse with unbounded_eval_refused.
         if not candidates:
             return envelope("do", ok=False, actor=actor, game=gw.game(),
                             blocked=why_blocked("unbounded_eval_refused",
-                                                summary="decisions enumerate REQUIRES a bounded `candidates` list (#64 freeze safety)"),
+                                                summary="decisions enumerate REQUIRES a bounded `candidates` list (freeze safety)"),
                             bridge_health=gw.health)
         # The ANNOTATED read, not list_valid_decisions. The
         # valid-only read drops every decision that is not available
@@ -6345,21 +10194,37 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                                  "detail": "this bridge returned no row for "
                                            f"{', '.join(missing)} and does not say why"})
     elif action_class == "interactions":
+        # 469 rows were 82 KB live. candidates are name fragments; the rows
+        # are capped at NAME_LIST_CAP with the rest counted.
         res = await gw.read("list_interactions", {})
-        for i in (res or {}).get("interactions", []) if isinstance(res, dict) else []:
-            name = i.get("name") or i.get("type")
-            available.append({"label": name,
-                              "do_call": {"intent": "interact", "args": {"interaction": name, "target_id": 0}},
-                              "blocked": None})
+        names = [i.get("name") or i.get("type") for i in ((res or {}).get("interactions", [])
+                                                          if isinstance(res, dict) else [])
+                 if isinstance(i, dict)]
+        names, more = filter_names([n for n in names if isinstance(n, str)], candidates)
+        for name in names:
+            row = {"label": name, "do_call": {"intent": "interact", "args": {"interaction": name}}}
+            if name in INTERACTION_ROW_UNKNOWN:
+                row["unknown"] = INTERACTION_ROW_UNKNOWN[name]
+            if name in INTERACTION_ROW_KNOWN:
+                row["rules"] = INTERACTION_ROW_KNOWN[name]
+                row["do_call"]["args"].update(target_id="<the title's holder>", title_id="<a county in his domain>")
+            if name in (DIVORCE_INTERACTION, DIVORCE_HOF_INTERACTION):
+                # (two divorce sends with no rule beside them, both refused)
+                row["rules"] = DIVORCE_RULE
+                row["do_call"]["args"]["target_id"] = "<your spouse>"
+            available.append(row)
+        if more:
+            warnings.append({"code": "truncated", "truncated": more,
+                             "detail": f"{more} more interactions; pass candidates=[<name fragment>, ...]"})
     elif action_class == "council_tasks":
         # `seat` goes to the bridge, which evaluates the
         # targets on that seat's version of the task (council_task_family.h) and
         # names the version and its seat (`task_used`, `task_seat`). The rows'
         # do_call names the seat the bridge resolved; with no seat the bridge
         # tries the court chaplain's task_fabricate_claim, and a ruler with
-        # ministries passes seat (B5: minister_justice).
+        # ministries passes seat (minister_justice).
         want_seat = str(args.get("seat") or "").strip()
-        params = {"actor_id": character_id, "task": "task_fabricate_claim", "max_results": 40}
+        params = {"actor_id": character_id, "task": "task_fabricate_claim", "max_results": FABRICATE_LIST_CAP}
         if want_seat:
             params["seat"] = want_seat
         res = await gw.read("query_fabricate_targets", params)
@@ -6369,20 +10234,17 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                     else (want_seat or FABRICATE_CLAIM_SEAT))
         for t in r.get("targets", []) or []:
             assignable = t.get("assignable")
-            row = {"label": f"Fabricate claim on {t.get('title') or t.get('title_id')}",
-                   # lane-query item 1: this row used to say seat "chancellor".
+            row = {"label": f"Fabricate claim on {t.get('title_key') or t.get('title') or t.get('title_id')}",
+                   # This row does not say seat "chancellor".
                    # task_fabricate_claim is a COURT CHAPLAIN task (dump
-                   # ck3_20260625_152901_ivar867: tasktype+0x30 ->
+                   # the 867 start dump: tasktype+0x30 ->
                    # councillor_court_chaplain); its clones sit on other seats
                    # (task_fabricate_claim_minister_of_rites, minister_justice).
                    "do_call": {"intent": "council_task",
                                "args": {"seat": row_seat, "task": "task_fabricate_claim",
-                                        "target_title_id": t.get("title_id")}},
-                   "warnings": [{"code": "may_revert_ai_reasserts", "is_known_limitation": True}]}
-            # The version of the task the bridge evaluated
-            # (a seat's clone, e.g. task_fabricate_claim_minister_of_rites).
-            if isinstance(r.get("task_used"), str) and r["task_used"]:
-                row["task_used"] = r["task_used"]
+                                        "target_title_id": t.get("title_id")}}}
+            if t.get("target_province_id") is not None:
+                row["target_province_id"] = t.get("target_province_id")
             if assignable:
                 row["blocked"] = None
                 available.append(row)
@@ -6390,6 +10252,17 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                 row["blocked"] = why_blocked("target_not_assignable",
                                              summary="target dropped off the eligible list this tick — re-enumerate, never reuse a stale target_id")
                 unavailable.append(row)
+        if available or unavailable:
+            # Said once, not on each of up to 40 rows.
+            warnings.append({"code": "may_revert_ai_reasserts", "is_known_limitation": True,
+                             "detail": "the game's AI may re-task the seat after the task is set"})
+            if r.get("target_scope") != "county_province":
+                warnings.append({"code": "targets_not_ruler_specific", "is_known_limitation": True,
+                                 "detail": FABRICATE_LIST_LIMIT})
+            more = _as_int(r.get("assignable_count")) - len(available)
+            if more > 0:
+                warnings.append({"code": "truncated", "truncated": more,
+                                 "detail": f"{more} more assignable counties in the bridge's scan"})
         if r.get("reason") == "seat_cannot_take_task":
             return envelope("do", ok=False, actor=actor, game=gw.game(),
                             blocked=why_blocked("target_ineligible", raw_reason="seat_cannot_take_task",
@@ -6419,8 +10292,12 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
             if task_seats:
                 w["task_seats"] = task_seats
             warnings.append(w)
+        # The version of the task the bridge evaluated (a seat's
+        # clone, e.g. task_fabricate_claim_minister_of_rites), once.
+        if isinstance(r.get("task_used"), str) and r["task_used"]:
+            task_used = r["task_used"]
     elif action_class == "laws":
-        # lane-query item 2: THE REPLY SHAPE WAS NEVER READ. The bridge answers
+        # THE REPLY SHAPE WAS NEVER READ. The bridge answers
         # {groups: [{group_name, current_law, options: [{name, ...}]}]} and this
         # read `laws` / `available`, keys the bridge does not emit, so every
         # ruler got {"available": [], "unavailable": []} — at war or at peace.
@@ -6440,50 +10317,96 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                                   "group": gname, "current_law": cur,
                                   "do_call": {"intent": "change_law", "args": {"law": name}},
                                   "blocked": None})
+        # The succession laws the game would allow now or one step away, with what is missing
+        succ = [r for r in available if r["group"] == "succession_order_laws"]
+        if succ:
+            ins = await law_reach_inputs(gw, character_id, [g.get("current_law") for g in groups
+                                                            if isinstance(g, dict)])
+            kept, left = _lr.listing([r["do_call"]["args"]["law"] for r in succ], current=succ[0].get("current_law"),
+                                     **ins)
+            by = {k["law"]: k for k in kept}
+            available[:] = [r for r in available if r["group"] != "succession_order_laws"
+                            or r["do_call"]["args"]["law"] in by]
+            for r in available:
+                k = by.get(r["do_call"]["args"]["law"]) if r["group"] == "succession_order_laws" else None
+                if k is not None:
+                    r.update({x: k[x] for x in ("possible", "missing", "not_checked", "not_read") if x in k})
+            if left:
+                warnings.append({"code": "succession_laws_left_out", "is_known_limitation": False,
+                                 "detail": ("succession laws not listed: "
+                                            + (f"{left['other_governments']} of other governments; "
+                                               if left.get("other_governments") else "")
+                                            + "; ".join(f"{f['law']} needs {' and '.join(f['missing'])}"
+                                                        for f in left.get("two_or_more_steps") or [])),
+                                 "source": _lr.SOURCE})
+        ca_up = [r for r in available if r["group"] == "crown_authority"
+                 and str(r["do_call"]["args"]["law"]) > str(r.get("current_law") or "")]
+        if ca_up:
+            # The game's rule
+            import event_prices as _EP  # noqa: PLC0415
+            rl = await gw.read("query_realm", {"character_id": character_id})
+            ch = await gw.read("query_character", {"character_id": character_id})
+            _sk = _char_section(ch).get("skills")
+            est = _EP.crown_authority_price(_char_section(rl).get("realm_total_counties"),
+                                            _sk.get("learning") if isinstance(_sk, dict) else None)
+            for r in ca_up:
+                r["prestige_price"] = est["prestige"] if est else "unread: the realm or the ruler's learning"
+            if est:
+                warnings.append({"code": "law_price_rule", "is_known_limitation": True,
+                                 "detail": f"crown_authority prestige_price, each step up: {est['basis']}; "
+                                           "not read: " + "; ".join(est["not_read"])})
         warnings.append({"code": "law_options_unvalidated", "is_known_limitation": True,
-                         "detail": ("each row is another law in a group this ruler has, not a "
-                                    "verdict that the change is allowed now: the game checks "
-                                    "cost, war and other conditions when change_law runs")})
+                         "detail": ("a row is another law in a group this ruler has; a succession row says "
+                                    "`possible` or `missing` by the game's conditions; the game checks cost, war "
+                                    "and the rest when change_law runs")})
         if not available:
             _why = (res.get("error") or ("the ruler has no law groups with alternatives"
                                          if groups else "the bridge returned no law groups"))
             warnings.append({"code": "no_law_options", "is_known_limitation": False,
                              "detail": f"no law changes listed: {_why}"})
     elif action_class == "fabricate_targets":
+        if args.get("within") or candidates:
+            return await fabricate_named_impl(gw, character_id, actor, str(args.get("within") or ""),
+                                              list(candidates or []), str(args.get("seat") or ""))
         return await _do_enumerate(gw, "council_tasks", character_id, candidates, actor, args)
     elif action_class == "mercenaries":
-        # lane-query item 2: 562 rows, every label null, no size, 49 KB. The
-        # bridge now labels each company (home county + men), gives troops and
-        # the regiment mix, leaves out companies under contract, and with an
-        # actor sorts nearest first; the cap keeps the reply small.
-        res = await gw.read("query_hireable_mercenaries",
-                            {"actor_id": character_id, "max_results": 25})
-        res = res if isinstance(res, dict) else {}
-        for m in (res.get("companies") or []):
-            if not isinstance(m, dict):
-                continue
-            cid = m.get("company_id")
-            row = {"label": m.get("label") or f"company {cid}",
-                   "do_call": {"intent": "hire_merc", "args": {"company_id": cid}},
-                   "troops": m.get("troops"),
-                   "regiments": m.get("regiments"),
-                   "home_county": m.get("home_county_name") or m.get("home_county_key"),
-                   "cost": m.get("cost"),
-                   "blocked": None}
-            if m.get("distance_px") is not None:
-                row["distance_px"] = m.get("distance_px")
-            available.append(row)
-        if res.get("cost_note"):
-            warnings.append({"code": "merc_cost_not_read", "is_known_limitation": True,
-                             "detail": res.get("cost_note")})
+        # (re_military_levers.md 4, the run's bridge.log: the listing sent actor_id 0,
+        # so the bridge sorted by size and returned distant companies): the resolved ruler, the
+        # companies in the game's hire range first, each priced and judged affordable
+        me = _as_int(character_id) or _as_int((actor or {}).get("id"))
+        rows, out_of_range, note = await mercenary_rows(gw, me, cap=0 if candidates else MERC_ROWS_MAX)
+        n_in = _MERC_LAST_READ.get("in_range_total")
+        if candidates:
+            # candidates=[<company ids>]: those companies only (the rows a cut listing did not show)
+            want = {_as_int(c) for c in candidates}
+            rows = [r for r in rows if _as_int(r.get("company_id")) in want]
+        elif isinstance(n_in, int) and n_in > len(rows):
+            warnings.append({"code": "truncated", "is_known_limitation": False,
+                             "detail": (f"{len(rows)} of {n_in} companies in range shown, the cheapest first; "
+                                        "do action_class=mercenaries candidates=[<company ids>] reads named ones")})
+        available.extend(merc_listing_row(r) for r in rows)
+        merc_notes = {"months_basis": MERC_MONTHS_BASIS, "debt_after_hire": MERC_DEBT_ROW_NOTE,
+                      "your_modifiers": _MERC_LAST_READ.get("your_modifiers")}
+        # The purse the prices are read against, and the gold the realm's next title still needs
+        _mp = _dg.purse_of(_char_section(await gw.read("query_character", {"character_id": me}))) or {}
+        merc_purse = {"gold": _mp.get("gold"), "monthly_income": _mp.get("monthly_income")}
+        merc_purse.update(await next_title_short(gw, me, _mp.get("gold"), None) or {})
+        for _t in merc_purse.values():
+            if isinstance(_t, dict):
+                _t.pop("short_after", None)
+        if out_of_range:
+            unavailable.append({"label": f"{out_of_range} companies out of hire range", "blocked": why_blocked(
+                "target_ineligible", summary=MERC_RANGE_RULE)})
+        warnings.append({"code": "merc_price_estimate", "is_known_limitation": True, "detail": note})
+        res = _MERC_LAST_READ.get("res") or {}
         if res.get("listed_before_cap") and res.get("count") is not None \
                 and res.get("listed_before_cap") > res.get("count"):
             warnings.append({"code": "truncated", "is_known_limitation": False,
                              "detail": (f"{res.get('count')} of {res.get('listed_before_cap')} "
-                                        f"free companies shown ({res.get('order')})")})
+                                        f"free companies read ({res.get('order')})")})
     elif action_class == "men_at_arms":
-        # lane-query item 2: the enumerate do(intent="men_at_arms") pointed at.
-        res = await gw.read("query_maa_types", {"actor_id": character_id})
+        # The enumerate do(intent="men_at_arms") pointed at.
+        res = await seat_read(gw, "query_maa_types", {}, character_id)
         res = res if isinstance(res, dict) else {}
         types = [t for t in (res.get("types") or []) if isinstance(t, dict) and t.get("maa_type")]
         # fielded first (known available), then cheapest first; a type with no
@@ -6501,18 +10424,35 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                                         "then cheapest); pass candidates=[<maa_type>, ...] "
                                         "to look up specific types")})
             types = types[:cap]
+        # The price in the currency his government buys regiments with (a tribal ruler: prestige,
+        # the buy cost x 2); a bridge that does not say keeps the gold price, said so
+        cur = res.get("currency") if res.get("currency") in ("gold", "prestige", "unread") else None
+        if cur == "unread":
+            warnings.append({"code": "maa_currency_unread", "is_known_limitation": False,
+                             "detail": res.get("price_basis") or "your government was not read"})
+        elif cur is None:
+            warnings.append({"code": "maa_currency_not_sent", "is_known_limitation": True,
+                             "detail": "this bridge prices regiments in gold for every government; a tribal "
+                                       "government pays prestige (the buy cost x 2)"})
+        elif cur == "prestige":
+            warnings.append({"code": "maa_price_in_prestige", "is_known_limitation": False,
+                             "detail": (res.get("price_basis") or "") + MAA_PRICE_BEFORE_MODIFIERS})
         for t in types:
             mt = t.get("maa_type")
-            row = {"label": f"{mt} (recruit {t.get('recruit_cost')} gold)",
+            price = t.get("price") if t.get("price") is not None else t.get("recruit_cost")
+            unit = t.get("currency") or "gold"
+            row = {"label": f"{mt} (recruit {price} {unit}{MAA_PRICE_LABEL_SUFFIX})",
                    "do_call": {"intent": "men_at_arms", "args": {"action": "recruit", "maa_type": mt}},
                    "recruit_cost": t.get("recruit_cost"),
+                   **({"price": price, "currency": unit} if unit == "prestige" else {}),
                    "upkeep_per_stack": t.get("upkeep_per_stack"),
                    "fielded_regiments": t.get("fielded_regiments")}
             if t.get("affordable") is False:
+                have = res.get("prestige") if unit == "prestige" else res.get("gold")
                 row["blocked"] = why_blocked(
-                    "insufficient_gold",
-                    summary=f"recruit cost {t.get('recruit_cost')} > gold {res.get('gold')}",
-                    measured={"need": t.get("recruit_cost"), "have": res.get("gold")})
+                    f"insufficient_{unit}",
+                    summary=f"recruit price {price} {unit} > {unit} {have}",
+                    measured={"need": price, "have": have, "currency": unit})
                 unavailable.append(row)
             else:
                 row["blocked"] = None
@@ -6521,7 +10461,7 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
             warnings.append({"code": "maa_unlock_not_checked", "is_known_limitation": True,
                              "detail": res.get("note")})
     elif action_class == "factions_to_join":
-        # F16: the game's own verdict on every create/join/leave/press, with its reason.
+        # The game's own verdict on every create/join/leave/press, with its reason.
         cid = character_id or _as_int((actor or {}).get("id"))
         res = await _factions.options(gw, cid)
         available, unavailable, warnings = _factions.option_rows(res)
@@ -6596,6 +10536,26 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
         if refused is not None:
             return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                             blocked=refused, bridge_health=gw.health)
+    elif action_class == "activities":
+        # The activities the ruler's AI may host, each with the game's verdict and gates
+        return await _activities.enumerate_activities(
+            gw, _as_int(character_id) or _as_int((actor or {}).get("id")), actor)
+    elif action_class == "income_levers":
+        # No bridge read lists income levers; these are the writes on
+        # this surface that change the realm's income, each with the enumerator
+        # that gives its ready rows (checked against INTENTS and ACTION_CLASSES).
+        available.extend(dict(r) for r in INCOME_LEVERS)
+        unavailable.extend(dict(r) for r in INCOME_NOT_LEVERS)
+        # A modifier that cuts income and the decision that removes it, as the game reads it now
+        for im in await income_modifiers(gw, _as_int(character_id) or _as_int((actor or {}).get("id"))):
+            lev = {"lever": "renounce", "label": f"Renounce {im['modifier']} ({im['effect']})",
+                   "do_call": {"intent": "take_decision", "args": {"decision": im["removed_by"]}},
+                   "blocked": im.get("blocked")}
+            (unavailable if lev["blocked"] else available).append(lev)
+        # The head of faith's gold, priced for this ruler
+        hg = hof_gold_lever(_dg.purse_of(await gw.read("query_character", {
+            "character_id": character_id or _as_int((actor or {}).get("id"))})))
+        (unavailable if hg.get("blocked") else available).append(hg)
     elif action_class == "formable_titles":
         # GAP 1 (re_toolgap_mint.md): make the formable-title set DISCOVERABLE rather than
         # memorized. Pure composition of the already-shipping query_dejure_progress read
@@ -6604,42 +10564,44 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
         # `available` row, and fires its embedded do_call do(intent="mint_title", args=...).
         # Bounded BY DESIGN: only the keys the caller names (never a DB-wide scan).
         keys = list(candidates or [])
+        if not keys:
+            # An empty list read as "nothing can be formed".
+            return envelope("do", ok=False, actor=actor, game=gw.game(), bridge_health=gw.health,
+                            blocked=why_blocked(
+                                "missing_required_argument",
+                                summary=("formable_titles checks the titles you name: pass "
+                                         "candidates=['d_meath', 'k_ireland', ...] (title keys; "
+                                         "inspect(subject='title', title_key=...) lists a title's "
+                                         "de-jure duchies and counties)")))
         warnings.append({"code": "control_requirements", "is_known_limitation": False,
-                         "detail": ("Each row is the game's own verdict: the create-title command's "
-                                    "validity (de-jure control, not already held, the game's "
-                                    "can_create rules) and its price in gold (piety or treasury for "
-                                    f"some governments), read before anything is sent. {MINT_DEJURE_RULE}; "
-                                    "a titular kingdom (no de-jure "
-                                    "counties, e.g. k_danelaw) is formed by its decision, not minted.")})
+                         "detail": ("Each row's requirements are the game's own verdict (the "
+                                    "create-title command's validity, with its words, and its price "
+                                    "in gold, or piety or treasury for some governments) and the "
+                                    f"bridge's de-jure bar: {MINT_DEJURE_RULE}; a titular kingdom (no "
+                                    "de-jure counties, e.g. k_danelaw) is formed by its decision, not "
+                                    "minted.")})
         for tkey in keys:
-            prog = await gw.read("query_dejure_progress",
-                                 {"character_id": character_id, "title_key": tkey})
-            prog = prog if isinstance(prog, dict) else {}
-            if str(prog.get("error") or "").startswith("title_key"):
-                continue  # not a real landed_title — skip (never invent a row)
-            held, total = _as_int(prog.get("held")), _as_int(prog.get("total"))
-            short = mint_dejure_shortfall(tkey, held, total)
-            row = {"label": f"Form {tkey} ({held}/{total} de-jure)",
-                   "do_call": {"intent": "mint_title", "args": {"title_key": tkey}},
-                   "measured": {"held": held, "total": total, "need": dejure_need(total),
-                                "fraction": round(_f(prog.get("fraction")), 3)}}
-            if short is not None:
-                need = short["need"]
-                row["blocked"] = why_blocked(
-                    "de_jure_control",
-                    summary=(f"hold {held}/{need} de-jure counties of {tkey} "
-                             f"(need >={round(MINT_DEJURE_MIN_FRAC * 100)}% REALM-de-jure, "
-                             "counted via transitive vassals — NOT personal demesne)"),
-                    measured=row["measured"])
-                unavailable.append(row)
-            else:
-                # The game's verdict and price (mint_title_price, the same check
-                # do(intent="mint_title") makes before it sends).
-                blk, price = await mint_title_price(gw, character_id, tkey)
-                if price is not None:
-                    row["price"] = price
-                row["blocked"] = blk
-                (unavailable if blk is not None else available).append(row)
+            row, blk = await title_requirements(gw, character_id, tkey,
+                                                news_actor=_as_int((actor or {}).get("id")))
+            if blk is not None and isinstance(blk.get("measured"), dict):
+                # the row carries them already (requirements)
+                blk = dict(blk, measured={k: v for k, v in blk["measured"].items() if k != "requirements"})
+            row["blocked"] = blk
+            (unavailable if blk is not None else available).append(row)
+        attach_tier_bill(available + unavailable)
+        _by = {r.get("title_key"): r for r in available + unavailable}
+        for row in available + unavailable:
+            attach_chain(row, _by)
+        _me = _as_int(character_id) or _as_int((actor or {}).get("id"))
+        for row in available + unavailable:
+            # The goal title's row says what the ruler's death takes from its chain (the turn's goal line)
+            try:
+                _ad = await goal_death_forecast(gw, _me, row)
+            except Exception as e:  # noqa: BLE001 - a read that raised: said unread, never left out silently
+                _ad = {"unread": f"the death forecast raised {type(e).__name__}"} \
+                    if row.get("title_key") == _seat_events.goal_title() else None
+            if _ad:
+                row["at_death"] = _ad
     else:
         return envelope("do", ok=False, actor=actor, game=gw.game(),
                         # SAY WHICH VOCABULARY IT IS. The census caught
@@ -6661,16 +10623,247 @@ async def _do_enumerate(gw, action_class: str, character_id: int, candidates: li
                             raw_reason=f"unknown_action_class:{action_class}"),
                         bridge_health=gw.health)
 
-    return envelope("do", result={"action_class": action_class, "available": available,
-                                   "unavailable": unavailable},
-                    actor=actor, game=gw.game(), warnings=warnings, bridge_health=gw.health)
+    result = {"action_class": action_class, "available": available, "unavailable": unavailable}
+    if task_used:
+        result["task_used"] = task_used
+    if merc_purse:
+        result["purse"] = merc_purse
+    if merc_notes:
+        # what every row's numbers are, said once (a row is a company's numbers only: the listing fits whole)
+        result["rows_read"] = merc_notes
+    return envelope("do", result=result, actor=actor, game=gw.game(), warnings=warnings,
+                    bridge_health=gw.health)
+
+
+#: What the bridge's fabricate-target list is, measured. Live 1066.09.15 the
+#: list was the same 40 counties (title ids 223 ... 1637, every one assignable, none in
+#: Ireland) for three different counts (31506, 32287, 34579), while the chaplain's
+#: task set directly on c_athlone (469, not in the list) applied and the claim came.
+FABRICATE_LIST_LIMIT = ("this list is the bridge's county scan, not checked to be this ruler's "
+                        "targets (the list can be the same for every count and miss the ruler's region, "
+                        "while a task on an unlisted neighbour applies); name the "
+                        "counties instead: args={'within': '<k_ or d_ key>'} or candidates=[<c_ keys>]")
+
+#: A bridge that judges each county through its own province
+#: (`target_scope: county_province`). At first the bridge passed the county's title id as a
+#: province id and judged an unrelated county. A live 1066 game (1066.09.15): the scan listed the 12
+#: Irish counties Murchad can fabricate on (not his own Dublin, not c_leinster, which the game reset)
+#: with Athlone at its own province 34, so the county_province list carries no warning.
+
+#: The most rows the bridge's fabricate list returns (40 rows were 12.5 KB live).
+FABRICATE_LIST_CAP = 24
+#: The most counties fabricate_targets judges by name in one call.
+FABRICATE_NAMED_CAP = 40
+
+
+async def fabricate_named_impl(gw, character_id: int, actor: dict, within: str, candidates: list,
+                               seat: str = "") -> dict[str, Any]:
+    """do(action_class="fabricate_targets", args={"within": key} | candidates=[keys]):
+    the counties the caller names, each judged by what the code can read:
+    yours already, a claim you hold already (declare instead), or a target with the
+    ready council_task call. The game's own per-target check for a named county is not
+    read (no bridge read answers it for one county); the council_task write reads the
+    seat back, and a refusal comes back with the game's reason."""
+    import title_table as _tt
+    keys = ([within] if within else []) + [str(c) for c in candidates if str(c).strip()]
+    me = _as_int(character_id) or _as_int((actor or {}).get("id"))
+    rows: list = []
+    errors: list = []
+    seen: set = set()
+    for key in keys:
+        res, errs, blk = await _tt.title_table(gw, character_id=me, title_key=key.strip(), next_calls=False)
+        if blk is not None:
+            return envelope("do", ok=False, actor=actor, game=gw.game(), blocked=blk, bridge_health=gw.health)
+        errors += errs
+        for r in res.get("counties") or []:
+            if r.get("title_id") not in seen:
+                seen.add(r.get("title_id"))
+                rows.append(r)
+    use_seat = seat or FABRICATE_CLAIM_SEAT
+    active = _news.fabrication_of(me)
+    # (c_leinster listed unblocked; the game reset the task every month
+    # for 36 months): what the code reads of each county's holder, before it is offered
+    kin_cache: dict = {}
+    available, unavailable = [], []
+    for r in rows[:FABRICATE_NAMED_CAP]:
+        tid, key = r.get("title_id"), r.get("key")
+        row = {"label": f"Fabricate claim on {key or tid}", "title_key": key, "title_id": tid,
+               "holder_id": r.get("holder_id"), "realm_ruler_id": r.get("realm_ruler_id"),
+               "do_call": {"intent": "council_task",
+                           "args": {"seat": use_seat, "task": "task_fabricate_claim",
+                                    "target_title_id": tid}}}
+        if active and active.get("title_id") == tid:
+            row["in_progress"] = {"since": active.get("since"), "eta": None,
+                                  "eta_unread": FABRICATION_ETA_UNREAD}
+        if r.get("you_control") is True:
+            row.pop("do_call")
+            row["blocked"] = why_blocked("already_in_that_state", summary=f"{key} is already in your realm")
+            unavailable.append(row)
+        elif r.get("your_claim"):
+            row.pop("do_call")
+            row["blocked"] = why_blocked(
+                "already_in_that_state", summary=f"you already hold a {r['your_claim']} claim on {key}",
+                fix={"tool": "cbs", "args": {"target_id": r.get("realm_ruler_id") or r.get("holder_id")}})
+            unavailable.append(row)
+        elif (chk := await _news.fabricate_check(gw, me, r.get("holder_id"), kin_cache,
+                                                 title_id=tid))["game_check"] == "refuses":
+            row.pop("do_call")
+            row["blocked"] = why_blocked("target_ineligible", summary=chk["why"])
+            unavailable.append(row)
+        else:
+            row["blocked"] = None
+            row["game_check"] = chk["game_check"]
+            if chk["game_check"] == "unknown":
+                row["validity"] = "unknown"
+                row["checked"] = _news.FAB_KIN_CHECKED if "not your parent" in chk["why"] else "nothing"
+            n = _news.reverts_of(me, tid)
+            if n:
+                row["reset_by_game"] = n
+            #
+            # the game halves a fabrication's progress on a county not neighbouring your realm
+            row.update(await fabrication_border(gw, me, tid))
+            available.append(row)
+    # counties bordering the realm first: they fabricate at the full rate
+    available.sort(key=lambda r: r.get("borders_your_realm") is not True)
+    # A county whose game check was not read is not listed as available
+    unchecked = [r for r in available if r.get("validity") == "unknown"]
+    available = [r for r in available if r.get("validity") != "unknown"]
+    warnings = ([{"code": "target_check_not_read", "is_known_limitation": True,
+                  "detail": ("the game's own fabricate check did not answer for these counties: a county a living "
+                             "parent of yours holds is blocked (the game refuses it); the "
+                             "rest are `unchecked`, validity unknown, each with its call")}]
+                if unchecked else [])
+    if len(rows) > FABRICATE_NAMED_CAP:
+        warnings.append({"code": "truncated", "detail": f"{FABRICATE_NAMED_CAP} of {len(rows)} counties judged"})
+    return envelope("do", result={"action_class": "fabricate_targets", "within": within or None,
+                                  "available": available, "unavailable": unavailable,
+                                  **({"unchecked": unchecked} if unchecked else {})},
+                    actor=actor, game=gw.game(), warnings=warnings, errors=errors or None,
+                    bridge_health=gw.health)
+
+
+#: The game's fabrication progress on a county outside your borders
+#: (common/council_tasks/00_court_chaplain_tasks.txt: NOT is_neighbor_to_realm ->
+#: court_chaplain_fabricate_claim_not_adjacent_penalty, 0.5 in 99_court_chaplain_values.txt).
+FABRICATE_NOT_ADJACENT = ("x0.5 progress: the county does not border your realm (the game's "
+                          "is_neighbor_to_realm; this read is the county's land neighbours, a sea "
+                          "crossing the game may count is not read)")
+
+
+async def fabrication_border(gw, me: int, title_id: Any) -> dict:
+    """{borders_your_realm, progress_note?} for one county from query_county_neighbors: a
+    neighbour whose realm ruler is you. None when the read did not answer."""
+    nb = await gw.read("query_county_neighbors", {"title_id": _as_int(title_id)})
+    rows = nb.get("neighbors") if isinstance(nb, dict) else None
+    if not isinstance(rows, list) or not me:
+        return {"borders_your_realm": None}
+    yes = any(isinstance(n, dict) and _as_int(n.get("realm_ruler_id")) == me for n in rows)
+    return {"borders_your_realm": yes, **({} if yes else {"progress": FABRICATE_NOT_ADJACENT})}
+
+
+#: No read gives a fabrication's progress or its end date (query_council
+#: carries the seat's task and no target or progress).
+FABRICATION_ETA_UNREAD = ("no read gives a fabrication's progress (the bridge reads none); "
+                          + _news.FABRICATION_MEASURED)
+
+
+#: The council tasks whose target is a county (task_type_county in the game's
+#: common/council_tasks), which the game stores as the county's capital PROVINCE.
+COUNTY_TASKS = ("task_fabricate_claim", "task_develop_county", "task_increase_control",
+                "task_integrate_title", "task_conversion", "task_promote_culture",
+                "task_accept_culture", "task_convince_dejure")
+COUNCIL_TARGET_NOTE_GAME = (
+    "target_province_id: a county task's target as the game stores it (a province of the county); "
+    "`target` is the county the game derives from it, read by the bridge")
+COUNCIL_TARGET_NOTE = (
+    "target_province_id: a county task's target as the game stores it, the county's capital "
+    "province; no read maps a province to its county, so `target` names the title only for "
+    "the fabrication this server set (read back when set), else unknown")
+
+
+def _county_task(name: Any) -> bool:
+    return any(str(name or "").startswith(t) for t in COUNTY_TASKS)
+
+
+def council_task_seats(reply: Any) -> Optional[list]:
+    """query_council_tasks' seat rows with the target read as what it is.
+
+    The bridge resolves the seat's target id as a TITLE id (council_task_hook.cpp,
+    emit_live_council_seats, tag 8 -> lookup_title_obj). For a county task the game
+    stores the county's capital PROVINCE id there: live 1066-1069 the chaplain set on
+    c_athlone (the script's target is title:c_athlone.title_province) read 34, named
+    "Blue Horde" (e_blue_horde); on c_ossory 43 ("Bosporan Kingdom"); the steward 28
+    ("Red Horde"). In the game's map definition 28 is Dublin, 34 Athlone, 43 Gowran
+    (c_ossory's capital). The id becomes target_province_id and the wrong name is
+    dropped; None when the reply has no seat list."""
+    rows = reply.get("seats") if isinstance(reply, dict) else None
+    if not isinstance(rows, list):
+        return None
+    actor = _as_int(reply.get("character_id"))
+    fab = _news.fabrication_of(actor) or {}
+    out = []
+    for s in rows:
+        if not isinstance(s, dict):
+            continue
+        s = dict(s)
+        if "target_title_id" in s or "target_province_id" in s:
+            # A bridge that sends target_province_id reads the county the game derives
+            # from the province (re_fabricate_claim.md §2): its target_title_id is that county
+            from_game = "target_province_id" in s
+            raw = s.pop("target_title_id", None)
+            s.pop("target_title", None)
+            key = s.pop("target_title_key", None)
+            prov = s.get("target_province_id", raw)
+            if _county_task(s.get("task_name")):
+                s["target_province_id"] = prov
+                mine = (s.get("task_name") == _news.FABRICATE_TASK and fab.get("province_id") is not None
+                        and fab.get("province_id") == prov)
+                if from_game and _as_int(raw):
+                    s["target"], s["target_read"] = {"title_id": _as_int(raw), "title_key": key}, "game"
+                else:
+                    s["target"] = ({"title_id": fab.get("title_id"), "title_key": fab.get("title_key")}
+                                   if mine else "unknown")
+            else:
+                s.pop("target_province_id", None)
+                s["target_id_read"], s["target"] = prov, "unknown"
+        out.append(s)
+    return out
+
+
+def council_task_rows(reply: Any, date: Optional[str]) -> Any:
+    """query(domain="council_tasks")'s reply: the seats with their targets read right
+    (council_task_seats) and, when a fabrication runs or one set here stopped, the
+    `fabrication` block (news.fabrication_status: since, days, progress unknown)."""
+    seats = council_task_seats(reply)
+    if seats is None:
+        return reply
+    out = dict(reply, seats=seats)
+    if any(s.get("target_read") == "game" for s in seats):
+        out["target_note"] = COUNCIL_TARGET_NOTE_GAME
+    elif any("target" in s for s in seats):
+        out["target_note"] = COUNCIL_TARGET_NOTE
+    fs = _news.fabrication_status(_as_int(reply.get("character_id")), seats, date)
+    if fs is not None:
+        out["fabrication"] = fs
+    return out
+
+
+#: The most names an enumeration of interactions or decisions lists by default.
+NAME_LIST_CAP = 40
+
+
+def filter_names(names: list, fragments: Optional[list], cap: int = NAME_LIST_CAP) -> tuple[list, int]:
+    """(the names containing any of `fragments` (all when none), capped; how many more)."""
+    frs = [str(f).lower() for f in (fragments or []) if str(f).strip()]
+    hit = [n for n in names if not frs or any(f in n.lower() for f in frs)]
+    return hit[:cap], max(0, len(hit) - cap)
 
 
 def applied_result(result: dict) -> dict:
     """An applied verdict's result without the bridge's interim reply when that reply
     did not itself say success: the readback is the verdict, and a `raw` with
-    success:false beside it is two polarities in one envelope (surface-eval
-    finding 14: k_ireland applied under raw.success:false). The reply's request id
+    success:false beside it is two polarities in one envelope (once:
+    k_ireland applied under raw.success:false). The reply's request id
     stays, so the write can still be found in inspect(pending)."""
     raw = result.get("raw")
     if not isinstance(raw, dict) or raw.get("success") is True:
@@ -6680,8 +10873,746 @@ def applied_result(result: dict) -> dict:
     return out
 
 
-async def mint_title_price(gw, character_id: int, tkey: str) -> tuple[Optional[dict], Optional[dict]]:
-    """The game's own answer to "can this ruler
+#: What no read in this toolkit gives about creating a kingdom or empire: the
+#: game's own creation rules beyond the de-jure share and the price (a duchy-title
+#: count or a tier rule, if the game has one) are not mirrored here; the game's own
+#: check (`game_check`) applies them and lists the ones that fail in its words.
+#: The tier rule (titles of the tier below) applies from a kingdom up
+TIER_RULE_MIN_TIER = 4
+TIER_RULE_PASSED = ("met: the game's own check ran and listed no 'Titles Required' line (it lists only the "
+                    "requirements it fails; the line goes once the titles it names are held)")
+TIER_RULE_UNREAD = ("unknown: the game's own check gave no 'Titles Required' lines for this "
+                    "title, and no other read gives the tier rule; game_check applies the "
+                    "game's rules and names the failing ones")
+
+TIER_RULE_DISAGREE = ("unknown: your held titles counted against the game's defines say unmet, and the game's own "
+                      "check listed no 'Titles Required' line; game_check names what fails")
+_TIER_NAME = {3: "Duchy", 4: "Kingdom", 5: "Empire", 6: "Hegemony"}
+
+
+async def tier_rule_of_held(gw, character_id: int, tier: int) -> Optional[dict]:
+    """The tier rule counted from the titles the ruler holds (query_title_hierarchy held_titles, each
+    row's tier) against the game's define for the title's tier (00_defines.txt CREATE_TITLE_OR_TIER_<TIER>, one
+    count per tier, any one of which suffices: event_prices.title_or_tier). None when either is not read."""
+    import event_prices as _EP  # noqa: PLC0415
+    from collections import Counter  # noqa: PLC0415
+    need = (_EP.title_or_tier() or {}).get(tier)
+    if not need or not character_id:
+        return None
+    try:
+        h = await gw.read("query_title_hierarchy", {"character_id": character_id})
+    except Exception:  # noqa: BLE001 - a read that raised is a read that did not answer
+        return None
+    if not hierarchy_was_read(h, None) or not h.get("held_titles"):
+        return None
+    have = Counter(_as_int(t.get("tier")) for t in h["held_titles"] if isinstance(t, dict))
+    lines = [f"{_TIER_NAME[t]} Titles Required: {n} (currently: {have.get(t, 0)})"
+             for t, n in enumerate(need) if n > 0 and t in _TIER_NAME]
+    row, _rest = tier_rule_of_reasons(lines)
+    if row is None:
+        return None
+    row["source"] = (f"your {sum(have.values())} held titles by tier (query_title_hierarchy) against the game's "
+                     f"00_defines.txt CREATE_TITLE_OR_TIER_{_TIER_NAME[tier].upper()}, any one of which suffices")
+    return row
+
+
+#: The game's tier rule for creating a kingdom or above comes back from its own
+#: check as one line per tier, "Duchy Titles Required: 2 (currently: 0)", "Kingdom
+#: Titles Required: 1 (currently: 0)", ... under an empty header. The rule is ONE OF
+#: them (the define CREATE_TITLE_OR_TIER_<TIER>, by the creator's own tier: a count
+#: cannot, a duke needs that many duchy titles, a king or above one title of his tier).
+_TIER_LINE_RE = re.compile(r"^\s*(\w+) Titles Required:\s*(\d+)\s*\(currently:\s*(\d+)\)\s*$")
+_TIER_RANK = {"duchy": 3, "kingdom": 4, "empire": 5, "hegemony": 6}
+_TIER_HOLDER = {"duchy": "duke", "kingdom": "king", "empire": "emperor", "hegemony": "hegemon"}
+
+
+#: The game's own county line in its creation check ("You only have 6 of 8 required Counties")
+_GAME_COUNTIES_RE = re.compile(r"You only have (\d+) of (\d+) required Counties", re.I)
+GAME_COUNTIES_SOURCE = "the game's own check (its 'required Counties' line)"
+
+
+def game_counties_of_reasons(reasons: list) -> Optional[dict]:
+    """{have, need} from the game's 'You only have H of N required Counties' line, None when it lists none."""
+    for x in reasons or []:
+        m = _GAME_COUNTIES_RE.search(str(x))
+        if m:
+            return {"have": int(m.group(1)), "need": int(m.group(2))}
+    return None
+
+
+def tier_rule_of_reasons(reasons: list) -> tuple[Optional[dict], list]:
+    """(the tier_rule requirement row, the other reasons) from the game's check
+    reasons. The row is None when no 'Titles Required' line is among them. Every
+    number is read off the lines: `options` [{tier, need, have}], met when any one
+    option is met, and `rule` in words for the caller's present tier (the highest
+    tier he holds a title of, by the lines' `currently` counts)."""
+    opts, rest = [], []
+    for x in reasons:
+        m = _TIER_LINE_RE.match(str(x))
+        if m and m.group(1).lower() in _TIER_RANK:
+            opts.append({"tier": m.group(1).lower(), "need": int(m.group(2)), "have": int(m.group(3))})
+        elif str(x).strip():
+            rest.append(x)
+    if not opts:
+        return None, rest
+    opts.sort(key=lambda o: _TIER_RANK[o["tier"]])
+    met = any(o["have"] >= o["need"] for o in opts)
+    held = [o["tier"] for o in opts if o["have"] > 0]
+    first, others = opts[0], opts[1:]
+    if others and len({o["need"] for o in others}) == 1:
+        n = others[0]["need"]
+        alt = f"hold {n} title{'s' if n != 1 else ''} of {others[0]['tier']} tier or above"
+    else:
+        alt = ", or ".join(f"hold {o['need']} {o['tier']} title{'s' if o['need'] != 1 else ''}"
+                           for o in others)
+    if not held:
+        head = (f"become a {_TIER_HOLDER[first['tier']]} holding {first['need']} {first['tier']} "
+                f"title{'s' if first['need'] != 1 else ''}")
+    else:
+        head = (f"hold {first['need']} {first['tier']} title{'s' if first['need'] != 1 else ''} "
+                f"(you hold {first['have']})")
+    rule = head + (f" (or {alt})" if alt else "")
+    return {"requirement": "tier_rule", "met": met, "rule": rule, "one_of": opts,
+            "your_tier": held[-1] if held else f"below {first['tier']} (no {first['tier']} title)",
+            "source": "the game's own check: its 'Titles Required' lines, any one of which suffices"}, rest
+
+
+#: The kingdom row's bill, when the tier rule asks for duchy titles the caller
+#: does not hold and the same formable_titles reply priced duchies.
+def attach_tier_bill(rows: list) -> None:
+    """For each row whose unmet tier_rule asks for N more duchy titles: the N cheapest
+    duchies this same reply priced (their cost and gate) and the whole bill (their
+    prices plus this title's), or what is missing to price it."""
+    duchies = sorted((r for r in rows if str(r.get("title_key") or "").startswith("d_")
+                      and isinstance(r.get("price"), dict) and r["price"].get("cost") is not None),
+                     key=lambda r: _f(r["price"]["cost"]))
+    for row in rows:
+        tr = next((q for q in row.get("requirements") or [] if q.get("requirement") == "tier_rule"), None)
+        if not tr or tr.get("met") is not False:
+            continue
+        d = next((o for o in tr.get("one_of") or [] if o["tier"] == "duchy"), None)
+        short = (d["need"] - d["have"]) if d else 0
+        if short <= 0:
+            continue
+        pick = duchies[:short]
+        tr["duchies_priced"] = [{"title_key": r["title_key"], "cost": r["price"]["cost"],
+                                 "currency": r["price"].get("currency"),
+                                 "gate": (r.get("blocked") or {}).get("gate")} for r in pick]
+        own = row.get("price") if isinstance(row.get("price"), dict) else {}
+        if len(pick) < short or own.get("cost") is None:
+            tr["bill"] = {"cost": None, "unread": (
+                f"{short} duchy titles needed, {len(pick)} priced in this reply: name the de-jure "
+                "duchies in candidates to price them" if len(pick) < short else "this title's price was not read")}
+            if len(pick) < short:
+                # The duchies
+                # this reply read and why each has no price, or that it read none
+                tr["bill"]["duchies_read"] = [
+                    {"title_key": r.get("title_key"),
+                     "why_no_price": ((r.get("blocked") or {}).get("summary") or (r.get("blocked") or {}).get("gate")
+                                      or "its price was not read")}
+                    for r in rows if str(r.get("title_key") or "").startswith("d_") and r not in pick] or \
+                    "none: no de-jure duchy of it was read in this reply (a duchy you hold, or with none of its " \
+                    "counties yours, is not priced)"
+        else:
+            tr["bill"] = {"currency": own.get("currency"),
+                          "cost": round(sum(_f(p["cost"]) for p in tr["duchies_priced"]) + _f(own["cost"]), 2),
+                          "of": [p["title_key"] for p in tr["duchies_priced"]] + [row.get("title_key")]}
+
+
+#: (a test run, 1077-1085: the goal line said no de-jure duchy of k_ireland could be created for gold alone
+#: while inspect k_ireland named "create d_ulster", 162.5 gold, cannot_afford): ONE reading of a title of the chain,
+#: used by both. formable_titles carries it on the target row (tier_rule.chain), so the goal line formats the toolkit's
+#: own verdict off the target row (the first row: a paged reply keeps it on page 1) instead of re-deriving it from the
+#: chain titles' own rows, which a paged reply can leave out; inspect's nearest_unmet ranks by it
+CHAIN_MAX = 6
+CHAIN_STATES = ("creatable_now", "gold_only", "lacks")
+
+
+def chain_step(row: dict) -> dict:
+    """One title of the chain from its title_requirements row: {title_key, state, cost, currency, have} and
+    `do_call` (creatable now) or `lacks` (what else is unmet, in the game's words where it gave them)."""
+    reqs = [q for q in row.get("requirements") or [] if isinstance(q, dict)]
+    by = {q.get("requirement"): q for q in reqs}
+    pr, gc = by.get("price") or {}, by.get("game_check") or {}
+    out: dict = {"title_key": row.get("title_key"), "cost": pr.get("cost"), "currency": pr.get("currency"),
+                 "have": pr.get("have")}
+    if row.get("blocked") is None and gc.get("met") is True and pr.get("met") is True \
+            and not any(q.get("met") is False for q in reqs):
+        return dict(out, state="creatable_now", do_call={"tool": "do", "args": row.get("do_call") or {
+            "intent": "mint_title", "args": {"title_key": row.get("title_key")}}})
+    lacks: list = []
+    for q in reqs:
+        name = q.get("requirement")
+        if name == "price":
+            if q.get("met") is None:
+                lacks.append(f"price unread: {q.get('unread')}")
+            elif q.get("met") is False and q.get("currency") != "gold":
+                lacks.append(f"{q.get('cost')} {q.get('currency')}")
+        elif name == "game_check":
+            if q.get("met") is False:
+                lacks += [str(x) for x in q.get("reasons") or [] if "gold" not in str(x).lower()]
+            elif q.get("met") is None:
+                lacks.append(f"the game's check unread: {q.get('unread')}")
+        elif name == "de_jure_counties":
+            if q.get("met") is False:
+                lacks.append(f"{q.get('have')} of {q.get('need')} de-jure counties")
+        elif q.get("met") is not True:
+            lacks.append(str(q.get("rule") or q.get("unread") or name))
+    if not lacks and pr.get("met") is False:
+        return dict(out, state="gold_only")
+    return dict(out, state="lacks", lacks=lacks or ["not read"])
+
+
+def rank_chain(steps: list) -> list:
+    """Creatable now first, then waiting only for gold, cheapest first; the rest after, as read."""
+    def key(st):
+        c = st.get("cost")
+        return (CHAIN_STATES.index(st.get("state")) if st.get("state") in CHAIN_STATES else 3,
+                c if isinstance(c, (int, float)) and st.get("state") != "lacks" else 0)
+    return sorted(steps, key=key)
+
+
+def attach_chain(row: dict, priced: dict) -> None:
+    """On a row whose tier rule lacks titles of the tier below (tier_rule.dejure_unheld), each of those titles
+    the same reply priced (`priced`: its rows by key) as chain_step reads it, ranked (tier_rule.chain), with the ones
+    it did not price named (chain_not_priced). No chain when the reply priced none of them."""
+    tr = next((q for q in row.get("requirements") or [] if isinstance(q, dict) and q.get("requirement") == "tier_rule"),
+              None)
+    unheld = tr.get("dejure_unheld") if tr and tr.get("met") is False else None
+    if not isinstance(unheld, list):
+        return
+    keys = [str(x) for x in unheld if isinstance(x, str)][:CHAIN_MAX]
+    got = [priced[k] for k in keys if isinstance(priced.get(k), dict)]
+    if not got:
+        return
+    tr["chain"] = rank_chain([chain_step(r) for r in got])
+    miss = [k for k in keys if not isinstance(priced.get(k), dict)]
+    if miss:
+        tr["chain_not_priced"] = miss
+
+
+#: The tier below each tier, as the tier rule's lines name it
+_TIER_BELOW = {4: "duchy", 5: "kingdom", 6: "empire"}
+GOAL_CHAIN_SOURCE = ("the game's own check: its 'Titles Required' line for the tier below, and the title's de-jure "
+                     "children of that tier you do not hold (query_de_jure)")
+
+
+def chain_option(tier_row: Optional[dict], tier: Optional[int]) -> Optional[dict]:
+    """The tier rule's option for the tier below the title ({tier, need, have, short}) when the rule is unmet
+    and that option is short; None when the rule is met, unread, or names no such option."""
+    if not isinstance(tier_row, dict) or tier_row.get("met") is not False or tier not in _TIER_BELOW:
+        return None
+    o = next((x for x in tier_row.get("one_of") or [] if x.get("tier") == _TIER_BELOW[tier]), None)
+    if not o or o["need"] - o["have"] <= 0:
+        return None
+    return dict(o, short=o["need"] - o["have"])
+
+
+async def dejure_unheld(gw, character_id: int, tkey: str, tier_word: str) -> Optional[list]:
+    """The title's de-jure children of one tier that the ruler does not hold ({title_key, title_id,
+    holder_id}), from query_de_jure; None when the read did not answer."""
+    want = _TIER_RANK.get(tier_word)
+    try:
+        dj = await gw.read("query_de_jure", {"title_key": tkey})
+    except Exception:  # noqa: BLE001 - a read that raised is a read that did not answer
+        return None
+    kids = dj.get("de_jure_children") if isinstance(dj, dict) else None
+    if not isinstance(kids, list):
+        return None
+    me = _as_int(character_id)
+    # live 1072.01.01: k_ireland's de-jure children of duchy tier include x_script_845, a script's title no ruler
+    # creates: only a key of the tier's own prefix (d_, k_, e_, h_) is a title the rule can count
+    pre = {3: "d_", 4: "k_", 5: "e_", 6: "h_"}.get(want, "")
+    return [{"title_key": k.get("key"), "title_id": _as_int(k.get("title_id")), "holder_id": _as_int(k.get("holder_id"))}
+            for k in kids if isinstance(k, dict) and _as_int(k.get("tier")) == want
+            and str(k.get("key") or "").startswith(pre) and pre
+            and _as_int(k.get("title_id")) and (not me or _as_int(k.get("holder_id")) != me)]
+
+
+async def goal_chain(gw, character_id: int, tkey: str) -> dict:
+    """A recorded case (the create_title veto dropped the AI's d_leinster three times with gold in hand; the duchy
+    was the one k_ireland's tier rule still needed): the titles the creation of `tkey` still needs, as the game's
+    own check states the rule ('Duchy Titles Required: 2 (currently: 1)') and the title's de-jure children of that
+    tier not yet held. {"option": {tier, need, have, short}, "titles": [...], "source"}, {"titles": []} when the rule
+    is met or names no tier below, {"unread": why} when a read did not answer."""
+    tier = title_tier_of_key(tkey)
+    if tier is None or tier < TIER_RULE_MIN_TIER:
+        return {"titles": []}
+    try:
+        chk = await gw.read("query_create_title_cost", {"actor_id": character_id, "title_key": tkey})
+    except Exception:  # noqa: BLE001
+        chk = None
+    if not (isinstance(chk, dict) and chk.get("success") is True and isinstance(chk.get("engine_valid"), bool)):
+        return {"unread": "the game's own check (query_create_title_cost) did not answer"}
+    row, _rest = tier_rule_of_reasons([engine_text(str(x)) for x in (chk.get("engine_reasons") or [])])
+    opt = chain_option(row, tier)
+    if opt is None:
+        return {"titles": []}
+    kids = await dejure_unheld(gw, character_id, tkey, opt["tier"])
+    if kids is None:
+        return {"option": opt, "unread": "query_de_jure did not answer: the title's de-jure children are unknown"}
+    return {"option": opt, "titles": kids, "source": GOAL_CHAIN_SOURCE}
+
+
+def net_realised_row(actor_id: int) -> Any:
+    """The gold that really moved a month over the last step read (every spend in it)."""
+    rn = _news.realised_net(actor_id)
+    return (dict(rn, basis="the last step's gold change a month, every spend in it") if rn
+            else "unread: no step read yet")
+
+
+#: The shortest step whose net gold reads as a month's
+MONTHS_TO_TARGET_MIN_DAYS = 28
+
+
+def months_to_target(short: float, net: Any) -> dict:
+    """The months to a gold shortfall at the last step's net gold a month (every spend in it), or why none."""
+    short = round(max(0.0, short), 2)
+    m = net.get("monthly") if isinstance(net, dict) else None
+    if not isinstance(m, (int, float)) or isinstance(m, bool):
+        return {"short": short, "months": None, "why": "no step read yet: the net gold a month is not known"}
+    lo, hi = _news._ordinal_of(net.get("from")), _news._ordinal_of(net.get("to"))
+    if lo is not None and hi is not None and hi - lo < MONTHS_TO_TARGET_MIN_DAYS:
+        # live 0905.01.08 (a surrender's 229 gold inside a 7-day step read -1036.92 a month): a short step is no month
+        return {"short": short, "months": None, "net_monthly": m,
+                "why": f"the last step ran {hi - lo} days, too short to read a month's net (a one-off charge in it "
+                       "counts as a month's); the next read of 28 days or more gives it"}
+    # ("never at the last step's net (-40.59 gold a month)" after the seat's 162.5-gold d_ulster
+    # mint in that step): the step's priced one-offs (news.note_one_offs) are taken out of the net a month
+    one = net.get("one_offs") if isinstance(net.get("one_offs"), dict) else None
+    excl = net.get("monthly_without_one_offs")
+    extra: dict = {}
+    if one is not None and isinstance(excl, (int, float)) and not isinstance(excl, bool):
+        extra = {"net_with_one_offs": m, "one_offs_excluded": one}
+        m = excl
+    stand = standing_down(short, m, net.get("armies_men"))
+    if m <= 0:
+        return {"short": short, "months": None, "net_monthly": m,
+                "why": (f"never at the last step's net ({m} gold a month"
+                        + (", its one-offs left out" if extra else "") + "): the purse fell; income_levers raise it"),
+                **extra, **stand}
+    return {"short": short, "months": math.ceil(short / m), "net_monthly": m,
+            "from": net.get("from"), "to": net.get("to"), **extra, **stand}
+
+
+#: What the armies raised at the step's end cost a month (the levy upkeep: news.GOLD_COST_PER_SOLDIER)
+STAND_DOWN_BASIS = ("the men raised at the step's end x 0.003 gold a man a month (00_defines.txt "
+                    "GOLD_COST_PER_SOLDIER); men-at-arms' raised extra and war costs are not read")
+
+
+def standing_down(short: float, net_monthly: float, men: Any) -> dict:
+    """Recorded cases (+0.07 gold a month over 172 months of war; -0.56 over 205): beside the realised
+    net, the levy upkeep the armies raised at the step's end were costing a month, and the months to the shortfall
+    at the net with that upkeep taken out. {} when no army was raised at the step's end or the men were not read."""
+    if not isinstance(men, list) or len(men) != 2 or not isinstance(men[1], int) or isinstance(men[1], bool) \
+            or men[1] <= 0:
+        return {}
+    up = round(men[1] * _news.GOLD_COST_PER_SOLDIER, 2)
+    out: dict = {"armies_raised": {"men": men[1], "upkeep_a_month": up, "basis": STAND_DOWN_BASIS}}
+    if isinstance(men[0], int) and not isinstance(men[0], bool) and men[0] > 0:
+        # raised at both reads: the step's net paid that upkeep, so standing down adds it back
+        stood = round(net_monthly + up, 2)
+        out["armies_raised"]["if_stood_down"] = (
+            {"net_monthly": stood, "months": math.ceil(short / stood)} if stood > 0 else
+            {"net_monthly": stood, "months": None, "why": "the purse still falls without that upkeep"})
+    return out
+
+
+def refresh_net_realised(obj: Any, actor_id: int) -> None:
+    """A recorded case (at 0867.08.08 net_realised said 03.15 -> 05.27, the step before the last):
+    observe reads the goal's price rows BEFORE its own news block measures this step's gold, so each
+    `net_realised` in the reply is re-read after the news block, for the ruler the news read (character_id 0 is
+    that ruler, not a key of its own)."""
+    if not actor_id:
+        return
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "net_realised":
+                obj[k] = net_realised_row(actor_id)
+            elif k == "months_to_target" and isinstance(v, dict) and isinstance(v.get("short"), (int, float)):
+                obj[k] = months_to_target(v["short"], _news.realised_net(actor_id))   # The same step
+            else:
+                refresh_net_realised(v, actor_id)
+    elif isinstance(obj, list):
+        for v in obj:
+            refresh_net_realised(v, actor_id)
+
+
+async def title_requirements(gw, character_id: int, tkey: str, *, prog: Optional[dict] = None,
+                             chk: Optional[dict] = None, news_actor: int = 0) -> tuple[dict, Optional[dict]]:
+    """THE creation requirements of one title for one ruler: (row, blocked).
+    Every requirement at once, met or unmet: the de-jure counties held against needed
+    (the bridge's bar, tier >= MINT_DEJURE_MIN_TIER), the price against what the ruler
+    holds (read whether or not the bar is met), the game's own check with its words,
+    and what is not read (TIER_RULE_UNREAD) as met null. blocked is the first gate:
+    title unknown, the de-jure bar, else mint_title_price's verdict.
+    do(action_class="formable_titles"), do(intent="mint_title")'s refusal and observe's
+    de_jure.next_title all call this; inspect(subject="title") too, passing
+    the reads it already made (`prog`: query_dejure_progress, `chk`: query_create_title_cost).
+    `news_actor`: the ruler's own id when `character_id` is 0 (the bound ruler): the last step's net gold
+    (news.realised_net) and the price reads are kept by his id, never by 0 (a test run's goal line read "no step
+    read yet" at five steps, the env's formable_titles read passing no character_id)."""
+    if prog is None:
+        prog = await gw.read("query_dejure_progress", {"character_id": character_id, "title_key": tkey})
+    prog = prog if isinstance(prog, dict) else {}
+    if str(prog.get("error") or "").startswith("title_key"):
+        return ({"label": f"{tkey}: no such title"},
+                why_blocked("target_not_assignable", raw_reason="title_key_not_found",
+                            summary=f"the game has no landed title {tkey!r}"))
+    held, total = _as_int(prog.get("held")), _as_int(prog.get("total"))
+    _nid = _as_int(character_id) or _as_int(news_actor)        # Whose step the realised net is
+    short = mint_dejure_shortfall(tkey, held, total)
+    tier = title_tier_of_key(tkey)
+    row: dict[str, Any] = {"label": f"Form {tkey} ({held}/{total} de-jure)", "title_key": tkey,
+                           "do_call": {"intent": "mint_title", "args": {"title_key": tkey}},
+                           "measured": {"held": held, "total": total, "need": dejure_need(total, tier),
+                                        "fraction": round(_f(prog.get("fraction")), 3)}}
+    reqs: list = []
+    if tier is not None and tier >= MINT_DEJURE_MIN_TIER and total > 0:
+        reqs.append({"requirement": "de_jure_counties", "have": held, "need": dejure_need(total, tier),
+                     "of": total, "met": short is None})
+    # The game's verdict and price (mint_title_price, the same check do(intent=
+    # "mint_title") makes before it sends), read whether or not the bar is met.
+    pre, chk = chk, {}
+    blk, price = await mint_title_price(gw, character_id, tkey, chk_out=chk, chk=pre, ruler_id=_nid)
+    if price is not None:
+        row["price"] = price
+        cur = price.get("currency")
+        if cur == "gold":
+            # (k_ireland read 325 under Murchad, 425 under his son Brian, and no row said why)
+            row["price_basis"] = await creation_price_basis(gw, character_id, tkey, price.get("cost"), ruler_id=_nid)
+        reqs.append({"requirement": "price", "currency": cur, "cost": price.get("cost"),
+                     "have": price.get(cur), "met": _f(price.get(cur)) >= _f(price.get("cost"))})
+        if cur == "gold" and tier is not None and tier >= 4 and not reqs[-1]["met"]:
+            # A recorded case (gold never above 108 of the kingdom's 425; 39 of 64 steps in debt): the
+            # gold short in months of income, so turn one shows whether gold or counties is the long pole
+            _p = _dg.purse_of(await gw.read("query_character", {"character_id": character_id})) or {}
+            _inc = _p.get("monthly_income")
+            _short = round(_f(price.get("cost")) - _f(price.get(cur)), 2)
+            reqs[-1]["months_of_income"] = (round(_short / _inc) if isinstance(_inc, (int, float)) and _inc > 0
+                                            else "unknown: no positive income read")
+            reqs[-1]["income_basis"] = (f"{_short} gold short at +{_inc} a month (the income read, before the "
+                                        "expenses it leaves out; armies raised cost more); what raises it: "
+                                        "do action_class=income_levers")
+            # The gold that really moved a month over the last step (every spend in it)
+            reqs[-1]["net_realised"] = net_realised_row(_nid)
+        if cur == "gold" and not reqs[-1]["met"]:
+            # (the empire's 850 gold was the gate for 45 turns at 94/117, and no read said how
+            # long at the gold that really came in): every tier, the months to the price at the last step's net
+            reqs[-1]["months_to_target"] = months_to_target(_f(price.get("cost")) - _f(price.get(cur)),
+                                                            _news.realised_net(_nid))
+        if cur == "gold":
+            # The price row says its basis (a seated game: 325 with no basis; 425 under the heir)
+            reqs[-1]["basis"] = _news.price_basis_words(row.get("price_basis"))
+    else:
+        reqs.append({"requirement": "price", "met": None,
+                     "unread": str(chk.get("reason") or (chk.get("price") or {}).get("reason")
+                                   or chk.get("error") or "no_reply")})
+    tier_row = None
+    if chk.get("success") is True and isinstance(chk.get("engine_valid"), bool):
+        # The tier lines are one requirement (any one of them), not one each
+        tier_row, rest = tier_rule_of_reasons([engine_text(str(x)) for x in (chk.get("engine_reasons") or [])])
+        reqs.append({"requirement": "game_check", "met": chk["engine_valid"], "reasons": rest})
+        gc_c = game_counties_of_reasons(rest)
+        if gc_c is not None:
+            #
+            # the counties row is the game's own count when its check names one
+            dj = next((q for q in reqs if q.get("requirement") == "de_jure_counties"), None)
+            if dj is not None:
+                dj.update(have=gc_c["have"], need=gc_c["need"], met=False, source=GAME_COUNTIES_SOURCE)
+            row["measured"]["need"] = gc_c["need"]
+            if short is not None:
+                short = dict(short, need=gc_c["need"], held=gc_c["have"])
+    else:
+        reqs.append({"requirement": "game_check", "met": None,
+                     "unread": str(chk.get("reason") or chk.get("error") or "no_reply")})
+    held_row = (await tier_rule_of_held(gw, character_id, tier)
+                if tier_row is None and tier is not None and tier >= TIER_RULE_MIN_TIER else None)
+    check_ran = chk.get("success") is True and isinstance(chk.get("engine_valid"), bool)
+    if tier_row is not None:
+        reqs.append(tier_row)
+        opt = chain_option(tier_row, tier)
+        if opt is not None:
+            # The de-jure titles of the tier the rule still lacks, not yet held (the goal line prices them)
+            kids = await dejure_unheld(gw, _nid, tkey, opt["tier"])
+            if kids is not None:
+                tier_row["dejure_unheld"] = [k["title_key"] for k in kids]
+    elif held_row is not None and held_row.get("met") is True:
+        # The rule counted from the titles he holds; the game's check, when it ran, listed no tier line either
+        reqs.append(dict(held_row, **({"game_check": "listed no 'Titles Required' line"} if check_ran else {})))
+    elif held_row is not None and check_ran:
+        # the count says unmet while the game's own check listed no tier line: the two disagree, so neither decides
+        reqs.append({"requirement": "tier_rule", "met": None, "rule": held_row.get("rule"),
+                     "unread": TIER_RULE_DISAGREE})
+    elif held_row is not None:
+        reqs.append(held_row)
+    elif tier is not None and tier >= TIER_RULE_MIN_TIER and check_ran:
+        # (after d_ulster, k_ireland's row read the tier rule unknown; the line had said "hold 2
+        # duchy titles (you hold 1)" a step before): the game's check lists only the requirements it fails, so a
+        # check that ran and listed no 'Titles Required' line passed the tier rule
+        reqs.append({"requirement": "tier_rule", "met": True, "rule": TIER_RULE_PASSED})
+    elif tier is not None and tier >= MINT_DEJURE_MIN_TIER:
+        reqs.append({"requirement": "tier_rule", "met": None, "unread": TIER_RULE_UNREAD})
+    row["requirements"] = reqs
+    pr = next((q for q in reqs if q.get("requirement") == "price"), {})
+    gc = next((q for q in reqs if q.get("requirement") == "game_check"), {})
+    if gc.get("met") is True and pr.get("met") is False and short is None:
+        # The game's own check passed while the price is not covered
+        row["game_ai_may_create"] = await ai_may_create(gw, character_id, tkey, pr)
+    if short is not None:
+        return row, why_blocked(
+            "de_jure_control",
+            summary=(f"hold {short.get('held', held)}/{short['need']} de-jure counties of {tkey} "
+                     f"({MINT_DEJURE_RULE}; counted via transitive vassals, NOT personal demesne)"),
+            measured=dict(row["measured"], requirements=reqs))
+    if blk is not None:
+        blk = dict(blk, measured=dict(blk.get("measured") or {}, requirements=reqs))
+    return row, blk
+
+
+#: What the price row says about the sources it cannot read
+PRICE_OTHER_SOURCES = ("culture traditions and innovations, the dynasty's legacies, the faith's holy sites, "
+                       "modifiers from events and activities")
+
+
+async def creation_price_basis(gw, character_id: int, tkey: str, cost: Any, ruler_id: int = 0) -> dict:
+    """A title's gold price for this ruler with where its discount comes from: the base by tier
+    (00_defines.txt CREATE_TITLE_GOLD_COST), his own perks and traits with a title_creation_cost_mult (they die
+    with him), his culture's ethos, and the rest (not read); then the price under his primary heir (the heir's
+    own perks and traits in place of his), and whether it rises at the succession. A part it cannot read is
+    said to be unread, never guessed."""
+    import event_prices as _ep  # noqa: PLC0415
+    tier = title_tier_of_key(tkey)
+    base_t = _ep.title_cost_base()
+    base = (base_t or {}).get("by_tier", {}).get(tier) if tier is not None else None
+    if not base or not isinstance(cost, (int, float)):
+        return {"unread": "the base price by tier (00_defines.txt CREATE_TITLE_GOLD_COST) was not read"}
+    me = _as_int(character_id)
+    total = round(float(cost) / base - 1.0, 4)
+    out: dict = {"base": base, "base_source": f"00_defines.txt CREATE_TITLE_GOLD_COST ({_TIER_WORD.get(tier, tier)})",
+                 "discount": round(-total, 4)}
+
+    async def own(cid: int) -> tuple[Optional[list], dict]:
+        ch = _char_section(await gw.read("query_character", {"character_id": cid}))
+        ls = await gw.read("query_lifestyle", {"character_id": cid})
+        perks = ls.get("perks") if isinstance(ls, dict) and isinstance(ls.get("perks"), list) else None
+        traits = [t.get("name") for t in ch.get("traits") or [] if isinstance(t, dict) and t.get("name")]
+        if perks is None or not ch:
+            return None, ch
+        return _ep.personal_creation_mults(perks, traits), ch
+    mine, ch = await own(me)
+    if mine is None:
+        out["sources_unread"] = "query_character or query_lifestyle did not answer: his perks and traits are unknown"
+        return out
+    cult = _ep.culture_creation_mult(ch.get("culture_key"))
+    named = mine + ([cult] if cult else [])
+    rest = round(total - sum(x["mult"] for x in named), 4)
+    out["sources"] = [dict(x, gold=round(base * x["mult"], 2)) for x in named]
+    if abs(rest) >= 0.005:
+        out["sources"].append({"source": "other (not read)", "mult": rest, "gold": round(base * rest, 2),
+                               "may_be": PRICE_OTHER_SOURCES})
+    _news.note_price_basis(me or _as_int(ruler_id), tkey, out)   # kept under the ruler's id (mint_title_price)
+    out["changes_it"] = ("a perk or trait with a title creation discount (each is his own: it dies with him), "
+                         "his culture's ethos, " + PRICE_OTHER_SOURCES)
+    succ = await gw.read("query_succession", {"character_id": me})
+    heir = _as_int(succ.get("primary_heir_id")) if isinstance(succ, dict) else None
+    if not heir:
+        out["at_succession"] = {"unread": "query_succession named no primary heir"}
+        return out
+    his, hch = await own(heir)
+    if his is None:
+        out["at_succession"] = {"heir_id": heir, "unread": "his perks and traits were not read"}
+        return out
+    if hch.get("culture_key") != ch.get("culture_key"):
+        out["at_succession"] = {"heir_id": heir, "unread": f"his culture ({hch.get('culture_key')}) is not yours: "
+                                                           "its discounts are not read"}
+        return out
+    floor = (base_t or {}).get("min_factor") or 0.0
+    f = 1.0 + total - sum(x["mult"] for x in mine) + sum(x["mult"] for x in his)
+    price = round(base * max(f, floor), 2)
+    at = {"heir_id": heir, "price": price, "his_own": [dict(x, gold=round(base * x["mult"], 2)) for x in his]}
+    lost = [x["key"] for x in mine if x["key"] not in {y["key"] for y in his}]
+    if price > float(cost) + 0.005:
+        at["rises"] = round(price - float(cost), 2)
+        at["why"] = (f"your own {', '.join(lost)} discount{'s' if len(lost) > 1 else ''} die{'' if len(lost) > 1 else 's'} "
+                     f"with you; create {tkey} before your death to pay {round(float(cost), 2)}") if lost else \
+            "his own discounts are smaller than yours"
+    elif price < float(cost) - 0.005:
+        at["falls"] = round(float(cost) - price, 2)
+    else:
+        at["same"] = True
+    at["assumes"] = "the same culture, faith and dynasty discounts (the same culture read); his own as read now"
+    out["at_succession"] = at
+    return out
+
+
+#: The most leaving titles a goal row's at_death names, and the de jure counties it lists for one
+AT_DEATH_MAX = 4
+AT_DEATH_SOURCE = ("succession_plan's partition forecast (partition_forecast_for) and levers.take_out_of_split, "
+                   "the price row's at_succession")
+
+
+def _county_keys(dj: Any) -> list:
+    kids = dj.get("de_jure_children") if isinstance(dj, dict) else None
+    return [str(k.get("key")) for k in kids or [] if isinstance(k, dict) and str(k.get("key") or "").startswith("c_")]
+
+
+async def goal_death_forecast(gw, me: int, row: dict) -> Optional[dict]:
+    """A recorded case (1079.12.16: Murchad died with d_ulster gold-only; the law created d_ulster for his son
+    Donnchad, who left the realm with three counties of k_ireland, and the price rose 325 -> 425; the forecast had
+    been one news row on page 2, discarded unread): what the goal title's chain loses at the ruler's death, on the
+    goal title's own formable_titles row, which the turn's goal line reads every turn. The forecast is succession_plan's
+    (partition_forecast_for); the levers are the ones that tool prices (vows, disinherit, the law), each with its call.
+    {ruler, leaves_realm, price_after, levers, source}, or None when the death takes nothing of the chain and does not
+    raise the price."""
+    tkey = row.get("title_key")
+    if not me or not isinstance(tkey, str) or tkey != _seat_events.goal_title() or _task_goal.peaceful():
+        return None
+    at = (row.get("price_basis") or {}).get("at_succession") if isinstance(row.get("price_basis"), dict) else None
+    rises = isinstance(at, dict) and _dg._num(at.get("rises")) is not None and _dg._num(at.get("price")) is not None
+    got = [await gw.read(a, {"character_id": me}) for a in
+           ("query_character", "query_realm_laws", "query_succession_simulation", "query_succession",
+            "query_title_succession_map")]
+    chr_raw, laws_raw, sim, succ, sp_raw = [x if isinstance(x, dict) else {} for x in got]
+    ruler = dict(_char_section(chr_raw), id=me)
+    msum = succession_verdict.map_summary(sp_raw)
+    sv = succession_verdict.verdict(sim, succ, msum)
+    names = _law_names(laws_raw)
+    fc, kids = await partition_forecast_for(gw, ruler, names, sv, sim, map_titles=msum.get("titles"))
+    age, health = ruler.get("age"), ruler.get("health")
+    est = _rd.estimate(age, health)
+    out: dict = {"ruler": {"age": age, "health": round(health, 2) if _dg._num(health) is not None else None,
+                           "act_now": _rd.poor(age, health),
+                           **({"dies_within_years": {"p25": est["years"]["p25"], "p50": est["years"]["p50"]}}
+                              if est else {})}}
+    if rises:
+        out["price_after"] = {"price": at["price"], "rises": at["rises"],
+                              "why": str(at.get("why") or "").split(";", 1)[0].strip()}
+    if fc.get("refused"):
+        out["partition_unread"] = fc["refused"]
+        return out if rises else None
+    dj = await gw.read("query_de_jure", {"title_key": tkey})
+    chain = {str(k.get("key")) for k in (dj or {}).get("de_jure_children") or [] if isinstance(k, dict)} \
+        if isinstance(dj, dict) else set()
+    if not chain:
+        out["goal_land_unread"] = f"query_de_jure {tkey} did not answer: every leaving share is listed"
+    keys = {t.get("title_id"): t.get("title_key") for t in msum.get("titles") or [] if isinstance(t, dict)}
+
+    async def in_goal(title: str, tid: Any) -> bool:
+        if not chain or title in chain:
+            return True
+        if not str(title).startswith("c_") or not _as_int(tid):
+            return False
+        t = _char_section(await gw.read("query_title_hierarchy", {"title_id": _as_int(tid)})).get("title") or {}
+        pid = _as_int(t.get("de_jure_parent_id")) if isinstance(t, dict) else None
+        p = _char_section(await gw.read("query_title_hierarchy", {"title_id": pid})).get("title") if pid else None
+        return isinstance(p, dict) and p.get("key") in chain       # a county of one of the goal's de jure duchies
+    leaves = []
+    for s in fc.get("younger_shares") or []:
+        if not isinstance(s, dict) or s.get("fate") != "leaves_realm":
+            continue
+        tt = s.get("takes_title") if isinstance(s.get("takes_title"), dict) else {}
+        tid = tt.get("title_id") or next((t for t in s.get("takes") or [] if keys.get(t)), None)
+        title = tt.get("title") or keys.get(tid)
+        if not title or not await in_goal(str(title), tid):
+            continue                     # a share outside the goal title's de jure land: not the goal chain's
+        r = {"to": s.get("id"), **({"name": s["name"]} if s.get("name") else {}), "takes": title}
+        if tt.get("created"):
+            r["created_by_the_law"] = True
+        cn = tt.get("counties") if isinstance(tt.get("counties"), dict) else None
+        if cn:
+            r["counties"] = cn
+            if cn.get("in_your_realm") and cn.get("in_your_realm") == cn.get("of") and str(title).startswith("d_"):
+                ck = _county_keys(await gw.read("query_de_jure", {"title_key": title}))
+                if len(ck) == cn["of"]:
+                    r["county_keys"] = ck
+        leaves.append(r)
+        if len(leaves) >= AT_DEATH_MAX:
+            break
+    if not leaves and not rises:
+        return None
+    if leaves:
+        out["leaves_realm"] = leaves
+        out["levers"] = await _death_levers(gw, ruler, fc, kids, msum, names, {x["to"] for x in leaves})
+    out["source"] = AT_DEATH_SOURCE
+    return out
+
+
+async def _death_levers(gw, ruler: dict, fc: dict, kids: list, msum: dict, law_names: list, sons: set) -> list:
+    """Succession_plan's own levers for the sons who leave with goal titles (vows, disinherit: the game's check
+    of each send, its price) and the succession law's, compact: {lever, son, allowed_now, why_not, call}."""
+    me = _as_int(ruler.get("id"))
+    checks: dict = {}
+    for it in ("disinherit_interaction", "take_vows_interaction"):
+        r = await gw.read("query_interaction_check", {"actor_id": me, "interaction_type": it,
+                                                      "candidates": sorted(sons)})
+        for c in ((r or {}).get("result") or {}).get("results") or [] if isinstance(r, dict) else []:
+            if isinstance(c, dict) and _as_int(c.get("target_id")):
+                checks[(it, _as_int(c["target_id"]))] = c
+    dyn_id = _as_int(ruler.get("dynasty_id"))
+    dyn = await gw.read("query_dynasty", {"dynasty_id": dyn_id, "character_id": me}) if dyn_id else None
+    heirs_of = {_as_int(t.get("projected_heir_id")) for t in msum.get("titles") or [] if isinstance(t, dict)}
+    heirs_of |= {_as_int(x.get("id")) for x in fc.get("younger_shares") or []
+                 if x.get("takes") or x.get("fate") in ("leaves_realm", "stays_vassal")}
+    rows = _pf.lever_rows(fc, fc.get("_inputs") or {}, ruler=ruler, dynasty=dyn, children=kids, checks=checks,
+                          title_heirs=heirs_of) or {}
+    out = []
+    for lever in ("disinherit", "vows"):
+        for r in rows.get(lever) or []:
+            if r.get("son_id") not in sons:
+                continue
+            out.append({"lever": lever, "son": r.get("son_id"), "allowed_now": r.get("allowed_now"),
+                        **({"why_not": (r.get("why_not") or [])[:1]} if r.get("why_not") else {}),
+                        # The son's own answer decides a vows ask; the send check's pre-answer when read
+                        **({"he_decides": True} if r.get("he_decides") else {}),
+                        **{k: r[k] for k in ("answer", "accept_score", "chance_pct") if k in r},
+                        "price": r.get("price"), "call": r.get("call")})
+    law = await _succession_law_lever(gw, ruler, law_names)
+    if law:
+        #
+        # every condition law_reach finds missing, in its words
+        out.append({"lever": "law", "law": law["law"], "allowed_now": law.get("allowed_now"),
+                    **({"why_not": list(law["needs"])} if law.get("needs") else {}),
+                    "price": law.get("price"), "call": law.get("call")})
+    return out
+
+
+async def ai_may_create(gw, character_id: int, tkey: str, price_req: dict) -> dict:
+    """A recorded case: the game's own check for creating `tkey` passed while the price row
+    says the ruler cannot pay. Which of the game's conditions for skipping its gold test the reads
+    show (news.AI_CREATE_RULE: count tier, over the domain limit, a duchy), the debt the price
+    would leave, and the lever (news.ai_create_lever). Says what was not read, never guesses."""
+    me = _as_int(character_id)
+    realm = await gw.read("query_realm", {"character_id": me}) if me else None
+    realm = realm if isinstance(realm, dict) else {}
+    chr_ = _char_section(await gw.read("query_character", {"character_id": me})) if me else {}
+    size, limit = _as_int(realm.get("domain_size")), _as_int(realm.get("domain_limit"))
+    tier = chr_.get("ruler_tier") if isinstance(chr_.get("ruler_tier"), int) else None
+    cond = {"title_is_duchy": title_tier_of_key(tkey) == 3,
+            "your_highest_tier_is_county": (tier == 2) if tier is not None else None,
+            "over_domain_limit": (size > limit) if realm.get("domain_size") is not None
+            and realm.get("domain_limit") is not None else None}
+    out: dict = {"why": _news.AI_CREATE_RULE, "conditions": cond,
+                 "domain": {"counties_you_hold": size if realm.get("domain_size") is not None else None,
+                            "limit": limit if realm.get("domain_limit") is not None else None}}
+    if all(v is True for v in cond.values()):
+        out["matches"] = True
+    elif any(v is None for v in cond.values()):
+        out["matches"] = None
+        out["unread"] = [k for k, v in cond.items() if v is None]
+    else:
+        out["matches"] = False
+        out["note"] = ("the game's check passed while the price is not covered, and the reads do not show "
+                       "the rule above holding: the reason is not read")
+    cost, have = _f(price_req.get("cost")), _f(price_req.get("have"))
+    out["debt_if_created"] = round(have - cost, 2)
+    out["lever"] = _news.ai_create_lever(tkey)
+    return out
+
+
+async def mint_title_price(gw, character_id: int, tkey: str, chk_out: Optional[dict] = None,
+                           chk: Optional[dict] = None, ruler_id: int = 0) -> tuple[Optional[dict], Optional[dict]]:
+    """A recorded case: the game's own answer to "can this ruler
     create tkey now, and at what price?" — query_create_title_cost, which runs the
     create-title command's IsValid (with its reasons) and the engine's cost function
     in the currency the engine charges, and reads what the ruler holds of it.
@@ -6696,9 +11627,15 @@ async def mint_title_price(gw, character_id: int, tkey: str) -> tuple[Optional[d
       * neither could be read           -> mint_cost_unverified (never sent: an
         unpriced mint is how k_ireland was created at 17.85 gold)
     One definition: do(intent="mint_title") and do(action_class="formable_titles")
-    both call this."""
-    chk = await _read_dict(gw, "query_create_title_cost",
-                           {"actor_id": character_id, "title_key": tkey})
+    both call this. `chk`: the query_create_title_cost reply when the caller read it. `ruler_id`: the ruler's own
+    id when `character_id` is 0 (the bound ruler): the price read is kept under his id, never under 0 (the
+    ruler-change briefing read "no price read under your late ruler" when every read of his had gone out as 0)."""
+    if chk is None:
+        chk = await _read_dict(gw, "query_create_title_cost",
+                               {"actor_id": character_id, "title_key": tkey})
+    chk = chk if isinstance(chk, dict) else {}
+    if chk_out is not None:
+        chk_out.update(chk)
     ok = chk.get("success") is True
     price = chk.get("price") if isinstance(chk.get("price"), dict) else {}
     known = ok and price.get("known") is True
@@ -6707,6 +11644,9 @@ async def mint_title_price(gw, character_id: int, tkey: str) -> tuple[Optional[d
         cur = str(price.get("currency") or "gold")
         cost, have = round(_f(price.get("cost")), 2), round(_f(price.get("have")), 2)
         measured = {"currency": cur, "cost": cost, cur: have}
+        # The last price read, for the purse when the title is created for him
+        _news.note_creation_price(_as_int(character_id) or _as_int(ruler_id), tkey, cur, cost,
+                                  (gw.game() or {}).get("date"))
         if price.get("affordable") is False or have < cost:
             return why_blocked("cannot_afford",
                                summary=f"creating {tkey} costs {cost:.2f} {cur}; you have {have:.2f}",
@@ -6745,9 +11685,9 @@ CONFIRMABLE_WRITES = {"mint_title"}
 async def _confirm_intent_write(gw, intent: str, bridge_action: str, bridge_params: dict,
                                 args: dict, character_id: int, actor: dict,
                                 warnings: list) -> dict[str, Any]:
-    """Dispatch a CONFIRMABLE_WRITES do() intent and resolve it by readback (#113)."""
+    """Dispatch a CONFIRMABLE_WRITES do() intent and resolve it by readback."""
     if intent == "mint_title":
-        tkey = args.get("title_key") or args.get("title")
+        tkey = args.get("title_key")
 
         async def _title_held(raw) -> Optional[dict]:
             # applied proof: the ruler now HOLDS the title, read off the title itself
@@ -6755,12 +11695,12 @@ async def _confirm_intent_write(gw, intent: str, bridge_action: str, bridge_para
             # writes `action` and `title_id` for every title it found and
             # `current_holder_id` only for a held one, line 12126) by the title_id the
             # create_title reply names. Never de-jure control: holding every de-jure
-            # county is the mint's PRECONDITION, not its product (B-1). Never
+            # county is the mint's PRECONDITION, not its product. Never
             # query_realm's primary title: a king who mints a duchy keeps his kingdom
             # primary, and query_realm carries no titles list (l14h geval, 2026-10-31:
             # Lothaire II minted d_bar, the drain ran it, his gold fell by the price, and
             # that readback saw nothing -> "rejected"). A reading that could not be made
-            # is UNREAD, never "not held" (N4-2: the same defect by another
+            # is UNREAD, never "not held" (the same defect by another
             # door); settle_write then answers pending, drains_when "readback".
             tid = _as_int(raw.get("title_id")) if isinstance(raw, dict) else 0
             if tid <= 0:
@@ -6768,7 +11708,10 @@ async def _confirm_intent_write(gw, intent: str, bridge_action: str, bridge_para
             t = await _read_dict(gw, "query_title_succession", {"title_id": tid})
             if not isinstance(t, dict) or ("title_id" not in t and "action" not in t):
                 return UNREAD
-            if _as_int(t.get("current_holder_id")) == _as_int(character_id):
+            # The resolved ruler, not the seat's character_id argument (0 in the bare
+            # call every reply offers: live, k_ireland created and this read "not held", the seat
+            # told `rejected`, write_unconfirmed)
+            if _as_int(t.get("current_holder_id")) == dispatch_actor_of(character_id, actor):
                 return {"title_held": tkey, "title_id": tid, "via": "title_holder"}
             return None
 
@@ -6781,7 +11724,7 @@ async def _confirm_intent_write(gw, intent: str, bridge_action: str, bridge_para
         # outrank the game's no.
         reason = conf.get("refused") or reply_refusal(raw)
         if reason:
-            counts = _parse_dejure_counts(reason)
+            counts = _parse_dejure_counts(reason, tkey)
             blk = write_blocked(reason, conf=conf if conf.get("refused") else None, raw=raw)
             if counts is not None:
                 blk["measured"] = counts
@@ -6813,7 +11756,7 @@ async def _confirm_intent_write(gw, intent: str, bridge_action: str, bridge_para
                                 "sent": conf.get("sent")},
                         warnings=warnings, bridge_health=gw.health)
 
-    # Only CONFIRMABLE_WRITES route in, and each has its branch above. (Until
+    # Only CONFIRMABLE_WRITES route in, and each has its branch above. (At first
     # an unhandled intent fell through to a bare write reported "applied" whatever
     # the bridge answered.)
     raise ValueError(f"_confirm_intent_write: no confirmation for intent {intent!r}")
@@ -6861,9 +11804,9 @@ async def _do_scheme(gw, bridge_action: str, bridge_params: dict, actor: dict,
     the bridge's cancel and the read after it is `applied`, with that scheme under
     result.id_reused_by. That case is covered by the unit test
     test_scheme_routes.py::test_a_freed_id_given_to_a_new_scheme_is_not_the_cancelled_scheme
-    only; no live867 row reaches it. The reuse has to land inside this one call,
+    only; no row reaches it. The reuse has to land inside this one call,
     after the write and before the read, and only the game's own AI makes it land
-    there (run w-l3-schemes-1 saw it once, on learn_language, id 152): a scenario
+    there (a scheme test run saw it once, on learn_language, id 152): a scenario
     that cancels, starts a second scheme that takes the freed id, and cancels again
     sees two ordinary cancels, because its own start comes after the first call's
     read and before the second call's first read."""
@@ -6984,7 +11927,7 @@ async def _do_scheme(gw, bridge_action: str, bridge_params: dict, actor: dict,
     readable = isinstance(after, dict) and isinstance(after.get("schemes"), list)
     if not readable:
         # The write ran (the bridge or the drain said so) and its list could not
-        # be read: pending readback, ok:true, never rejected (ruling).
+        # be read: pending readback, ok:true, never rejected.
         return envelope("do", verdict="pending", actor=actor, game=gw.game(),
                         pending=write_pending(
                             "readback", game_date_at_submit=submitted_on,
@@ -7196,7 +12139,7 @@ async def scheme_targets_impl(gw, scheme: str, character_id: int = 0, target_id:
 #: (common/character_interactions/06_ep3_scheme_interactions.txt): a landless
 #: adventurer's contract scheme, never a landed ruler's. A landed ruler's claim on a
 #: The council seat task_fabricate_claim is printed and evaluated on (dump
-#: ck3_20260625_152901_ivar867: tasktype+0x30 -> councillor_court_chaplain). One
+#: the 867 start dump: tasktype+0x30 -> councillor_court_chaplain). One
 #: definition: the fabricate_targets rows' do_call and its empty reply name it.
 FABRICATE_CLAIM_SEAT = "court_chaplain"
 
@@ -7228,6 +12171,13 @@ def title_scheme_blocked(scheme: str, raw_reason: str = TITLE_SCHEME_REASON) -> 
         fix=TITLE_CLAIM_DOOR)
 
 
+#: the bridge's cancel_intent refusal (action_handlers.cpp do_cancel_intent) and what it means
+CANCEL_NOT_QUEUED = "not_found_or_already_consumed"
+CANCEL_NOT_QUEUED_WHY = ("the bridge's queue no longer holds this id: the game already ran the write (a pending "
+                         "whose drains_when is clock_advances ran and only its answer is awaited), or it was never "
+                         "queued; nothing is left to withdraw")
+
+
 async def _do_cancel_pending(gw, a: dict, actor: dict) -> dict[str, Any]:
     """Withdraw one queued write by its request id (the bridge's cancel_intent)."""
     rid = str(a.get("request_id") or a.get("poll_token") or "")
@@ -7248,16 +12198,22 @@ async def _do_cancel_pending(gw, a: dict, actor: dict) -> dict[str, Any]:
                         bridge_health=gw.health)
     if reply_refusal(raw):
         reason = str(raw.get("reason") or raw.get("error") or "not_found")
+        blocked = write_blocked(reason, summary=f"cancel of {rid} refused: {reason}", raw=raw)
+        if reason == CANCEL_NOT_QUEUED:
+            # (cancel_pending on the intent_id a call_ally reply's pending block gave, a write
+            # whose drains_when was clock_advances, read "the name given does not exist in the game's database"):
+            # the bridge's queue holds a write only until the game runs it, the next tick
+            blocked["why"] = CANCEL_NOT_QUEUED_WHY
+            blocked["next"] = {"tool": "inspect", "args": {"subject": "pending"}}
         return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                         result={"intent": _CANCEL_PENDING_INTENT, "request_id": rid, "raw": raw},
-                        blocked=write_blocked(reason, summary=f"cancel of {rid} refused: {reason}", raw=raw),
-                        bridge_health=gw.health)
+                        blocked=blocked, bridge_health=gw.health)
     return envelope("do", verdict="applied", actor=actor, game=gw.game(),
                     result={"intent": _CANCEL_PENDING_INTENT, "request_id": rid, "raw": raw},
                     bridge_health=gw.health)
 
 
-# --------------------------------------------------------------------------- war intents (F8)
+# --------------------------------------------------------------------------- war intents
 #: do(intent="make_peace") terms → the end-war interaction the seat sends, by the
 #: side the seat leads. The game names all three from the attacker's view
 #: (common/character_interactions/00_war.txt): a DEFENDER who surrenders sends
@@ -7287,17 +12243,17 @@ WAR_INTENTS: frozenset = frozenset({"make_peace", "call_ally", "join_war"})
 
 #: THE LEVER TABLE: per write lever, the server's readback and WHEN its effect
 #: or the recipient's answer shows. ONE definition for the do() tail, the war
-#: intents and the live867 scenarios; levers.md "When the answer shows"
+#: intents and the scenarios; levers.md "When the answer shows"
 #: restates it. Key (intent, sub): sub is the interaction for interact, the
 #: terms for make_peace, the scope for change_law, "" otherwise; ("interact",
 #: "*") is every interaction not named. A drain "success" means the write was
 #: SENT; `applied` needs the readback (settle_write).
-#:   shows "on_execute": the effect, or the recipient's answer, is visible after
-#:       the dispatch pass, so stage 1 reads it back in either clock state and
-#:       no day is waited. Still absent after the pass: `absent` says what that
-#:       is: "declined" (the recipient said no: rejected recipient_refuses) or
-#:       "unconfirmed" (a command that should have landed: rejected
-#:       write_unconfirmed, with what was read).
+#:   shows "on_execute": the effect is visible after the dispatch pass, so stage 1
+#:       reads it back in either clock state and no day is waited. Still absent
+#:       after the pass: `absent` "unconfirmed" (a command that should have
+#:       landed: rejected write_unconfirmed, with what was read). An answer by
+#:       another ruler is never on_execute (an AI's yes landed a step
+#:       after the pass): "declined" is not a value, a sent offer is pending.
 #:   shows "days": the answer comes on a later day: stage 2, polled while the
 #:       clock runs, pending clock_advances paused (result.sent), never a refusal.
 #:   readback None: the server reads nothing back; the write is pending
@@ -7313,22 +12269,22 @@ WAR_INTENTS: frozenset = frozenset({"make_peace", "call_ally", "join_war"})
 LEVERS: dict[tuple, dict] = {
     ("make_peace", "surrender"): {
         "shows": "days", "readback": "the war-end ledger (query_war_history)",
-        "evidence": "live867 l13ff2a-p/r war_defender, war_lifecycle: applied in the call; a "
-                    "surrender cannot be refused, so a missing ledger row waits as days"},
+        "evidence": "applied in the call; a surrender cannot be refused, so a missing ledger row "
+                    "waits as days"},
     ("make_peace", "white_peace"): {
         "shows": "days", "readback": "the war-end ledger (query_war_history)",
-        "evidence": "live867 l13ff2a-p war_outcomes: all 31 sent offers ended white_peace 3-10 "
-                    "days after the send; l13ff2a-r: applied by the stage-2 poll in 3-8 s"},
+        "evidence": "the enemy's AI answers an offer some days after the send; an accepted offer ends "
+                    "the war white_peace, and the stage-2 poll can see it applied within seconds"},
     ("make_peace", "enforce_demands"): {
         "shows": "days", "readback": "the war-end ledger (query_war_history)",
-        "evidence": "unproven, treated as days (both runs: applied in the call at 100 war score, "
-                    "the game's auto_accept; no in-call refusal seen past the pre-check)"},
+        "evidence": "unproven, treated as days (at 100 war score the game's auto_accept applies it in "
+                    "the call; no in-call refusal is known past the pre-check)"},
     ("call_ally", ""): {
-        "shows": "on_execute", "absent": "declined",
+        "shows": "days",
         "readback": "the ally on the leader's side of the war (query_wars all, verbose)",
-        "evidence": "live867 l13ff2a-p/r call_allies: applied in the call. PROVEN FOR ACCEPT "
-                    "ONLY: no refusal has been observed, so an ally whose yes landed after the "
-                    "stage-1 re-reads would read as declined"},
+        "evidence": "applied in the call, or later: the drain can say success while the ally joins "
+                    "the war's attackers only a step after the pass, so a yes can land after the "
+                    "pass: sent is pending, never a refusal"},
     ("join_war", ""): {
         "shows": "days", "readback": "the joiner on the leader's side of the war",
         "evidence": "unproven, treated as days"},
@@ -7341,56 +12297,56 @@ LEVERS: dict[tuple, dict] = {
         "shows": "on_execute", "absent": "unconfirmed",
         "readback": "the title's own laws (query_title_succession title_laws)",
         "evidence": "set_title_law queues the title-law window's command, executed on the next "
-                    "pass (action_handlers.cpp do_set_title_law); live867 l4_succession_levers "
-                    "_title_law reads title_laws within passes, no advance"},
+                    "pass (action_handlers.cpp do_set_title_law); title_laws reads it within "
+                    "passes, no advance"},
     ("interact", "gift_interaction"): {
         "shows": "on_execute", "absent": "unconfirmed",
         "readback": "the exact amount: the sender's gold fell by what the recipient's rose, "
                     "within one game day (query_character gold and game_date, both sides)",
-        "evidence": "live867 l6_gift: both purses move within passes of the send, no advance"},
+        "evidence": "both purses move within passes of the send, no advance"},
     ("interact", "disinherit_interaction"): {
         "shows": "days", "readback": None,
-        "evidence": "the game applies an own-court interaction on a daily tick (live867 _l4 "
-                    "OWN_DAYS; l4_succession_levers reads it back over days)"},
+        "evidence": "the game applies an own-court interaction on a daily tick, so it reads back "
+                    "over days"},
     ("interact", "designate_heir_interaction"): {
         "shows": "days", "readback": None,
-        "evidence": "own-court, applied on a daily tick (live867 _l4 OWN_DAYS, l4_succession_levers)"},
+        "evidence": "own-court, applied on a daily tick"},
     ("interact", "grant_titles_interaction"): {
         "shows": "days",
         "readback": "the title's current holder is the recipient (query_title_succession "
                     "current_holder_id)",
-        "evidence": "L14 minor 9: live eval-paused/running and evalc-paused/running (L13 bridge): the "
-                    "grant to an own courtier read back with no day passed (paused, tick 4 both "
-                    "sides) and running; kept `days` so a holder not yet changed after the pass "
-                    "waits for the clock instead of reading as refused (the l4 proof's declaration, "
-                    "_l4 OWN_DAYS, names no measured day)"},
+        "evidence": "a grant to an own courtier can read back with no day passed, paused or "
+                    "running; `days` so a holder not yet changed after the pass waits for the "
+                    "clock instead of reading as refused"},
     ("interact", "arrange_marriage_interaction"): {
-        "shows": "days", "readback": None,
-        "evidence": "own-court, applied on a daily tick (live867 _l4 OWN_DAYS, l4_send_options)"},
+        "shows": "days",
+        "readback": ("the spouse-to-be among the secondary actor's spouses, or his betrothed "
+                     "(query_character of secondary_actor_id)"),
+        "evidence": "own-court, applied on a daily tick (the bride's spouses list the groom, a "
+                    "child's betrothed names the partner); another court's ruler answers in days, "
+                    "and the spouse can take more than a year to arrive at your court"},
     ("interact", "revoke_title_interaction"): {
         "shows": "days", "readback": None,
-        "evidence": "a vassal's AI answers in 4-9 days (ai_min/max_reply_days; live867 "
-                    "l4_succession_levers REPLY_DAYS)"},
+        "evidence": "a vassal's AI answers in 4-9 days (ai_min/max_reply_days)"},
     ("interact", "negotiate_alliance_interaction"): {
         "shows": "days", "readback": None,
-        "evidence": "the AI answers in 4-9 days (live867 l5_call_allies reads the alliance over days)"},
+        "evidence": "the AI answers in 4-9 days, so the alliance reads back over days"},
     ("faction", "*"): {
         "shows": "on_execute", "absent": "unconfirmed",
         "readback": "the faction's member list on its liege, or the leader's demand row "
                     "(factions._second_read; needs the faction the reply names)",
-        "evidence": "live867 l10_factions_liege / l10_factions_vassal: create, join, leave and "
-                    "press_demand read back in the same call"},
+        "evidence": "create, join, leave and press_demand read back in the same call, for a liege "
+                    "and for a vassal"},
     ("scheme", "*"): {
         "shows": "on_execute", "absent": "unconfirmed",
         "readback": "the owner's scheme list (query_schemes; _do_scheme's second read)",
-        "evidence": "live867 l3_schemes_matrix: start and cancel read back in the same call"},
+        "evidence": "start and cancel read back in the same call"},
     ("steer", ""): {
         "shows": "on_execute", "absent": "unconfirmed",
         "readback": "the axes as the bridge reads them back after the write "
                     "(set_ai_personality's own reply, else get_ai_personality)",
         "evidence": "personality.cpp do_set_ai_personality writes the bytes and the locks in "
-                    "the call and reads the axes back into its reply; live eval-paused/running "
-                    "steer write read back in the same call"},
+                    "the call and reads the axes back into its reply, paused or running"},
     ("interact", "*"): {
         "shows": "days", "readback": None,
         "evidence": "unproven, treated as days"},
@@ -7415,7 +12371,7 @@ def lever_of(intent: str, bridge_params: dict = None, *, sub: str = None) -> tup
         if key in LEVERS:
             row = LEVERS[key]
             if row["shows"] not in ("on_execute", "days") or row.get("absent") not in (
-                    None, "declined", "unconfirmed"):
+                    None, "unconfirmed"):
                 raise ValueError(f"LEVERS{key} is malformed: {row}")
             return key, row
     raise KeyError((intent, sub))
@@ -7423,13 +12379,8 @@ def lever_of(intent: str, bridge_params: dict = None, *, sub: str = None) -> tup
 
 def lever_absent_block(lever: dict, what: str) -> dict:
     """THE refusal of an "on_execute" lever whose effect is still absent after the
-    dispatch pass ran it: the LEVERS row's `absent` says which ("declined" ->
-    recipient_refuses, "unconfirmed" -> write_unconfirmed). One builder for the
-    do() tail and the mint (_confirm_intent_write)."""
-    if lever.get("absent") == "declined":
-        return why_blocked("recipient_refuses", raw_reason="recipient_declined_on_execute",
-                           summary=f"the recipient declined: {what} did not happen when the "
-                                   "game ran it (the game gives no reason text)")
+    dispatch pass ran it (write_unconfirmed). One builder for the do() tail and the
+    mint (_confirm_intent_write)."""
     return why_blocked("write_unconfirmed", raw_reason="readback_after_drain_absent",
                        summary=(f"the drain ran it and {lever.get('readback')} does not "
                                 "show it after the pass"),
@@ -7460,7 +12411,7 @@ GIFT_TOLERANCE = 0.05
 
 
 async def _gift_landed(gw, p: dict, before: dict) -> Optional[dict]:
-    """The gift's EXACT amount read back (m1): the sender's purse fell
+    """The gift's EXACT amount read back: the sender's purse fell
     by what the recipient's rose, with no game day between the two readings (a
     daily tick can pay either side income or take an expense, which a "the
     sender's gold fell" proxy reads either way). A day between them, or a purse
@@ -7468,7 +12419,7 @@ async def _gift_landed(gw, p: dict, before: dict) -> Optional[dict]:
     income. Stage 1 reads again (a later after-pair can share the before-pair's
     date only if no day passed since the send); still unread when the schedule
     ends, the gift that ran is pending drains_when "readback", ok:true, never
-    rejected (ruling). Paused, no day passes and the reading is always made."""
+    rejected. Paused, no day passes and the reading is always made."""
     now = await _purses(gw, p)
     b = before or {}
     vals = (b.get("sender"), b.get("recipient"), now["sender"], now["recipient"])
@@ -7498,13 +12449,88 @@ async def _title_law_landed(gw, p: dict, before: dict) -> Optional[dict]:
 
 
 async def _grant_landed(gw, p: dict, before: dict) -> Optional[dict]:
-    """The granted title's holder is the recipient (minor 9: read once before
+    """The granted title's holder is the recipient (read once before
     answering; the evaluator saw it land with no day passed)."""
     t = await _read_dict(gw, "query_title_succession", {"title_id": _as_int(p.get("title_id"))})
     if "current_holder_id" not in t:
         return UNREAD
     holder, to = _as_int(t.get("current_holder_id")), _as_int(p.get("target_id"))
     return {"title_id": _as_int(p.get("title_id")), "holder_id": holder} if to and holder == to else None
+
+
+def _marriage_pair(p: dict) -> tuple:
+    """(your side, the spouse-to-be) of a marriage send: the two secondaries, the
+    game's own pair (00_marriage_interactions.txt). (0, 0) when either is unnamed."""
+    sa, sr = _as_int(p.get("secondary_actor_id")), _as_int(p.get("secondary_recipient_id"))
+    return (sa, sr) if sa and sr else (0, 0)
+
+
+def _marriage_ties(c: dict, partner: int) -> Optional[dict]:
+    """{spouses, betrothed} of a query_character reply as ids, or None when the reply
+    carries neither field (not read)."""
+    if not isinstance(c, dict) or ("spouses" not in c and "betrothed" not in c):
+        return None
+    sp = [_as_int(x.get("id")) for x in (c.get("spouses") or []) if isinstance(x, dict)]
+    bet = c.get("betrothed") if isinstance(c.get("betrothed"), dict) else {}
+    return {"married": partner in sp, "betrothed": _as_int(bet.get("id")) == partner,
+            "matrilineal": next((x.get("matrilineal") for x in (c.get("spouses") or [])
+                                 if isinstance(x, dict) and _as_int(x.get("id")) == partner),
+                                bet.get("matrilineal") if _as_int(bet.get("id")) == partner else None)}
+
+
+async def _marriage_allied(gw, p: dict) -> Optional[bool]:
+    """Whether the arranging ruler (actor_id) is allied to the recipient
+    (target_id), from query_alliances; None when not read or the two are one."""
+    me, them = _as_int(p.get("actor_id")), _as_int(p.get("target_id"))
+    if not me or not them or me == them:
+        return None
+    al = await _read_dict(gw, "query_alliances", {"character_id": me})
+    if not isinstance(al, dict) or not isinstance(al.get("alliances"), list):
+        return None
+    return any(_as_int(x.get("ally_id")) == them for x in al["alliances"] + (al.get("forced_allies") or [])
+               if isinstance(x, dict))
+
+
+async def _marriage_before(gw, p: dict) -> dict:
+    sa, sr = _marriage_pair(p)
+    if not sa:
+        return {}
+    return {"ties": _marriage_ties(await _read_dict(gw, "query_character", {"character_id": sa}), sr),
+            "allied": await _marriage_allied(gw, p)}
+
+
+async def _marriage_landed(gw, p: dict, before: dict) -> Optional[dict]:
+    """The marriage (or a child's betrothal) read back on the secondary
+    actor, the lever's own readback (a test run, l4_send_options reads the same fields).
+    A tie that was already there before the send is not this send's effect: a
+    betrothal held before counts only once it became a marriage. A send that names no
+    pair has nothing to read: None, pending as before."""
+    sa, sr = _marriage_pair(p)
+    if not sa:
+        return None
+    now = _marriage_ties(await _read_dict(gw, "query_character", {"character_id": sa}), sr)
+    if now is None:
+        return UNREAD
+    was = (before or {}).get("ties") or {}
+    if now["married"] and not was.get("married"):
+        tie = "married"
+    elif now["betrothed"] and not was.get("betrothed") and not was.get("married"):
+        tie = "betrothed"
+    else:
+        return None
+    out = {"secondary_actor_id": sa, "secondary_recipient_id": sr, "tie": tie,
+           "matrilineal": now["matrilineal"]}
+    # The alliance, read (query_alliances of the arranging ruler), never assumed
+    allied = await _marriage_allied(gw, p)
+    them = _as_int(p.get("target_id"))
+    if allied is None:
+        out["alliance"] = {"with": them or None, "read": False,
+                           "why": "own court: no alliance" if _as_int(p.get("actor_id")) == them
+                           else "query_alliances did not answer"}
+    else:
+        out["alliance"] = {"with": them, "allied": allied, "before": (before or {}).get("allied"),
+                           "read": True}
+    return out
 
 
 #: The do() tail's readbacks, by LEVERS key: (read before the send or None, the
@@ -7515,6 +12541,7 @@ LEVER_READBACKS: dict[tuple, tuple] = {
     ("interact", "gift_interaction"): (_gift_before, _gift_landed),
     ("change_law", "title"): (None, _title_law_landed),
     ("interact", "grant_titles_interaction"): (None, _grant_landed),
+    ("interact", "arrange_marriage_interaction"): (_marriage_before, _marriage_landed),
 }
 
 
@@ -7535,6 +12562,40 @@ def _war_view(w: dict) -> dict:
             "defenders": [_as_int(x) for x in (w.get("defenders") or [])]}
 
 
+#: (prestige fell 73, 134.5 and 287.6 beyond the price in the three
+#: declare steps where an ally joined the seat's war): calling an ally into a war you ATTACK
+#: in costs you prestige by his primary title's tier when he accepts
+#: (common/scripted_effects/00_interaction_effects.txt call_ally_interaction_event_effect:
+#: barony 10, county minor_prestige_loss 75, duchy medium 150, kingdom major 350, empire
+#: massive 750; 00_basic_values.txt; the effect has no branch for a hegemon, so 0); a call to a war you defend
+#: costs nothing.
+CALL_ALLY_PRESTIGE = {1: 10, 2: 75, 3: 150, 4: 350, 5: 750, 6: 0}
+CALL_ALLY_SOURCE = ("the game's call_ally_interaction_event_effect (00_interaction_effects.txt): charged "
+                    "to the war's attacker when the ally joins, by his primary title's tier (none for a hegemon); "
+                    "a blood brother costs nothing, and a mandala ruler's tributary costs piety instead")
+
+
+def call_ally_cost(tier: Any, side: Optional[str]) -> Optional[int]:
+    """The prestige a joining ally costs the caller (negative), 0 on the defending side, None
+    when his tier or your side is not read."""
+    if side == "defender":
+        return 0
+    if side != "attacker" or not isinstance(tier, int) or isinstance(tier, bool):
+        return None
+    c = CALL_ALLY_PRESTIGE.get(tier)
+    return -c if c is not None else None
+
+
+async def call_ally_price(gw, ally_id: int, side: Optional[str]) -> dict:
+    tier = _tier_of(_char_section(await gw.read("query_character", {"character_id": _as_int(ally_id)})))
+    c = call_ally_cost(tier or None, side)
+    if c is None:
+        return {"prestige": "unknown", "why": "his primary title's tier was not read"}
+    return {"prestige": c, "when": ("when he joins" if c else "a call to a war you defend costs nothing"
+                                    if side == "defender" else "the effect charges nothing for his tier"),
+            "source": CALL_ALLY_SOURCE}
+
+
 async def _all_wars(gw) -> list:
     """Every active war (query_wars all=true, verbose: leaders + participants). A
     character's own war list can miss a war he fights, so wars are found here."""
@@ -7548,9 +12609,412 @@ def _intent_outcome(results_raw, rid: str) -> Optional[dict]:
     return None
 
 
+#: The bridge's maa_disband
+#: (the game's CDestroyMAARegimentCommand, re/findings/re_maa_disband.md), built, not proven live
+MAA_DISBAND_UNPROVEN = "built, not proven live: the game's own regiment disband (CDestroyMAARegimentCommand)"
+MAA_DISBAND_REFUSALS = {"regiment_id_required": "missing_required_argument", "regiment_not_found": "name_not_found",
+                        "regiment_not_owned": "invalid_argument", "refused_by_game": "engine_refused"}
+
+
+async def _maa_regiments_of_type(gw, actor_id: Any, maa_type: str) -> tuple[Optional[list], list]:
+    """(the ids of the ruler's own regiments of `maa_type`, every type he fields) from query_levy_readiness
+    (the read query(domain='levy_readiness') shows); (None, []) when it did not answer."""
+    raw = await gw.read("query_levy_readiness", {"character_id": _as_int(actor_id)})
+    regs = raw.get("regiments") if isinstance(raw, dict) else None
+    if not isinstance(regs, list):
+        return None, []
+    mine = [r for r in regs if isinstance(r, dict) and r.get("type") not in (None, "levy") and _as_int(r.get("regiment_id"))]
+    return ([_as_int(r["regiment_id"]) for r in mine if r.get("type") == maa_type],
+            sorted({str(r["type"]) for r in mine}))
+
+
+async def _do_maa_disband(gw, params: dict, actor) -> dict[str, Any]:
+    """do(intent='men_at_arms', args={action: disband, regiment_id | maa_type, check}): the regiment's id from
+    query(domain='levy_readiness'); the game's own check, then its disband; read back from the regiment table.
+    (maa_type=light_horsemen was refused regiment_id_required three times in a recorded game while the
+    men_at_arms list was cut before the ids): a type disbands every regiment of that type the ruler fields, one by one."""
+    mt = params.pop("maa_type", None)
+    if mt and not _as_int(params.get("regiment_id")):
+        ids, fielded = await _maa_regiments_of_type(gw, params.get("actor_id") or (actor or {}).get("id"), str(mt))
+        if not ids:
+            why = ("query_levy_readiness did not answer: the regiments are unknown, nothing was sent" if ids is None
+                   else f"you field no {mt} regiment" + (f"; you field: {', '.join(fielded)}" if fielded else ""))
+            return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(), bridge_health=gw.health,
+                            result={"intent": "men_at_arms", "action": "disband", "maa_type": mt, "fielded": fielded},
+                            blocked=write_blocked(gate="name_not_found" if ids is not None else "bridge_fault",
+                                                  raw_reason="no_regiment_of_type" if ids is not None
+                                                  else "levy_readiness_unread", summary=why))
+        each = [await _do_maa_disband(gw, dict(params, regiment_id=i), actor) for i in ids]
+        rows = [dict((e.get("result") or {}), ok=e.get("ok"), **({"blocked": e["blocked"]} if e.get("blocked") else {}))
+                for e in each]
+        rows = [{k: v for k, v in r.items() if k not in ("raw", "proven", "intent", "action")} for r in rows]
+        ok = all(e.get("ok") for e in each)
+        res = {"intent": "men_at_arms", "action": "disband", "maa_type": mt, "regiments": rows}
+        if ok:
+            return envelope("do", verdict="applied" if not params.get("check") else None, actor=actor, game=gw.game(),
+                            bridge_health=gw.health, result=res)
+        first = next(e for e in each if not e.get("ok"))
+        return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(), bridge_health=gw.health,
+                        result=res, blocked=first.get("blocked"))
+    raw = _unwrap_reply(await gw.write("maa_disband", params))
+    raw = raw if isinstance(raw, dict) else {}
+    res = {"intent": "men_at_arms", "action": "disband", "regiment_id": params.get("regiment_id"),
+           "proven": MAA_DISBAND_UNPROVEN, "raw": raw}
+    if raw.get("success") is not True:
+        code = str(raw.get("reason") or raw.get("error") or "no_reply")
+        why = (f"the game refused: {raw.get('game_reason') or NO_GAME_DETAIL}" if code == "refused_by_game" else
+               "this bridge has no maa_disband (an older build): nothing was sent" if "unknown" in code else
+               f"the bridge refused: {code}")
+        return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(), result=res,
+                        blocked=write_blocked(gate=MAA_DISBAND_REFUSALS.get(code, "engine_refused"), raw_reason=code,
+                                              summary=why,
+                                              raw={"engine_reason": raw.get("game_reason")}
+                                              if code == "refused_by_game" else None), bridge_health=gw.health)
+    if raw.get("check") is True:
+        return envelope("do", actor=actor, game=gw.game(), bridge_health=gw.health,
+                        result=dict(res, checked_only=True, allowed=True))
+    if raw.get("applied") is True and raw.get("regiment_after") == "absent":
+        return envelope("do", verdict="applied", actor=actor, game=gw.game(), bridge_health=gw.health, result=res)
+    return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(), bridge_health=gw.health,
+                    result=res, blocked=write_blocked(gate="write_not_applied", raw_reason="regiment_not_gone",
+                                                      summary=f"the game ran the disband and the regiment reads "
+                                                              f"{raw.get('regiment_after')!r} after it"))
+
+
 def _war_refused(gate: str, summary: str, actor, gw, **kw) -> dict[str, Any]:
     return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                     blocked=why_blocked(gate, summary=summary, **kw), bridge_health=gw.health)
+
+
+#: The game's AI calls allies into its ruler's wars from its own interactions pass
+#: (1082.03: it called 48828 after the seat's call to him was refused: -150 prestige)
+#: (0 / 0 for every ruler on the load day, filled on each ruler's own monthly day)
+MONTHLY_ZERO_NOTE = "0 / 0 is also what the game holds from a load until your ruler's first monthly day"
+CALL_ALLY_AI_NO_LEVER = ("the game's AI for your ruler also calls allies into your wars on its own; "
+                         "do ai_veto what=ally_call drops its calls (yours are never dropped). Each ally who "
+                         "joins costs you prestige; news allies_joined names who called him")
+#: call_ally_interaction's is_shown (common/character_interactions/00_alliance.txt), the parts the
+#: reads here can test
+CALL_ALLY_SHOWN = ("call_ally_interaction is shown only towards an ally (or your liege under a contract "
+                   "that lets you, a diarch, a suzerain or tributary under theirs), and not when you can "
+                   "call him as a member of your house instead (call_house_member_to_war_interaction)")
+
+
+#: The game's words when call_ally names a vassal of the caller (its acceptance check: engine text, in no script
+#: file), and what the alliance rows say of a vassal and of the liege
+CALL_ALLY_VASSAL_WORDS = "You cannot call Vassals as Allies in war"
+ALLY_VASSAL_WHY = ("he is your vassal: the game's acceptance check refuses call_ally to a vassal (\""
+                   + CALL_ALLY_VASSAL_WORDS + "\"); a vassal's troops come as his levies")
+ALLY_LIEGE_WHY = ("he is your liege: call_ally_interaction is shown towards your liege only under a contract with "
+                  "vassal_contract_liege_forced_war_override (00_alliance.txt is_shown)")
+ALLY_REALM_NOTE = "in your realm: a vassal of one of your vassals"
+#: The game's words when call_ally names a character who holds no realm (its acceptance check: engine text, in no
+#: script file), and the other conditions of the check its words name that a character read can test
+CALL_ALLY_NOT_RULER_WORDS = "is not a ruler"
+ALLY_NOT_RULER_WHY = ("he holds no realm (a courtier, a family member at court): the game's acceptance check refuses "
+                      "call_ally to a character who \"" + CALL_ALLY_NOT_RULER_WORDS + "\"; an alliance can come "
+                      "through him (a marriage), but only a ruler is called")
+CALL_ALLY_HEGEMON_WORDS = "You have to be of Emperor Rank or above to call a Hegemon into Wars"
+ALLY_HEGEMON_WHY = ("he is a hegemon and your rank is below emperor: the game's acceptance check refuses the call (\""
+                    + CALL_ALLY_HEGEMON_WORDS + "\")")
+#: call_ally_interaction's is_shown (00_alliance.txt): an actor its AI runs (yours is, in this view) sees the call only
+#: towards a recipient of 100 military strength or more (current_military_strength >= 100)
+CALL_ALLY_MIN_STRENGTH = 100
+ALLY_WEAK_WHY = ("his military strength {st} is under 100: the game shows call_ally to an ally that weak only to a "
+                 "player, and your ruler is an AI ruler in the game (00_alliance.txt is_shown)")
+ALLY_HOUSE_NOTE = ("he is of your house: where call_house_member_to_war_interaction is valid for him the game hides "
+                   "call_ally and the house call is the one to send (00_alliance.txt is_shown)")
+#: The ruler tiers (query_character ruler_tier): emperor 5, hegemon 6
+TIER_EMPEROR, TIER_HEGEMON = 5, 6
+
+
+def ally_not_callable(b: dict, a: Optional[dict] = None) -> Optional[tuple]:
+    """(relation, why, the game's words) when a character read shows the game refuses call_ally to him whatever the
+    war: he holds no realm, or he is a hegemon and you rank below emperor; None otherwise. The vassal case is
+    ally_relation's (it needs your id)."""
+    if b.get("has_realm") is False:
+        return "not a ruler", ALLY_NOT_RULER_WHY, CALL_ALLY_NOT_RULER_WORDS
+    bt, at = _as_int(b.get("ruler_tier")), _as_int((a or {}).get("ruler_tier"))
+    if bt == TIER_HEGEMON and at and at < TIER_EMPEROR:
+        return "a hegemon", ALLY_HEGEMON_WHY, CALL_ALLY_HEGEMON_WORDS
+    return None
+
+
+async def ally_relation(read, me: int, ally: int, mine: Optional[dict] = None, row: Optional[dict] = None) \
+        -> Optional[dict]:
+    """How an alliance row's ally stands to you, from two query_character reads (his realm, liege, top liege, tier,
+    house, and yours): {relation, callable?, why, also?} for one who holds no realm, a hegemon above your rank, your
+    vassal, your liege, or a ruler inside your realm; with `row` (the alliance row), an ally under 100 strength is
+    marked not callable by the call's is_shown, and one of your house carries the house-call note. None when none of
+    these holds or a read did not answer. `read` is an async (action, params) -> reply."""
+    try:
+        b = _char_section(await read("query_character", {"character_id": ally}))
+    except Exception:                                   # noqa: BLE001
+        return None
+    if not b or b.get("id") is None:
+        return None
+    a = mine
+    if a is None:
+        try:
+            a = _char_section(await read("query_character", {"character_id": me}))
+        except Exception:                               # noqa: BLE001
+            a = {}
+    notes: dict = {}
+    if a and a.get("house_id") is not None and a.get("house_id") == b.get("house_id") and _as_int(ally) != _as_int(me):
+        notes["house_member"] = ALLY_HOUSE_NOTE
+    hard = ally_not_callable(b, a)
+    if hard is not None:
+        return {"relation": hard[0], "callable": False, "why": hard[1], **notes}
+    if _as_int(b.get("liege_id")) == _as_int(me) and _as_int(me):
+        return {"relation": "your vassal", "callable": False, "why": ALLY_VASSAL_WHY, **notes}
+    st = (row or {}).get("military_strength")
+    if isinstance(st, int) and not isinstance(st, bool) and st < CALL_ALLY_MIN_STRENGTH:
+        return {"relation": "an ally under 100 strength", "callable": False, "why": ALLY_WEAK_WHY.format(st=st),
+                **notes}
+    if _as_int(b.get("top_liege_id")) == _as_int(me) and _as_int(me) and _as_int(ally) != _as_int(me):
+        return {"relation": ALLY_REALM_NOTE, **notes}
+    if a and _as_int(a.get("liege_id")) == _as_int(ally) and _as_int(ally):
+        return {"relation": "your liege", "callable": "only under that contract", "why": ALLY_LIEGE_WHY, **notes}
+    return notes or None
+
+
+#: An alliance row whose own flag read false for an ally the forced-allies list holds
+ALLY_FORCED_READ = "listed under forced_allies in the same reply; the alliance row's own flag read false"
+
+
+async def alliance_rows(reply: Any, read) -> Any:
+    """query_alliances' rows, each ally who is your vassal, your liege or inside your realm marked so (in a seated
+    game a vassal listed among the alliances took three call_ally calls the game refused, "You cannot call Vassals
+    as Allies in war"), and the totals' share that comes from allies who cannot be called. An ally the reply's
+    forced_allies list holds is is_forced in his alliance row too (the two lists of one reply never disagree)."""
+    if not isinstance(reply, dict) or not isinstance(reply.get("alliances"), list):
+        return reply
+    me = _as_int(reply.get("character_id"))
+    if not me:
+        return reply
+    try:
+        mine = _char_section(await read("query_character", {"character_id": me}))
+    except Exception:                                   # noqa: BLE001
+        mine = {}
+    rows, off = [], []
+    forced = {_as_int(f.get("ally_id")) for f in reply.get("forced_allies") or []
+              if isinstance(f, dict) and f.get("is_forced") is True}
+    for x in reply["alliances"]:
+        if isinstance(x, dict) and _as_int(x.get("ally_id")) in forced and x.get("is_forced") is not True:
+            # One reply, one answer: the game's list of forced allies holds him, so his alliance row says so too
+            x = dict(x, is_forced=True, forced_read=ALLY_FORCED_READ)
+        if isinstance(x, dict) and _as_int(x.get("ally_id")):
+            rel = await ally_relation(read, me, _as_int(x.get("ally_id")), mine, x)
+            if rel:
+                x = dict(x, **rel)
+                if rel.get("callable") is False:
+                    off.append(x)
+        rows.append(x)
+    out = dict(reply, alliances=rows)
+    if off:
+        out["not_callable"] = {"ids": [_as_int(x.get("ally_id")) for x in off],
+                               "strength": sum(_as_int(x.get("military_strength")) for x in off),
+                               "in_totals": "total_ally_strength and total_callable_strength count them"}
+    return out
+
+
+async def call_ally_why(gw, me: int, recipient: int, war_id: Any, war: Optional[dict] = None) -> dict:
+    """The game's own check of call_ally_interaction for this war (query_interaction_check
+    with the war as its target, nothing sent): sendable, refused_by and the game's words; beside it
+    the reads of its conditions (in the alliance list, your liege, a house member)."""
+    out: dict = {}
+    chk = await gw.read("query_interaction_check", {"actor_id": me, "interaction_type": "call_ally_interaction",
+                                                    "target_id": recipient, "war_id": war_id})
+    res = ((chk.get("result") or {}).get("results") or []) if isinstance(chk, dict) else []
+    row = next((r for r in res if isinstance(r, dict) and _as_int(r.get("target_id")) == _as_int(recipient)), None)
+    if row is not None:
+        out.update({k: row[k] for k in ("sendable", "refused_by", "engine_reason", "answer", "accept_score")
+                    if k in row})
+    else:
+        out["unread"] = ("the game's check did not answer: " +
+                         str((chk or {}).get("reason") or (chk or {}).get("error") or "no reply")
+                         if isinstance(chk, dict) else "the game's check did not answer")
+    al = await gw.read("query_alliances", {"character_id": me})
+    if isinstance(al, dict) and isinstance(al.get("alliances"), list):
+        out["in_your_alliances"] = any(_as_int(x.get("ally_id")) == _as_int(recipient)
+                                       for x in al["alliances"] if isinstance(x, dict))
+    a = _char_section(await gw.read("query_character", {"character_id": me}))
+    b = _char_section(await gw.read("query_character", {"character_id": recipient}))
+    if a and b:
+        out["your_liege"] = _as_int(a.get("liege_id")) == _as_int(recipient) and bool(_as_int(recipient))
+        if a.get("house_id") is not None and b.get("house_id") is not None:
+            out["same_house"] = a.get("house_id") == b.get("house_id")
+    out["rule"] = CALL_ALLY_SHOWN
+    if war is not None or row is not None:
+        causes = await call_ally_causes(gw, me, recipient, war, out, a, b)
+        if causes:
+            out["causes_read"] = causes
+    return out
+
+
+#: The game's conditions a read can test (common/character_interactions/00_alliance.txt call_ally_interaction; joining:
+#: can_be_picked, 00_war_and_peace_triggers.txt can_join_war_liege_vassal_check_trigger), each named only when read
+CALL_ALLY_CAUSES = {
+    "not_an_ally": "he is not in your alliances: is_shown needs him allied to you (or your liege, diarch, suzerain "
+                   "or tributary under a contract that lets you)",
+    "under_100_strength": ("his military strength {st} is under 100: the game hides call_ally from a ruler its AI "
+                           "runs (yours is, in this view) towards an ally that weak (is_shown)"),
+    "house_member": ("he is of your house: when call_house_member_to_war_interaction is valid for him the game "
+                     "hides call_ally (is_shown)"),
+    "already_in_war": "he is already in this war, on the {side} side (can_be_picked: not already in the target war)",
+    "truce_with_enemy": ("he has a truce with {enemy}, this war's enemy leader, until {until}: a truce bars joining "
+                         "a war against him"),
+    "not_war_leader": "you are not this war's leader: only a war leader calls allies (is_valid)",
+}
+
+
+async def call_ally_causes(gw, me: int, recipient: int, war: Optional[dict], chk: dict,
+                           a: Optional[dict], b: Optional[dict]) -> list:
+    """The usual causes of a refused call_ally, each only when a read shows it holds."""
+    out: list = []
+    if chk.get("in_your_alliances") is False:
+        out.append({"cause": "not_an_ally", "why": CALL_ALLY_CAUSES["not_an_ally"]})
+    st = _as_int((b or {}).get("military_strength"))
+    if st is not None and st < CALL_TO_ARMS_MIN_STRENGTH and (a or {}).get("is_ai") is not False:
+        out.append({"cause": "under_100_strength", "strength": st,
+                    "why": CALL_ALLY_CAUSES["under_100_strength"].format(st=st)})
+    if chk.get("same_house") is True:
+        out.append({"cause": "house_member", "why": CALL_ALLY_CAUSES["house_member"]})
+    if isinstance(war, dict):
+        rid = _as_int(recipient)
+        for side in ("attackers", "defenders"):
+            if rid in [_as_int(x) for x in war.get(side) or []]:
+                out.append({"cause": "already_in_war", "side": side[:-1],
+                            "why": CALL_ALLY_CAUSES["already_in_war"].format(side=side[:-1])})
+        mine = "attackers" if _as_int(me) in [_as_int(x) for x in war.get("attackers") or []] else "defenders"
+        leader = _as_int(war.get("attacker_id") if mine == "attackers" else war.get("defender_id"))
+        enemy = _as_int(war.get("defender_id") if mine == "attackers" else war.get("attacker_id"))
+        if leader is not None and leader != _as_int(me):
+            out.append({"cause": "not_war_leader", "leader": leader, "why": CALL_ALLY_CAUSES["not_war_leader"]})
+        if enemy:
+            tm = await _truces.truce_map(gw, rid)
+            t = (tm or {}).get(enemy) if isinstance(tm, dict) else None
+            if isinstance(t, dict):
+                out.append({"cause": "truce_with_enemy", "enemy": enemy,
+                            "why": CALL_ALLY_CAUSES["truce_with_enemy"].format(enemy=enemy,
+                                                                               until=t.get("until") or "unread")})
+    return out
+
+
+async def peace_answer(gw, me: int, interaction: str, recipient: Any, war_id: Any) -> dict:
+    """The game's check of a peace offer to its recipient (query_interaction_check with the war, nothing
+    sent): his answer, his acceptance score, and what it lacks (he takes it above 0). Built, not proven live."""
+    chk = await gw.read("query_interaction_check", {"actor_id": me, "interaction_type": interaction,
+                                                    "target_id": recipient, "war_id": war_id})
+    res = ((chk.get("result") or {}).get("results") or []) if isinstance(chk, dict) else []
+    row = next((r for r in res if isinstance(r, dict) and _as_int(r.get("target_id")) == _as_int(recipient)), None)
+    if row is None:
+        return {"unread": "the game's check did not answer: " + str((chk or {}).get("reason") or (chk or {}).get("error")
+                                                                     or "no reply" if isinstance(chk, dict) else "no reply")}
+    out = {k: row[k] for k in ("answer", "accept_score", "engine_reason") if k in row}
+    sc = row.get("accept_score")
+    if isinstance(sc, (int, float)) and not isinstance(sc, bool):
+        out["missing"] = round(max(0.0, 1 - float(sc)), 1)
+        out["rule"] = "he takes the offer when his score is above 0; resending it unchanged gets the same answer"
+    out["proven"] = "built, not proven live"
+    return out
+
+
+#: (enforce_demands refused recipient_refuses four times at war score 11-37,
+#: nothing saying what score it needs): each peace term's acceptance as the game's interaction states it
+#: (common/character_interactions/00_war.txt), from the sender's side.
+PEACE_ACCEPT_SOURCE = "common/character_interactions/00_war.txt (the end_war_attacker_* interactions)"
+
+
+def _war_days(w: dict, gw) -> Optional[int]:
+    """Days since the war's start date (a war-list row's start_date, Y.M.D), or None."""
+    import news as _n  # noqa: PLC0415
+    a, b = _n._ordinal_of(w.get("start_date")), _n._ordinal_of((gw.game() or {}).get("date"))
+    return (b - a) if a is not None and b is not None and b >= a else None
+
+
+def peace_term_needs(terms: str, my_score: Optional[int], war_days: Optional[int] = None) -> dict:
+    """What the game needs for the enemy AI to take `terms` from you, with the current score put in.
+    `my_score` is YOUR side's war score (positive: you lead), None when it was not read."""
+    s = my_score if isinstance(my_score, int) else None
+    if terms == "surrender":
+        return {"needs": "nothing: the enemy AI takes your surrender always (auto_accept)",
+                "source": PEACE_ACCEPT_SOURCE}
+    if terms == "enforce_demands":
+        out = {"needs": ("your side's war score 100: then it is taken at once (auto_accept); below 100 the enemy "
+                         "AI's acceptance is -99 + your war score (+ a peacemaker perk, hostages), taken above 0"),
+               "your_war_score": s, "source": PEACE_ACCEPT_SOURCE}
+        if s is not None:
+            out["acceptance_from_score"] = -99 + s
+        return out
+    out = {"needs": ("the enemy AI's acceptance above 0: -30 + your war score + the war's days / 91 once it has "
+                     "run a year + 20 per debt level of the defender after 182 days, less the recipient's "
+                     "vengefulness, greed and zeal terms (not read)"),
+           "your_war_score": s, "source": PEACE_ACCEPT_SOURCE}
+    if s is not None:
+        part = -30 + s + ((war_days // 91) if isinstance(war_days, int) and war_days >= 365 else 0)
+        out["acceptance_from_score_and_length"] = part
+        if war_days is None:
+            out["war_days"] = "not read: the length term is left out"
+    return out
+
+
+#: Why a refused surrender interaction is sent as end_war we_yield
+SURRENDER_ROUTED = ("the game refused the surrender's interaction for this war; a surrender needs no answer from "
+                    "the enemy, so the same defeat was sent by the game's end_war effect (end_war terms=we_yield): "
+                    "the casus belli's loser's price applies as for any defeat")
+
+#: make_peace's terms as end_war's price table names them
+MAKE_PEACE_AS_END_WAR = {"surrender": "we_yield", "white_peace": "white_peace", "enforce_demands": "we_win"}
+MAKE_PEACE_CHECK_PROOF = "built, not proven live"
+
+
+def takes_all_words(cb: Any, side: Optional[str], terms: str) -> Optional[str]:
+    """The plain words for an ending that takes your titles and your life, or None."""
+    row = PEACE_TAKES_ALL.get(str(cb or ""))
+    if not row or side not in row:
+        return None
+    lose = {"surrender": True, "enforce_demands": False, "white_peace": None}.get(terms)
+    if not lose:
+        return None
+    return ("THIS WAR'S DEFEAT TAKES EVERYTHING: " + PEACE_PRICE[str(cb)][row[side]]
+            + f" ({PEACE_PRICE[str(cb)]['file']} {cb})")
+
+
+async def make_peace_check(gw, me: int, w: dict, side: str, terms: str, recipient: int, actor) -> dict:
+    """A recorded case: make_peace args.check=true sends nothing and says what the terms would give up:
+    the casus belli's outcome for each side, the gold and prestige where the table prices them, the purse now,
+    what the enemy AI needs to take them, and, for a war whose defeat takes every title or the ruler's life, that
+    in plain words. What is not read is named."""
+    war_id = w.get("war_id")
+    aw = await gw.read("get_active_wars", {"character_id": me})
+    rows = [x for x in ((aw or {}).get("wars") or []) if isinstance(x, dict)] if isinstance(aw, dict) else []
+    row = next((x for x in rows if _as_int(x.get("war_id")) == _as_int(war_id)), None) or next(
+        (x for x in rows if {_as_int(x.get("attacker_id")), _as_int(x.get("defender_id"))}
+         == {w.get("attacker_id"), w.get("defender_id")}), None)
+    cb = (row or {}).get("cb_type")
+    purse = _dg.purse_of(await gw.read("query_character", {"character_id": me})) or {}
+    et = MAKE_PEACE_AS_END_WAR[terms]
+    price = peace_prices(cb, side, purse.get("monthly_income"), [et], today=(gw.game() or {}).get("date")).get(et)
+    wsb = await gw.read("query_war_score_breakdown", {"character_id": me, "war_id": war_id})
+    view = war_score_view(wsb, is_attacker=(side == "attacker"), enemy_id=_as_int(recipient))
+    total = view.get("war_score")
+    mine = (total if side == "attacker" else -total) if isinstance(total, int) else None
+    res: dict = {"intent": "make_peace", "check": True, "sent": False, "war_id": war_id, "war_name": w.get("name"),
+                 "terms": terms, "side": side, "recipient_id": recipient,
+                 "casus_belli": cb if cb else "unread: get_active_wars did not list this war's casus belli",
+                 "target_titles": (row or {}).get("target_titles") if row is not None else "unread",
+                 "gives_up": price, "purse_now": {k: purse.get(k) for k in ("gold", "prestige")},
+                 "your_war_score": mine if mine is not None else view.get("war_score_unread", "unread"),
+                 "term_needs": peace_term_needs(terms, mine, _war_days(w, gw)),
+                 "not_read": "prestige amounts that scale with the war's prestige factor; the defender culture's "
+                             "reparations doubling",
+                 "proof": MAKE_PEACE_CHECK_PROOF,
+                 "send": {"tool": "do", "args": {"intent": "make_peace", "args": {"war_id": war_id, "terms": terms}}}}
+    words = takes_all_words(cb, side, terms)
+    if words:
+        res["takes_everything"] = words
+    return envelope("do", result=res, actor=actor, game=gw.game(), bridge_health=gw.health)
 
 
 async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict[str, Any]:
@@ -7622,7 +13086,16 @@ async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict
                                             "often gold; the war's goal is lost). The bridge cannot read "
                                             "the amount before the send; result.before/after show what "
                                             "it took. A stalled war that costs nothing is cheaper "
-                                            "left open.")})
+                                            "left open. args.check=true previews it.")})
+                _aw = await gw.read("get_active_wars", {"character_id": me})
+                _cb = next((x.get("cb_type") for x in ((_aw or {}).get("wars") or []) if isinstance(x, dict)
+                            and _as_int(x.get("war_id")) == _as_int(war_id)), None) if isinstance(_aw, dict) else None
+                _all = takes_all_words(_cb, side, terms)
+                if _all:
+                    warnings.append({"code": "defeat_takes_everything", "is_known_limitation": False,
+                                     "detail": _all})
+            if p.get("check") is True:
+                return await make_peace_check(gw, me, w, side, terms, recipient, actor)
             same_pair = [x for x in wars if {x["attacker_id"], x["defender_id"]} == {atk, dfn}]
             if len(same_pair) > 1:
                 warnings.append({"code": "several_wars_with_this_enemy", "is_known_limitation": True,
@@ -7636,6 +13109,28 @@ async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict
                                     "call_ally needs args.ally_id (inspect(subject='diplomacy') lists your allies)",
                                     actor, gw, fix={"rejected_fields": ["ally_id"]})
             interaction = "call_ally_interaction"
+            # The ally read first: a dead one, or a vassal of yours (the game refuses both), is refused here with
+            # the reason, nothing sent
+            _ally = _char_section(await gw.read("query_character", {"character_id": recipient}))
+            if _ally.get("alive") is False:
+                return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
+                                blocked=dead_character_blocked(recipient, _ally, "args.ally_id"),
+                                bridge_health=gw.health)
+            _hard = ally_not_callable(_ally, _char_section(await gw.read("query_character", {"character_id": me})))
+            if _hard is not None:
+                return _war_refused("interaction_invalid",
+                                    f"{recipient} is {_hard[0]}: {_hard[1]}. Nothing was sent",
+                                    actor, gw, fix={"rejected_fields": ["ally_id"]},
+                                    measured={"ally_id": recipient, "has_realm": _ally.get("has_realm"),
+                                              "ruler_tier": _ally.get("ruler_tier"), "relation": _hard[0],
+                                              "callable": False, "game_words": _hard[2]})
+            if _as_int(_ally.get("liege_id")) == _as_int(me) and _as_int(me):
+                return _war_refused("interaction_invalid",
+                                    f"{recipient} is your vassal: {ALLY_VASSAL_WHY}. Nothing was sent",
+                                    actor, gw, fix={"rejected_fields": ["ally_id"]},
+                                    measured={"ally_id": recipient, "his_liege_id": _as_int(_ally.get("liege_id")),
+                                              "relation": "your vassal", "callable": False,
+                                              "game_words": CALL_ALLY_VASSAL_WORDS})
 
     params = {"interaction_type": interaction, "actor_id": me, "target_id": recipient}
     if intent in ("call_ally", "join_war"):
@@ -7684,30 +13179,42 @@ async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict
     if conf.get("refused") and got is None:
         got = {"refused": conf["refused"], "summary": refusal_summary(conf),
                "intent": (conf.get("drain") or {}).get("row")}
-    if got is None and conf.get("sent") and shows == "on_execute" \
-            and conf.get("drains_when") != "readback":
-        # The drain ran it and its effect is absent after the pass: the
-        # recipient said no when the game ran the interaction.
-        got = {"refused": "recipient_declined_on_execute", "declined": True,
-               "intent": (conf.get("drain") or {}).get("row")}
+    # A sent offer whose effect is not yet visible is pending (below), never
+    # a refusal: every war lever is "days" (LEVERS).
     base = {"intent": intent, "war_id": war_id, "war_name": w.get("name"),
             "interaction": interaction, "side": side, "recipient_id": recipient}
     if terms:
         base["terms"] = terms
+    if intent == "call_ally":
+        # What his joining costs you, before he answers
+        base["price"] = await call_ally_price(gw, recipient, side)
+        if conf.get("sent") or not (isinstance(got, dict) and got.get("refused")):
+            _news.note_call(me, recipient, war_id, (gw.game() or {}).get("date"))
 
     if isinstance(got, dict) and got.get("refused"):
         reason = got["refused"]
         blocked = write_blocked(reason.split(";", 1)[0].strip(), summary=got.get("summary") or reason,
                                 conf=conf if conf.get("refused") else None)
         words = blocked.get("detail")
-        if got.get("declined"):
-            blocked = write_blocked(gate=
-                "recipient_refuses", raw_reason=reason,
-                summary=(f"{recipient} declined: the game ran {interaction} and its effect is "
-                         "absent after that pass (the game gives no reason text)"))
+        if intent == "make_peace" and terms == "surrender" and blocked.get("gate") == "interaction_invalid":
+            # (turn 104, 0904.07.12: a claim war on k_france as its attacker at -77; the surrender's
+            # interaction was refused "Does not have a valid Casus Belli", and the lost war could not be cut short):
+            # a surrender needs no answer (auto_accept), so the end the game refused by its interaction is made by
+            # the game's own end_war effect instead (end_war terms=we_yield, the same defeat)
+            alt = await _do_end_war(gw, {"enemy_id": recipient, "terms": "we_yield"}, me, actor)
+            routed = {"asked": {"intent": "make_peace", "terms": "surrender", "war_id": war_id},
+                      "interaction_refused": {"interaction": interaction, "gate": blocked.get("gate"),
+                                              "game_words": words},
+                      "sent_instead": {"intent": "end_war", "args": {"enemy_id": recipient, "terms": "we_yield"}},
+                      "why": SURRENDER_ROUTED}
+            if isinstance(alt, dict) and isinstance(alt.get("result"), dict):
+                alt["result"]["routed"] = routed
+            elif isinstance(alt, dict):
+                alt["result"] = {"routed": routed}
+            return alt
         if intent == "make_peace":
             # A refused send ends nothing; a war the ledger shows ended was ended by
-            # the game between the war-list read and the send (live: m-l12-gl5-r1,
+            # the game between the war-list read and the send (live, one test run,
             # war 33554432 ended defender_victory in the tick the enforce was queued,
             # and the send was refused for want of a casus belli). Say that.
             hist = await gw.read("query_war_history", {"war_id": war_id})
@@ -7720,6 +13227,34 @@ async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict
                              f"the game refused the send: {reason}"))
                 if words is not None:
                     blocked["detail"] = words
+            else:
+                # The war's total beside the refusal, and the end_war call
+                # when it already reaches we_win (live 1068.04.22 and 07.04: enforce_demands
+                # refused twice in a war end_war won at 1068.09.15)
+                wsb = await gw.read("query_war_score_breakdown", {"character_id": me, "war_id": war_id})
+                base.update(war_score_view(wsb, is_attacker=(side == "attacker") if side in (
+                    "attacker", "defender") else None, enemy_id=_as_int(recipient)))
+                total = base.get("war_score")
+                mine = (total if side == "attacker" else -total) if isinstance(total, int) else None
+                base["term_needs"] = peace_term_needs(terms, mine, _war_days(w, gw))
+                # The enemy's own score now and the
+                # part missing, from the game's check of the same offer (nothing sent)
+                base["his_answer"] = await peace_answer(gw, me, interaction, recipient, war_id)
+        if intent == "call_ally":
+            # (the mother 27052, listed in the alliances, refused
+            # interaction_not_valid_for_target three times with "the game gives no detail")
+            why = await call_ally_why(gw, me, recipient, war_id, w)
+            base["game_check"] = why
+            if why.get("engine_reason") and blocked.get("detail") in (None, "", NO_GAME_DETAIL):
+                blocked["detail"] = why["engine_reason"]
+            elif not why.get("engine_reason") and "for a marriage" in str(blocked.get("detail") or ""):
+                # The call's own words, and the causes the reads show
+                cs = why.get("causes_read") or []
+                blocked["detail"] = ("the game gives no words; call_ally_interaction's is_shown check is false for "
+                                     "him" + (": " + "; ".join(c["why"] for c in cs) if cs else
+                                              " (none of the causes the reads can test holds: "
+                                              + ", ".join(CALL_ALLY_CAUSES) + ")"))
+            base["ai_calls_for_you"] = CALL_ALLY_AI_NO_LEVER
         return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                         result=dict(base, raw=raw, intent_result=got.get("intent")),
                         blocked=blocked, warnings=warnings, bridge_health=gw.health)
@@ -7738,6 +13273,11 @@ async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict
                             result=dict(base, raw=raw, sent=conf.get("sent")),
                             warnings=warnings, bridge_health=gw.health)
         after = _purse(await gw.read("query_character", {"character_id": me}))
+        # (1093.03.15: a surrender took 106 gold, read before/after, and the purse named nothing:
+        # "unexplained -109.8"): the change recorded as your act
+        charged = war_end_charged(before, after)
+        note_war_end_act(me, (gw.game() or {}).get("date"), f"ended the war against {recipient}: {terms}", None,
+                         charged, war_id=war_id)
         outcome = ended.get("outcome")
         if outcome != expected:
             warnings.append({"code": "war_ended_otherwise", "is_known_limitation": False,
@@ -7748,7 +13288,8 @@ async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict
                                                      "outcome": outcome,
                                                      "end_date": ended.get("end_date"),
                                                      "target_titles": ended.get("target_titles")},
-                                    expected_outcome=expected, before=before, after=after),
+                                    expected_outcome=expected, before=before, after=after,
+                                    truce=_peace_truce(ended, me, gw)),
                         warnings=warnings, bridge_health=gw.health)
 
     joined = got.get("joined") if isinstance(got, dict) else None
@@ -7759,13 +13300,16 @@ async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict
     return envelope("do", verdict="pending", actor=actor, game=gw.game(),
                     pending=conf_pending(
                         conf, expected_change=f"{joiner} among war {war_id}'s {key}",
-                        verify_with="query(domain='wars', verbose=true); inspect(subject='pending')"),
+                        **({"why_pending": "the game ran the offer (result.sent); his answer lands "
+                                           "as game days pass"} if conf.get("sent") else {}),
+                        verify_with=(f"after your turn's days pass: inspect(subject='wars') lists {joiner} "
+                                     f"among war {war_id}'s {key}; inspect(subject='pending')")),
                     result=dict(base, raw=raw, participants=seen, sent=conf.get("sent")),
                     warnings=warnings, bridge_health=gw.health)
 
 
 # ===========================================================================
-# THE SCRIPT ACTION LAYER (pre-registration v4 draft §7).
+# THE SCRIPT ACTION LAYER.
 #
 # The write of these action kinds is carried out by one of the game's own script
 # effects, guarded by the game's own check, run by the bridge's `script_action`
@@ -7778,7 +13322,7 @@ async def _do_war_intent(gw, intent: str, p: dict, me: int, actor: dict) -> dict
 # no), the game's own error text (error.log: run_interaction's "Interaction
 # cannot be sent. Reason: ..."), and the read-back. A script that ran and whose
 # read-back shows no change is `write_not_applied` (raw_reason silent_no_op),
-# never applied: run_interaction offer_peace did exactly that in the probe.
+# never applied (run_interaction offer_peace can do exactly that).
 #
 # Moved: declare_war (start_war guarded by can_declare_war), gift and sway
 # (run_interaction, the interaction's own validity, execute_threshold accept),
@@ -7793,23 +13337,21 @@ SCRIPT_ROUTES: dict[tuple, str] = {
     ("council_task", ""): "council_task",
 }
 
-#: What stays on the native path, and why (the hand-back and the docs read this).
+#: What stays on the native path, and why: a record for this file's readers, which no code reads
+#: (test_script_actions.py holds make_peace, arrange_marriage_interaction and declare_war_interaction to a row).
 SCRIPT_NOT_MOVED: dict[str, str] = {
-    "make_peace": "run_interaction offer_peace_interaction was a SILENT no-op in the probe "
-                  "(lane modprobe e12c: accept and decline, no error, the war still listed); "
-                  "the offer stays native. The script route for peace is a different action, "
+    "make_peace": "run_interaction offer_peace_interaction can be a silent no-op (accept and decline, no error, the "
+                  "war still listed); the offer stays native. The script route for peace is a different action, "
                   "do(intent='end_war'): end_war in the war scope, which ENDS the war with the "
-                  "casus belli's outcome and asks nobody (lane peace)",
-    "arrange_marriage_interaction": "ran in the probe only with execute_threshold decline "
-                                    "(executes whatever the recipient's AI answers); accept was a "
-                                    "silent no-op, so a script route would either do nothing or "
-                                    "override the AI's answer",
-    "declare_war_interaction": "run_interaction cannot pass a casus belli: 'No target selected' "
-                               "(probe e12c); wars go through start_war instead",
-    "join_war / call_ally": "run_interaction cannot name the war (the probe's declare_war "
-                            "interaction failed for the same reason); the standing policy "
-                            "join_liege_wars is the script route for a vassal",
-    "every other intent": "not proven by the probe; the native path stays",
+                  "casus belli's outcome and asks nobody",
+    "arrange_marriage_interaction": "run_interaction runs it only with execute_threshold decline (it executes "
+                                    "whatever the recipient's AI answers), and accept can be a silent no-op, so a "
+                                    "script route would either do nothing or override the AI's answer",
+    "declare_war_interaction": "run_interaction cannot pass a casus belli ('No target selected'); wars go through "
+                               "start_war instead",
+    "join_war / call_ally": "run_interaction cannot name the war (a declare_war interaction fails for the same "
+                            "reason); the standing policy join_liege_wars is the script route for a vassal",
+    "every other intent": "no script route is known to work; the native path stays",
 }
 
 #: Bridge refusals that mean "this character has no script reference" (no held
@@ -7886,16 +13428,56 @@ def script_unaddressable(sent: dict) -> bool:
     return raw.get("success") is False and raw.get("reason") in SCRIPT_UNADDRESSABLE
 
 
+def _raw_without_script(raw: dict) -> dict:
+    """A reply carries the composed script's size, not its text (the declare template's refused branch grew
+    to 11 KB with the price probe, a live check). The text is the template's (script_templates.h) with the
+    arguments sent; its guard, marks and the game's errors stay in the reply."""
+    if isinstance(raw, dict) and isinstance(raw.get("script"), str):
+        return dict(raw, script={"bytes": len(raw["script"]), "omitted": (
+            "the composed script: the template named here (bridge script_templates.h) filled with the "
+            "arguments sent; its guard, marks and the game's errors are in this reply")})
+    return raw
+
+
+#: (a declaration refused for raised armies: 8 game_errors "Failed to fetch variable
+#: for 'ck3a_cbp' due to not being set" and their 'var' follow-ons beside the real reason, twice in the reply).
+#: The toolkit's own price probe variable (script_templates.h kPriceVar) read in the refused branch: harmless,
+#: the price marks were read. Kept out of the seat's reply and written to the server's log.
+PROBE_VAR = "ck3a_cbp"
+PROBE_FOLLOW_ON = frozenset({"Event target link 'var' returned an unset scope",
+                             "Invalid left side during comparison 'var'"})
+
+
+def split_probe_noise(errors: list) -> tuple:
+    """(the game's errors, the price probe's noise). The 'var' follow-on lines count as noise only beside a
+    line naming the probe variable; with none, every error is the game's."""
+    errs = [e for e in (errors or []) if isinstance(e, str)]
+    if not any(PROBE_VAR in e for e in errs):
+        return errs, []
+    keep, noise = [], []
+    for e in errs:
+        (noise if PROBE_VAR in e or e.strip() in PROBE_FOLLOW_ON else keep).append(e)
+    return keep, noise
+
+
 async def script_verdict(gw, sent: dict, *, landed, before, what: str,
                          guard_gate: str, guard_reason: str, error_gate: str) -> dict:
     """THE verdict of one script action, from the game's three answers.
     Returns {verdict: applied|rejected|pending, readback|blocked|pending, result}."""
-    raw, guard, errors = sent["raw"], sent["guard"], sent["errors"]
+    raw, guard = sent["raw"], sent["guard"]
+    errors, noise = split_probe_noise(sent["errors"])
+    if noise:
+        import logging
+        logging.getLogger("ck3agent.redesign").info("script %s: %d price-probe error lines kept out of the reply: %s",
+                                                    raw.get("token"), len(noise), noise)
+        if isinstance(raw.get("errors"), list):
+            raw = dict(raw, errors=split_probe_noise(raw["errors"])[0])
     words = engine_text("\n".join(errors)) if errors else ""
     res = {"path": "script", "template": raw.get("template"), "token": raw.get("token"),
            "guard": guard, "script_log_channel": sent.get("channel") or log_channel_of(raw),
            "game_errors": [engine_text(e) for e in errors],
-           "marker_read_late": sent.get("late", False), "raw": raw}
+           "marker_read_late": sent.get("late", False), "raw": _raw_without_script(raw),
+           **({"probe_noise_logged": len(noise)} if noise else {})}
     # The game's words ride in blocked.detail (write_blocked reads engine_reason):
     # its error text when it wrote one; "" (NO_GAME_DETAIL) when the game's check
     # said no without words, as can_declare_war does.
@@ -8061,7 +13643,33 @@ async def _do_scripted(gw, intent: str, template: str, p: dict, actor, warnings:
                              what=f"the {seat or 'seat'}'s current_task (inspect(subject='council'))",
                              guard_gate="engine_refused", guard_reason="no_councillor_in_seat",
                              error_gate="engine_refused")
+    if v["verdict"] == "rejected" and sent.get("guard") == "refused":
+        _seat_read_disagrees(v, before, seat)
     return _script_envelope("do", v, actor, gw, warnings)
+
+
+#: (a test run, 1069.09.25: council_task refused no_councillor_in_seat twice for the steward while observe
+#: in the same step listed Brian 36303 there; the same call applied at the next step, 1070.03.24)
+COUNCIL_READ_DISAGREES = ("the council read before the send named {holder} in {seat} ({src} field), and the game's own "
+                          "check (exists = cp:{seat}) found no councillor seated there at that moment: the two disagree; "
+                          "the game's check is the one that decides. Read the council again at the next step and "
+                          "send it then (the same call can apply one step later)")
+
+
+def _seat_read_disagrees(v: dict, before: Any, seat: Any) -> None:
+    """A council_task the game refused for no councillor, while the read made just before it named one:
+    the refusal says so, with the holder and the field read, and that it can be sent again (it was retry never)."""
+    row = next((p for p in before or [] if isinstance(p, dict) and p.get("position_key") == seat), None)
+    holder = _as_int((row or {}).get("holder_id"))
+    if not holder or holder == 0xFFFFFF or (row or {}).get("vacant") is True:
+        return
+    b = v.get("blocked")
+    if not isinstance(b, dict):
+        return
+    src = str(row.get("holder_source") or "unnamed")
+    b.update(detail=COUNCIL_READ_DISAGREES.format(holder=holder, seat=seat, src=src), retryable=True,
+             retry="after the blocking condition clears",
+             measured={"council_read_holder": holder, "holder_source": src, "game_check": "no councillor"})
 
 
 async def policies_of(gw, character_id: int) -> dict:
@@ -8070,12 +13678,17 @@ async def policies_of(gw, character_id: int) -> dict:
     observe and do(set_policy) show the same block."""
     r = _unwrap_reply(await gw.read("query_script_log", {"character_id": character_id}))
     pol = r.get("policies") if isinstance(r.get("policies"), dict) else None
+    # The call is
+    # offered only when the game has logged the policy mod enabled; otherwise the block says why it is not
+    off = r.get("mod_enabled") is False
     return {
         "policies": ({k: bool(pol.get(k)) for k in POLICIES} if pol is not None else None),
         "mod_enabled": r.get("mod_enabled"),
         "unread": None if pol is not None else (r.get("reason") or r.get("error") or "query_script_log_failed"),
-        "set_with": "do(intent='set_policy', args={'policy': <one of " + ", ".join(POLICIES) +
-                    ">, 'on': true|false})",
+        "set_with": (None if off else "do(intent='set_policy', args={'policy': <one of " + ", ".join(POLICIES) +
+                     ">, 'on': true|false})"),
+        **({"not_offered": "the game has not logged the standing-policy mod enabled in this game: a policy "
+                           "would not hold, and set_policy refuses it"} if off else {}),
         "holds": ("between your turns: the game re-checks it every 3 days. join_liege_wars joins "
                   "each war your liege leads when the game's own join-war checks allow it; "
                   "stay_out_of_liege_factions leaves a faction against him and keeps you from "
@@ -8104,7 +13717,7 @@ async def _do_set_policy(gw, a: dict, character_id: int, actor) -> dict:
                         bridge_health=gw.health)
     view = await policies_of(gw, me)
     if view["mod_enabled"] is None and view["unread"]:
-        # fix10 (v4 pilot 2, council-a D1 at 1066.09.15): the mod check's read did
+        # The mod check's read did
         # not come back (`query_script_log_failed` under bridge load) and was told
         # to the seat as `policy_mod_not_loaded` while the mod was witnessed
         # agreed. A read that did not happen is a read failure, retryable, never
@@ -8143,7 +13756,7 @@ async def _do_answer_proposal(gw, a: dict, character_id: int, actor) -> dict:
     me = character_id or _as_int((actor or {}).get("id"))
     return await _proposals.answer(gw, a.get("proposal_id"), a.get("answer"), me, actor)
 # ===========================================================================
-# end_war (lane peace): a war the seat's character LEADS against a named enemy
+# end_war: a war the seat's character LEADS against a named enemy
 # leader ends, through the script layer's end_war template (script_templates.h):
 # inside the war scope `end_war = attacker | defender | white_peace`, the side
 # resolved in script from which side the character leads. The guards are the
@@ -8160,11 +13773,276 @@ END_WAR_TERMS: dict[str, str] = {
     "white_peace": "neither side wins (the casus belli's white-peace outcome)",
     "we_yield": "YOU YIELD: YOUR SIDE LOSES the war and the enemy takes what they fought for",
 }
+#: When each end_war term is open, the guard's own thresholds
+#: (bridge/include/script_templates.h kWeWinScore, kWhitePeaceEnemyBelow; mirrored,
+#: test_ireland_walk_replies reads the header). we_yield is always open.
+END_WAR_WE_WIN_SCORE = 100
+END_WAR_WHITE_ENEMY_BELOW = 25
+END_WAR_TERM_NEEDS: dict[str, str] = {
+    "we_win": f"your side's war score at {END_WAR_WE_WIN_SCORE}",
+    "white_peace": f"the enemy side's war score below {END_WAR_WHITE_ENEMY_BELOW}",
+    "we_yield": "always open",
+}
 #: Words that read from either side, refused by name: the other developer's mod
 #: once carried out "make the enemy surrender" as the ruler's own surrender.
 END_WAR_AMBIGUOUS = ("surrender", "victory", "enforce_demands")
 END_WAR_WHAT = ("end_war ENDS the war at once with the casus belli's own outcome for the "
                 "terms named; it is not a negotiated offer and the enemy is not asked")
+
+#: The parts of a war's score, each under its own name, as the bridge's
+#: breakdown reads spell them (single war: *_score; every war: the short names).
+_WAR_SCORE_PARTS = (("battle", ("battle_score", "battle")),
+                    ("occupation", ("occupation_score", "occupation")),
+                    ("imprisonment", ("imprisonment_score", "imprisonment")),
+                    ("ticking", ("ticking_warscore", "ticking_score", "ticking")))
+#: What a war row says when the game has not computed the total yet.
+WAR_SCORE_UNREAD = ("the game has not computed this war's total yet (the bridge's breakdown "
+                    "cache holds no fresh entry); the parts read so far are beside it")
+
+
+def wars_with_totals(reply: Any) -> Any:
+    """query_wars' reply with each row's war_score made the total (war_score_view): the
+    bridge falls back to battle+ticking under the same name when the game's total is
+    not cached (war_score_source computed_fallback / computed_stale); that number stays
+    as `battle_and_ticking`, never as war_score. inspect(subject="wars") and query wars."""
+    if not isinstance(reply, dict) or not isinstance(reply.get("wars"), list):
+        return reply
+    rows = []
+    for w in reply["wars"]:
+        if not isinstance(w, dict) or "war_score" not in w:
+            rows.append(w)
+            continue
+        att = w.get("is_attacker") if isinstance(w.get("is_attacker"), bool) else None
+        enemy = _as_int(w.get("primary_defender") if att else w.get("primary_attacker")) if att is not None else 0
+        sv = war_score_view(w, is_attacker=att, enemy_id=enemy)
+        row = dict(w, **sv)
+        if sv["war_score"] is None and w.get("war_score") is not None:
+            row["battle_and_ticking"] = w.get("war_score")      # the bridge's fallback estimate
+        rows.append(row)
+    return dict(reply, wars=rows)
+
+
+def war_score_view(read: Any, *, is_attacker: Optional[bool] = None, enemy_id: int = 0) -> dict:
+    """THE war score a reply shows: `war_score` is the war's TOTAL, the
+    number the game uses for peace terms (attacker's view: positive favours the
+    attacker), never a part of it; the parts are `war_score_parts`. A read with no
+    engine total (the bridge's live battle+ticking estimate, query_wars' fallback, a
+    stale cache entry) gives war_score null with `war_score_unread`. When the total
+    reaches what we_win needs for the reader's side, `next_call` is the end_war call.
+
+    Live 1068.02.08-07.04: war_stance showed war_score 21 three turns running and the
+    seat read it as the battle part; on 1068.09.15 the breakdown read battle 21,
+    occupation 100, imprisonment 25, total 100. Every war-score field goes through here."""
+    r = read if isinstance(read, dict) else {}
+    total = None
+    if "total_warscore" in r:                       # query_war_score_breakdown, one war
+        if r.get("total_warscore_source") == "engine_cached":
+            total = r.get("total_warscore")
+    elif "war_score_source" in r:                   # query_wars
+        if r.get("war_score_source") == "computed":
+            total = r.get("war_score")
+    elif "total" in r and "cached_tick" in r:       # query_war_score_breakdown, every war
+        total = r.get("total")
+    elif "war_score" in r and not r.get("war_score_stale"):   # get_active_wars (fresh only)
+        total = r.get("war_score")
+    total = _as_int(total) if isinstance(total, (int, float)) and not isinstance(total, bool) else None
+    parts = {}
+    for name, keys in _WAR_SCORE_PARTS:
+        v = next((r[k] for k in keys if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool)), None)
+        if v is not None:
+            parts[name] = _as_int(v)
+    out: dict[str, Any] = {"war_score": total}
+    if parts:
+        out["war_score_parts"] = parts
+    if total is None:
+        out["war_score_unread"] = WAR_SCORE_UNREAD
+    elif is_attacker is not None and enemy_id:
+        mine = total if is_attacker else -total
+        if mine >= END_WAR_WE_WIN_SCORE:
+            out["next_call"] = {"tool": "do", "args": {"intent": "end_war",
+                                                       "args": {"enemy_id": _as_int(enemy_id), "terms": "we_win"}}}
+    return out
+
+
+#: (1088.02.08: the seat yielded the Mayo claim war believing "it costs only
+#: prestige"; the purse then fell 243 gold). What each outcome of a casus belli does to each
+#: side, from its on_victory / on_white_peace / on_defeat blocks (common/casus_belli_types/;
+#: the reparations effect pay_short_term_gold_reparations_effect in common/scripted_effects/
+#: 00_war_effects.txt: GOLD_VALUE years of the payer's yearly income, x2 when the defender's
+#: culture has more_gold_for_successful_defensive_wars). `gold_years` is the attacker's
+#: reparations on its defeat; prestige amounts scale with the war's own prestige factor,
+#: which no read gives. The truce is standard_truce_duration_days (00_war_values.txt).
+TRUCE_DAYS = 1825
+_CLAIM_LIKE = {"victory_attacker": "takes the claimed title(s) and the counties under them; gains prestige "
+                                   "experience (fame), not prestige",
+               "victory_defender": "loses the claimed title(s) to the claimant",
+               "white_attacker": "loses prestige (5 x the war's prestige factor); a weak claim becomes pressed",
+               "white_defender": "nothing",
+               "defeat_attacker": "loses the claim; loses prestige (10 x the war's prestige factor) and legitimacy",
+               "defeat_defender": "receives the reparations; gains prestige"}
+PEACE_PRICE: dict = {
+    "claim_cb": dict(_CLAIM_LIKE, gold_years=3, file="00_claim.txt"),
+    "de_jure_cb": dict(_CLAIM_LIKE, gold_years=3, file="00_dejure_war.txt",
+                       victory_attacker=("takes the de-jure title(s) fought for; gains prestige experience (fame), "
+                                         "not prestige"),
+                       victory_defender="loses the de-jure title(s) fought for",
+                       white_attacker="loses prestige (5 x the war's prestige factor)",
+                       defeat_attacker="loses prestige (10 x the war's prestige factor)"),
+    "county_conquest_cb": {"gold_years": 2, "file": "00_conquest.txt",
+                           "victory_attacker": "takes the county fought for", "victory_defender": "loses the county",
+                           "white_attacker": "loses prestige", "white_defender": "nothing",
+                           "defeat_attacker": "loses prestige", "defeat_defender": "receives the reparations"},
+}
+PEACE_PRICE["individual_county_de_jure_cb"] = PEACE_PRICE["de_jure_cb"]
+PEACE_PRICE["individual_duchy_de_jure_cb"] = PEACE_PRICE["de_jure_cb"]
+PEACE_PRICE["duchy_conquest_cb"] = dict(PEACE_PRICE["county_conquest_cb"], gold_years=3,
+                                        victory_attacker="takes the duchy's counties fought for")
+PEACE_PRICE["ducal_conquest_cb"] = PEACE_PRICE["county_conquest_cb"]
+#: (1066.09.15: a vassalization war on Ossory read `if_you_lose {"gold": "unknown"}`; its
+#: defeat 1068.03.04 cost 350 prestige and 133.88 gold, the run's largest loss). The three casus belli the
+#: recorded runs offered or fought that had no row: vassalization_cb (00_vassalization.txt on_defeat:
+#: pay_short_term_gold_reparations_effect GOLD_VALUE 3, add_prestige -major_prestige_value), make_tributary_cb
+#: (00_tributarize.txt on_defeat: -major_prestige_value, no reparations), refused_liege_demand_war (00_civil_war.txt,
+#: the liberty faction's war on its liege: no reparations either way).
+PEACE_PRICE["vassalization_cb"] = {
+    "gold_years": 3, "file": "00_vassalization.txt",
+    "victory_attacker": "he becomes your vassal (swear fealty); you gain prestige experience (150), not prestige",
+    "victory_defender": "you become his vassal and lose 150 prestige",
+    "white_attacker": "loses 75 prestige", "white_defender": "nothing",
+    "defeat_attacker": "loses 350 prestige and pays 3 years of income", "defeat_defender":
+        "receives the reparations; gains prestige"}
+PEACE_PRICE["make_tributary_cb"] = {
+    "gold_years": 0, "file": "00_tributarize.txt",
+    "victory_attacker": "he becomes your tributary; you gain prestige experience (150), not prestige",
+    "victory_defender": "you become his tributary and lose 150 prestige",
+    "white_attacker": "loses 75 prestige", "white_defender": "nothing",
+    "defeat_attacker": "loses 350 prestige (no reparations in its on_defeat)",
+    "defeat_defender": "gains prestige"}
+PEACE_PRICE["refused_liege_demand_war"] = {
+    "gold_years": 0, "file": "00_civil_war.txt",
+    "victory_attacker": "the faction wins: its liege loses 500 prestige, his crown authority falls one step and he "
+                        "is deposed (depose_effect)",
+    "victory_defender": "you lose 500 prestige, your crown authority falls one step, and you are deposed",
+    "white_attacker": "nothing (a truce both ways)", "white_defender": "nothing (a truce both ways)",
+    "defeat_attacker": "the faction loses: its members are imprisoned by the liege",
+    "defeat_defender": "you gain dread; the faction's members are imprisoned"}
+#: The one-county holy war (00_religious_war.txt minor_religious_war). Its on_defeat pays
+#: pay_short_term_income years = 2 per target title (a fixed medium_gold_value when the income is not positive),
+#: not the reparations effect, so no culture doubling; no ending moves prestige: a white peace costs the attacker
+#: religious_cb_piety_white_peace (-50 piety), a defeat gives the defender religious_cb_piety_gain_county (50).
+PEACE_PRICE["minor_religious_war"] = {
+    "gold_years": 2, "file": "00_religious_war.txt",
+    "gold_basis": ("2 years of your yearly income (a fixed sum if it is not positive): pay_short_term_income in "
+                   "its on_defeat; this row prices it as 2 x 12 x your monthly income read, an estimate that can "
+                   "differ from the game's yearly income"),
+    "victory_attacker": "takes the county: its holders of a faith tolerated no better than his lose it to you, "
+                        "others become your vassals; piety experience and legitimacy, no prestige",
+    "victory_defender": "loses the county (or its holders become the attacker's vassals)",
+    "white_attacker": "loses 50 piety", "white_defender": "nothing",
+    "defeat_attacker": "pays 2 years of income; loses legitimacy; your vassals of your faith like you less",
+    "defeat_defender": "receives the payment; gains 50 piety"}
+#: (a seated game, 1090.10.25: Brian surrendered Ruaidri's eradicate_house_cb war and lost every title and
+#: his life; the warning said "prestige, often gold"). 10_tgp_japan_wars.txt eradicate_house_cb: on_victory gives
+#: the defender's held titles below kingdom tier to the attacker (tgp_japan_soryo_eradicate_cb_transfer_effect) and
+#: fires tgp_japan_general.9550, which kills the defender (death_eradicated); on_defeat and on_white_peace move
+#: prestige only, no reparations.
+PEACE_PRICE["eradicate_house_cb"] = {
+    "gold_years": 0, "file": "10_tgp_japan_wars.txt",
+    "victory_attacker": "takes every county and duchy he holds; he dies (event tgp_japan_general.9550)",
+    "victory_defender": "you LOSE EVERY county and duchy you hold to the attacker and you DIE (death_eradicated)",
+    "white_attacker": "loses prestige", "white_defender": "nothing",
+    "defeat_attacker": "loses prestige by his top title's tier; no reparations",
+    "defeat_defender": "gains prestige"}
+#: The endings that take a side's titles and life, in plain words (side -> the outcome that takes them)
+PEACE_TAKES_ALL = {"eradicate_house_cb": {"defender": "victory_defender"}}
+#: Casus belli in the class this code does not price, each with why (a war against one is read as
+#: "unknown" with this reason, never as free).
+NOT_PRICED = {
+    "liberty_faction_war": "a faction's war: its outcomes change laws and titles of the realm, not a price a "
+                           "seat pays as an attacker",
+    "independence_faction_war": "a faction's war: its outcomes change laws and titles of the realm, not a price a "
+                                "seat pays as an attacker",
+}
+#: The game charges 3 years of its own yearly income (pay_short_term_gold_reparations_effect, yearly_income = yes);
+#: this row prices it as 3 x 12 x the monthly income read, an estimate that can differ from it.
+PEACE_PRICE_MEASURED = ("yielding a claim war as its attacker costs 3 years of the game's yearly income in gold (x2 "
+                        "against a culture that doubles defensive reparations; this row prices it as 3 x 12 x the "
+                        "monthly income read, which can differ from the game's yearly income) and 10 x the war's "
+                        "prestige factor in prestige (the factor is not read)")
+
+
+def peace_prices(cb: Any, my_side: Optional[str], monthly_income: Any, terms: list, today: Any = None) -> dict:
+    """What each of `terms` costs you and gives the other side, for a war of
+    casus belli `cb` in which you are `my_side` (attacker|defender). A casus belli not in
+    PEACE_PRICE, or a side not read, says unknown with the reason."""
+    row = PEACE_PRICE.get(str(cb or ""))
+    if row is None or my_side not in ("attacker", "defender"):
+        why = ((f"no outcome table for the casus belli '{cb}' in this code"
+                + (f": {NOT_PRICED[str(cb)]}" if str(cb) in NOT_PRICED else "")) if cb else
+               "the war's casus belli was not read") if row is None else "your side in the war was not read"
+        return {t: {"price": "unknown", "why": why} for t in terms}
+    inc = monthly_income if isinstance(monthly_income, (int, float)) and not isinstance(monthly_income, bool) else None
+    other = "defender" if my_side == "attacker" else "attacker"
+    outcome = {"we_win": "victory_" if my_side == "attacker" else "defeat_",
+               "white_peace": "white_",
+               "we_yield": "defeat_" if my_side == "attacker" else "victory_"}
+    out = {}
+    for t in terms:
+        key = outcome.get(t)
+        if key is None:
+            continue
+        # The truce this ending makes (its days "not read" where the casus belli's script is not read)
+        ending = _truces.ending_of(key)
+        tr = _truces.made_by_peace(today, cb, ending)
+        p = {"you": row[key + my_side], "they": row[key + other], "truce_days": tr["days"],
+             "source": f"common/casus_belli_types/{row['file']} ({cb})"}
+        op = _dg.outcome_price(cb) if my_side == "attacker" else None
+        if op is not None:
+            # The attacker's prestige on this ending, before it is paid (a live check
+            # 1067.12.03: a county claim war's white peace took 7.50, 287.89 -> 280.39 in one tick)
+            p["prestige"] = {"we_win": op["win"], "white_peace": op["white_peace"], "we_yield": op["defeat"]}[t]
+            p["prestige_basis"] = op["basis"]
+        if today:
+            # The truce this ending makes, until when, against the episode's end
+            p["truce"] = {k: v for k, v in tr.items() if k in ("until", "episode_end", "outlasts_episode")}
+            p["truce"]["who"] = _truces.bound_by_peace(_truces.peace_truce_kind(cb, ending), tr,
+                                                       my_side == "attacker")
+        pays = (key == "defeat_")          # the attacker pays reparations on its defeat
+        if pays and not row["gold_years"]:
+            p["gold"] = 0
+            p["gold_basis"] = f"no reparations in its on_defeat ({row['file']})"
+        elif pays:
+            payer = "attacker"
+            yrs = row["gold_years"]
+            if payer == my_side:
+                p["gold"] = (-round(yrs * 12 * inc, 1) if inc else "unknown: no monthly income read")
+                p["gold_basis"] = row.get("gold_basis") or (
+                    f"{yrs} years of your yearly income (a landless adventurer pays {yrs} x medium_gold_value "
+                    "instead), x2 if the defender's culture doubles defensive reparations; "
+                    f"this row prices it as {yrs} x 12 x your monthly income read, an estimate that can differ from "
+                    "the game's yearly income")
+                if str(cb).startswith("claim"):
+                    p["rule"] = PEACE_PRICE_MEASURED
+            else:
+                p["gold"] = f"+{yrs} years of the attacker's yearly income (his income is not read)"
+        else:
+            p["gold"] = 0
+        out[t] = p
+    return out
+
+
+def _peace_truce(ended: Any, me: int, gw) -> dict:
+    """The truce a war's end made (truces.made_by_peace), from its end date, its casus belli and its outcome, and
+    who it binds. Forgets the cached truce map."""
+    _truces.forget()
+    e = ended if isinstance(ended, dict) else {}
+    cb = e.get("cb_type")
+    ending = _truces.ending_of(e.get("outcome"))
+    out = _truces.made_by_peace(e.get("end_date") or (gw.game() or {}).get("date"), cb, ending)
+    atk = _as_int(e.get("attacker_id") or e.get("primary_attacker"))
+    out["who"] = _truces.bound_by_peace(_truces.peace_truce_kind(cb, ending), out, (atk == me) if atk else None)
+    out.pop("source", None)
+    return out
 
 
 def end_war_reading(marks: list) -> dict:
@@ -8193,12 +14071,74 @@ def end_war_reading(marks: list) -> dict:
             "our_war_score": score}
 
 
+async def end_war_open_terms(gw, me: int, enemy: int) -> Optional[dict]:
+    """The game's own reading of the war `me` leads against `enemy` (end_war's read-only listing, the check the
+    guard makes before any end): end_war_reading's dict, None when the game's script did not answer."""
+    if not me or not enemy:
+        return None
+    params = {"actor_id": me, "target_id": enemy}
+    sent = await _script_write(gw, "end_war", params)
+    if script_unaddressable(sent):
+        sent = await _script_write(gw, "end_war", dict(params, enemy_landless=True))
+    raw = sent.get("raw") or {}
+    if raw.get("success") is not True or sent.get("guard") in ("unseen", GUARD_LOG_UNREADABLE):
+        return None
+    return end_war_reading(sent.get("marks") or [])
+
+
 def _war_between(wars: list, me: int, enemy: int) -> list:
     return [w for w in wars if {w["attacker_id"], w["defender_id"]} == {me, enemy}]
 
 
+def _war_purse(ch) -> dict:
+    sect = _char_section(ch)
+    return {"gold": sect.get("gold"), "prestige": sect.get("prestige")}
+
+
+def war_end_charged(before: Optional[dict], after: Optional[dict]) -> Optional[dict]:
+    """What ending a war moved, read before and after the end in the same game day: {gold, prestige,
+    basis}, a key only where both reads are numbers; None when neither is."""
+    out: dict = {}
+    for k in ("gold", "prestige"):
+        a, b = (before or {}).get(k), (after or {}).get(k)
+        if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in (a, b)):
+            out[k] = round(b - a, 2)
+    if not out:
+        return None
+    out["basis"] = "read before and after the war ended, the same game day (the game charges it at the end)"
+    return out
+
+
+def note_war_end_act(me: int, date: Any, what: str, price: Optional[dict], charged: Optional[dict],
+                     war_id: Any = None) -> None:
+    """Record a war's end as your act for the purse: the change read at the end where it was read
+    (`charged`), else the price the outcome table gave; cost unknown when neither. With the war's id,
+    so the news' war-ended row for the same war is not counted a second time."""
+    src = charged if charged else (price or {})
+    g, pr = src.get("gold"), src.get("prestige")
+    num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)   # noqa: E731
+    _news.note_act(me, date, what, cost_known=num(g) or num(pr),
+                   **({"gold": g} if num(g) else {}), **({"prestige": pr} if num(pr) else {}),
+                   **({"measured": True} if charged else {}), **({"war_id": _as_int(war_id)} if _as_int(war_id) else {}))
+
+
+async def _end_war_prices(gw, me: int, enemy: int, terms: list) -> dict:
+    """Peace_prices for the war `me` leads against `enemy`: its casus belli and
+    my side from get_active_wars, the monthly income from query_character."""
+    wars = await gw.read("get_active_wars", {"character_id": me})
+    rows = [w for w in ((wars or {}).get("wars") or []) if isinstance(w, dict)] if isinstance(wars, dict) else []
+    w = next((x for x in rows if {_as_int(x.get("attacker_id")), _as_int(x.get("defender_id"))} == {me, enemy}), None)
+    side = None
+    if w is not None:
+        side = "attacker" if _as_int(w.get("attacker_id")) == me else "defender"
+    inc = _dg.purse_of(await gw.read("query_character", {"character_id": me})) or {}
+    return peace_prices((w or {}).get("cb_type"), side, inc.get("monthly_income"), terms,
+                        today=(gw.game() or {}).get("date"))
+
+
 async def _do_end_war(gw, a: dict, character_id: int, actor) -> dict:
     """do(intent='end_war', args={'enemy_id', 'terms', 'check'}): see the block above."""
+    _truces.forget()      # A war that ends here makes a truce the next read must see
     me = character_id or _as_int((actor or {}).get("id"))
     enemy = _as_int(a.get("enemy_id"))
     terms = a.get("terms")
@@ -8217,9 +14157,9 @@ async def _do_end_war(gw, a: dict, character_id: int, actor) -> dict:
                            "ambiguous_peace_terms" if amb else "unknown_peace_terms",
                            (f"'{word}' reads from either side and is refused. " if amb else
                             f"unknown terms '{word}'. ")
-                           + "args.terms is one of: we_win (the enemy yields to you; needs your war "
-                           "score at 100), white_peace (neither wins; needs the enemy's war score "
-                           "below 25), we_yield (you give up and LOSE the war). Omit terms (or "
+                           + "args.terms is one of: we_win (the enemy yields to you; needs "
+                           f"{END_WAR_TERM_NEEDS['we_win']}), white_peace (neither wins; needs "
+                           f"{END_WAR_TERM_NEEDS['white_peace']}), we_yield (you give up and LOSE the war). Omit terms (or "
                            "check=true) to read the war, the score and the open terms",
                            fix={"rejected_fields": ["terms"], "accepted": list(END_WAR_TERMS)})
     if not enemy:
@@ -8241,20 +14181,42 @@ async def _do_end_war(gw, a: dict, character_id: int, actor) -> dict:
 
     before = await wars_now()
     params = {"actor_id": me, "target_id": enemy}
+    # The price of the terms, read while the war still stands
+    price = (await _end_war_prices(gw, me, enemy, [terms])).get(terms) if not check else None
     if not check:
         params["terms"] = terms
+    # (1083.05.10: we_yield priced -171.0 from the income read, the game took about 121 and the
+    # purse read "unexplained +49.56"): the purse before and after the end, the change the act records
+    purse_before = _war_purse(await gw.read("query_character", {"character_id": me})) if not check else None
     sent = await _script_write(gw, "end_war", params)
+    landless = False
+    if script_unaddressable(sent):
+        # (1092.01.06: a populist rebel at +100 could not be named; the war
+        # ended by itself 9 days later): the war is matched as the one you lead against a leader
+        # who holds no title (the template refuses when there are two: AMBIGUOUS)
+        landless = True
+        sent = await _script_write(gw, "end_war", dict(params, enemy_landless=True))
     raw = sent["raw"]
     reading = end_war_reading(sent.get("marks") or [])
     base = {"path": "script", "template": "end_war", "token": raw.get("token"), "guard": sent["guard"],
             "enemy_id": enemy, "reading": reading, "what": END_WAR_WHAT,
             "wars_between_you": (_war_between(before, me, enemy) if before is not None else None),
             "marker_read_late": sent.get("late", False)}
+    if landless:
+        base["enemy_matched_as"] = ("the leader of the one war you lead whose other leader holds no title "
+                                    "(he cannot be named in the game's script by a title)")
     if script_unaddressable(sent):
         return refused("target_ineligible", "target_not_script_addressable",
                        f"{raw.get('detail') or 'a leader'} holds no title, so the game's script cannot "
                        "name him; end_war has no native path (do(intent='make_peace') sends an offer)",
                        raw=raw)
+    if landless and "AMBIGUOUS" in (sent.get("marks") or []):
+        env = refused("target_ineligible", "two_wars_against_landless_leaders",
+                      "you lead two or more wars against leaders who hold no title; the game's script "
+                      "cannot tell them apart, so nothing was ended. Each ends by itself when its side "
+                      "reaches the game's war score limit (its casus belli's ticking score)", raw=raw)
+        env["result"] = base
+        return env
     if raw.get("success") is True and sent["guard"] == "refused":
         if not reading["leads_war_against_enemy"]:
             env = refused("war_not_found", "no_war_led_against_enemy",
@@ -8290,8 +14252,14 @@ async def _do_end_war(gw, a: dict, character_id: int, actor) -> dict:
                                                   summary="the game's reading of the war was not seen in "
                                                           "debug.log; nothing was ended, ask again", raw=raw),
                             bridge_health=gw.health)
+        # The game's own total read in bands; at we_win, the ready call
+        ready = ({"next_call": {"tool": "do", "args": {"intent": "end_war",
+                                                       "args": {"enemy_id": enemy, "terms": "we_win"}}}}
+                 if "we_win" in reading["open_terms"] else {})
         return envelope("do", result=dict(base, check=True,
-                                          ends_with={t: END_WAR_TERMS[t] for t in reading["open_terms"]}),
+                                          ends_with={t: END_WAR_TERMS[t] for t in reading["open_terms"]},
+                                          prices=await _end_war_prices(gw, me, enemy, list(END_WAR_TERMS)),
+                                          term_needs=END_WAR_TERM_NEEDS, **ready),
                         actor=actor, game=gw.game(), bridge_health=gw.health)
 
     ids = {w["war_id"] for w in _war_between(before or [], me, enemy)}
@@ -8320,13 +14288,900 @@ async def _do_end_war(gw, a: dict, character_id: int, actor) -> dict:
                              guard_gate="peace_terms_not_open", guard_reason="peace_terms_not_open",
                              error_gate="engine_refused")
     v["result"] = dict(base, **{k: x for k, x in v["result"].items() if k not in base}, terms=terms,
-                       outcome_for_you=END_WAR_TERMS[terms])
+                       outcome_for_you=END_WAR_TERMS[terms], **({"price": price} if price else {}))
+    if v.get("verdict") == "applied":
+        after = _war_purse(await gw.read("query_character", {"character_id": me}))
+        charged = war_end_charged(purse_before, after)
+        if charged:
+            v["result"]["charged"] = charged
+        note_war_end_act(me, (gw.game() or {}).get("date"), f"ended the war against {enemy}: {terms}",
+                         price if isinstance(price, dict) else None, charged,
+                         war_id=(v["result"].get("readback") or {}).get("war_id")
+                         if isinstance(v["result"].get("readback"), dict) else None)
     return _script_envelope("do", v, actor, gw)
+
+
+async def _fabrication_already_running(gw, character_id: int, title_id: int) -> Optional[dict]:
+    """A recorded case (the seat set the chaplain on Athlone again at 1072.09.15,
+    1073.04.22 and 1074.04.22 while that task ran, each time after a read that said the
+    target was unknown). The refusal when this server knows the task runs on that title
+    for this ruler; None to send."""
+    me = _as_int(character_id)
+    if not me:
+        actor, _err = await _resolve_actor(gw, 0, "do")
+        me = _as_int((actor or {}).get("id"))
+    if not me:
+        return None
+    rows = council_task_seats(await gw.read("query_council_tasks", {"character_id": me}))
+    fab = _news.fabrication_running_on(me, title_id, rows)
+    if fab is None:
+        return None
+    status = _news.fabrication_status(me, rows, (gw.game() or {}).get("date"))
+    return envelope("do", ok=False, verdict="rejected", game=gw.game(), bridge_health=gw.health,
+                    blocked=why_blocked(
+                        "already_in_that_state", raw_reason="fabrication_already_running",
+                        summary=(f"the fabrication on {fab.get('title_key') or title_id} already runs "
+                                 f"(since {fab.get('since')}); setting it again may restart its "
+                                 "progress (not read). Nothing was sent"),
+                        measured={"fabrication": status}))
+
+
+async def _fabrication_game_check(gw, character_id: int, args: dict) -> tuple:
+    """(refusal envelope or None, {game_check, why, game_verdict}) for a fabricate task on
+    args.target_title_id. Live: the game's own target check for that county (query_fabricate_targets
+    title_id), proven live against the game's own resets, decides; unread, a county a living parent
+    holds is refused (the one rule proven live) and anything else is sent, validity unknown."""
+    me = _as_int(character_id)
+    if not me:
+        actor, _err = await _resolve_actor(gw, 0, "do")
+        me = _as_int((actor or {}).get("id"))
+    tid = _as_int(args.get("target_title_id"))
+    t = await gw.read("query_title_hierarchy", {"title_id": tid})
+    holder = _as_int(((t or {}).get("title") or {}).get("holder_id")) if isinstance(t, dict) else None
+    chk = await _news.fabricate_check(gw, me, holder, title_id=tid)
+    if chk["game_check"] != "refuses":
+        return None, chk
+    n = _news.reverts_of(me, tid)
+    return envelope("do", ok=False, verdict="rejected", game=gw.game(), bridge_health=gw.health,
+                    blocked=why_blocked(
+                        "target_ineligible", raw_reason="game_check_refuses",
+                        summary=chk["why"] + (f"; this server's task on it was reset {n} times" if n else "")
+                        + ". Nothing was sent",
+                        fix={"tool": "do", "args": {"action_class": "fabricate_targets"}},
+                        measured={"target_title_id": tid, **chk})), chk
+
+
+#: An intent's one spelling for an argument the code once took
+#: under several. A call with the other spelling is refused naming the one.
+ONE_SPELLING: dict = {"mint_title": {"title": "title_key", "title_id": "title_key"}}
+
+
+#: (a test run: two men-at-arms regiments bought, the purse said "unexplained
+#: -93.31"): the do() writes whose price is taken at once. The ruler's purse is read before
+#: and after the write, in the same paused moment; what moved is the write's own cost, noted
+#: for observe's news (your_acts). A write applied later (an offer) moves nothing here.
+PURSE_WITNESSED_INTENTS = frozenset({"men_at_arms", "build", "mint_title", "hire_merc", "change_law",
+                                     "take_decision", "interact"})
+
+
+async def _purse_witness(gw, character_id: int) -> Optional[dict]:
+    me = _as_int(character_id)
+    if not me:
+        a, _err = await _resolve_actor(gw, 0, "do")
+        me = _as_int((a or {}).get("id"))
+    p = _dg.purse_of(await gw.read("query_character", {"character_id": me})) if me else None
+    return dict(p, id=me) if p else None
+
+
+async def _note_own_spend(gw, intent: str, args: Any, before: dict, env: dict) -> None:
+    after = await _purse_witness(gw, before.get("id"))
+    if not after:
+        return
+    moved = {k: round(after[k] - before[k], 2) for k in ("gold", "prestige", "piety")
+             if isinstance(after.get(k), (int, float)) and isinstance(before.get(k), (int, float))
+             and abs(after[k] - before[k]) >= 0.01}
+    what = intent + (f" {args.get('maa_type') or args.get('building') or args.get('title_key') or args.get('interaction') or args.get('law') or ''}".rstrip()
+                     if isinstance(args, dict) else "")
+    if moved:
+        cid = _as_int(args.get("company_id")) if intent == "hire_merc" and isinstance(args, dict) else None
+        _news.note_act(before["id"], (gw.game() or {}).get("date"), what, cost_known=True, **moved,
+                       **({"company_id": cid} if cid else {}))
+        if isinstance(env.get("result"), dict):
+            env["result"]["purse_moved"] = moved
+    elif intent in ("take_decision", "interact") and env.get("verdict") in ("applied", "pending"):
+        # Nothing moved at the send; the decision's or interaction's event may charge later
+        _news.note_act(before["id"], (gw.game() or {}).get("date"), what, cost_known=False,
+                       unpriced_kind="deferred")
+
+
+#: The do intents' arguments that name another character (do_intent_args.accepted), each read alive before the
+#: call goes further (the acting ruler is _resolve_actor's)
+DEAD_CHECKED_ARGS = {
+    "interact": ("target_id", "secondary_actor_id", "secondary_recipient_id"),
+    "call_ally": ("ally_id",),
+    "join_war": ("leader_id",),
+    "scheme": ("target_id",),
+    "council_task": ("target_character_id",),
+    "appoint": ("councillor_id",),
+    "set_obligation": ("vassal_id",),
+    "end_war": ("enemy_id",),
+}
 
 
 async def do_impl(gw, intent: str = None, action_class: str = None,
                   candidates: list = None, character_id: int = 0,
                   args: dict = None) -> dict[str, Any]:
+    """do(): title keys in args become ids first, and the
+    reply names them under result.titles_named; then _do_impl runs the call."""
+    import title_refs as _trefs
+    echo: list = []
+    if intent and isinstance(args, dict):
+        wrong = [k for k in ONE_SPELLING.get(intent, {}) if k in args]
+        if wrong:
+            one = ONE_SPELLING[intent][wrong[0]]
+            return envelope("do", ok=False, verdict="rejected", game=gw.game(), bridge_health=gw.health,
+                            blocked=why_blocked(
+                                "invalid_argument",
+                                summary=f"{intent} takes args.{one}; got {', '.join(wrong)}. Nothing was sent",
+                                fix={"rejected_fields": wrong, "accepted_fields": [one]}))
+        # An argument the intent does not read is refused before anything is read or sent (do_intent_args)
+        import do_intent_args as _dia
+        bad, takes = _dia.unknown_args(intent, args)
+        if bad:
+            return envelope("do", ok=False, verdict="rejected", game=gw.game(), bridge_health=gw.health,
+                            blocked=why_blocked(
+                                "unknown_argument",
+                                summary=(f"{intent} takes no args.{', args.'.join(bad)}; it takes "
+                                         f"{', '.join(takes) or 'no args'}. Nothing was sent"),
+                                fix={"rejected_fields": bad, "accepted_fields": takes}))
+        args, echo, blk = await _trefs.resolve_args(gw, args)
+        if blk is not None:
+            return envelope("do", ok=False, verdict="rejected", game=gw.game(), blocked=blk,
+                            bridge_health=gw.health)
+    elif action_class and isinstance(args, dict):
+        # (1087-1094: action_class=buildings with location_id 'c_dublin' read the key as no
+        # location, four times): an enumerate's title arguments take a key too
+        args, echo, blk = await _trefs.resolve_args(gw, args)
+        if blk is not None:
+            return envelope("do", ok=False, verdict="rejected", game=gw.game(), blocked=blk,
+                            bridge_health=gw.health)
+    if intent in DEAD_CHECKED_ARGS and isinstance(args, dict):
+        # A character the call names who is dead is said first, before any other check (a marriage send named a
+        # son the news had reported dead, and the reply called him married)
+        named = {f"args.{k}": args.get(k) for k in DEAD_CHECKED_ARGS[intent] if _as_int(args.get(k))}
+        if named:
+            dead = await dead_among(gw.read, named)
+            if dead is not None:
+                return _trefs.attach(envelope("do", ok=False, verdict="rejected", game=gw.game(),
+                                              blocked=dead_character_blocked(dead["id"], dead["sect"],
+                                                                             dead["field"]),
+                                              bridge_health=gw.health), echo)
+    fab_check = None
+    if intent == "council_task" and isinstance(args, dict) and "fabricate_claim" in str(args.get("task") or "") \
+            and _as_int(args.get("target_title_id")):
+        # The same fabrication already running is not sent again
+        same = await _fabrication_already_running(gw, character_id, _as_int(args["target_title_id"]))
+        if same is not None:
+            return _trefs.attach(same, echo)
+        # The game's own check for this county before the task is set (a task set
+        # anyway is reset by the game: c_leinster, 35 months)
+        refused, fab_check = await _fabrication_game_check(gw, character_id, args)
+        if refused is not None:
+            return _trefs.attach(refused, echo)
+    if intent == "hire_merc" and isinstance(args, dict):
+        # A hire into debt needs args.confirm_debt=true; check=true answers the price and the debt
+        held = await _hire_debt_guard(gw, character_id, args)
+        if held is not None:
+            return _trefs.attach(held, echo)
+        args = {k: v for k, v in args.items() if k not in ("check", "confirm_debt")}
+    if intent == "interact" and isinstance(args, dict):
+        # A debug-only
+        # interaction is refused here with the game's own reason and the real one
+        dbg = _diarchy.debug_refusal(str(args.get("interaction") or args.get("interaction_type") or ""))
+        if dbg is not None:
+            nb = why_blocked("interaction_invalid", summary=dbg["summary"],
+                             fix=(dbg.get("instead") or {}).get("call"))
+            nb["game_rule"] = dbg["game_rule"]
+            if dbg.get("instead"):
+                nb["instead"] = {k: v for k, v in dbg["instead"].items() if k != "call"}
+            return _trefs.attach(envelope("do", ok=False, verdict="rejected", game=gw.game(), blocked=nb,
+                                          bridge_health=gw.health), echo)
+    spend_before = await _purse_witness(gw, character_id) if intent in PURSE_WITNESSED_INTENTS else None
+    env = await _do_impl(gw, intent=intent, action_class=action_class, candidates=candidates,
+                         character_id=character_id, args=args)
+    if spend_before is not None and isinstance(env, dict) and env.get("verdict") in ("applied", "pending"):
+        await _note_own_spend(gw, intent, args, spend_before, env)
+    if intent == "take_decision" and isinstance(env, dict) and isinstance(env.get("blocked"), dict) \
+            and env["blocked"].get("gate") == "ai_potential_not_met" and isinstance(args, dict):
+        # The conditions of the check that refused it, from the game's files
+        env["blocked"]["summary"] = ai_potential_words(args.get("decision"))
+    if intent == "council_task" and isinstance(args, dict) and isinstance(env, dict) \
+            and env.get("verdict") == "applied" and "fabricate_claim" in str(args.get("task") or ""):
+        # The fabrication this server set, for observe's news
+        # and the fabricate rows (no read gives a task's target back).
+        me = _as_int(character_id) or _as_int((env.get("actor") or {}).get("id"))
+        # The key the script named when the seat passed an id (live: the
+        # fabrication_left row read title_key null for 508)
+        key = next((e.get("title_key") for e in echo if e.get("arg") == "target_title_id"), None)
+        if key is None:
+            m = re.search(r"target = title:(\w+)\.title_province",
+                          str(((env.get("result") or {}).get("raw") or {}).get("script") or ""))
+            key = m.group(1) if m else None
+        _news.note_fabrication(me, _as_int(args.get("target_title_id")), key,
+                               str(args.get("seat") or FABRICATE_CLAIM_SEAT), (gw.game() or {}).get("date"))
+        # The province the game stored as the target, read back once, so
+        # later reads can tell this task from another (no read maps a province to a county)
+        seats = council_task_seats(await gw.read("query_council_tasks", {"character_id": me}))
+        row = next((s for s in seats or [] if s.get("task_name") == _news.FABRICATE_TASK), None)
+        if row is not None:
+            _news.note_fabrication_province(me, row.get("target_province_id"))
+        if isinstance(env.get("result"), dict):
+            env["result"]["fabrication"] = {"target_province_id": (row or {}).get("target_province_id"),
+                                            "progress": None, "rule": _news.FABRICATION_MEASURED,
+                                            **(fab_check or {})}
+            n = _news.reverts_of(me, _as_int(args.get("target_title_id")))
+            if n:
+                env["result"]["fabrication"]["reset_by_game_before"] = n
+    if intent == "interact" and isinstance(args, dict) and isinstance(env, dict):
+        _explain_interaction_refusal(env, str(args.get("interaction") or args.get("interaction_type") or ""),
+                                    args.get("target_id"))
+        await _explain_disinherit_refusal(gw, env, str(args.get("interaction") or args.get("interaction_type") or ""),
+                                          _as_int(character_id) or _as_int((env.get("actor") or {}).get("id")))
+        _explain_marriage_refusal(env, args)
+        await marriage_refusal_reads(env, args, gw.read)
+        if env.get("verdict") in ("applied", "pending"):
+            # An ask its recipient decides; the next news reads his answer (news.asks_answered)
+            _news.note_ask(_as_int(character_id) or _as_int((env.get("actor") or {}).get("id")),
+                           str(args.get("interaction") or args.get("interaction_type") or ""),
+                           _as_int(args.get("target_id")), (gw.game() or {}).get("date"))
+        if env.get("verdict") == "rejected" and str(args.get("interaction") or args.get("interaction_type")
+                                                      or "") == _news.HOF_CLAIM_SEND:
+            _news.note_refused_send(_as_int(character_id) or _as_int((env.get("actor") or {}).get("id")),
+                                    _news.HOF_CLAIM_SEND, (gw.game() or {}).get("date"))
+        if str(args.get("interaction") or args.get("interaction_type") or "") == _news.HOF_GOLD_SEND \
+                and (env.get("verdict") in ("applied", "pending") or (env.get("blocked") or {}).get("gate")
+                     in ("recipient_refuses", "target_would_reject")):
+            # A refused ask silences the idle hint; one the game took re-arms it
+            _news.note_acceptance(_as_int(character_id) or _as_int((env.get("actor") or {}).get("id")),
+                                  _news.HOF_GOLD_SEND, env.get("verdict") != "rejected", None,
+                                  (gw.game() or {}).get("date"))
+    if intent == "hire_merc" and isinstance(args, dict) and isinstance(env, dict):
+        await _explain_hire_refusal(gw, env, _as_int(args.get("company_id")),
+                                    _as_int(character_id) or _as_int((env.get("actor") or {}).get("id")))
+        res = env.get("result")
+        moved = (res or {}).get("purse_moved", {}).get("gold") if isinstance(res, dict) else None
+        if env.get("verdict") == "applied" and isinstance(moved, (int, float)) and isinstance(res, dict):
+            # The charge beside the estimate the listing showed (the listing's last read)
+            est = next((r.get("price_estimate") for r in _MERC_LAST_ROWS.get("rows") or []
+                        if _as_int(r.get("company_id")) == _as_int(args.get("company_id"))), None)
+            res["price"] = {"charged": -moved, "estimate_listed": est}
+            # A hire that left the purse below 0 says what that closes, in the reply of the call
+            ch = _char_section(await gw.read("query_character", {"character_id": _as_int(character_id) or _as_int(
+                (env.get("actor") or {}).get("id"))}))
+            g, inc = ch.get("gold"), (ch.get("income_breakdown") or {}).get("total_monthly")
+            if isinstance(g, (int, float)) and not isinstance(g, bool) and g < 0:
+                env["warnings"] = list(env.get("warnings") or [])
+                env["warnings"].append({
+                    "code": "in_debt_after_hire", "is_known_limitation": False,
+                    "detail": _dg.debt_words(g, inc if isinstance(inc, (int, float)) else None)})
+    if intent == "change_law" and isinstance(args, dict) and isinstance(env, dict):
+        await _explain_law_refusal(gw, env, str(args.get("law") or ""),
+                                   _as_int(character_id) or _as_int((env.get("actor") or {}).get("id")))
+    if intent == "appoint" and isinstance(env, dict) and isinstance(env.get("blocked"), dict) \
+            and env["blocked"].get("raw_reason") == "vacant_seat_fill_unsupported" \
+            and env["blocked"].get("summary") != APPOINT_VACANT:
+        # The council read found the seat held; the bridge's write read it empty
+        held = next((h for (who, _p), h in _APPOINT_HOLDER.items()
+                     if who == (_as_int(character_id) or _as_int((env.get("actor") or {}).get("id")))), None)
+        if held:
+            env["blocked"] = why_blocked("bridge_read_disagrees", raw_reason="seat_read_disagrees",
+                                         summary=APPOINT_READ_DISAGREES.format(holder=held),
+                                         measured={"query_council_holder": held,
+                                                   "bridge_reason": "vacant_seat_fill_unsupported"})
+    if intent == "appoint" and isinstance(args, dict) and isinstance(env, dict) \
+            and (env.get("blocked") or {}).get("raw_reason") == "seat_holder_unchanged":
+        await _explain_seat_unchanged(gw, env, args, _as_int(character_id) or _as_int((env.get("actor") or {}).get("id")))
+    if intent == "interact" and isinstance(args, dict) and args.get("confirm_leaves_realm") is True \
+            and isinstance(env, dict) and env.get("verdict") in ("applied", "pending"):
+        _news.note_act(_as_int(character_id) or _as_int((env.get("actor") or {}).get("id")),
+                       (gw.game() or {}).get("date"),
+                       f"granted out of the realm: title {args.get('title_id')} to {args.get('target_id')}",
+                       cost_known=False)
+    if intent == "interact" and isinstance(args, dict) and _as_int(args.get("title_id")) > 0 \
+            and isinstance(env, dict):
+        name = str(args.get("interaction") or args.get("interaction_type") or "")
+        if name not in DIRECT_DISPATCH_INTERACTIONS:
+            env.setdefault("warnings", []).append({"code": "title_not_applied", "is_known_limitation": True,
+                                                   "detail": TITLE_NOT_APPLIED.format(name=name)})
+    return _trefs.attach(env, echo)
+
+
+APPOINT_SWAP_REFUSED = ("the game's seat swap ran and {pos} is still held by {holder}: the engine's own condition "
+                        "for the trade said no (not read). {who} sits as {his}. Built, not proven live")
+
+
+async def _explain_seat_unchanged(gw, env: dict, a: dict, me: int) -> None:
+    """Item j (a seated game, step 54, 1095.11: appoint 36742 to the steward's seat 7108 answered
+    `seat_holder_unchanged`, `already_in_that_state`, while 15611 held it): the seat's holder and the candidate's
+    own seat, read now; already_in_that_state only when the candidate is the one who holds it."""
+    who = _as_int(a.get("councillor_id") or a.get("character_id"))
+    pos = _as_int(a.get("position_id") or a.get("seat"))
+    rows = (await gw.read("query_council", {"character_id": me}) or {}).get("council")
+    if not isinstance(rows, list):
+        env["blocked"]["unread"] = "the council read did not answer: the seat's holder is not known"
+        return
+    by_pos = {_as_int(r.get("position_id")): r for r in rows if isinstance(r, dict)}
+    row = by_pos.get(pos) or next((r for r in rows if isinstance(r, dict)
+                                   and str(r.get("position_key") or "").lower().endswith(str(a.get("seat")).lower())), None)
+    holder = _as_int((row or {}).get("holder_id"))
+    if holder and holder == who:
+        return                                          # he holds it: the state already matched
+    his = next((str(r.get("position_key")) for r in rows if isinstance(r, dict) and _as_int(r.get("holder_id")) == who),
+               "no council seat")
+    env["blocked"] = why_blocked("engine_refused", raw_reason="seat_holder_unchanged",
+                                 summary=APPOINT_SWAP_REFUSED.format(pos=(row or {}).get("position_key") or pos,
+                                                                     holder=holder or "nobody read", who=who, his=his),
+                                 measured={"seat_holder_now": holder, "candidate_seat": his})
+
+
+#: (1085.04.22: single_heir_succession_law refused
+#: not_allowed_or_unaffordable with prestige at -168): a succession law's pass_cost is
+#: change_succession_law_prestige_cost (common/laws/00_succession_laws.txt; 500 prestige,
+#: change_succession_law_prestige_base in 00_law_values.txt, before faith doctrines, x4 for a
+#: clan, x1.25 under a partition-locked contract); its can_pass conditions follow.
+SUCCESSION_LAW_PRESTIGE = 500
+SUCCESSION_LAW_NOT_CHECKED = (
+    "a powerful vassal who opposes the change (no_powerful_vassal_with_negative_opinion)",
+    "your realm laws' can_change_succession_laws flag (tribal or bureaucratic realms)",
+    "can_have: your culture's innovation_primogeniture, or being independent (single heir)",
+    "a clan's piety level 3, an administrative realm's influence level 4")
+
+
+async def _explain_law_refusal(gw, env: dict, law: str, me: int) -> None:
+    b = env.get("blocked")
+    if env.get("verdict") != "rejected" or not isinstance(b, dict) \
+            or ("succession" not in law and law not in _lr.SUCC_LAWS) \
+            or b.get("raw_reason") != "not_allowed_or_unaffordable":
+        return
+    sect = _char_section(await gw.read("query_character", {"character_id": me}))
+    pr = _dg._num(sect.get("prestige"))
+    # (a Carinthia test run: refused "500 prestige short" while the game's own conditions, crown_authority_1
+    # and innovation_hereditary_rule, were the reason): the game's conditions first, the price after
+    rl = await gw.read("query_realm_laws", {"character_id": me})
+    names = _law_names(rl)
+    ins = await law_reach_inputs(gw, me, names, sect)
+    why = _lr.refusal_reasons(law, **ins) if names else None
+    if why:
+        env["blocked"] = why_blocked(
+            "missing_prerequisite_law", raw_reason=b.get("raw_reason"),
+            summary=f"{law}: the game's conditions not met: " + "; ".join(why),
+            measured={"missing": why, **({"prestige": {"cost": SUCCESSION_LAW_PRESTIGE, "have": round(pr, 2)}}
+                                         if pr is not None else {})})
+        env["blocked"]["source"] = _lr.SOURCE
+        env["blocked"]["also_not_checked"] = [_lr.NOT_CHECKED]
+        return
+    if pr is not None and pr < SUCCESSION_LAW_PRESTIGE:
+        env["blocked"] = why_blocked(
+            "insufficient_prestige", raw_reason=b.get("raw_reason"),
+            summary=(f"{law} costs {SUCCESSION_LAW_PRESTIGE} prestige (the game's succession-law price, before "
+                     f"faith doctrines); you hold {round(pr, 2)}: {round(SUCCESSION_LAW_PRESTIGE - pr, 2)} short"),
+            measured={"cost_prestige": SUCCESSION_LAW_PRESTIGE, "have": round(pr, 2)})
+        env["blocked"]["also_not_checked"] = list(SUCCESSION_LAW_NOT_CHECKED)
+    else:
+        b["checked"] = ({"prestige": {"cost": SUCCESSION_LAW_PRESTIGE, "have": round(pr, 2), "ok": True}}
+                        if pr is not None else {"prestige": "unread"})
+        b["not_checked"] = list(SUCCESSION_LAW_NOT_CHECKED)
+        b["summary"] = (f"{law}: the game refused it and named no condition; the price is "
+                        + ("covered" if pr is not None else "not read") + ", so one of not_checked failed")
+
+
+#: The game's hire rules for a mercenary company (re/findings/re_military_levers.md
+#: section 4, decompile of the hire command's CanExecute, MercenaryCompany_ValidateHire and its callees; defines
+#: NMercenary in common/defines/00_defines.txt): the hirer is a ruler the game finds by the command's id; the
+#: company is available; already hired; outside the hire range (500 from your capital, 1,500 for a company of
+#: your culture); cannot afford: gold minus the price is below 0 and not above -ALLOWED_DEBT_MONTHS (24) x your
+#: monthly income (the game's own monthly income, query_character income_breakdown.total_monthly; 0 or less
+#: allows no debt); a flag that wants vassals (not set by the bridge's hire).
+MERC_RANGE_RULE = ("the game hires only within 500 of your capital, 1,500 for a company of your culture "
+                   "(NMercenary.HIRE_RANGE / HIRE_RANGE_SAME_CULTURE); the bridge compares its map distance")
+MERC_DEBT_MONTHS = 24
+MERC_LEVY_PER_100 = 12.0
+MERC_MAA_RATIO = 0.5
+MERC_REALM_MULT = 0.05
+MERC_PRICE_NOTE = ("price_estimate: the game's mercenary price from its defines (NMercenary): 12 gold per 100 "
+                   "levies, plus half the recruit price of each men-at-arms sub-regiment (its men / the type's "
+                   "stack), x (1 + 5% x the square root of your realm's counties), x (1 + the sum of your "
+                   "mercenary_hire_cost_mult: your rank's, duke +10%, king +30%, emperor +60%, and your perks' and "
+                   "traits' in the game's files, your_modifiers: soldiers_of_lesser_fortune_perk -30%). Not read: "
+                   "your culture's traditions and era, dynasty perks, buildings, court and council modifiers "
+                   "(they lower or raise it). Against the game's charge: off by each modifier it applies that is "
+                   "not read (a duke's +10% is 10%). price_upper adds the high medieval era's +15% (your "
+                   "culture's era is not read): affordable and debt_after_hire use it. affordable: the game refuses "
+                   "a hire that leaves you in debt by 24 months of your monthly income or more (no debt at all when "
+                   "the income is 0 or less); within 3% of that line it reads unsure")
+#:
+#: 00_basic_modifiers.txt duke_modifier / king_modifier / emperor_modifier / hegemon_modifier
+#: mercenary_hire_cost_mult (count_modifier has none); 00_culture_eras.txt culture_era_high_medieval +0.15
+#: (the culture's era is not read: the upper bound carries it). Built, not proven live.
+MERC_RANK_MULT = {1: 0.0, 2: 0.0, 3: 0.1, 4: 0.3, 5: 0.6, 6: 0.8}
+MERC_ERA_UP = 0.15
+#: Men in one sub-regiment of a men-at-arms type (common/men_at_arms_types `stack`), where
+#: it is not 100. The recruit price the bridge reads (query_maa_types recruit_cost) is per
+#: sub-regiment: a company's regiment of 355 light horsemen is 3.55 of them.
+MAA_STACK = {
+    **dict.fromkeys(("gendarme", "monaspa", "cataphract", "asawira", "tarkhan", "armored_horsemen",
+                     "accolade_maa_lancers", "ayrudzi", "conrois", "ballistrai", "maa_bandits", "maa_poachers",
+                     "maa_marauders", "maa_thieves", "kheshig", "heavy_horse_archers", "nomad_lancers",
+                     "cataphract_archers", "japanese_horse_archers", "zhanmadao_infantry", "tiefutu",
+                     "rocket_carts"), 50),
+    **dict.fromkeys(("war_elephant", "accolade_maa_elephantiers", "ballista_elephant"), 25),
+    **dict.fromkeys(("onager", "mangonel", "trebuchet", "bombard", "torch_bearers", "ballista",
+                     "cloud_ladder", "siege_tower", "cannon"), 10),
+}
+MERC_AFFORD_MARGIN = 0.03
+
+
+def merc_price(regiments: Any, realm_counties: Any, maa_cost: dict) -> Optional[float]:
+    """The estimate in MERC_PRICE_NOTE for a company's regiments, or None when a men-at-arms
+    type's recruit price, or the realm's county count, is not read."""
+    total = 0.0
+    for r in regiments or []:
+        if not isinstance(r, dict):
+            continue
+        t, men = r.get("maa_type"), _as_int(r.get("men"))
+        if t in (None, "levies"):
+            total += men / 100.0 * MERC_LEVY_PER_100
+        else:
+            c = maa_cost.get(t)
+            if not isinstance(c, (int, float)):
+                return None
+            # Per sub-regiment, not per regiment
+            total += MERC_MAA_RATIO * c * men / MAA_STACK.get(t, 100)
+    n = _as_int(realm_counties)
+    if realm_counties is None or n < 0:
+        return None
+    return round(total * (1 + MERC_REALM_MULT * (n ** 0.5 if n > 0 else 0)), 2)
+
+
+def _num_read(x: Any) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def merc_debt_line(income: Any) -> Optional[float]:
+    """The deepest debt the game lets a hire leave (exclusive): -24 x the monthly income, 0 when the income is 0
+    or less; None when the income is not read."""
+    return round(-MERC_DEBT_MONTHS * max(0.0, float(income)), 2) if _num_read(income) else None
+
+
+def _within_debt_line(after: float, line: float) -> bool:
+    """The game's afford test: no debt, or a debt above the line (strictly)."""
+    return after >= 0 or after > line
+
+
+def merc_debt_after(price: Any, gold: Any, income: Any) -> Optional[dict]:
+    """A recorded case (1078.08.16: company 55 listed `affordable: true` at 194.99 with 143 gold; the hire took
+    214 and the seat was in debt for 18 steps, every declaration refused): what a hire into debt leaves, said
+    where the hire is chosen and sent, and whether the game's debt line allows it. None when the purse covers it
+    or a number is unread."""
+    if not (_num_read(price) and _num_read(gold)):
+        return None
+    after = round(gold - price, 2)
+    if after >= 0:
+        return None
+    line = merc_debt_line(income)
+    if line is None:
+        note = ("the game allows a hire into debt only above 24 months of your monthly income in debt; your "
+                "income was not read, so whether it allows this one is not known")
+    elif _within_debt_line(after, line):
+        note = (f"the game allows this hire into debt (its line: {MERC_DEBT_MONTHS} months of your monthly "
+                f"income, {line}); a declaration is not allowed until gold is back above 0")
+    else:
+        note = (f"the game refuses this hire: it would leave you {-after} in debt, and the game allows a debt "
+                f"only above {MERC_DEBT_MONTHS} months of your monthly income ({line})")
+    return {"gold_after": after, "debt": _dg.debt_words(after, income if _num_read(income) else None),
+            "debt_line": line, "note": note}
+
+
+def merc_affordable(price: Any, gold: Any, income: Any) -> Any:
+    """True / False by the game's afford test (_within_debt_line) at the estimate; "unsure" when the
+    estimate's margin (MERC_AFFORD_MARGIN) crosses the line; None when a number is not read."""
+    if not (_num_read(price) and _num_read(gold) and _num_read(income)):
+        return None
+    line = merc_debt_line(income)
+    lo, hi = gold - price * (1 + MERC_AFFORD_MARGIN), gold - price * (1 - MERC_AFFORD_MARGIN)
+    if _within_debt_line(lo, line):
+        return True
+    if not _within_debt_line(hi, line):
+        return False
+    return "unsure"
+
+
+#: (0871.12.06: company 33 hired for 157 gold holding 71, the listing's own
+#: debt_after_hire beside it; 3.5 years in debt followed, every declaration refused). The rule for every write
+#: whose price the server reads before sending and the game lets run into debt (DEBT_PRICED): it is sent only
+#: with args.confirm_debt=true when the price (the upper estimate) is more than the gold read; check=true
+#: answers the price, the gold and the debt it would leave, sending nothing. The game itself refuses
+#: men-at-arms, buildings and titles it cannot charge (not read live for every one: listed in a test run).
+DEBT_PRICED = frozenset({"hire_merc"})
+DEBT_CONSEQUENCE = "no new wars while in debt: the game refuses every declaration while gold is below 0"
+
+
+async def _hire_debt_guard(gw, character_id: int, a: dict) -> Optional[dict]:
+    """None when the hire may be sent as asked; else the reply: a check's reading, or the refusal of a hire
+    whose price is more than the gold read and that does not carry confirm_debt=true. A price or gold that
+    is not read refuses nothing (the game's own rule stands) and a check says it is unread."""
+    check = a.get("check") is True
+    if not check and a.get("confirm_debt") is True:
+        return None
+    actor, _err = await _resolve_actor(gw, _as_int(character_id), "do")
+    me = _as_int(character_id) or _as_int((actor or {}).get("id"))
+    cid = _as_int(a.get("company_id"))
+    if not me or not cid:
+        return None
+    rows, _far, _n = await mercenary_rows(gw, me)
+    row = next((r for r in rows if _as_int(r.get("company_id")) == cid), None)
+    ch = _char_section(await gw.read("query_character", {"character_id": me}))
+    purse = _dg.purse_of(ch) or {}
+    gold, inc = purse.get("gold"), purse.get("monthly_income")
+    price = (row or {}).get("price_upper")
+    reading = {"company_id": cid, "price_estimate": (row or {}).get("price_estimate"), "price_upper": price,
+               "gold": gold}
+    if not isinstance(price, (int, float)) or not isinstance(gold, (int, float)):
+        reading["unread"] = ("the company is not in the hireable list read now" if row is None
+                             else "its price or your gold was not read")
+    into_debt = isinstance(price, (int, float)) and isinstance(gold, (int, float)) and price > gold
+    if into_debt:
+        reading["debt_after_hire"] = merc_debt_after(price, gold, inc)
+        reading["consequence"] = DEBT_CONSEQUENCE
+    if check:
+        res = {"intent": "hire_merc", "check": True, "sent": False, **reading,
+               "affordable": (row or {}).get("affordable"),
+               "needs": "args.confirm_debt=true" if into_debt else None}
+        return envelope("do", result=res, actor=actor, game=gw.game(), bridge_health=gw.health)
+    if not into_debt:
+        return None
+    return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(), bridge_health=gw.health,
+                    result={"intent": "hire_merc", "sent": False, **reading},
+                    blocked=why_blocked("debt_unconfirmed",
+                                        summary=(f"the hire costs up to {price} and you hold {round(gold, 2)}: "
+                                                 f"it leaves you in debt ({DEBT_CONSEQUENCE}). Nothing was sent; "
+                                                 "send again with args.confirm_debt=true to hire anyway"),
+                                        fix={"tool": "do", "args": {"intent": "hire_merc",
+                                                                    "args": dict(a, confirm_debt=True)}}))
+
+
+async def next_title_short(gw, me: int, gold: Any, cost: Any) -> Optional[dict]:
+    """{<title>: {price, gold, short_now, short_after}}: the gold the realm's next title (the one observe's news
+    names, _NEWS_WITHIN) still needs now and after a spend of `cost`, the game's own price (mint_title_price);
+    None when no title is named or its price is not a gold price read."""
+    kt = _NEWS_WITHIN.get(me)
+    if not (isinstance(kt, str) and kt):
+        return None
+    _blk, price = await mint_title_price(gw, me, kt)
+    if not (isinstance(price, dict) and price.get("currency") == "gold" and _num_read(price.get("cost"))):
+        return None
+    g = price.get("gold") if _num_read(price.get("gold")) else gold
+    num = _num_read(g)
+    return {kt: {"price": price["cost"], "gold": g,
+                 "short_now": round(max(0.0, price["cost"] - g), 2) if num else None,
+                 "short_after": round(max(0.0, price["cost"] - g + cost), 2) if num and _num_read(cost) else None}}
+
+
+async def mercenary_rows(gw, me: int, include_hired: bool = False, cap: int = 0) -> tuple:
+    """(rows in range, count out of range, note): query_hireable_mercenaries for the ruler
+    `me`, each row with in_range, price_estimate and affordable, the cheapest first, at most `cap` (0: every row
+    read; the listing passes MERC_ROWS_MAX)."""
+    res = await gw.read("query_hireable_mercenaries", {"actor_id": me, "max_results": 25,
+                                                       **({"include_hired": True} if include_hired else {})})
+    res = res if isinstance(res, dict) else {}
+    ch = _char_section(await gw.read("query_character", {"character_id": me}))
+    purse = _dg.purse_of(ch) or {}
+    # The game's realm size is its counties (realm_total_counties, vassals' too), not
+    # query_character's realm_size (every title held directly: 7 for Dublin and Leinster)
+    rl = await gw.read("query_realm", {"character_id": me})
+    counties = rl.get("realm_total_counties") if isinstance(rl, dict) else None
+    mt = await seat_read(gw, "query_maa_types", {}, me)
+    maa_cost = {t.get("maa_type"): t.get("recruit_cost") for t in ((mt or {}).get("types") or [])
+                if isinstance(t, dict)} if isinstance(mt, dict) else {}
+    own_mults, own_why = await merc_personal_mults(gw, me, ch)
+    own = round(sum(x["mult"] for x in own_mults), 4) if own_mults is not None else 0.0
+    rows, far = [], 0
+    for m in (res.get("companies") or []):
+        if not isinstance(m, dict):
+            continue
+        if m.get("in_range") is False:
+            far += 1
+            continue
+        cid = m.get("company_id")
+        base = merc_price(m.get("regiments"), counties, maa_cost)
+        rank = MERC_RANK_MULT.get(_as_int(ch.get("ruler_tier")))
+        mult = max(MERC_MULT_FLOOR, 1 + (rank if rank is not None else 0.0) + own)
+        price = round(base * mult, 2) if base is not None else None
+        upper = round(base * max(MERC_MULT_FLOOR, 1 + (rank if rank is not None else max(MERC_RANK_MULT.values()))
+                                 + own + MERC_ERA_UP), 2) if base is not None else None
+        row = {"label": m.get("label") or f"company {cid}", "company_id": cid,
+               "do_call": {"intent": "hire_merc", "args": {"company_id": cid}},
+               "troops": m.get("troops"), "regiments": m.get("regiments"),
+               "home_county": m.get("home_county_name") or m.get("home_county_key"),
+               "in_range": m.get("in_range") if isinstance(m.get("in_range"), bool) else "unread",
+               "same_culture": m.get("same_culture"), "distance_px": m.get("distance_px"),
+               "price_estimate": price, "price_upper": upper,
+               **({} if rank is not None else {"rank_modifier": "unread: your ruler's tier was not read"}),
+
+               "affordable": merc_affordable(upper, purse.get("gold"), purse.get("monthly_income")),
+               "blocked": None, **({"hired_by": m["hired_by"]} if m.get("hired_by") is not None else {})}
+        inc = purse.get("monthly_income")
+        if _num_read(price) and _num_read(inc) and inc > 0:
+            # The price as months of the monthly income read: months_of_income on price_estimate (the price the game
+            # charges when nothing unread applies), months_of_income_at_upper on price_upper (the one affordable and
+            # debt_after_hire read)
+            row["months_of_income"] = round(price / inc, 1)
+            if _num_read(upper):
+                row["months_of_income_at_upper"] = round(upper / inc, 1)
+            row["months_basis"] = MERC_MONTHS_BASIS
+        dh = merc_debt_after(upper, purse.get("gold"), inc)
+        if dh:
+            row["debt_after_hire"] = dh
+        rows.append(row)
+    # The cheapest first (a price not read last), so a listing cut to the rows that fit shows the ones the purse is
+    # nearest to; then at most MERC_ROWS_MAX
+    rows.sort(key=lambda r: (not _num_read(r.get("price_estimate")), r.get("price_estimate") or 0.0))
+    _MERC_LAST_READ["in_range_total"] = len(rows)
+    _MERC_LAST_READ["your_modifiers"] = own_mults if own_mults is not None else {"unread": own_why}
+    if cap:
+        rows = rows[:cap]
+    _MERC_LAST_READ["res"] = res
+    if not include_hired:
+        _MERC_LAST_ROWS["rows"] = rows
+    return rows, far, MERC_PRICE_NOTE
+
+
+#: the last listing read (for the enumerate's truncation warning)
+_MERC_LAST_READ: dict = {}
+#: The most companies one listing carries (the cheapest first)
+MERC_ROWS_MAX = 12
+MERC_MONTHS_BASIS = ("months_of_income: price_estimate / your monthly income read; months_of_income_at_upper: "
+                     "price_upper / the same income")
+#: What a listing row's debt_after_hire is, said once for the listing (the hire's own reply says it whole)
+MERC_DEBT_ROW_NOTE = ("debt_after_hire: the gold a hire at price_upper leaves (gold_after), the game's debt line "
+                      f"({MERC_DEBT_MONTHS} months of your monthly income in debt) and whether the game allows the "
+                      "hire (allowed); in debt the game refuses every declaration until gold is back above 0")
+
+
+def merc_listing_row(r: dict) -> dict:
+    """A company's row as the listing shows it: its numbers, the words every row would repeat said once in the
+    listing's rows_read (months_basis, the debt line's meaning); in_range only when it is not true (the listing's
+    rows are the companies in range); home_county only when the label does not name it; the regiments as one line
+    of type and men each."""
+    out = {k: v for k, v in r.items() if k not in ("months_basis", "debt_after_hire")
+           and not (k == "in_range" and v is True)
+           and not (k == "home_county" and isinstance(v, str) and v in str(r.get("label") or ""))}
+    regs = r.get("regiments")
+    if isinstance(regs, list) and all(isinstance(x, dict) and set(x) <= {"maa_type", "men"} for x in regs):
+        # "levies 477, bowmen 358": the type and the men of each regiment, as the list gives them
+        out["regiments"] = ", ".join(f"{x.get('maa_type')} {x.get('men')}" for x in regs)
+    dh = r.get("debt_after_hire")
+    if isinstance(dh, dict):
+        line, after = dh.get("debt_line"), dh.get("gold_after")
+        out["debt_after_hire"] = {"gold_after": after, "debt_line": line,
+                                  "allowed": (_within_debt_line(after, line) if _num_read(after) and _num_read(line)
+                                              else "unread: your income was not read")}
+    return out
+
+
+#: The least the hire price's multiplier comes to (the modifiers add; the game does not charge below nothing)
+MERC_MULT_FLOOR = 0.0
+
+
+async def merc_personal_mults(gw, me: int, ch: dict) -> tuple:
+    """(rows, why): the hirer's own mercenary price modifiers, from his perks (query_lifestyle) and traits
+    (query_character) and their mercenary_hire_cost_mult in the game's files (event_prices.personal_merc_mults:
+    soldiers_of_lesser_fortune_perk -0.3). ([], "") when he holds none; (None, why) when his perks were not read."""
+    import event_prices as _ep  # noqa: PLC0415
+    ls = await gw.read("query_lifestyle", {"character_id": me})
+    perks = ls.get("perks") if isinstance(ls, dict) and isinstance(ls.get("perks"), list) else None
+    traits = [t.get("name") if isinstance(t, dict) else t for t in (ch or {}).get("traits") or []]
+    if perks is None:
+        return None, "query_lifestyle did not answer: your perks' mercenary price modifiers are not counted"
+    return _ep.personal_merc_mults(perks, [t for t in traits if isinstance(t, str)]), ""
+#: The rows of the last listing, for the hire reply's estimate beside its charge
+_MERC_LAST_ROWS: dict = {}
+
+
+#: A hire the game refused while the reads pass the price, the range and the contract (_explain_hire_refusal)
+HIRE_REFUSED_UNREAD = ("the game's hire check refused it and gave no reason. It is not the price as read: your gold "
+                       "covers the estimate's upper bound by the game's debt rule; the company is in range and "
+                       "not hired. Sending it again unchanged gets the same answer")
+HIRE_RULED_OUT = ["already hired", "out of range", "the price (its upper estimate, by the game's debt rule)"]
+HIRE_NOT_READ = ("that the company is available (the game's own check, which the bridge does not read); the game's "
+                 "exact price")
+
+
+async def _explain_hire_refusal(gw, env: dict, company_id: int, me: int) -> None:
+    """A recorded case (re_military_levers.md: the seat's hire came back REJECTED (CanExecute=0) with
+    no reason): name the game's gate the reads show failing, in the game's order."""
+    b = env.get("blocked")
+    if env.get("verdict") != "rejected" or not isinstance(b, dict):
+        return
+    rows, _far, _n = await mercenary_rows(gw, me, include_hired=True)
+    row = next((r for r in rows if _as_int(r.get("company_id")) == company_id), None)
+    if row is None:
+        b["gate_named"] = {"gate": "MERCENARY_COMPANY_OUTSIDE_RANGE", "read": MERC_RANGE_RULE,
+                           "basis": "the company is not among those in your hire range"}
+    elif row.get("hired_by") is not None:
+        b["gate_named"] = {"gate": "HIRED_TROOPS_ALREADY_HIRED", "read": f"hired by {row['hired_by']}"}
+    elif row.get("affordable") in (False, "unsure"):
+        b["gate_named"] = {"gate": "HIRED_TROOPS_CANNOT_AFFORD",
+                           "read": f"price about {row.get('price_estimate')} (estimate) against your gold "
+                                   f"and {MERC_DEBT_MONTHS} months of income"
+                                   + (" (the estimate's margin crosses the line)" if row["affordable"] == "unsure" else "")}
+    elif row.get("affordable") is True:
+        # The reads pass every gate they can test, so the game's refusal is not the price: not cannot_afford
+        # and not "cannot pay it now" (the bridge's hire gives the game the ruler's and the company's whole
+        # ids, so the check finds both; what it refused on is not read)
+        nb = why_blocked("engine_refused", raw_reason=b.get("raw_reason") or "rejected_or_unaffordable",
+                         summary=HIRE_REFUSED_UNREAD)
+        nb["gate_named"] = {"gate": "unknown", "ruled_out": HIRE_RULED_OUT, "not_read": HIRE_NOT_READ}
+        nb["measured"] = {k: row.get(k) for k in ("price_estimate", "price_upper", "in_range")}
+        nb["measured"].update({k: v for k, v in (row.get("debt_after_hire") or {}).items()
+                               if k in ("gold_after", "debt_line")})
+        env["blocked"] = nb
+    else:
+        b["gate_named"] = {"gate": "unknown", "ruled_out": ["already hired", "out of range"],
+                           "not_read": HIRE_NOT_READ}
+
+
+#: The bridge's refusal for an interaction it does not send to a named
+#: recipient (ai_eval_hook.cpp: AI_INTERACTION_DECISION returned false).
+AI_PATH_NO_TARGET = ("{name} is not one the bridge sends to a named recipient: it went through the "
+                     "game's own AI decision, which picks its target from the actor's AI candidate "
+                     "list and found none it would send to. The target_id given was not used, and "
+                     "the game's validity check for him was not run, so no condition is read")
+
+
+def _explain_interaction_refusal(env: dict, name: str, target: Any = None) -> None:
+    """A refused interaction names what was and was not checked.
+    ai_no_valid_target (invite_to_court x2, hof_ask_for_claim,
+    declare_war_interaction) becomes gate ai_path_no_target with
+    AI_PATH_NO_TARGET; a grant the game refused without words carries GRANT_NOT_CHECKED."""
+    b = env.get("blocked")
+    if env.get("verdict") != "rejected" or not isinstance(b, dict):
+        return
+    raw = str(b.get("raw_reason") or "")
+    if raw.startswith("ai_no_valid_target") and name not in DIRECT_DISPATCH_INTERACTIONS:
+        nb = why_blocked("ai_path_no_target", raw_reason=raw, summary=AI_PATH_NO_TARGET.format(name=name))
+        if name == "declare_war_interaction":
+            nb["fix"] = {"tool": "declare_war", "args": {"target_id": "<the realm ruler>", "cb": "<from cbs>"}}
+        env["blocked"] = nb
+    elif name == HOF_CLAIM_INTERACTION and b.get("gate") in ("target_would_reject", "recipient_refuses"):
+        # (accept_score -84, the reply did not say whose)
+        b["whose_acceptance"] = ("your head of faith's: the interaction's redirect makes him the recipient "
+                                 "(the title's holder is the secondary recipient)")
+    elif name == HOF_GOLD_INTERACTION and b.get("gate") in ("target_would_reject", "recipient_refuses"):
+        # The file's terms
+        b["he_accepts_when"] = HOF_GOLD_ACCEPT
+        b["your_terms"] = "discover(what='acceptance', interaction_type='hof_ask_for_gold_interaction', target_id=<him>)"
+    elif _diarchy.is_block_words(b.get("detail")) or _diarchy.is_block_words(b.get("game_says")):
+        # (vows and disinherit on Gebhard refused, the diarchy named only in the game's words)
+        b["diarchy"] = _diarchy.lever_note(target if target is not None else "<the target>")
+    elif name == GRANT_TITLES_INTERACTION and b.get("gate") == "interaction_invalid":
+        b["checked_before_sending"] = ("recipient not yourself; a landed recipient inside your realm; "
+                                       "an unlanded recipient not in prison; no devoted/gallivanter trait")
+        b["not_checked"] = GRANT_NOT_CHECKED
+
+
+async def _explain_disinherit_refusal(gw, env: dict, name: str, me: int) -> None:
+    """A recorded case (the standing order's disinherit fired 892.02.08 and its record said only
+    interaction_not_valid_for_target; the dynasty headship had passed to 13495): a refused disinherit says, in its
+    summary, the rule the game applies first (only the dynasty's head may) and who the head is now."""
+    b = env.get("blocked")
+    if name != "disinherit_interaction" or env.get("verdict") != "rejected" or not isinstance(b, dict) \
+            or b.get("raw_reason") != "interaction_not_valid_for_target" or not me:
+        return
+    ch = _char_section(await gw.read("query_character", {"character_id": me}) or {})
+    dyn = _as_int(ch.get("dynasty_id"))
+    head = None
+    if dyn:
+        d = await gw.read("query_dynasty", {"dynasty_id": dyn, "character_id": me})
+        head = _as_int((d or {}).get("head_character_id")) if isinstance(d, dict) else None
+    words = b.get("detail") if b.get("detail") not in (None, "", NO_GAME_DETAIL) else None
+    # The culture line the game prints pass or fail is never the reason (partition_forecast.engine_why)
+    kept, culture_line = _pf.engine_why(words)
+    words = kept or None
+    if culture_line and not words:
+        words = _pf.MYSTICAL_ANCESTORS_WHY.split(" and ", 1)[1]
+    if head and head != me:
+        b["summary"] = (f"only your dynasty's head can disinherit, and the head is {head}, not your ruler "
+                        "(the headship passes with the dynasty's eldest line, not with your titles)")
+        b["dynasty_head_id"] = head
+    elif head == me:
+        b["summary"] = ("the game does not allow this disinherit: your ruler is the dynasty's head, so another "
+                        "condition said no" + (f": {words}" if words else " (the game gave no words)"))
+    else:
+        b["summary"] = ("the game does not allow this disinherit; only the dynasty's head may, and the head "
+                        "did not read" + (f"; the game says: {words}" if words else ""))
+
+
+#: The interactions the bridge sends through its own pipeline to the named
+#: recipient, with the secondary characters, the title and the send options applied
+#: (bridge/src/ai_eval_hook.cpp is_direct_dispatch_interaction; test_tier_rule_and_claim_rows compares the
+#: two). Any other interaction goes through the AI-scoring fallback, and the send check
+#: (discover acceptance) answers interaction_not_checkable for it.
+HOF_CLAIM_INTERACTION = "hof_ask_for_claim_interaction"
+#: Divorce (common/character_interactions/00_marriage_interactions.txt). The plain one is actor + spouse,
+#: auto-accepted, shown only when the faith needs no approval; a faith with divorce_approval and a spiritual
+#: head (Catholic) shows only the head-of-faith request, target the spouse: its `redirect` makes the head of
+#: faith the recipient, and he answers (ai_accept: -50 base, his opinion of you, minus his opinion of your
+#: spouse). Both cost divorce_cost = 100 piety (00_basic_values.txt).
+DIVORCE_INTERACTION = "divorce_character_interaction"
+DIVORCE_HOF_INTERACTION = "divorce_character_rel_head_interaction"
+DIVORCE_RULE = ("divorce costs 100 piety. A faith that needs approval and has a spiritual head (Catholic): only "
+                "divorce_character_rel_head_interaction with target_id = your spouse; the head of faith answers "
+                "(base -50, plus his opinion of you, minus his opinion of your spouse): discover(what='acceptance') "
+                "reads it. Otherwise divorce_character_interaction, target your spouse, accepted at once. "
+                "Children already born keep their dynasty and their place in the line")
+DIRECT_DISPATCH_INTERACTIONS = frozenset({
+    "start_murder_interaction", "start_abduct", "fabricate_hook_interaction", "seduce_interaction",
+    "learn_language_interaction", "offer_vassalization_interaction", "negotiate_alliance_interaction",
+    "call_ally_interaction", "demand_conversion_interaction", MARRIAGE_INTERACTION,
+    "revoke_title_interaction", IMPRISON_INTERACTION, "execute_prisoner_interaction",
+    "ransom_interaction", "release_from_prison_interaction", "disinherit_interaction",
+    "grant_titles_interaction", "designate_heir_interaction", "gift_interaction", "sway_interaction",
+    "befriend_interaction", "elope_interaction", "buy_claim_interaction",
+    "end_war_attacker_victory_interaction", "end_war_attacker_defeat_interaction",
+    "end_war_attacker_white_peace_interaction", "join_war_interaction",
+    # The title rides as the target object, like buy_claim's (not yet run live)
+    HOF_CLAIM_INTERACTION,
+    # Actor + the head of faith only (not yet run live)
+    "hof_ask_for_gold_interaction",
+    # A courtier son's vows (live: ai_no_valid_target through the AI fallback)
+    "take_vows_interaction",
+    # Divorce (1070.10.26: both sends ai_no_valid_target through the AI fallback)
+    DIVORCE_INTERACTION, DIVORCE_HOF_INTERACTION,
+    # The ends of a regency (1073: the debug end_diarchy_interaction went through the AI path)
+    "liege_dismiss_temporary_regency_interaction", "liege_dismiss_entrenched_regency_interaction",
+})
+
+#: claim_piety_value: 2 x minor_piety_value (50) on a county, x2 more on a duchy, x4 on a
+#: kingdom, x8 on an empire, plus 10 per county of your realm (sub_realm_size)
+HOF_CLAIM_COST = ("piety: 100 on a county (200 a duchy, 400 a kingdom, 800 an empire) plus 10 per "
+                  "county in your realm, paid on acceptance")
+
+
+def hof_claim_piety(tier: Optional[str], realm_counties: Any) -> Optional[int]:
+    """claim_piety_value for one title tier and realm size (HOF_CLAIM_COST)."""
+    mult = {"county": 1, "duchy": 2, "kingdom": 4, "empire": 8}.get(str(tier or ""))
+    n = _as_int(realm_counties)
+    return None if mult is None else 100 * mult + 10 * n
+
+
+TITLE_NOT_APPLIED = ("args.title_id was sent, but the bridge sets a title only for the interactions "
+                     "it sends itself; {name} is not one of them (it goes through the AI-scoring "
+                     "fallback), so which title the game uses is not read")
+
+#: What an interaction row cannot say. What the
+#: interaction's own file says instead (common/character_interactions/
+#: 00_religious_interactions.txt, hof_ask_for_claim_interaction; the cost
+#: claim_piety_value in common/script_values/02_religion_values.txt; the effect
+#: hof_ask_for_claim_interaction_effect in 00_interaction_effects.txt).
+INTERACTION_ROW_UNKNOWN: dict = {}
+INTERACTION_ROW_KNOWN = {
+    HOF_CLAIM_INTERACTION: {
+        "send": ("args.target_id = the title's holder, args.title_id = a county or higher in his "
+                 "domain; the interaction's redirect makes your head of faith the recipient"),
+        "who": ("shown only when your faith has a spiritual head and the holder shares YOUR faith "
+                "(is_shown: scope:actor.faith = scope:secondary_recipient.faith); not on a title "
+                "you hold a pressed claim on, nor at war with your head of faith"),
+        "cost": HOF_CLAIM_COST,
+        "gives": "a pressed claim on the title; the holder's opinion of you -50",
+        "check": "discover(what='acceptance') sends the game's own check (not yet run live)",
+    },
+}
+
+
+async def _do_impl(gw, intent: str = None, action_class: str = None,
+                   candidates: list = None, character_id: int = 0,
+                   args: dict = None) -> dict[str, Any]:
     actor, err = await _resolve_actor(gw, character_id, "do",
                                       war_id=args.get("war_id") if isinstance(args, dict) else None)
     if err:
@@ -8354,6 +15209,16 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
         return await _do_answer_proposal(gw, dict(args or {}), character_id, actor)
     if intent == _END_WAR_INTENT:
         return await _do_end_war(gw, dict(args or {}), character_id, actor)
+    if intent == _EVENT_RULE_INTENT:
+        return await _seat_events.do_event_rule(gw, dict(args or {}), character_id, actor)
+    if intent == _GOLD_RESERVE_INTENT:
+        return await _seat_events.do_gold_reserve(gw, dict(args or {}), character_id, actor)
+    if intent == _AI_VETO_INTENT:
+        return await _seat_events.do_ai_veto(gw, dict(args or {}), character_id, actor)
+    if intent == _HOST_ACTIVITY_INTENT:
+        return await _activities.do_host_activity(gw, dict(args or {}), character_id, actor)
+    if intent == _ARMY_INTENT:
+        return await _army_orders.do_army(gw, dict(args or {}), character_id, actor)
 
     if intent not in INTENT_TO_ACT:
         return envelope("do", ok=False, actor=actor, game=gw.game(),
@@ -8386,50 +15251,45 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
         itype = (a.get("interaction") or a.get("interaction_type") or "").lower()
         _actor_id = character_id or _as_int((actor or {}).get("id"))
         _guard = await _kin_guard(gw, itype, _actor_id, _as_int(a.get("target_id")))
+        if _guard is None and itype == HOF_CLAIM_INTERACTION:
+            _guard = await _hof_claim_guard(gw, _actor_id, _as_int(a.get("target_id")), a.get("title_id"))
+            if _guard is None:
+                # A holder whose pre-check passed may be named by the idle block
+                _news.note_hof_claim_ok(_actor_id, _as_int(a.get("target_id")), _as_int(a.get("title_id")))
+        if _guard is None and itype == GRANT_TITLES_INTERACTION:
+            _guard = await _grant_guard(gw, _actor_id, _as_int(a.get("target_id")))
+        if _guard is None and itype == GRANT_TITLES_INTERACTION:
+            _guard = await _grant_leaves_realm(gw, _actor_id, a)
+        if _guard is None and itype == GRANT_TITLES_INTERACTION:
+            # Read before he holds land; said on the reply whatever its verdict
+            _fx = await grant_price_effects(gw, _actor_id, _as_int(a.get("target_id")))
+            if _fx is not None:
+                warnings.append({"code": "grant_changes_later_prices", "is_known_limitation": False,
+                                 "detail": _fx["note"], "disinherit": _fx["disinherit"]})
         if _guard is not None:
             return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                             blocked=_guard, bridge_health=gw.health)
 
     # A7: mint_title pre-check via query_dejure_progress (NEVER create_title as a meter).
     # The read routes PAUSED now (mcp_server gateway) → stable held/total (no mid-tick 0/0).
-    # Mirror the bridge's FIXED #131 gate (intent_dispatch.cpp, 2026-06-25): only a
-    # POSITIVE de-jure tree (total>0) gets the >=51% territorial bar; a total==0 on a
+    # Mirror the bridge's gate (intent_dispatch.cpp): only a
+    # POSITIVE de-jure tree (total>0) gets the territorial bar (dejure_need); a total==0 on a
     # RESOLVED title is a TITULAR kingdom (k_danelaw) — no territorial bar — so DEFER to
     # the engine can_create gate instead of pre-rejecting. Only a genuine resolution
     # failure (title_key_not_found) is a hard reject here. (re_dejure_meter_and_mint.md bug #2)
     if intent == "mint_title":
-        tkey = a.get("title_key") or a.get("title")
-        prog = await gw.read("query_dejure_progress", {"character_id": character_id, "title_key": tkey})
-        prog = prog if isinstance(prog, dict) else {}
-        if (prog.get("error") == "title_key_not_found"
-                or str(prog.get("error") or "").startswith("title_key")):
-            return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
-                            blocked=why_blocked("target_not_assignable",
-                                                summary=f"title key '{tkey}' did not resolve to a landed_title"),
-                            bridge_health=gw.health)
-        held, total = _as_int(prog.get("held")), _as_int(prog.get("total"))
-        # The #131 bar, as the bridge applies it (mint_dejure_shortfall: tier >= 4
-        # only; a titular or unnamed-tier title is left to the bridge's gate).
-        short = mint_dejure_shortfall(tkey, held, total)
-        if short is not None:
-            need = short["need"]
-            return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
-                            blocked=why_blocked("de_jure_control",
-                                                summary=(f"hold {held}/{need} de-jure counties of {tkey} "
-                                                         f"(need >={round(MINT_DEJURE_MIN_FRAC * 100)}%: "
-                                                         f"{MINT_DEJURE_RULE})"),
-                                                measured={"held": held, "need": need, "total": total,
-                                                          "fraction": round(_f(prog.get('fraction')), 3)}),
-                            bridge_health=gw.health)
-        # The game's verdict and price before anything is sent (mint_title_price).
-        _blk, _price = await mint_title_price(gw, character_id, tkey)
+        # Every requirement at once (title_requirements), met or unmet, in
+        # blocked.measured.requirements; the first unmet one is the gate.
+        tkey = a.get("title_key")
+        _row, _blk = await title_requirements(gw, character_id, tkey,
+                                              news_actor=_as_int((actor or {}).get("id")))
         if _blk is not None:
             return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                             blocked=concrete_next(_blk, intent), bridge_health=gw.health)
 
-    # #64: take_decision must be bounded (no unbounded annotated eval here — single
+    # take_decision must be bounded (no unbounded annotated eval here — single
     # named decision is fine; it dispatches send_decision, not the eval path).
-    # lane-scheme 2026-10-18: the scheme and faction handlers REFUSE actor_id 0
+    # 2026-10-18: the scheme and faction handlers REFUSE actor_id 0
     # (`actor_id_required`, action_handlers.cpp) rather than fall back to the
     # bridge's process-wide controlled primary, which may be another seat's
     # character and which the ownership gate does not check. So a seat that
@@ -8437,11 +15297,14 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
     # call, and the persona test's -- was refused for a missing argument it
     # never had to pass. Measured live once the write gate was armed: six of six
     # do(intent="scheme") calls refused actor_id_required. Send the actor this
-    # call already resolved instead. Every other intent keeps actor_id 0 and the
-    # bridge's own default, unchanged.
-    dispatch_actor = character_id
-    if not dispatch_actor and intent in _EXPLICIT_ACTOR_INTENTS:
-        dispatch_actor = _as_int((actor or {}).get("id"))
+    # call already resolved instead, for EVERY generic-path intent
+    # (dispatch_actor_of), not a list of the handlers known to refuse 0.
+    if intent == "appoint":
+        _a_blk = await _appoint_seat(gw, a, character_id or _as_int((actor or {}).get("id")))
+        if _a_blk is not None:
+            return envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
+                            blocked=_a_blk, bridge_health=gw.health)
+    dispatch_actor = dispatch_actor_of(character_id, actor)
     act_params = _intent_to_act_params(intent, a, dispatch_actor)
     if intent in WAR_INTENTS:
         return await _do_war_intent(gw, intent, act_params,
@@ -8508,6 +15371,8 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
                         bridge_health=gw.health)
     bridge_action, bridge_params = resolved
 
+    if bridge_action == "maa_disband":
+        return await _do_maa_disband(gw, bridge_params, actor)
     if intent == "scheme":
         return await _do_scheme(gw, bridge_action, bridge_params, actor, warnings)
 
@@ -8521,7 +15386,7 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
         if _env is not None:
             return _env
         if intent == "council_task" and _as_int(act_params.get("target_character_id")):
-            # lane peace: the native set_council_task never carries a character
+            # The native set_council_task never carries a character
             # target (tools.resolve_act drops target_character_id, and the bridge's
             # do_set_council_task reads it and never uses it: BUILD_TARGET_SCOPE is
             # built from target_title_id only). Sending it native would set the
@@ -8540,7 +15405,7 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
                                     "cannot address him (character:<id> takes history ids); sent "
                                     "on the native path")})
 
-    # FIX 1 — deferred-write confirmation (#113). Confirmable writes (mint_title)
+    # Deferred-write confirmation. Confirmable writes (mint_title)
     # route through _confirm_write: dispatch → readback → applied/rejected, never a bare
     # dispatched_pending surfaced and never a success:false for an object that landed.
     if intent in CONFIRMABLE_WRITES:
@@ -8563,13 +15428,13 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
                         blocked=experimental_gate_blocked(raw, bridge_action),
                         bridge_health=gw.health)
 
-    # Stickiness honesty (G1) for council_task — warn it may revert.
+    # Stickiness honesty for council_task — warn it may revert.
     if intent == "council_task":
         warnings.append(council_revert_warning(raw))
 
-    # ── deploy-51 item (3): NEVER "applied" FOR A QUEUED ACTION ─────
+    # ── NEVER "applied" FOR A QUEUED ACTION ─────
     #
-    # THE DEFECT, and the bridge was the honest party. `do_send_interaction`
+    # THE HAZARD, and the bridge was the honest party. `do_send_interaction`
     # replies, on its enqueue path (action_handlers.cpp:531-535):
     #
     #     success: true   status: "queued"   method: "intent_dispatch"
@@ -8592,7 +15457,7 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
     #    good bucket, which is a claim and not a reading. An absent `success` is
     #    now UNCONFIRMED, and unconfirmed is pending, not applied.
     #
-    # amendment 3 and the rulings: "later" is the NEXT PASS, and
+    # "Later" is the NEXT PASS, and
     # applied needs an effect read back. The bridge drains a queued intent on the
     # session thread's next pass, paused or running; settle_write reads its
     # verdict back, then the lever's readback (LEVERS, LEVER_READBACKS): visible
@@ -8629,7 +15494,7 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
         what = queued_expected_change(intent, bridge_params)
         if conf["drains_when"] == "readback":
             # It ran, and the reading that would show it was never made: pending,
-            # ok:true, never rejected (ruling).
+            # ok:true, never rejected.
             return envelope("do", verdict="pending", actor=actor, game=gw.game(),
                             pending=conf_pending(
                                 conf,
@@ -8670,7 +15535,7 @@ async def do_impl(gw, intent: str = None, action_class: str = None,
         _summary = reason or status
         _result = None
         if intent == "council_task":
-            # lane-query item 1: the bridge's refusal names the seat it used or
+            # The bridge's refusal names the seat it used or
             # the seat the task belongs to; surface that instead of the bare code.
             _summary = raw.get("warning") or _summary
             _result = {"intent": intent, "raw": raw}
@@ -8705,7 +15570,7 @@ _INSPECT_SUBJECTS: dict[str, Any] = {
     "realm":      ("query_realm",              lambda p: {"character_id": p["cid"]}),
     "council":    ("query_council",            lambda p: {"character_id": p["cid"]}),
     "succession": ("query_succession",         lambda p: {"character_id": p["cid"]}),
-    # (succession_preview was deleted in, finding 8: succession_plan carries the
+    # (succession_preview was deleted: succession_plan carries the
     # verdict and the per-title map.)
     "claims":     ("query_claims",             lambda p: {"character_id": p["cid"]}),
     "wars":       ("query_wars",               lambda p: {"character_id": p["cid"]}),
@@ -8716,15 +15581,17 @@ _INSPECT_SUBJECTS: dict[str, Any] = {
     "dynasty":    ("query_dynasty",            lambda p: {"character_id": p["cid"], "dynasty_id": p["dynasty_id"]}),
     "laws":       ("query_realm_laws",         lambda p: {"character_id": p["cid"]}),
     "schemes":    ("query_schemes",            lambda p: {"character_id": p["cid"]}),
-    "marriage":   ("query_marriage_candidates", lambda p: {"character_id": p["cid"]}),
+    "marriage":   ("query_marriage_candidates", lambda p: {"character_id": p["cid"], "skip_republics": 1,
+                                                           "include_courtiers": 1, "kin_only": 1}),
     "economy":    ("query_realm",              lambda p: {"character_id": p["cid"], "verbose": True}),
     "research":   ("query_research_speed",     lambda p: {"character_id": p["cid"]}),
     "county":     ("query_county_details",     lambda p: {"character_id": p["cid"]}),
     # Phase-2 PORT (_PHASE2_PARITY.md): SPEC §3 inspect subjects the code omitted — the
     # legibility long-tail that retiring `query` would otherwise silently drop. All route
     # to existing bridge actions.
-    "opinion":            ("query_opinion",            lambda p: {"character_id": p["cid"], "target_id": p["target_id"]}),
-    "opinion_breakdown":  ("query_opinion_breakdown",  lambda p: {"character_id": p["cid"], "target_id": p["target_id"]}),
+    # The bridge reads actor_id (query_handlers.cpp do_query_opinion*).
+    "opinion":            ("query_opinion",            lambda p: {"actor_id": p["cid"], "target_id": p["target_id"]}),
+    "opinion_breakdown":  ("query_opinion_breakdown",  lambda p: {"actor_id": p["cid"], "target_id": p["target_id"]}),
     "relations":          ("query_relations",          lambda p: {"character_id": p["cid"]}),
     "hooks":              ("query_hooks",               lambda p: {"character_id": p["cid"]}),
     "title_hierarchy":    ("query_title_hierarchy",    lambda p: {"character_id": p["cid"], "title_id": p["title_id"]}),
@@ -8741,11 +15608,28 @@ _INSPECT_SUBJECTS: dict[str, Any] = {
 
 
 #: inspect subjects composed from several reads rather than one bridge action.
-_INSPECT_COMPOSED = ("war_stance", "heir_plan", "guardian_candidates", "pending", "factions")
+_INSPECT_COMPOSED = ("war_stance", "heir_plan", "guardian_candidates", "pending", "factions", "map",
+                     "threats")
+# With reply pages on (reply_fit.pages_on, CK3_REPLY_PAGES unset or not `off`), `more` reads the
+# next page of the last paged observe, plan_war or succession_plan reply; off, the subject is not listed at all
+import reply_fit as _rfit  # noqa: E402
+if _rfit.pages_on():
+    _INSPECT_COMPOSED = _INSPECT_COMPOSED + (_rfit.MORE_SUBJECT,)
 
 #: Every subject inspect answers: the `subject` enum the tool advertises.
 INSPECT_SUBJECTS: list = sorted(set(_INSPECT_SUBJECTS) | set(_INSPECT_COMPOSED))
+#: inspect subjects a dead character's id still answers in full (his profile, his memories, his dynasty)
+INSPECT_DEAD_READ_OK = frozenset({"character", "memories", "dynasty", "more", "pending"})
 
+
+#: The bridge's drained-verdict ring (bridge/include/intent_queue.h MAX_COMPLETED;
+#: test_pending_ring_doc reads the header).
+PENDING_RING_SIZE = 128
+#: inspect's max_results default (the tool's signature reads it).
+INSPECT_MAX_RESULTS_DEFAULT = 20
+#: discover(what="scheme_targets") stops at this many valid without max_results: the
+#: bridge's default (scheme_engine.cpp `int max_results = 20`, checked by test_tool_surface_listing).
+SCHEME_TARGETS_DEFAULT = 20
 
 #: The most drained verdicts inspect(subject="pending") lists. The bridge keeps
 #: more (intent_queue.h MAX_COMPLETED, 128; the protocol and the inspect
@@ -8761,7 +15645,7 @@ def _pending_row(row):
     Any other row keeps its detail as cleaned words, NO_GAME_DETAIL only when a
     detail is present and cleans to nothing, and gains none when it had none. A
     rejected row the bridge stored without words says the words the write's own
-    reply carried (_REPLY_REFUSAL_WORDS, finding 1: set_title_law)."""
+    reply carried (_REPLY_REFUSAL_WORDS; set_title_law's case)."""
     if not isinstance(row, dict):
         return row
     present = isinstance(row.get("detail"), str) and bool(row.get("detail"))
@@ -8801,10 +15685,69 @@ async def _inspect_pending(gw, max_results: int) -> dict[str, Any]:
     }, errors=errors, game=gw.game(), bridge_health=gw.health)
 
 
+#: query_realm credits
+#: every holder to his independent top liege, so for a vassal `realm_total_counties` is what he holds himself; his and
+#: his vassal tree's counties are his row of the ruler listing of his liege's court, the read a harness's
+#: `realm_counties` metric (and a line goal's "counties at the start") takes. Built, not proven live.
+COURT_ROWS_MAX = 500
+REALM_TOTAL_VASSAL = ("for a vassal: the counties he holds himself (query_realm credits every holder to his "
+                      "independent top liege); realm_counties_with_vassals adds his vassal tree's")
+REALM_WITH_VASSALS_SOURCE = ("search_characters filter=ruler court_of=<your liege>: your row's realm_counties, your "
+                             "counties and your vassal tree's (the count a goal on your realm's counties reads)")
+
+
+async def realm_counts_named(gw, res: dict, character_id: int) -> dict:
+    """inspect realm for a vassal: what realm_total_counties counts, and the count with his vassals beside it."""
+    cid = _as_int(res.get("character_id")) or _as_int(character_id)
+    if not cid:
+        return res
+    ch = _char_section(await gw.read("query_character", {"character_id": cid}))
+    liege = _as_int(ch.get("liege_id")) if isinstance(ch, dict) else 0
+    if not liege:
+        return res
+    rows = await gw.read("search_characters", {"filter": "ruler", "sort": "realm_counties",
+                                               "max_results": COURT_ROWS_MAX, "verbose": True, "court_of": liege})
+    mine = next((r for r in (rows.get("characters") if isinstance(rows, dict) else None) or []
+                 if isinstance(r, dict) and _as_int(r.get("id")) == cid), None)
+    n = mine.get("realm_counties") if isinstance(mine, dict) else None
+    out = dict(res, realm_total_counties_counts=REALM_TOTAL_VASSAL)
+    if isinstance(n, int) and not isinstance(n, bool):
+        out.update(realm_counties_with_vassals=n, realm_counties_with_vassals_source=REALM_WITH_VASSALS_SOURCE)
+    else:
+        out["realm_counties_with_vassals_unread"] = (f"your row (character {cid}) was not in the ruler listing of "
+                                                     f"your liege {liege}'s court")
+    return out
+
+
 async def inspect_impl(gw, subject: str, character_id: int = 0, target_id: int = 0,
-                       title_id: int = 0, war_id: int = 0, title_key: str = "",
+                       title_id: Any = 0, war_id: int = 0, title_key: str = "",
                        dynasty_id: int = 0,
-                       max_results: int = 20) -> dict[str, Any]:
+                       max_results: int = 20, layers: Any = None) -> dict[str, Any]:
+    if subject == "more" and _rfit.MORE_SUBJECT in _INSPECT_COMPOSED:
+        return _rfit.next_page()           # The next kept page (no game read)
+    # title_id may be a title key; title_key on the title subject is one too.
+    echo: list = []
+    if isinstance(title_id, str):
+        if subject in ("title", "map") and not title_key and not title_id.strip().isdigit():
+            title_key, title_id = title_id.strip(), 0
+        else:
+            import title_refs as _trefs
+            title_id, row, blk = await _trefs.resolve(gw, title_id, "title_id")
+            if blk is not None:
+                return envelope("inspect", ok=False, result={"subject": subject}, blocked=blk,
+                                game=gw.game(), bridge_health=gw.health)
+            echo += [row] if row else []
+    env = await _inspect_impl(gw, subject, character_id=character_id, target_id=target_id,
+                              title_id=title_id or 0, war_id=war_id, title_key=title_key,
+                              dynasty_id=dynasty_id, max_results=max_results, layers=layers)
+    import title_refs as _trefs
+    return _trefs.attach(env, echo)
+
+
+async def _inspect_impl(gw, subject: str, character_id: int = 0, target_id: int = 0,
+                        title_id: int = 0, war_id: int = 0, title_key: str = "",
+                        dynasty_id: int = 0,
+                        max_results: int = 20, layers: Any = None) -> dict[str, Any]:
     if not subject:
         return envelope("inspect", ok=False, game=gw.game(),
                         blocked=why_blocked("missing_required_argument",
@@ -8825,13 +15768,21 @@ async def inspect_impl(gw, subject: str, character_id: int = 0, target_id: int =
         if unbound is not None:
             return envelope("inspect", ok=False, result={"subject": subject}, blocked=unbound,
                             game=gw.game(), bridge_health=gw.health)
+    if subject not in INSPECT_DEAD_READ_OK and (_as_int(character_id) or _as_int(target_id)):
+        # A dead character the read names is said first, before any other check
+        dead = await dead_among(gw.read, {k: v for k, v in (("character_id", character_id),
+                                                            ("target_id", target_id)) if _as_int(v)})
+        if dead is not None:
+            return envelope("inspect", ok=False, result={"subject": subject}, game=gw.game(),
+                            blocked=dead_character_blocked(dead["id"], dead["sect"], dead["field"]),
+                            bridge_health=gw.health)
     if subject == "pending":
         return await _inspect_pending(gw, max_results)
-    # factions (F16): the liege's seat — members, threat, demand state, the standing
+    # factions: the liege's seat — members, threat, demand state, the standing
     # answer to a demand, and the levers against each leader.
     if subject == "factions":
         return await _factions.inspect_factions(gw, character_id)
-    # war_stance (item 3): a SYNTHESIZED view (no single bridge action) — per-active-war
+    # war_stance: a SYNTHESIZED view (no single bridge action) — per-active-war
     # side/stance/occupation + a stall verdict + the white-peace exit lever, so the agent
     # SEES stuck offensive wars and abandons them. Special-cased before the action map.
     if subject == "war_stance":
@@ -8839,9 +15790,8 @@ async def inspect_impl(gw, subject: str, character_id: int = 0, target_id: int =
         warns = []
         if view.get("any_stalled"):
             warns.append({"code": "war_stalled", "is_known_limitation": False,
-                          "detail": f"{len(view['stalled'])} attacker war(s) stuck at occupation 0 / losing — "
-                                    "abandon via the per-war exit_lever (white-peace) before they bleed your army "
-                                    "across a succession"})
+                          "detail": f"{len(view['stalled'])} attacker war(s) losing — the per-war "
+                                    "exit_lever names white peace and surrender"})
         return envelope("inspect", result={"subject": "war_stance", **view},
                         warnings=warns, game=gw.game(), bridge_health=gw.health)
     # heir_plan / guardian_candidates: multi-read compositions (per-child query_character),
@@ -8859,8 +15809,41 @@ async def inspect_impl(gw, subject: str, character_id: int = 0, target_id: int =
             env["result"] = {"subject": "guardian_candidates", **env["result"]}
             env["tool"] = "inspect"
         return env
+    if subject == "map":
+        # The layered map digest (map_view.py)
+        import map_view as _mv
+        actor, err = await _resolve_actor(gw, character_id, "inspect")
+        if err is not None:
+            return err
+        res, errs, blk = await _mv.digest(gw, me=_as_int((actor or {}).get("id")) or character_id,
+                                          title_key=title_key or "", layers=layers)
+        if blk is not None:
+            return envelope("inspect", ok=False, result={"subject": "map"}, blocked=blk,
+                            game=gw.game(), bridge_health=gw.health)
+        return envelope("inspect", result={"subject": "map", **res}, errors=errs,
+                        game=gw.game(), bridge_health=gw.health)
+    if subject == "threats":
+        # Patch D: who can declare war on you now (the game's casus-belli check, each ruler in
+        # range as the attacker), with the vassalization rule and your county count (threats.py)
+        import threats as _th
+        actor, err = await _resolve_actor(gw, character_id, "inspect")
+        if err is not None:
+            return err
+        res = await _th.read(gw, _as_int((actor or {}).get("id")) or character_id)
+        return envelope("inspect", result={"subject": "threats", **res}, game=gw.game(),
+                        bridge_health=gw.health)
+    if subject == "title":
+        # The de-jure title's county table (title_table.py).
+        import title_table as _tt
+        res, errs, blk = await _tt.title_table(gw, character_id=character_id, title_key=title_key or "",
+                                               title_id=_as_int(title_id))
+        if blk is not None:
+            return envelope("inspect", ok=False, result={"subject": "title"}, blocked=blk,
+                            game=gw.game(), bridge_health=gw.health)
+        return envelope("inspect", result={"subject": "title", **_tt.seat_rows(res)}, errors=errs,
+                        game=gw.game(), bridge_health=gw.health)
     action, builder = _INSPECT_SUBJECTS[subject]
-    # deploy-51: this DEFAULTED the de-jure subject to the previous
+    # this DEFAULTED the de-jure subject to the previous
     # project's goal title, so a seat that asked "de jure of what?" without
     # naming one was answered about e_britannia. No default: the caller names
     # the title, and an unnamed one is the bridge's own problem to refuse.
@@ -8870,11 +15853,12 @@ async def inspect_impl(gw, subject: str, character_id: int = 0, target_id: int =
     res = await gw.read(action, builder(p))
     res = res if isinstance(res, dict) else {"value": res}
 
-    # War_score without war_id. query_war_score_breakdown answers every war
+    # war_score without war_id. query_war_score_breakdown answers every war
     # in the world (`count`, `breakdowns`): 21 at 0867.06, 394 by 0873 — 54-119K
     # characters, over the CLI's cap, and every seat that got one then jq'd out its
     # own war_id. Without war_id the subject is YOUR wars (get_active_wars of the
     # actor); a war_id still reads that one war, whoever fights it.
+    mine = None
     if subject == "war_score" and not _as_int(war_id) and isinstance(res.get("breakdowns"), list):
         mine = await gw.read("get_active_wars", {"character_id": character_id})
         mine = mine if isinstance(mine, dict) else {}
@@ -8884,19 +15868,59 @@ async def inspect_impl(gw, subject: str, character_id: int = 0, target_id: int =
                    scope=("your wars (get_active_wars); pass war_id=<id> for any one war "
                           f"of the {_as_int(res.get('count'))} the game holds"))
 
-    # title subject → summary + per-county holders (O2 verbose), reshaped.
-    if subject == "title":
-        counties = res.get("counties") or []
-        res = {"title_key": res.get("title_key"), "title_id": res.get("title_id"),
-               "summary": {"held": res.get("held"), "total": res.get("total"),
-                           "fraction": res.get("fraction")},
-               "counties": [{"county": c.get("county_id"), "holder_id": c.get("holder_id"),
-                             "you_control": c.get("you_control")} for c in counties]}
-        if not counties:
-            res["counties_note"] = "per-county list unavailable (O2 fallback) — summary only"
-
+    if subject == "wars":
+        res = wars_with_totals(res)
+        import map_view as _mv               # Each siege's barony and county
+        await _mv.name_sieges(gw, [s for w in (res.get("wars") or []) if isinstance(w, dict)
+                                   for s in (w.get("sieges") or [])])
+    if subject == "war_score":
+        # Each of your wars' row carries `war_score` (its total) and, at
+        # what we_win needs, the end_war call (the sides from get_active_wars)
+        # (a war_id reads that war and nothing else: no sides, so no next_call there)
+        sides = {_as_int(w.get("war_id")): w for w in ((mine or {}).get("wars") or []) if isinstance(w, dict)} \
+            if isinstance(mine, dict) else {}
+        rows = res.get("breakdowns") if isinstance(res.get("breakdowns"), list) else (
+            [res] if "total_warscore" in res else None)
+        for b in rows or []:
+            if not isinstance(b, dict):
+                continue
+            w = sides.get(_as_int(b.get("war_id"))) or {}
+            att = w.get("is_attacker") if isinstance(w.get("is_attacker"), bool) else None
+            sv = war_score_view(b, is_attacker=att, enemy_id=_as_int(
+                w.get("defender_id") if att else w.get("attacker_id")) if att is not None else 0)
+            b["war_score"] = sv["war_score"]
+            if "next_call" in sv:
+                b["next_call"] = sv["next_call"]
+    if subject == "economy":
+        # The modifiers on the ruler
+        # that cut income, as the game's own decision list reads them
+        im = await income_modifiers(gw, _as_int(res.get("character_id")) or _as_int(character_id))
+        if im:
+            res = dict(res, income_modifiers=im)
+    if subject == "council":
+        # Whether a claim fabrication runs, on what, since when (one more read)
+        seats = council_task_seats(await gw.read("query_council_tasks", {"character_id": character_id}))
+        fs = _news.fabrication_status(_as_int(res.get("character_id")) or character_id, seats,
+                                      (gw.game() or {}).get("date"))
+        if fs is not None:
+            res = dict(res, fabrication=fs)
+    if subject == "county" and _as_int(title_id):
+        # (a test run, call 224: title_id=485, Ailech, answered the seat's own five
+        # counties): the named county alone; one not in your realm from the map's live overlay
+        import map_view as _mv
+        res = await _mv.one_county(gw, res, _as_int(title_id), character_id)
+    if subject == "marriage":
+        res = await marriage_rows(res, gw.read)
+    if subject == "realm":
+        res = await realm_counts_named(gw, res, character_id)
+    lead: dict = {}
+    if subject == "title_succession":
+        res = await title_succession_view(gw, res, _as_int(character_id))
+        if "dynasty_warning" in res:                                      # first in the reply
+            res = dict(res)
+            lead = {"dynasty_warning": res.pop("dynasty_warning")}
     warns: list = []
-    return envelope("inspect", result={"subject": subject, **res}, game=gw.game(),
+    return envelope("inspect", result={**lead, "subject": subject, **res}, game=gw.game(),
                     warnings=warns or None, bridge_health=gw.health)
 
 
@@ -8923,7 +15947,7 @@ _EXPERIMENTAL_FLAGS: dict[str, dict[str, str]] = {
         "summary": "off-goal war veto: AI-chosen wars are suppressed for every controlled character (steered bypass=1 unaffected). Armed only by session(action=\"set_experimental\", flag=\"off_goal_veto\", enabled=true).",
     },
     # REMOVED: force_offensive_stance. The engine's own
-    # coordinator already prosecutes a steered war offensively (live867 l5fx6-p2-live);
+    # coordinator already prosecutes a steered war offensively;
     # the game's AI prosecutes a declared war on its own (re_steered_war_offensive_root.md §9).
     # REMOVED: move_army experimental flag deleted per design (agent does not drive army micro).
 }
@@ -9014,14 +16038,14 @@ async def _set_experimental_flag(gw, flag: str, enabled: bool) -> dict[str, Any]
         warnings=[
             f"EXPERIMENTAL-unvalidated: '{flag}' arms a default-OFF engine hook/write that has "
             f"NOT passed live validation ({meta['spec']}). Use only for validation on a "
-            f"disposable observer save — never rely on its behaviour on the live campaign."
+            f"disposable observer save — never rely on its behaviour in a game you care about."
         ],
         game=gw.game(), bridge_health=gw.health)
 
 
 # --------------------------------------------------------------------------- session
 #: Every reason `do_set_controlled_character` can refuse with, enumerated from
-#: deploy-27's source rather than grepped for: `ownership_divergence` is not a
+#: the source rather than grepped for: `ownership_divergence` is not a
 #: literal but a ternary at dispatch_router.cpp:807-808, so a literal grep does
 #: not find it and a count does not catch its absence. Nine distinct, with
 #: `observe_mode` reachable from BOTH the handler and the registry under one
@@ -9030,6 +16054,8 @@ CONTROL_REFUSAL_REASONS = frozenset((
     "no_session", "invalid_character", "observe_mode", "owned_by_other",
     "watchlist_full", "character_not_found", "character_dead",
     "cannot_act_as_player", "ownership_divergence",
+    # The realm guard's two refusals (played_line.h realm_check_name), reached only while the seat's ruler is dead
+    "realm_unresolved", "heir_outside_realm",
 ))
 
 
@@ -9045,7 +16071,12 @@ CONTROL_REFUSAL_SUMMARIES = {
     "character_not_found": "no such character in the world",
     "character_dead": "that character is dead — claim the heir, not the corpse",
     "cannot_act_as_player": "cannot control the human player — player is target-only",
-    "ownership_divergence": "the registry disagrees with itself about who holds this character (§7.3g)",
+    "ownership_divergence": "the registry disagrees with itself about who holds this character",
+    "realm_unresolved": ("your ruler is dead and the bridge binds a successor only inside the seat's realm: this "
+                         "character's top liege could not be read (a landless heir has no realm of his own), so "
+                         "nobody is bound on it. The seat moves by itself to whoever holds your late ruler's title"),
+    "heir_outside_realm": ("your ruler is dead and this character rules outside the seat's registered realm: the "
+                           "bridge never moves a seat there"),
     "refusal_reason_unknown": ("the bridge refused control and named a reason this client "
                                "does not know: treat as UNFORESEEN, not as a near-miss"),
 }
@@ -9058,11 +16089,11 @@ RELEASE_REFUSAL_REASONS = frozenset((
     "missing_character_id", "not_in_roster", "not_owned_by_session",
     "observe_mode",
     # A CONTROL seat's release of its
-    # LAST character is refused by the bridge. The literal is, agreed
+    # LAST character is refused by the bridge. The literal was agreed
     # before either side shipped, because the two halves meet at exactly this
     # string: a mismatch routes a real refusal into `refusal_reason_unknown`
     # and the agent is told the bridge named something this client does not
-    # know — safe, and not the explanation the ruling asks for.
+    # know — safe, and not the explanation the rule asks for.
     #
     # The bridge emits it (dispatch_router.cpp, the release of a control
     # session's last claim). It needs the GATE_TABLE row above as well as this
@@ -9076,11 +16107,11 @@ RELEASE_REFUSAL_SUMMARIES = {
     "not_in_roster": "that character is not in the controlled roster — nothing to release",
     "not_owned_by_session": "this seat does not hold that character, so it cannot release it",
     "observe_mode": "this episode is an OBSERVER: it holds no seat to release",
-    # THE EXPLANATION THE RULING ASKS FOR, in the agent's own terms: it is not
+    # THE EXPLANATION THE RULE ASKS FOR, in the agent's own terms: it is not
     # being told it cannot act, it is being told acting is not what holding the
     # seat is for.
     # THE CARVE-OUT IS NOW STATED, and it is ONE, not the two I expected.
-    # answered bridge_init.cpp:1575 from the handler (2026-09-25): the
+    # bridge_init.cpp:1575 is answered from the handler (2026-09-25): the
     # direct assignment there only refreshes the session's cached primary — the
     # claim itself is made in `swap_character`, which the handoff always goes
     # through and which moves the id between `claimed_character_ids` under one
@@ -9088,7 +16119,7 @@ RELEASE_REFUSAL_SUMMARIES = {
     # no second seating path: `last_steered_character_id` only recovers WHICH
     # corpse to run the handoff for, after which the ordinary path continues.
     #
-    # The corpse carve-out I had planned DISSOLVED rather than being confirmed:
+    # There is no corpse carve-out:
     # the corpse is removed by `swap_character` inside the handoff and never
     # reaches do_release_character, so there is no release request to exempt.
     # Stated positively, the refusal applies to EVERY release an
@@ -9121,14 +16152,14 @@ RELEASE_REFUSAL_FIXES = {
 }
 
 
-import seat_reservations as _resv     # noqa: E402  (2026.12.7: the cell's seat reservations, one reader)
+import seat_reservations as _resv     # noqa: E402  (the cell's seat reservations, one reader)
 import seat_lineage as _lineage       # noqa: E402  (the sink the refused attempt is written to)
 import os as _os                      # noqa: E402
 import channel as _chan               # noqa: E402  (ENV_SEAT, the seat label's one spelling)
 
 #: What each server-side claim refusal tells the seat (2026.12.7).
 RESERVATION_REFUSAL_SUMMARIES = {
-    _resv.R_RESERVED: ("that character is reserved for another seat in this experiment: it belongs "
+    _resv.R_RESERVED: ("that character is reserved for another seat in this run: it belongs "
                        "to that seat, and this seat must not claim it. Nothing was sent to the "
                        "bridge. Play the rulers this seat holds."),
     _resv.R_UNREADABLE: ("this seat's reservation list (CK3_RESERVED_FOR_OTHER_SEATS, with "
@@ -9143,7 +16174,7 @@ def reserved_claim_refusal(gw, action: str, character_id) -> "Optional[dict]":
     reservations, or None when the claim may go to the bridge. (2026.12.7)
 
     Decided BEFORE any bridge call, with no retry and no fall-through to
-    owned_by_other: in v3pilot5 the king's `add` of the dukes' rulers SUCCEEDED
+    owned_by_other: in a pilot run the king's `add` of the dukes' rulers SUCCEEDED
     because none of them had bound yet, so the bridge cannot be the check. A
     refused attempt leaves a `claim_refused` row in the seat's lineage sink
     (when armed): the attempt is evidence, not noise."""
@@ -9166,12 +16197,12 @@ def reserved_claim_refusal(gw, action: str, character_id) -> "Optional[dict]":
 def control_refusal_reason(res) -> "Optional[str]":
     """The refusal code, or None when the bridge WITNESSED a success.
 
-    Three-valued on purpose, because `success` has three states and the old code
+    Three-valued on purpose, because `success` has three states and the superseded code
     read none of them: it inspected `res` for exactly one condition
     (`cannot_act_as_player`) and never read `success` at all, so every other
     refusal — the seat already held by another agent, the cap reached, the
     character dead — returned ok=True, verdict "applied", and an actor echo for
-    a character the agent DOES NOT HOLD. That is the defect Ruling Three names.
+    a character the agent DOES NOT HOLD. That is the hazard the swap rule names.
 
     `success is False` is a refusal, and a refusal whose spelling this list does
     not name is `refusal_reason_unknown`, never the nearest member.
@@ -9215,7 +16246,7 @@ def own_session_id(gw) -> "Optional[str]":
 
     None is a STATE, not a failure to be papered over. Every consumer here must
     say "I do not know which seat I am" rather than fall back to the global
-    primary — falling back is the defect this bead exists to fix, and it is the
+    primary — falling back is the hazard this code exists to fix, and it is the
     same shape as the ledger's character_id fallback and as the succession
     condition that required the GLOBAL primary to move.
     """
@@ -9252,7 +16283,7 @@ def roster_ids(reply) -> "Optional[list]":
     the reply carries none. The bridge writes the ids under `roster`
     (dispatch_router.cpp do_get_controlled_roster, `r.key("roster")`); it never
     wrote `characters` or `controlled`, which is why the several-rulers guard
-    below never fired ."""
+    below never fired."""
     if not isinstance(reply, dict):
         return None
     ids = reply.get("roster")
@@ -9283,7 +16314,7 @@ async def actor_gate_of(gw) -> Optional[dict]:
 
     - roster unread (the read raised, refused, or carries no `roster`):
       actor_required. Whether this seat holds several rulers is unknown, so the
-      call names its actor (it used to answer "not multi").
+      call names its actor (it does not answer "not multi").
     - roster empty: None. Nobody holds a ruler, so there is no fallback to
       leak; the bridge declines query_character(0) and unbound_actor_block
       answers no_ruler_bound.
@@ -9294,7 +16325,7 @@ async def actor_gate_of(gw) -> Optional[dict]:
       same seat gets when nobody else holds a ruler. Not actor_required: this
       seat holds no actor, and naming another seat's ruler cannot make it one
       (the bridge refuses the write, session.cpp actor_not_claimed); the step
-      that helps is to bind one (it used to answer "not multi"
+      that helps is to bind one (it does not answer "not multi"
       and the read fell through to the global primary).
     - more than one claim: actor_required (multi-actor mode).
     """
@@ -9328,8 +16359,10 @@ async def actor_gate_of(gw) -> Optional[dict]:
     if not isinstance(claims, list) or len(claims) > 1:
         return why_blocked(
             "actor_required",
-            summary="multi-actor mode: character_id is REQUIRED on every actor-bearing call",
-            measured={"roster": len(ids),
+            summary=("multi-actor mode: character_id is REQUIRED on every actor-bearing call"
+                     + (f" (this seat holds {len(claims)} rulers, e.g. after session add; its primary is "
+                        f"{primary}: pass character_id={primary} for him)" if isinstance(claims, list) else "")),
+            measured={"roster": len(ids), "primary": primary,
                       "own_claims": len(claims) if isinstance(claims, list) else "unread"})
     return None
 
@@ -9373,16 +16406,16 @@ def unwitnessed_applied(env, writes):
     such reply wins the report, because it is the one that failed earliest and
     anything after it ran on a premise that had already broken.
 
-    THE CLASS, NOT THE INSTANCE (sweep). session_impl has ten action
-    branches, six of which write. Three of us fixed instances of one pattern and
-    stopped: found `control`, I found `release`, and four remained in the
+    THE CLASS, NOT THE INSTANCE (the sweep). session_impl has ten action
+    branches, six of which write. A fix to one instance of one pattern does not
+    find the rest: `control` and `release` were found one at a time, and four more were in the
     same 218 lines — `speed` and `auto_events` carrying `raw: res` into a result
     whose verdict contradicts it, `unpause` re-reading gw.game() so only its
     verdict is wrong, and `pause` assigning the reply to `res`, never mentioning
     `res` again, and hard-coding `{"paused": True}`.
 
     `pause` is the one that shows why this is reachable rather than theoretical.
-    All six verbs (five since deleted `auto_events`) go out on the gateway's action path, and there `gw.write`
+    All six verbs (five without the deleted `auto_events`) go out on the gateway's action path, and there `gw.write`
     answers a timeout with `{"status": "sent_no_confirmation"}` — the bridge's explicit
     "I do not know if this landed". The one shape it takes trouble to report
     honestly was the one the caller overwrote with a literal.
@@ -9417,7 +16450,7 @@ def unwitnessed_applied(env, writes):
         # ENUM — so a raw reason that RAW_REASON_TO_GATE maps to a gate under a
         # different spelling became `refusal_reason_unknown` anyway:
         # `clock_owned_by_pipeline` did for the whole of the census, until
-        # happened to add it as a GATE_TABLE key and not merely as a
+        # one change happened to add it as a GATE_TABLE key and not merely as a
         # mapping. That is two resolvers for one question, and the narrower one
         # decided. `map_raw_reason` is the resolver every other path uses: exact
         # map, then the engine-prose table, then the substring pass, then
@@ -9489,8 +16522,8 @@ ENABLED_REQUIRED = ("set_experimental",)
 
 
 def _enabled_required(gw, action: str) -> dict[str, Any]:
-    """ finding 4: a switch call without `enabled` armed the flag (it defaulted
-    to true). The value is required; nothing is written without it."""
+    """A switch call without `enabled` must not arm the flag (a default of
+    true would). The value is required; nothing is written without it."""
     assert action in ENABLED_REQUIRED, action
     return envelope("session", ok=False, verdict="rejected", game=gw.game(),
                     blocked=why_blocked(
@@ -9506,6 +16539,12 @@ async def session_impl(gw, action: str, character_id: int = 0, speed: int = SPEE
                        flag: str = "", seconds: int = 60) -> dict[str, Any]:
     """Thin wrapper: run the branches, then apply the one guard to whatever they
     returned. See `unwitnessed_applied` for why the rule lives in one place."""
+    if action in SESSION_CLOCK_ACTIONS and clock_owned_by_env():
+        return envelope("session", ok=False, game=gw.game(), bridge_health=gw.health,
+                        blocked=why_blocked("clock_owned_by_env",
+                                            summary=(f"session(action='{action}') is not served: the "
+                                                     "environment owns the clock; end your turn to let "
+                                                     "game days pass. Nothing was written")))
     wgw = _WitnessingGateway(gw)
     env = await _session_impl_branches(wgw, action, character_id=character_id,
                                        speed=speed, enabled=enabled, game_days=game_days,
@@ -9522,7 +16561,7 @@ async def session_impl(gw, action: str, character_id: int = 0, speed: int = SPEE
 # 120 s to a background task (CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS); the cap keeps a
 # wait under that, and the run harness and play directory turn the hand-off off.
 WAIT_CAP_S = 110
-import cycle_cadence as _cc            # noqa: E402  (v3 §7.2: the cycle in game-days, one definition)
+import cycle_cadence as _cc            # noqa: E402  (the cycle in game-days, one definition)
 _SLEEP = asyncio.sleep          # tests replace it
 
 
@@ -9608,13 +16647,13 @@ async def _session_clock_write(gw, action: str) -> dict[str, Any]:
 
 #: Seconds session(speed) re-reads get_tick_info for the written speed before
 #: it calls the write pending. The cell runner's read-back mirrors it
-#: (ck3bench/runner/cell.py SPEED_READBACK_S; a test checks the mirror).
+#: (runner/cell.py SPEED_READBACK_S; a test checks the mirror).
 SPEED_SETTLE_S = 3.0
 
 
 async def _session_speed_write(gw, speed: int) -> dict:
-    """session(speed): write, then read the speed back, like pause/unpause
-   . The bridge stores the speed synchronously (clock_write ->
+    """session(speed): write, then read the speed back, like pause/unpause.
+    The bridge stores the speed synchronously (clock_write ->
     speed_primitive, event_handler.cpp) and get_tick_info reads it back as
     `game_speed` (speed_read.h emit; null with speed_read_status naming the
     absence when the read faulted). A refusal (reply_refusal: success false, or
@@ -9699,7 +16738,7 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
             # identical assignments pretending to be a distinction; what tells
             # them apart is `session_id` in the result, null for the first and a
             # string for the second. Falling back to the global primary is the
-            # defect this bead exists to fix.
+            # defect this code exists to fix.
             primary = None
         # Every seat's held rulers, as the bridge writes them (roster_ids), or
         # None when the read did not come back; `characters` was never written.
@@ -9755,7 +16794,7 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
         agent_mode = (bs or {}).get("agent_mode") if isinstance(bs, dict) else None
         _agency = await agency_block(gw, _as_int(primary))
         return envelope("session", warnings=_warn, result={"controlled": ctrl,
-                                           # deploy-51 item (4): what
+                                           # what
                                            # this seat actually controls, stated
                                            # once and measured, not inferred.
                                            "agency": _agency,
@@ -9770,9 +16809,13 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
     if action == "health":
         bs = await gw.read("get_bridge_state", {})
         ov = await gw.read("get_offset_validation", {})
+        import notes as _notes
         return envelope("session", result={"state": gw.health,
                                            "peer": (await gw.read("who_holds_the_lock", {})),
-                                           "offset_health": ov, "agent_mode": (bs or {}).get("agent_mode") if isinstance(bs, dict) else None},
+                                           "offset_health": ov, "agent_mode": (bs or {}).get("agent_mode") if isinstance(bs, dict) else None,
+                                           # the shared notes this server serves (version, or off)
+                                           "notes": (_notes.SERVED.status() if _notes.SERVED is not None
+                                                     else {"state": "unread", "why": "no server booted the notes"})},
                         game=gw.game(), bridge_health=gw.health)
     if action == "control":
         # The bridge reads character_id<=0 as "drop this seat's primary"
@@ -9792,7 +16835,7 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
         res = await gw.write("set_controlled_character",
                              {"character_id": character_id, "disable_native_ai": disable_native_ai})
         res = res if isinstance(res, dict) else {}
-        # / Ruling Three: read `success`, and return the TYPED reason
+        # Read `success`, and return the TYPED reason
         # with NO actor echo. Echoing a character the agent does not hold is
         # what made a refusal indistinguishable from a seat change.
         _refusal = control_refusal_reason(res)
@@ -9809,7 +16852,7 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                 raw_reason=_raw if isinstance(_raw, str) else ""),
                             bridge_health=gw.health)
         _witnessed = res.get("success") is True
-        # ── the echo is what the seat HOLDS, not what it ASKED FOR (Ruling Three)
+        # ── the echo is what the seat HOLDS, not what it ASKED FOR
         # Building it from `character_id` is what let 2,578 retries happen: the
         # agent was handed back the character it had named, observed it was not
         # steering that character, and called again. Not irrational — misinformed.
@@ -9832,7 +16875,7 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
         # strand a conquest. Fix = release during the war, or keep disable_native_ai=false.
         warnings = None
         if disable_native_ai:
-            # deploy-51: BRIDGE finding is kept verbatim in
+            # the BRIDGE finding is kept verbatim in
             # substance — `disable_native_ai=false` genuinely undoes nothing,
             # because the disable has no else-branch. What is removed is the
             # remedy it named: `set_character_ai` is not callable from the seat
@@ -9871,11 +16914,11 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                 "this seat actually holds."]
         return envelope("session", verdict="applied",
                         result={"controlled": actor_echo(chr_ if isinstance(chr_, dict) else {}, character_id),
-                                # deploy-51 item (4): RENAMED. This is
+                                # RENAMED. This is
                                 # `bool(disable_native_ai)` — THE PARAMETER THE
                                 # CALLER PASSED — and it was named as though it
-                                # were a measured state. d50 read it `true` 210
-                                # times and d49's king concluded "I never had
+                                # were a measured state. One recorded episode read it `true` 210
+                                # times and a recorded king concluded "I never had
                                 # hands on the army". The measured per-character
                                 # fact is `agency.ai_tick` from
                                 # session(action='whoami').
@@ -9890,8 +16933,8 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                         warnings=warnings,
                         game=gw.game(), bridge_health=gw.health)
     if action == "add":
-        # lane-multi: ONE MORE RULER for this session. `control` SWITCHES (the
-        # bridge's swap, Ruling Three); `add` claims the character beside the
+        # ONE MORE RULER for this session. `control` SWITCHES (the
+        # bridge's swap); `add` claims the character beside the
         # ones already held and keeps the primary (`add: true` on the bridge's
         # set_controlled_character). With nothing held it is a first claim.
         if _as_int(character_id) <= 0:
@@ -9991,38 +17034,43 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                             "session(action='whoami') before assuming it is free."],
                         game=gw.game(), bridge_health=gw.health)
     if action == "speed" and _cc.in_cell():
-        # 2026.12.4: in an experiment cell the game speed
-        # is a registered condition (v3 §7.3), written and read back by the
+        # In an experiment cell the game speed
+        # is a registered condition, written and read back by the
         # cell's runner before any seat boots; the seats share one clock, so a
         # seat that re-speeds it changes the condition for every seat. Refused,
         # nothing written.
         return envelope("session", ok=False, game=gw.game(), bridge_health=gw.health,
                         blocked=why_blocked("speed_registered",
-                                            summary=("the game speed is the experiment's registered "
+                                            summary=("the game speed is the scheduled run's declared "
                                                      "condition and no seat may change it; nothing "
                                                      "was written")))
     if action == "speed":
         # The bridge clamps every speed write to 1..SPEED_MAX (game_set_speed,
-        # event_handler.cpp). This mirrors it so the reply says what was set, and
-        # adds the one rule the bridge does not have: above the cap at war is
-        # refused, not quietly clamped.
+        # event_handler.cpp), unless the episode declared a speed of 4 or 5
+        # (CK3_EPISODE_GAME_SPEED): then the bridge's cap is that speed
+        # (registered_speed.h clamp_speed_write). A session is refused above
+        # SPEED_MAX here either way, so no write of its is ever clamped and the
+        # reply names only the speed the game got.
         try:
             speed = int(speed)
         except (TypeError, ValueError):
             speed = 0
-        if speed < SPEED_MIN:
-            return envelope("session", ok=False, game=gw.game(),
-                            blocked=why_blocked("invalid_argument",
-                                                summary=f"speed must be {SPEED_MIN}-{SPEED_MAX}; got {speed}"),
-                            bridge_health=gw.health)
         if speed > SPEED_MAX:
+            # Above the cap is refused, never clamped: a clamped write answered
+            # applied would name a speed nobody asked for.
             wars = await gw.read("get_active_wars", {})
             if isinstance(wars, dict) and wars.get("wars"):
                 return envelope("session", ok=False, game=gw.game(),
                                 blocked=why_blocked("speed_refused_at_war",
-                                                    summary=f"speed {speed} refused while at war; the cap is {SPEED_MAX}"),
+                                                    summary=f"speed {speed} refused while at war; the cap is "
+                                                            f"{SPEED_MAX}; nothing was written"),
                                 bridge_health=gw.health)
-            speed = SPEED_MAX
+        if speed < SPEED_MIN or speed > SPEED_MAX:
+            return envelope("session", ok=False, game=gw.game(),
+                            blocked=why_blocked("invalid_argument",
+                                                summary=f"speed must be {SPEED_MIN}-{SPEED_MAX}; got {speed}; "
+                                                        "nothing was written"),
+                            bridge_health=gw.health)
         return await _session_speed_write(gw, speed)
     if action == "pause":
         return await _session_clock_write(gw, action)
@@ -10036,7 +17084,7 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
         except (TypeError, ValueError):
             secs = 60
         secs = max(1, min(secs, WAIT_CAP_S))
-        # v3 §7.2 (Study 0 round 2): past the registered horizon no wait is made.
+        # past the registered horizon no wait is made.
         # Read only when a horizon is registered, so free play makes no extra read.
         hz_ord, hz_raw, hz_err = _cc.registered_horizon_end()
         if hz_err:
@@ -10059,7 +17107,7 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                              "horizon; no further wait is made. Pause and report "
                                              "(session(action='pause'))."),
                                     measured={"game_date": now.get("date")}))
-        # 2026.12.4: a CELL seat's wait returns at the next
+        # A CELL seat's wait returns at the next
         # cycle boundary, capped at the horizon; `seconds` and `game_days` are
         # recorded, never the target. Absent HORIZON_START_ENV: the published wait.
         sched, sched_err = _cc.cell_schedule()
@@ -10079,7 +17127,7 @@ async def _session_impl_branches(gw, action: str, character_id: int = 0, speed: 
                                                 summary=(f"game_days must be a whole number >= 0 "
                                                          f"(0 = wait `seconds` once); got {game_days!r}")))
         if days > 0:
-            # v3 §7.2 /: THE CYCLE IS MEASURED IN GAME-DAYS.
+            # THE CYCLE IS MEASURED IN GAME-DAYS.
             cap_days, cap_err = _cc.registered_cycle_game_days()
             if cap_err:
                 return envelope("session", ok=False, game=gw.game(), bridge_health=gw.health,
@@ -10158,7 +17206,7 @@ async def _session_wait_once(gw, secs: int):
 
 
 async def _session_wait_game_days(gw, days: int, secs: int, cap_days):
-    """v3 §7.2: let the clock run until the game date has advanced `days`
+    """Let the clock run until the game date has advanced `days`
     game-days since this call began.
 
     The bridge's pause alarm first (`_session_wait_alarm`): the game
@@ -10265,7 +17313,7 @@ async def _session_wait_alarm(gw, days: int, secs: int, cap_days):
             if ti.get("paused") is True:
                 # The engine paused the game itself (an event): not a bridge clock
                 # write, so the alarm stands. Unpause again on the same target, as
-                # every polled wait used to unpause at its start.
+                # every polled wait does not unpause at its start.
                 if calls >= _cc.MAX_WAIT_CALLS:
                     break
                 reply = await gw.write("unpause_game", {"pause_at": target})
@@ -10366,7 +17414,7 @@ async def _session_wait_cell(gw, sched, *, requested_seconds, requested_game_day
         return envelope("session", ok=False, game=_game_from_tick(gw, before), bridge_health=gw.health,
                         blocked=why_blocked(_cc.R_HORIZON_UNREADABLE,
                                             summary=(f"the game date {start_date!r} could not be read "
-                                                     "against the cell's schedule; nothing was waited")))
+                                                     "against the run's schedule; nothing was waited")))
     target_ord = sched.next_boundary(start_ord)
     target = _cc.date_from_ordinal(target_ord)
     base = {"wait_mode": "cycle", "start_date": start_date, "cycle_start_date": start_date,

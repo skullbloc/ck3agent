@@ -36,11 +36,11 @@ constexpr const char* GAME_VERSION  = "1.18.3.1"; // CK3 patch version. HIGH: th
                                                    // carrying this BuildID reports "1.18.3.1 (Crane)"
                                                    // in launcher/launcher-settings.json and embeds the
                                                    // same string; the earlier "1.12.5" label was never
-                                                   // checked against the binary (release-prep 2026-10-17).
+                                                   // checked against the binary (2026-10-17).
 constexpr const char* GAME_PLATFORM = "linux";     // linux / windows
 constexpr const char* BINARY_MD5    = "09ba163bbff47f2eb8a69692536307e6";
 
-// ─── Windows PE identity (ADR 0001 "Binary identity"; lane-p0p1 2026-10-19) ──
+// ─── Windows PE identity (ADR 0001 "Binary identity"; 2026-10-19) ──
 // Per-platform siblings of BUILD_ID for the Windows build of the SAME pinned
 // version: ck3.exe of CK3 1.18.3.1 from the Steam `1.18.3` branch (buildid
 // 21768289; launcher-settings.json rawVersion "1.18.3.1"; titus_branch.txt
@@ -48,7 +48,7 @@ constexpr const char* BINARY_MD5    = "09ba163bbff47f2eb8a69692536307e6";
 // Nothing in the Linux build reads them. Each value HIGH: the inspect JSON
 // (tools/inspect_binary.py on the depot) and the independent parser
 // re/scripts/windows/pe_manual.py agree byte for byte; SHA-256 also by
-// sha256sum on node and workstation. Evidence: re/findings/windows/W0-binary-report.md.
+// sha256sum on two hosts.
 namespace windows {
 constexpr const char* PE_GAME_VERSION = "1.18.3.1";   // HIGH: launcher-settings.json rawVersion
 

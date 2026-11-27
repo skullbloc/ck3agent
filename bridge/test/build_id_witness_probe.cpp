@@ -7,11 +7,11 @@
 // src/build_id_witness.cpp and prints the witness it produces, as JSON, for the
 // environment the probe was started with.
 //
-// TWO TARGETS FROM ONE SOURCE, the / speed_read_probe pattern:
+// TWO TARGETS FROM ONE SOURCE, the speed_read_probe pattern:
 //
 //   build_id_witness_probe                 — the shipped rule.
 //   build_id_witness_probe_prefix_control  — compiled with
-//       CK3_WITNESS_PREFIX_CONTROL, which restores the PRE-FIX behaviour:
+//       CK3_WITNESS_PREFIX_CONTROL, which restores the SUPERSEDED behaviour:
 //       strictness is resolved ONLY when the BuildID mismatches, so a matching
 //       or unreadable binary leaves the witness saying nothing at all. The
 //       acceptance requires that control to FAIL — a witness that only appears
@@ -38,12 +38,12 @@ bridge::BuildIdWitness run(const char* outcome) {
     bridge::BuildIdWitness w;
 
 #ifdef CK3_WITNESS_PREFIX_CONTROL
-    // PRE-FIX: nothing is resolved up front. The old code asked about
+    // SUPERSEDED: nothing is resolved up front. The superseded code asked about
     // strictness only inside the mismatch branch of run_resolver(), so a
     // matching binary and an unreadable one both left the witness empty.
 #else
     // SHIPPED: resolved FIRST and unconditionally, so the witness exists on
-    // every path — including NOT_FOUND, where the old code recorded nothing.
+    // every path — including NOT_FOUND, where the superseded code recorded nothing.
     bridge::resolve_build_id_strictness(w);
 #endif
 
@@ -60,7 +60,7 @@ bridge::BuildIdWitness run(const char* outcome) {
     if (strcmp(outcome, "mismatch") == 0) {
         w.status = bridge::BuildIdCheck::MISMATCH;
 #ifdef CK3_WITNESS_PREFIX_CONTROL
-        // PRE-FIX: the mismatch branch is the ONLY place the question was ever
+        // SUPERSEDED: the mismatch branch is the ONLY place the question was ever
         // asked, and its answer went into a local, not into anything a client
         // could read.
         bridge::resolve_build_id_strictness(w);

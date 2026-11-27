@@ -1,4 +1,4 @@
-// test_handoff_player.cpp —, bridge half: the succession handoff must
+// test_handoff_player.cpp — bridge half: the succession handoff must
 // never bind the human player's character.
 //
 // The handoff (bridge_init.cpp check_controlled_handoff) resolves the heir from

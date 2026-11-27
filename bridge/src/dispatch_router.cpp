@@ -5,13 +5,13 @@
 // Split from action_dispatch.cpp (mechanical refactor, no logic changes).
 
 #include "played_line.h"
-#include "log_redact.h"   // 2026.12.5: no token reaches the log
+#include "log_redact.h"   // No token reaches the log
 #include "pause_alarm.h"
 #include "action_log_row.h"
 #include "log_dedupe.h"
 #include "instance_paths.h"
 #include "action_dispatch_internal.h"
-#include "action_args.h"      // Call_is_read_only
+#include "action_args.h"      // call_is_read_only
 #include "claim_event_log.h"
 #include "primary_cause.h"   //: cause register
 #include "skip_held_heir.h"
@@ -21,6 +21,8 @@
 #include "episode_policy.h"
 #include "budget_ledger.h"
 #include "vassal_roster.h"
+#include "win_anchor_refusal.h"   // not_on_windows by name
+#include "engine_id.h"           // the whole id a game function compares
 #ifdef _WIN32
 #include "windows/ck3_offsets_win.h"   // ck3_win::globals::AI_TOGGLE (P6)
 #endif
@@ -63,7 +65,7 @@ void init_action_dispatch() {
 // Liege Resolution Helper
 // =============================================================================
 // The liege is stored as CCharacter* at SLandedCharacterData + 0x448 (LIEGE_PTR).
-// Round 3 confirmed this with 8 accessor functions.
+// Confirmed this with 8 accessor functions.
 // Previous code incorrectly read core_data + 0x274 which is NOT the liege.
 // Returns 0 if independent or unlanded.
 // Resolve title_realm (SLandedCharacterData) for a character, with fallback probing.
@@ -71,7 +73,7 @@ void init_action_dispatch() {
 // Fallback: if null but core_data::IS_RULER is set, probe neighboring pointer slots
 // for a valid title_realm struct (handles +-8 byte layout shifts across patches).
 uintptr_t resolve_title_realm(uintptr_t char_addr) {
-    // Safe_read returns 0 on unmapped addresses, so we don't need an
+    // safe_read returns 0 on unmapped addresses, so we don't need an
     // entry is_mapped(char_addr) check. Derived pointers ARE validated below
     // before any further dereference.
     uintptr_t title_realm = safe_read<uintptr_t>(char_addr + ck3::character::TITLE_REALM_DATA);
@@ -99,7 +101,7 @@ uintptr_t resolve_title_realm(uintptr_t char_addr) {
     }
     if (g_logfile) {
         // FIRST PER CHARACTER, then a rollup. This line was 19-85% of
-        // every bridge log in the d39-d50 corpus (d43: 195,823 of 229,852
+        // every bridge log in the recorded episodes (one: 195,823 of 229,852
         // lines) and was eating the 64MB rotation headroom that sealed
         // evidence depends on. Keyed on the character so every distinct fact
         // still reaches the log exactly once.
@@ -127,11 +129,11 @@ uintptr_t resolve_title_realm(uintptr_t char_addr) {
 // FIX #liege_id (DB round-trip gate): validate a resolved liege candidate id.
 // A candidate is accepted ONLY if it (a) is outside {0,0xFFFFFF,self} AND (b) names a
 // REAL character in the DB whose entry pointer EQUALS the pointer we read the id from.
-// The old code's reject-set {0,0xFFFFFF,self} was the ONLY validation, so a small
-// garbage/stale char-id (e.g. liege_id=3 seen live mid-recompute) leaked through verbatim.
+// A reject-set {0,0xFFFFFF,self} alone is not enough validation: a small garbage/stale
+// char-id (e.g. liege_id=3 seen live mid-recompute) leaks through verbatim.
 // lookup_character masks to 24 bits and compares the lower 24 bits, so round-trip equality
 // holds for the masked ids the resolver already produces. Core-dump validation
-// (ck3_20260421_195552): zero false-rejects across all 3684 genuine lieges.
+// (the 1097 dump): zero false-rejects across all 3684 genuine lieges.
 static inline uint32_t validate_liege_id(uint32_t cand, uint32_t self_id, uintptr_t src_ptr) {
     if (cand == 0 || cand == 0xFFFFFF || cand == self_id) return 0;
     void* dbc = lookup_character(cand);
@@ -146,7 +148,7 @@ uint32_t get_liege_id_from_addr(uintptr_t char_addr) {
 
     uint32_t self_id = safe_read<uint32_t>(char_addr + ck3::character::ID) & 0xFFFFFF;
 
-    // FIX (independence-resolver): PATH 1 (title_realm+0x448 LIEGE_PTR) is UNRELIABLE in
+    // PATH 1 (title_realm+0x448 LIEGE_PTR) is UNRELIABLE in
     // this build. For an INDEPENDENT ruler it is either NULL (Asian tier-5 emperors) or a
     // non-null *mapped sentinel/economy* object whose char-id field reads 0xFFFFFF (and is
     // occasionally junk e.g. 0x6) — it does NOT point to a real liege CCharacter. The old
@@ -201,7 +203,7 @@ uint32_t game_string_hash(const char* data, uint32_t len) {
 // =============================================================================
 
 void* lookup_character(uint32_t char_id) {
-    // Safe_read for the DB pointer (g_base_addr is always mapped),
+    // safe_read for the DB pointer (g_base_addr is always mapped),
     // then is_mapped() guards on each derived pointer before further reads.
     uintptr_t db = safe_read_offset<uintptr_t>(ck3::globals::CHARACTER_DB);
     if (!db) return nullptr;
@@ -331,6 +333,16 @@ bool is_sentinel(void* ptr) {
 
 uint32_t char_get_id(void* character) {
     return safe_read<uint32_t>(reinterpret_cast<uintptr_t>(character) + ck3::character::ID);
+}
+
+// The whole character id a game function compares (engine_id.h) for `char_id`, a full id or
+// its low 24 bits: read off the character the slot holds; `char_id` unchanged when no live
+// entry answers (the game then refuses it as before).
+uint32_t engine_char_id(uint32_t char_id) {
+    if (char_id == engine_id::kNone) return char_id;
+    void* ch = lookup_character(char_id);
+    if (!ch || is_sentinel(ch)) return char_id;
+    return engine_id::full_or(char_id, char_get_id(ch));
 }
 
 void* char_get_realm(void* character) {
@@ -574,7 +586,7 @@ void emit_culture_fields_by_id(ResponseBuilder& r, uint32_t culture_id,
 // Read a character's name from memory: the localized name from the cache,
 // or — on a miss — the localization KEY marked pending (see CharName).
 //
-// lane-namekey. Before this, a cache miss returned the key AS the name, so
+// Before this, a cache miss returned the key AS the name, so
 // the first reads of a session (the game paused before any tick has run
 // populate_name_cache) handed every client `E_thelred` where a name belongs;
 // the hook, two campaign notes and whoami-before-time-moved all show it. The
@@ -603,7 +615,7 @@ CharName ad_read_char_name_full(uintptr_t c) {
     out.key = ad_read_std_string(name_addr);
 #ifdef CK3_NAME_LEGACY_KEY_FALLBACK
     // NEGATIVE CONTROL ONLY (name_pending_probe_negative_control): the
-    // pre-fix behaviour, the key presented as the name. Never set in a build
+    // superseded behaviour, the key presented as the name. Never set in a build
     // that ships.
     out.name = out.key;
     out.key.clear();
@@ -634,9 +646,9 @@ void emit_char_name(ResponseBuilder& r, uintptr_t c) {
 // the name does not read. THE dynasty-name reader: char_dynasty_name,
 // the observation feed (observation.cpp) and query_dynasty all call it. There is
 // no custom-name branch: CUSTOM_NAME (+0x110) as a std::string would overlap
-// HOUSES_ARRAY (+0x118) and HOUSES_COUNT (+0x124), and in the ivar867 dump all
+// HOUSES_ARRAY (+0x118) and HOUSES_COUNT (+0x124), and in the 867 dump all
 // 12,025 dynasties hold an image pointer at +0x110 and a heap pointer at +0x118
-// (M-2; the header marks both LOW).
+// (the header marks both LOW).
 std::string dynasty_name(uintptr_t dyn_obj) {
     if (!dyn_obj) return {};
     return ad_read_std_string(dyn_obj + dynasty_obj::NAME);
@@ -644,7 +656,7 @@ std::string dynasty_name(uintptr_t dyn_obj) {
 
 // A house's name: NAME (+0x248; House_GetName @ image 0x05eba4d0 is
 // `return param_1 + 0x248`). "" when the object is null or the name does not
-// read. THE house-name reader (M-1): the observation feed and
+// read. THE house-name reader: the observation feed and
 // emit_char_names call it through char_house_name. +0x10 on a house is its
 // masked id (hash_map::ENTRY_KEY_REF), never a string.
 std::string house_name(uintptr_t house_obj) {
@@ -666,9 +678,9 @@ std::string char_house_name(uintptr_t c) {
 // A CFaith* by faith id. FAITH_DB is a TPdxRefDatabase<CFaith,8>: its entry's
 // id is at faith::FAITH_ID (+0x08, full 32-bit), not at hash_map::ENTRY_KEY_REF
 // (+0x10, a pointer on a faith), so ad_db_lookup answers 0 for every faith (the
-// ivar867 dump: 140 of 140 faiths carry their id at +0x08, 0 at +0x10).
+// the 867 dump: 140 of 140 faiths carry their id at +0x08, 0 at +0x10).
 // FAITH_INDEXED_DB has no table (table 0, capacity 0 in the same dump).
-// THE faith lookup (M-1): every faith name and do_set_doctrine /
+// THE faith lookup: every faith name and do_set_doctrine /
 // do_set_character_faith go through it.
 uintptr_t faith_lookup(uint32_t faith_id) {
     uintptr_t db = safe_read<uintptr_t>(g_base_addr + ck3::globals::FAITH_DB);
@@ -740,7 +752,7 @@ void emit_char_names(ResponseBuilder& r, uintptr_t c) {
     // misleading "house_id=0" fields. Guard once at entry instead.
     if (!c || !is_mapped(c)) return;
     // Character name: `name` when localized, else `name_key` + `name_pending`
-    // (lane-namekey; the key is stored directly on CCharacter at +0x20, with
+    // (the key is stored directly on CCharacter at +0x20, with
     // the override at +0x40).
     CharName n = ad_read_char_name_full(c);
     if (!n.name.empty()) {
@@ -779,7 +791,7 @@ void emit_char_names(ResponseBuilder& r, uintptr_t c) {
 
 // Helper: look up a title object by ID from the landed title DB
 uintptr_t lookup_title_obj(uint32_t title_id) {
-    // Safe_read for DB pointer, is_mapped guards on table/entry.
+    // safe_read for DB pointer, is_mapped() guards on table/entry.
     uintptr_t db = safe_read_offset<uintptr_t>(ck3::globals::TITLE_DB);
     if (!db) return 0;
     uint32_t masked = title_id & 0xFFFFFF;
@@ -888,10 +900,10 @@ played_line::RealmCheck (*g_succession_realm_guard)(bridge::Session*, uint32_t, 
 bool do_set_controlled_character(const char* params_json, std::string* out) {
     int cid = json_get_int(params_json, "character_id");
     bool disable_ai = json_get_bool(params_json, "disable_native_ai", false);
-    //: lane-multi: `add: true` takes the character as ONE MORE ruler of this
+    //: `add: true` takes the character as ONE MORE ruler of this
     //: session and keeps its primary, instead of switching away from it. Net +1,
     //: so the cap is enforced exactly as for a first claim. Absent or false is
-    //: the switch (Ruling Three), unchanged. The reply says `added`, so
+    //: the switch, unchanged. The reply says `added`, so
     //: a client can tell this bridge from an older one that ignores the key and
     //: switches.
     const bool add = json_get_bool(params_json, "add", false);
@@ -982,7 +994,7 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
     // roster-only behaviour.)
     if (session) {
         std::string claim_reason;
-        // / RULING THREE: `session(action=control)` calls the SWAP in one
+        // THE SWAP RULE: `session(action=control)` calls the SWAP in one
         // IPC. A session that already steers somebody is SWITCHING, not adding —
         // which is what the tool's docstring has always promised and what the
         // handler never did. The add-not-switch defect is what accumulated a
@@ -1024,16 +1036,16 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
         // publishes the new primary — not the legacy-mirror store further down.
         // claim_character/swap_character rebuild the mirrors internally, so
         // g_controlled_primary is visible to the tick hook the moment either
-        // returns, roughly fifty lines before the stamp used to run. That is why
-        // read cause=unknown on the most ordinary control switch there is,
-        // TWICE: my first fix moved the stamp ahead of do_set's own store, and
+        // returns, roughly fifty lines before the legacy-mirror store. That is why
+        // a stamp after them reads cause=unknown on the most ordinary control switch there is,
+        // and so does a stamp placed only ahead of do_set's own store:
         // do_set's own store was never the publisher.
         //
         // Stamping this early is safe precisely BECAUSE the note is id-keyed: if
         // the claim is refused, the note names an id that never becomes primary,
         // and primary_change_cause_for only answers for an id it was actually
         // asked about. An early stamp can be unused; it cannot be wrong.
-        //: lane-multi: an ADD with a primary held does not move the primary, so
+        //: An ADD with a primary held does not move the primary, so
         //: there is no primary change to stamp.
         if (!(add && held_primary != 0))
             bridge::note_primary_change(char_id, bridge::kPrimaryCauseControl);
@@ -1064,11 +1076,11 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
     }
 
     // The take's two remaining mutations — the legacy global-primary
-    // write and the native-AI disable — USED TO RUN HERE, above the roster
+    // write and the native-AI disable — DOES NOT RUN HERE, above the roster
     // check below.  An ownership_divergence / watchlist_full rejection then
     // returned success:false having already zeroed the engine's AI for the
     // character (and flipped g_agent_mode), with no undo: the same defect class
-    // as the release-ordering bug this bead fixes, a mutation ahead of its own
+    // as the release-ordering bug this code guards against, a mutation ahead of its own
     // validation.  They are packaged here and INVOKED AFTER the roster check,
     // which is the last thing that can refuse the take.
     bool ai_disabled_now = false;
@@ -1077,14 +1089,14 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
         // registry (episode-manifest designation, else claim order) — see
         // SessionRegistry::rebuild_legacy_mirrors, which claim_character just
         // ran.  Storing char_id here would reinstate "last take wins", which is
-        // exactly the N>1 nondeterminism that bead removes.  The legacy
+        // exactly the N>1 nondeterminism that task removes.  The legacy
         // no-session path has no registry behind it, so it still writes the
         // mirror directly.
         if (!session) {
             //: WHY the primary changed, recorded by the action that
             //: changed it, and stamped BEFORE the value is published.
             //:
-            //: It was stamped after, and duly saw cause=unknown on the most
+            //: It was stamped after, and a measurement duly saw cause=unknown on the most
             //: ordinary control switch there is: the tick hook on another thread
             //: observed the new primary and read the cause register before this
             //: thread had written it, so the id did not match and the pairing check
@@ -1100,15 +1112,15 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
             //: can preserve it instead of inferring it from g_agent_mode, which is
             //: true whenever anyone holds anything at all.
             //:
-            //: IN THE `session` BRANCH, and that placement is the whole point. My
-            //: first version of this put the write inside `if (!session)` — the
-            //: legacy no-session path — where `session->mutex` is a null
-            //: dereference. It compiled, and the gate passed, because the host never
-            //: exercises that path. The rebase conflict is what made me read the
-            //: surrounding branch; nothing in my own lane did, because the row
-            //: checked that the assignment EXISTS and not WHERE it is.
+            //: IN THE `session` BRANCH, and that placement is the whole point. The
+            //: write inside `if (!session)` — the
+            //: legacy no-session path — would be a null `session->mutex`
+            //: dereference. It compiles, and a gate passes, because the host never
+            //: exercises that path: a row that checks the assignment EXISTS
+            //: cannot see WHERE it is, so the placement is stated here
+            //: beside the code.
             std::lock_guard<std::mutex> lk(session->mutex);
-            //: lane-multi: an added ruler does not rewrite what the PRIMARY's
+            //: An added ruler does not rewrite what the PRIMARY's
             //: claim asked for; the handoff preserves the primary's choice.
             if (!add || session->primary_character_id == char_id)
                 session->claim_disabled_native_ai = disable_ai;
@@ -1130,7 +1142,7 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
 
 #ifdef CK3_RELEASE_LEGACY_ORDER
     // ─── NEGATIVE CONTROL ────────────────────────────────────────────
-    // Pre-fix position: mutate first, validate after.  Never in the library build.
+    // Superseded position: mutate first, validate after.  Never in the library build.
     commit_take();
 #endif
 
@@ -1139,8 +1151,8 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
     // refusing the claim), so there is nothing to add here — only to verify.
     // On the legacy no-session path this is still the only writer.
     //
-    // / design §1.5: a roster that disagrees with the ownership table
-    // is an ERROR, not a log line.  The old code logged "watchlist full" and
+    // A roster that disagrees with the ownership table
+    // is an ERROR, not a log line.  The superseded code logged "watchlist full" and
     // answered success:true with the character missing from the roster, so the
     // caller believed it had control of a character no snapshot would ever
     // report.  Both paths below now fail loudly instead.
@@ -1179,7 +1191,7 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
         // Undo the claim so the registry does not keep ownership of a character
         // the roster will never carry.  (Legacy path holds no claim to undo.)
         //: EXPLICIT, and not a release. Called with no state this defaulted
-        //: to Unknown — which census found reaching the handoff — and it
+        //: to Unknown — which the census found reaching the handoff — and it
         //: also clobbered last_steered_character_id with a character this seat never
         //: steered, destroying a genuine earlier value. UndoneClaim says what this
         //: actually is, so the registry updates the primary and records nothing.
@@ -1208,7 +1220,7 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
 
     // STAMPED. This was a raw fprintf with no monotonic stamp and no
     // tick, so a claim was locatable in the log only to the nearest 50-tick DIAG
-    // marker — and ep-02's vacancies are 50 ticks, so the floor equalled the
+    // marker — and a recorded episode's vacancies are 50 ticks, so the floor equalled the
     // phenomenon. The ledger's tick_executed stays the primary exact source; this
     // makes the log a full corroborator that can disagree with it.
     if (g_logfile) {
@@ -1226,7 +1238,7 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
 
     if (out) {
         ResponseBuilder r; r.begin_object();
-        // lane-multi: this seat's primary AFTER the call. A switch or a first
+        // This seat's primary AFTER the call. A switch or a first
         // claim makes it char_id; an add leaves the one the seat already had.
         uint32_t primary_after = char_id;
         std::vector<uint32_t> held_after;
@@ -1250,7 +1262,7 @@ bool do_set_controlled_character(const char* params_json, std::string* out) {
         r.key("ai_disabled"); r.value_bool(ai_disabled_now);
         r.key("agent_mode"); r.value_bool(g_agent_mode.load(std::memory_order_relaxed));
         r.key("roster_size"); r.value_uint(static_cast<uint32_t>(roster_size));
-        // P2: report the LIVE per-char AI gate (ai_ctrl+0x28) so every
+        // Report the LIVE per-char AI gate (ai_ctrl+0x28) so every
         // take shows whether this char's AI tick — and hence war prosecution —
         // is actually running (catches a disable leaked by an earlier take).
         if (g_get_ai_ctrl) {
@@ -1305,9 +1317,9 @@ bool do_release_character(const char* params_json, std::string* out) {
     // bit-for-bit unchanged, or it falls through to a single commit point after
     // which the WHOLE cleanup runs.  A partial release must not be reachable.
     //
-    // It used to be: the M1 ownership release (which erases the ownership entry
-    // AND rebuilds the legacy mirrors from the reduced table) ran FIRST, above
-    // roster guard — a guard whose own contract is "validate roster
+    // So the M1 ownership release (which erases the ownership entry
+    // AND rebuilds the legacy mirrors from the reduced table) does not run FIRST, above
+    // The roster guard — a guard whose own contract is "validate roster
     // membership BEFORE mutating anything".  The guard then inspected the state
     // its own predecessor had just created: roster empty, primary 0, so EVERY
     // release of a session-owned character answered not_in_roster / "nothing
@@ -1353,7 +1365,7 @@ bool do_release_character(const char* params_json, std::string* out) {
     }
 #else
     // ─── NEGATIVE CONTROL ────────────────────────────────────────────
-    // The pre-fix code, reproduced exactly: the M1 ownership release runs HERE,
+    // The superseded code, reproduced exactly: the M1 ownership release runs HERE,
     // above the roster guard, so it erases the ownership entry and rebuilds the
     // legacy mirrors before the guard has looked at them.  Build with
     // -DCK3_RELEASE_LEGACY_ORDER to restore the bug and watch a successful
@@ -1385,7 +1397,7 @@ bool do_release_character(const char* params_json, std::string* out) {
     // for ANY character_id (release_character(999999999) -> silent-accept). A
     // character is releasable iff it is in the controlled roster OR is the
     // current primary (the primary can be roster-less when the watchlist was
-    // full at control time — no longer reachable since made that
+    // full at control time — no longer reachable now that the release path made that
     // divergence an error, but kept as a tolerant release path for legacy
     // callers).  On the session path the roster is DERIVED from the ownership
     // table INSPECT 2 just vouched for, so a session-owned character passes here
@@ -1423,21 +1435,21 @@ bool do_release_character(const char* params_json, std::string* out) {
 
 #ifndef CK3_RELEASE_LEGACY_ORDER
     // NOTE ON THE #ifndef THIS SITS INSIDE: the guard is deliberately absent from
-    // the CK3_RELEASE_LEGACY_ORDER build. That build is negative control
+    // the CK3_RELEASE_LEGACY_ORDER build. That build is the negative control
     // and exists to reproduce the old release-first ordering; a refusal here would
     // return before that ordering ran, so the control would stop reproducing the
     // very bug it is the control for. The shipped library always has the guard.
     //
-    // ── INSPECT 4 — (progenitor ruling 2026-09-24): A CONTROL SESSION
+    // ── INSPECT 4 — A CONTROL SESSION
     // MAY NOT RELEASE ITS LAST CHARACTER.
     //
     // The registered design is STEER mode: the agent tunes personality weights and
     // the native AI executes. A control seat holding nothing has nothing to steer,
-    // and the tool surface gave no way back — so the ruling is to refuse the
+    // and the tool surface gave no way back — so the rule is to refuse the
     // release and say why, rather than allow a seat to strand itself. Switching to
     // another character stays allowed; this only refuses EMPTYING the set.
     //
-    // NO CARVE-OUTS ARE NEEDED, and that is measured rather than assumed. The bead
+    // NO CARVE-OUTS ARE NEEDED, and that is measured rather than assumed. The task
     // named two exemptions — the second half of a control switch, and a handoff
     // corpse release — and NEITHER reaches this handler:
     //   * a control switch goes through SessionRegistry::swap_character, which is
@@ -1450,7 +1462,7 @@ bool do_release_character(const char* params_json, std::string* out) {
     //     empty the set.
     // So every release that arrives here is one an agent asked for, and an
     // exemption for a case that cannot arise would be a contract the tree does not
-    // keep. acceptance_cwal asserts those three bypasses so nobody adds one later.
+    // keep. A host acceptance asserts those three bypasses so nobody adds one later.
     if (session && session->is_control()) {
         bool would_empty = false;
         {
@@ -1462,7 +1474,7 @@ bool do_release_character(const char* params_json, std::string* out) {
             if (g_logfile) {
                 fprintf(g_logfile,
                         "[CK3-Bridge] release_character: REFUSED last claim of "
-                        "control session %s (R3/§2.7 amendment) tick=%llu char=%u\n",
+                        "control session %s (release by grant) tick=%llu char=%u\n",
                         session->session_id.c_str(),
                         (unsigned long long)bridge::g_tick_id.load(
                             std::memory_order_relaxed),
@@ -1474,7 +1486,7 @@ bool do_release_character(const char* params_json, std::string* out) {
                 r.key("success"); r.value_bool(false);
                 r.key("action"); r.value_string("release_character");
                 r.key("reason"); r.value_string("last_claim_of_control_session");
-                //: The explanation the ruling asks for, carried on the refusal so
+                //: The explanation the rule asks for, carried on the refusal so
                 //: an agent reading only the reply learns the contract.
                 r.key("hint"); r.value_string(
                     "you steer; the AI runs regardless. A control session's last "
@@ -1497,7 +1509,7 @@ bool do_release_character(const char* params_json, std::string* out) {
     //: MEASURE the subject's state HERE, at the release, because this is
     //: the last moment it is true. Evaluated at handoff time instead, a character
     //: released alive and dying later reads as a corpse release and the recovery
-    //: branch seizes it — ep-03, 3100 ticks after a deliberate drop.
+    //: branch seizes it — a recorded episode, 3100 ticks after a deliberate drop.
     bridge::ReleaseSubjectState rel_state = bridge::ReleaseSubjectState::Unknown;
     {
         void* rc = lookup_character(char_id);
@@ -1539,7 +1551,7 @@ bool do_release_character(const char* params_json, std::string* out) {
         }
     }
 
-    // Clear council suppression lock (stickiness) — let the native
+    // Clear council suppression lock — let the native
     // per-ruler council-AI resume for this ruler once released.
     council_lock_remove(char_id);
 
@@ -1552,8 +1564,8 @@ bool do_release_character(const char* params_json, std::string* out) {
         if (core_data) {
             uintptr_t ai_ctrl = safe_read<uintptr_t>(core_data + ck3::core_data::AI_CONTROLLER);
             if (ai_ctrl) {
-                // R3 (design §2.7) — the half of R3 that SURVIVED
-                // the 2026-09-12 G3' reversal: `ai_ctrl+0x28` is NEVER
+                // The half of the unavailability rule that holds with a
+                // free-running clock: `ai_ctrl+0x28` is NEVER
                 // re-enabled for a claimed character in an EXPERIMENT episode.
                 // Handing a character back to the native AI mid-episode changes
                 // the arm — the very thing R3 exists to prevent — and it is not
@@ -1568,7 +1580,7 @@ bool do_release_character(const char* params_json, std::string* out) {
                     if (g_logfile) fprintf(g_logfile,
                         "[CK3-Bridge] release_character: NOT re-enabling native AI for %u "
                         "— experiment mode; ai_ctrl+0x28 stays disabled for the "
-                        "life of the episode (R3, §2.7)\n", char_id);
+                        "life of the episode\n", char_id);
                 } else if (safe_read_had_fault()) {
                     // No store after a read that faulted: an address from a
                     // faulted read is not an address. The reply says degraded.
@@ -1660,7 +1672,7 @@ bool do_release_character(const char* params_json, std::string* out) {
 // Bridge State Recovery Query
 // =============================================================================
 
-// Multi-polecat dispatch needs a way to ask "who currently owns the
+// Multi-agent dispatch needs a way to ask "who currently owns the
 // bridge socket?" before slinging work. Returns the peer's pid/uid (from
 // SO_PEERCRED at accept time), the fd number, how long the slot has been
 // held, and a live kill(pid, 0) probe so the caller can distinguish a healthy
@@ -1722,8 +1734,8 @@ bool do_get_bridge_state(const char* /* params_json */, std::string* out) {
     // Intent queue
     r.key("pending_intents"); r.value_uint(static_cast<uint32_t>(g_intent_queue.pending_count()));
 
-    // H3 (re_warplanner_lifecycle.md §1.4): CB-slot busy-return counter. Tells us
-    // whether the H1 bounded-drain hardening reduced slot collisions in the live
+    // CB-slot busy-return counter (re_warplanner_lifecycle.md §1.4). Says
+    // whether the bounded drain keeps slot collisions down in a live
     // run. Instrumentation only — no behavioural effect.
     r.key("cb_query_busy_count");
     r.value_uint(static_cast<uint32_t>(g_cb_query_busy_count.load(std::memory_order_relaxed)));
@@ -1734,11 +1746,11 @@ bool do_get_bridge_state(const char* /* params_json */, std::string* out) {
     // them together rather than in two surfaces. 0 is a real statement — the
     // bridge looked and it never fired; the key being ABSENT means an older
     // bridge that could not say. (drain_unavailable_count went with the pause
-    // pulse that was its only source,.)
+    // pulse that was its only source.)
     r.key("busy_deferred_count");
     r.value_uint(static_cast<uint32_t>(g_busy_deferred_count.load(std::memory_order_relaxed)));
 
-    // FIX I05: agent-control mode (matches set_controlled_character / release_character)
+    // Agent-control mode (matches set_controlled_character / release_character)
     r.key("agent_mode"); r.value_bool(g_agent_mode.load(std::memory_order_relaxed));
 
     // The session registry itself. SessionRegistry::sessions_json
@@ -1751,7 +1763,7 @@ bool do_get_bridge_state(const char* /* params_json */, std::string* out) {
     // owning anything.
     r.key("sessions"); r.value_raw(bridge::g_session_registry.sessions_json());
     // CUMULATIVE since process start, GLOBAL (one number, not per
-    // session), and the two outcomes SEPARATE — settled with before
+    // session), and the two outcomes SEPARATE — settled with the harness before
     // either side cut. Cumulative because a bridge-side per-interval delta drops
     // firings whenever a sample is missed, and a missed sample is exactly the
     // condition under which a collision is most likely; their block already
@@ -1898,18 +1910,18 @@ static bool experimental_write_enabled(const char* action) {
         //    set origin→province#1; both CHANGED, no crash. re_resolution_maa_station.md.
         //    NOTE: agent needs province-index discovery (a query exposing realm province
         //    indices) for optimal stationing; unstation needs only regiment_id.
-        // faction_action REMOVED 2026-10-21 (F16) — validated live
-        // on the 867 save from both seats (live867 runs l10-p6, l10-p7): create /
+        // faction_action REMOVED 2026-10-21 — validated live
+        // on the 867 save from both seats: create /
         // join / leave / press_demand run through the engine's own create-command
         // check, CAN_JOIN / CAN_LEAVE / CAN_FIRE_ULTIMATUM with their reason text,
-        // and each is read back (re/findings/re_factions.md,
-        // scripts/live867/scenarios/l10_factions_*.py).
+        // and each is read back (re/findings/re_factions.md).
+        //
         //
         // No write is gated now. nullptr marks the list as deliberately empty (a
         // zero-length array is not C++); the loop below skips it.
         nullptr,
-        // scheme_action REMOVED 2026-10-18 — VALIDATED live (lane-scheme,
-        // re/sessions/lane-scheme-2026-10-18, re/findings/re_scheme_start_args.md):
+        // scheme_action REMOVED 2026-10-18 — VALIDATED live, per
+        // re/findings/re_scheme_start_args.md:
         // CreateActiveScheme's p5/p6 are the CTaskContract/CArtifact DB null objects
         // (engine starts pass the same, witnessed 13 types), SCHEME_NULL is the slot
         // not the sentinel, cancel reachable. Murders created and owned for four
@@ -1943,12 +1955,12 @@ static bool experimental_write_enabled(const char* action) {
 }
 
 // =============================================================================
-// Action-Log JSONL Tap (overlay-v2 §2.2)
+// Action-Log JSONL Tap (overlay-)
 //
 // Append-only feed of state-mutating bridge RPCs:
 // {ts, game_date, session_id, kind, verb, args, result}. kind is "action" or
 // "management" (clock, per-character AI, steering flags; see action_log_kind).
-// Lives at <telemetry>/action_log.jsonl (per instance since). Reads
+// Lives at <telemetry>/action_log.jsonl (per instance). Reads
 // and diagnostic management RPCs are excluded. The overlay renderer
 // humanizes these verbs into the kill-feed; the run monitor consumes them as
 // clip-candidate signals.
@@ -1997,6 +2009,8 @@ bool is_bridge_management_verb(const char* action_type) {
         "set_cb_selector_override", "set_offgoal_veto",
         "set_war_stance_record_walk",
         "set_faction_demand_response",
+        "set_event_rule",
+        "set_ai_veto",
         // diagnostics / meta
         "who_holds_the_lock", "get_bridge_state", "get_offset_validation", "get_tick_info",
         // misc reads mis-routed as actions
@@ -2022,9 +2036,9 @@ bool is_bridge_management_verb(const char* action_type) {
 }
 
 // =============================================================================
-// / R6 / decision G7 — THE DECISION-BUDGET GOVERNOR, BRIDGE SIDE
+// THE DECISION-BUDGET GOVERNOR, BRIDGE SIDE
 // =============================================================================
-// Design of record: docs/design/event-pipeline-conductor.md §5. The supervisor
+// The supervisor
 // tails its agent's claude-CLI transcript and reports RAW TOKEN COUNTS; the
 // BRIDGE owns the ledger, the game year and the refusal. An agent cannot be
 // trusted to stop itself, and the only thing that can actually stop it acting
@@ -2053,7 +2067,7 @@ bool budget_config_is_pinned() { return g_budget_pinned; }
 void budget_init_from_env() {
     // The ceiling is a PER-EPISODE CONFIG VALUE (§5.3: 1.5 x the median
     // per-agent per-game-year spend across the A and B pilots, written into the
-    // pre-registration at freeze). It arrives as an environment variable set by
+    // experiment design at freeze). It arrives as an environment variable set by
     // whoever launches the game, which is exactly the place an agent cannot
     // reach. Unset => no cap: record everything, refuse nothing.
     const char* raw = getenv("CK3_BUDGET_PER_AGENT_PER_YEAR");
@@ -2212,6 +2226,8 @@ static const char* action_log_kind(const char* action_type) {
         "set_character_ai",
         "set_offgoal_veto",
         "set_faction_demand_response",
+        "set_event_rule",
+        "set_ai_veto",
     };
     for (const char* m : kLoggedMgmt)
         if (strcmp(action_type, m) == 0) return "management";
@@ -2308,7 +2324,7 @@ void emit_action_outcome_log(const Intent& completed) {
 }
 
 // =============================================================================
-// Inline-case adapters for the action registry (D1-C / FIX 3.1)
+// Inline-case adapters for the action registry (action_registry.inc)
 // =============================================================================
 // Bodies that used to live inline in the hand-written dispatch chain, lifted
 // into named functions with the uniform bool(const char*, std::string*)
@@ -2317,9 +2333,8 @@ void emit_action_outcome_log(const Intent& completed) {
 // still rely on dispatch_action_with_response to synthesize
 // {"success":<bool>,"action":...}.
 
-// Json_get_bool's silent
-// default-to-false meant enabled:"banana" (or a missing key) DISABLED all AI
-// with a synthesized success:true. Strict-parse the boolean and typed-reject
+// json_get_bool's silent default-to-false would let enabled:"banana" (or a
+// missing key) DISABLE all AI with a synthesized success:true. Strict-parse the boolean and typed-reject
 // anything else — same contract as set_cb_selector_override's
 // invalid_enabled_type reject (ai_cb_selector_hook.cpp:380).
 static bool case_toggle_all_ai(const char* params_json, std::string* response_out) {
@@ -2462,13 +2477,13 @@ static bool case_set_character_ai(const char* params_json, std::string* response
         rb.key("success"); rb.value_bool(ok);
         rb.key("action"); rb.value_string("set_character_ai");
         rb.key("character_id"); rb.value_int(cid);
-        // lane-query item 7: a refusal used to report `ai_enabled: true` — a
+        // A refusal does not report `ai_enabled: true` — a
         // value nobody read (the write was refused before it touched the byte).
         // set_phase passed character_id 0, the refusal said success:false,
         // ai_enabled:true, and the action log carried that pair. On failure the
         // state is UNREAD: null, plus the reason the handler refused.
         if (ok) {
-            // F11: the byte as it reads after the
+            // The byte as it reads after the
             // write (ai_ctrl::AI_ENABLED), not the value requested. A store
             // that did not take answers success with the byte it left.
             void* ch = lookup_character(static_cast<uint32_t>(cid));
@@ -2517,7 +2532,7 @@ static bool case_get_offset_validation(const char* /*params_json*/, std::string*
     r.key("failure_pct"); r.value_double(static_cast<double>(result.failure_pct));
     // The offset table's own verdict, named apart from the fault marker
     // ("degraded", a read under this reply that faulted), which the FaultScope
-    // adds and a key of the same name would suppress (R1(b)).
+    // adds and a key of the same name would suppress.
     r.key("offsets_degraded"); r.value_bool(result.degraded);
     r.key("groups"); r.begin_array();
     for (int i = 0; i < result.total_groups; i++) {
@@ -2534,12 +2549,12 @@ static bool case_get_offset_validation(const char* /*params_json*/, std::string*
     return true;
 }
 
-// Toggle the (default-ON since WSTANCE) war-stance coordinator record walk at runtime.
+// Toggle the (default-ON) war-stance coordinator record walk at runtime.
 // { "enabled": <bool> }. Pure flag store — no game-thread reentry.
 static bool case_set_war_stance_record_walk(const char* params_json, std::string* response_out) {
     // json_get_int cannot read a JSON boolean: {"enabled": false} parsed as an
     // int yielded a non-zero result, so a disarm silently ARMED the flag while
-    // reporting success (found 2026-08-22 while chasing — the flag is
+    // reporting success (found 2026-08-22 while chasing a game-thread hang — the flag is
     // the leading suspect for a deterministic game-thread hang, and it could
     // not be turned off). `true` happened to work, which hid this. Accept the
     // JSON literals explicitly before falling back to the integer form.
@@ -2566,7 +2581,7 @@ static bool case_list_interactions(const char* /*params_json*/, std::string* res
     return true;
 }
 
-// #64: this route always serves the LIGHT name+hash list (enumerate_decisions) —
+// This route always serves the LIGHT name+hash list (enumerate_decisions) —
 // no engine eval, always safe/fast. The ANNOTATED engine eval lives on the separate
 // list_decisions_annotated / list_valid_decisions routes (bounded list-mode,
 // deferred to the game thread). It is NOT disabled — but the FULL-DB eval remains
@@ -2667,7 +2682,7 @@ static bool fail_if_no_context(const char* action_name, std::string* response_ou
     std::string reason;
     if (!bridge::require_dispatch_context(action_name, &reason)) {
         if (g_logfile) fprintf(g_logfile,
-            "[CK3-Bridge][M1] '%s' dispatched with no ClientContext\n", action_name);
+            "[CK3-Bridge] '%s' dispatched with no ClientContext\n", action_name);
         if (response_out) {
             ResponseBuilder r; r.begin_object();
             r.key("success"); r.value_bool(false);
@@ -2737,7 +2752,7 @@ static bool refuse_debug_verb(const char* verb, std::string* response_out) {
 bool dispatch_action(const char* action_type, const char* params_json,
                      std::string* response_out) {
     if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] Action: %s params: %s\n", action_type,
-                           bridge::redact_for_log(params_json ? params_json : "").c_str());   // 2026.12.5: log_redact.h
+                           bridge::redact_for_log(params_json ? params_json : "").c_str());   // log_redact.h
     if (refuse_debug_verb(action_type, response_out)) return false;
 
     // M1: per-session ownership + mode choke point.  Read-only actions are
@@ -2747,7 +2762,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
     // actions manage ownership themselves and bypass the actor check.
     bridge::Session* session = bridge::current_session();
 
-    // / decision G1: IN PIPELINE MODE THE BRIDGE OWNS THE CLOCK.
+    // IN PIPELINE MODE THE BRIDGE OWNS THE CLOCK.
     // pause_game / unpause_game / set_speed from a session are typed refusals;
     // the flush loop is the only thing allowed to move the clock, and it calls
     // do_pause_game / do_unpause_game / do_set_speed directly rather than
@@ -2763,7 +2778,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
             r.key("action"); r.value_string(action_type);
             r.key("reason"); r.value_string("clock_owned_by_pipeline");
             r.key("hint"); r.value_string(
-                "The pipeline flush loop owns the clock in pipeline mode (G1). "
+                "The pipeline flush loop owns the clock in pipeline mode. "
                 "Submit your work and collect it with `check`; the bridge will "
                 "pause only for as long as the paused reads in a flush take.");
             r.end_object();
@@ -2772,7 +2787,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
         return false;
     }
 
-    // / decision G7: THE DECISION BUDGET IS ENFORCED HERE.
+    // THE DECISION BUDGET IS ENFORCED HERE.
     // MUTATIONS ONLY. A session that has spent its per-game-year allowance
     // keeps every read, every bridge-management verb and `report_usage` itself
     // (§5.3) — it can observe and log, it simply cannot spend the world's
@@ -2819,7 +2834,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
     // is loaded and lets the bridge decide what to do with steering it is
     // already holding — and every effect it can have is conservative (discard,
     // never grant). The process that knows the answer is the episode harness,
-    // which attaches in OBSERVE mode: that is the whole shape of the E0 arm, and
+    // which attaches in OBSERVE mode: that is the whole shape of the null arm, and
     // world_identity.h says so in as many words ("an observer-mode harness
     // declares before any control session attaches"). Gating it on control would
     // mean the identity could only ever be vouched for by a session that is
@@ -2842,7 +2857,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
         bridge::is_clock_verb(action_type) &&
         bridge::mode_admits_observer_clock_verbs(bridge::pipeline_mode());
 
-    // Scheme_action's "check" reads (the engine's start
+    // scheme_action's "check" reads (the engine's start
     // check, nothing started), so it is guarded as a read: no observe refusal, no
     // actor-ownership check (action_args.h call_is_read_only).
     const bool is_read_only_call = bridge::call_is_read_only(action_type, params_json);
@@ -2914,7 +2929,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
     }
 
 
-    // --- Registered actions: single source-of-truth table (D1-C / FIX 3.1) ---
+    // --- Registered actions: single source-of-truth table ---
     // action_registry.inc expands here into the strcmp dispatch chain. The SAME
     // table generates is_registered_action() below, so dispatch and registration
     // can never drift — drift is how the query_titles class of paused-caller
@@ -2925,6 +2940,26 @@ bool dispatch_action(const char* action_type, const char* params_json,
     // Every registered handler runs inside an actor scope, so the
     // one resolver (actor_resolve.h) knows whether this call reads or writes
     // and the reply carries a typed `no_actor` refusal when it refused.
+    // A write whose engine entry has no Windows anchor is refused by name here,
+    // before its handler would fault on the poisoned address (win_anchor_refusal.h; never
+    // on Linux, where no constant reads unmapped).
+    if (const bridge::win_anchor::Need* need = bridge::win_anchor::missing_for(action_type)) {
+        if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] %s refused: not_on_windows (%s has no Windows anchor)\n",
+                               action_type, need->anchor);
+        if (response_out) {
+            ResponseBuilder r; r.begin_object();
+            r.key("success"); r.value_bool(false);
+            r.key("action"); r.value_string(action_type);
+            r.key("reason"); r.value_string("not_on_windows");
+            r.key("missing_anchor"); r.value_string(need->anchor);
+            r.key("detail"); r.value_string(
+                "this build of the bridge has no Windows address for the game function this write calls; "
+                "nothing was sent to the game");
+            r.end_object();
+            *response_out = r.take();
+        }
+        return false;
+    }
 #define BRIDGE_ACTION(NAME, HANDLER) \
     if (strcmp(action_type, NAME) == 0) { \
         if (fail_if_no_context(NAME, response_out)) return false; \
@@ -2945,13 +2980,13 @@ bool dispatch_action(const char* action_type, const char* params_json,
     return false;
 }
 
-// D1-C / FIX 3.1 (bridge-investigation-20260801): registry membership test,
+// Registry membership test,
 // generated from the SAME action_registry.inc table as the dispatch chain in
 // dispatch_action() above — the two cannot drift. Consumed by the IPC reader
 // thread (ipc_server.cpp::try_queue_fallthrough_rejection) to fast-fail
 // unregistered action names with an inline unknown_action reply. Before this,
 // an unknown name fell through to g_msg_queue and, while the game was paused,
-// hung the caller forever with no reply (D1, the query_titles hang class).
+// hung the caller forever with no reply (the query_titles hang class).
 // NOTE: this is NOT a pause classifier — it says nothing about routing, only
 // whether a dispatch case exists (do NOT gate on the snapshot.cpp classifier
 // lists here: legit Tier-3 / unclassified actions must still queue).
@@ -2970,7 +3005,7 @@ bool dispatch_action_with_response(const char* action_type, const char* params_j
     // The fault flag counts this dispatch only (a flag left by an earlier call
     // on this thread is not this reply's), so the reply made below for a
     // handler that left none can say whether a read under it faulted: a
-    // FaultScope that saw an empty reply had nothing to mark (R1(a)).
+    // FaultScope that saw an empty reply had nothing to mark.
     safe_read_clear();
     std::string resp;
     bool ok = dispatch_action(action_type, params_json, response_out ? response_out : &resp);
@@ -2989,7 +3024,7 @@ bool dispatch_action_with_response(const char* action_type, const char* params_j
         if (safe_read_had_fault()) mark_reply_degraded(*response_out, safe_read_fault_count());
     }
 
-    // overlay-v2 §2.2: tap executed state-mutating action verbs into the JSONL feed.
+    // overlay-: tap executed state-mutating action verbs into the JSONL feed.
     if (const char* kind = action_log_kind(action_type)) {
         const char* result = response_out ? response_out->c_str() : resp.c_str();
         emit_action_log(action_type, kind, params_json, result);

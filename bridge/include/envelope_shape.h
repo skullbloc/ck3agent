@@ -11,7 +11,7 @@
 // the NEXT broadcast, which is some other request's answer, well-formed and
 // complete and about something else entirely.
 //
-// hit this probing a live world: two malformed envelopes each came back
+// A live probe hit this probing a live world: two malformed envelopes each came back
 // with a full query_character payload for Harold Godwinson. They read a field
 // off it, wrote the OPPOSITE of the truth into a report, and caught it only
 // because they recognised the character name. That is the plausible-wrong-answer

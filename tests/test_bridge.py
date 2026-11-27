@@ -40,7 +40,7 @@ def test_teardown_waits_for_the_owner_to_release(bridge):
 
 
 def test_teardown_leaves_another_runs_ruler_alone_and_names_it(bridge):
-    """ (consolidate's teardown warned "13902 still held by session
+    """A recorded teardown (consolidate's teardown warned "13902 still held by session
     ...14: not_owned_by_session", expand's ruler). Two sessions hold one ruler
     each; the teardown of the run whose session is s1 releases nothing of s2's,
     asks the bridge for nothing of s2's, and does not warn."""
@@ -196,7 +196,7 @@ def test_doctor_accepts_a_matching_or_absent_bridge_version(bridge, ack):
 _PUBLIC_ACK = {"session_state": "active", "bridge_version": __version__,
                "build_git_sha": "unknown", "build_git_branch": "unknown", "build_git_dirty": "unknown"}
 _RESEARCH_ACK = {"session_state": "active", "bridge_version": br.RESEARCH_BRIDGE_VERSION,
-                 "build_git_sha": "627af763abcd", "build_git_branch": "release-prep-2026.10",
+                 "build_git_sha": "627af763abcd", "build_git_branch": "main",
                  "build_git_dirty": "clean"}
 
 
@@ -300,10 +300,10 @@ def test_watch_stops_a_real_process_that_never_exits(bridge, monkeypatch):
         proc.kill()
 
 
-# 2026.12.5 (draft smoke, row 2): the teardown read a pinned, detached
+# 2026.12.5 (draft smoke): the teardown read a pinned, detached
 # session as gone ("already closed, nothing held") while it held the ruler. A
 # get_bridge_state reply with no session list (the bridge's fault reply here)
-# was read as an empty registry. Red on e8411492: rows 1 and 3.
+# was read as an empty registry. Red without the rule: rows 1 and 3.
 
 def _pinned_session(sock):
     """A seat session that claimed 42 and dropped its connection (pinned, detached)."""
@@ -330,7 +330,7 @@ def test_a_reply_without_a_session_list_is_not_a_gone_session(bridge):
 
 
 def test_a_list_without_the_row_is_still_gone(bridge):
-    """Control (non-discriminating, green on e8411492 too): a reply that carries
+    """Control (non-discriminating, green without the rule too): a reply that carries
     the list and not the session is the registry's word that it is gone."""
     bridge(pin_claims=False)
     sock = br.socket_path()
@@ -359,10 +359,10 @@ def test_unreadable_session_state_is_never_none_held(bridge):
 
 
 def test_owner_labels_an_unread_holder_and_an_unlisted_one_apart(bridge):
-    """r3: `_owner` read a list-less reply as "an unknown session",
+    """`_owner` read a list-less reply as "an unknown session",
     the same words as a list that names no holder. Now the label says which:
     unread, or no session listed. (_claims, which had no caller and the same
-    misreading, is deleted.) Red on 5e42c229: both read "an unknown session"."""
+    misreading, is deleted.) Red without the rule: both read "an unknown session"."""
     bridge(pin_claims=True, bare_state={"ck3agent-cli": 1})
     sock = br.socket_path()
     link = br.Link(sock, mode="control")

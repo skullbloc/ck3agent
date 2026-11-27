@@ -1,29 +1,29 @@
 // claim_event_log.h — EVERY CLAIM-SET EVENT, STAMPED
 //
-// THE DEFECT. The claim-set events were emitted three different ways:
+// THE HAZARD. The claim-set events were emitted three different ways:
 //
 //   release_character:      raw fprintf, no stamp, no tick
 //   set_controlled_character: raw fprintf, no stamp, no tick
 //   CONTROLLED_HANDOFF:     blog(), monotonic stamp, still no tick
 //
-// and the only tick-bearing line in the log is "BUILD-B: DIAG tick=" every 50
+// and the only tick-bearing line in the log is "DIAG tick=" every 50
 // ticks. So a vacancy is locatable from the log only to a 50-tick marker interval —
-// and ep-02's vacancies ARE 50 ticks. The measurement floor equalled the phenomenon,
+// and a recorded episode's vacancies ARE 50 ticks. The measurement floor equalled the phenomenon,
 // which means the log could not corroborate a vacancy at all.
 //
 // THE LEDGER REMAINS THE PRIMARY EXACT SOURCE (bridge_record.tick_executed,
-// now actually reaching the observer after). This makes the log a full
+// now actually reaching the observer). This makes the log a full
 // CORROBORATOR rather than a second-best substitute: two independent artefacts that
 // can disagree, which is the whole point of a corroborator.
 //
 // ABSENCE IS ITS OWN STATE. If the game state is not loaded the date cannot be read,
 // and this prints `game_date=unread` — never a zero, never a stale value, never a
 // plausible-looking date nobody measured. That is the same rule as
-// `heir_ai_enabled=unobserved` and `Unknown`: a value that was not observed
+// `heir_ai_enabled=unobserved` and the `Unknown`: a value that was not observed
 // must not be formatted like one that was.
 //
-// AND THE LITERALS ARE ASCII. log line contains a section sign, which
-// TRUNCATES `strings` output and made the bead's own witness unusable — the full
+// AND THE LITERALS ARE ASCII. The log line contains a section sign, which
+// TRUNCATES `strings` output and made the task's own witness unusable — the full
 // literal read 0 while its ASCII prefix read 1. Every literal here is ASCII so the
 // blind-rebuild witness list can key on the whole token.
 //
@@ -39,7 +39,7 @@
 #include "ck3_offsets.h"
 //: so one include gives a caller BOTH halves of the stamp — the monotonic
 //: wall-clock prefix the rest of the log already carries, and the game tick +
-//: date this bead adds. Two includes for one stamp invites one being forgotten.
+//: date this code adds. Two includes for one stamp invites one being forgotten.
 #include "log_stamp.h"
 
 #include <cstdint>

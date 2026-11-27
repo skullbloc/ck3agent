@@ -31,14 +31,14 @@ sets a ruler's strategy. The game's own AI carries it out.
 | CK3 updated past 1.18.3.1 | Not until a matching release. See [Your game updated](docs/supported-versions.md). |
 | Flatpak or Snap Steam | No. See [troubleshooting](docs/troubleshooting.md#flatpak-or-snap-steam). |
 | Steam Deck | Untested. |
-| Windows or macOS | Not yet. See the [port plan](docs/adr/0001-windows-macos-port.md). |
+| Windows or macOS | Not yet. The Windows bridge builds with clang-cl and the MSVC libraries (xwin) from Linux ([porting](docs/porting/README.md)), CI builds its platform layer with MSVC, and it is not yet proven on a live Windows game; macOS is not built. See the [port plan](docs/adr/0001-windows-macos-port.md). |
 | Ironman, achievements, multiplayer | No. Single-player, non-Ironman saves only. |
 
 ## Install
 
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing     # in the download directory
-tar xzf ck3agent-2026.12.11-linux-x86_64.tar.gz && cd ck3agent-2026.12.11-linux-x86_64
+tar xzf ck3agent-2026.12.12-linux-x86_64.tar.gz && cd ck3agent-2026.12.12-linux-x86_64
 ./install.sh                                 # installs the bridge and the ck3agent command
 ```
 

@@ -31,7 +31,7 @@ std::once_flag g_once;
 std::string g_id CK3_EARLY_INIT, g_socket CK3_EARLY_INIT, g_tele CK3_EARLY_INIT,
             g_log CK3_EARLY_INIT, g_dir CK3_EARLY_INIT,
             // CK3_EARLY_INIT like its siblings, NOT by habit — these
-            // are read from a constructor-ordering-sensitive path, and
+            // are read from a constructor-ordering-sensitive path, and a past defect
             // was an unprioritised _GLOBAL__sub_I zeroing state after dll_init
             // had already used it. A new member of this group inherits the
             // hazard whether or not anyone remembers why.

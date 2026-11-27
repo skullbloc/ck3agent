@@ -9,7 +9,7 @@
 // bridge side, used at every raw-frame log site (ipc_server.cpp "Handshake
 // received", dispatch_router.cpp "Action: ... params:").
 //
-// THE RULE (round 4, after the r3 witness's adversarial frames):
+// THE RULE (tested against adversarial frames, test_log_redact.cpp):
 //   * A SENSITIVE KEY is one whose DECODED name (\u escapes and the other JSON
 //     escapes resolved, as RapidJSON resolves them), lower-cased with `_`, `-`
 //     and spaces dropped, is "auth", or contains "authoriz", "token", "secret",

@@ -1,9 +1,9 @@
 """`BridgeClient.recv`'s timeout is a DEADLINE, not a per-syscall budget.
 
-THE BUG THIS PINS, measured on a real run rather than imagined. In the arm-C
-smoke (ep-20260921T041851Z) the driver hung on its 10th `query_war_stance`,
-part-way through its FIRST sampling pass, and stayed there ~4 minutes until the
-operator killed it. Nothing blocked in the kernel and nothing raised: `recv`
+THE BUG THIS PINS, measured on a recorded run rather than imagined: a driver
+hung on its 10th `query_war_stance`,
+part-way through its FIRST sampling pass, and stayed there ~4 minutes until it
+was killed. Nothing blocked in the kernel and nothing raised: `recv`
 set the socket timeout ONCE above its loop and `continue`d on every keepalive
 ping WITHOUT RETURNING, so each `sock.recv` was handed the full timeout again
 and the caller never regained control to check its own absolute deadline.
@@ -14,7 +14,7 @@ wait indefinitely. The consequence was not a slow call: the poll loop ran
 exactly ONE iteration, `last_date` never advanced, and the episode's horizon
 could never fire, turning a four-game-year run into an unbounded spend.
 
-The ping-skip is correct. The defect is that skipping cost NOTHING.
+The ping-skip is correct. The hazard is that skipping cost NOTHING.
 """
 import json
 import socket
@@ -49,7 +49,7 @@ class _PingFlood:
         if self.calls > self.cap:
             raise RuntimeError(
                 f"recv() consumed {self.calls} pings without honouring its "
-                "deadline — the timeout is being re-armed per syscall (ck-3esm)")
+                "deadline — the timeout is being re-armed per syscall")
         time.sleep(self.interval)
         return PING
 
@@ -61,7 +61,7 @@ def _client(sock):
 
 
 def test_a_ping_flood_does_not_outlast_the_deadline():
-    """THE REGRESSION TEST. Pre-fix this raises from the cap; post-fix returns None."""
+    """THE REGRESSION TEST. Without the deadline this raises from the cap; with it, returns None."""
     sock = _PingFlood(interval=0.01, cap=100)
     started = time.monotonic()
     got = _client(sock).recv(timeout=0.2)
@@ -76,7 +76,7 @@ def test_a_ping_flood_does_not_outlast_the_deadline():
 def test_the_socket_timeout_SHRINKS_across_a_ping_flood():
     """The mechanism, not just the outcome: each wait asks for what is LEFT.
 
-    Pre-fix there is exactly ONE settimeout call, carrying the full timeout.
+    Without the deadline there is exactly ONE settimeout call, carrying the full timeout.
     Post-fix there is one per syscall and they DECREASE — which is the actual
     difference between a deadline and a budget handed out afresh each time.
     """
@@ -94,7 +94,7 @@ def test_the_socket_timeout_SHRINKS_across_a_ping_flood():
 def test_a_real_message_still_returns_immediately():
     """THE NON-DISCRIMINATING CONTROL, labelled as such.
 
-    This passes both before and after the fix. It is here so a change that
+    This passes with and without the deadline. It is here so a change that
     bounds the loop by BREAKING ordinary delivery cannot hide behind the two
     tests above.
     """

@@ -1,6 +1,6 @@
-"""lane-prebind: the pre-bind waits for the game.
+"""The pre-bind waits for the game.
 
-lane-multi run 1: `ck3agent run` started while the save was still loading, the
+In one run `ck3agent run` started while the save was still loading, the
 pre-bind of both declared rulers was refused `character_not_found` at once and
 never retried; the run prompt recovered it by binding for itself. Now a
 handshake ack whose session_state is not `active` defers the bind to a task

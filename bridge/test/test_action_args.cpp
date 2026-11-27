@@ -1,4 +1,4 @@
-// test/test_action_args.cpp — regression tests for.
+// test/test_action_args.cpp — regression tests for the action-argument parser.
 //
 // THE BUG: pipeline `check` returned {"success":true,"results":[]} for every
 // ticket in every state, so the async API's documented retrieval path was
@@ -10,7 +10,7 @@
 //
 // These tests drive the resolver with the EXACT wire shapes a real client puts
 // on the socket, and carry a NEGATIVE CONTROL: legacy_lookup() reproduces the
-// pre-fix read, and the control must FAIL every assertion the fix passes. A
+// superseded read, and the control must FAIL every assertion the fix passes. A
 // test that passes with and without the fix proves nothing.
 //
 //   cmake -DBUILD_BRIDGE_TESTS=ON .. && make -j$(nproc) test_action_args
@@ -37,7 +37,7 @@ static int g_failures = 0;
         }                                                                     \
     } while (0)
 
-// The pre-fix read, kept verbatim as the negative control.
+// The superseded read, kept verbatim as the negative control.
 static bool legacy_lookup(const rapidjson::Value& inner, const char* key) {
     return inner.HasMember(key);
 }
@@ -48,7 +48,7 @@ static rapidjson::Document parse(const char* json) {
     return d;
 }
 
-// The literal frame the probe sent when it reproduced live.
+// The literal frame the probe sent when it reproduced the hazard live.
 static const char* kFramedCheck =
     "{\"action\":\"check\",\"params\":{\"tickets\":[\"tk_00000005\"]},"
     "\"request_id\":\"3312f62dca3e469ca72cb0831d439598\"}";
@@ -57,7 +57,7 @@ static const char* kFlatCheck =
     "\"request_id\":\"3312f62dca3e469ca72cb0831d439598\"}";
 
 static void test_framed_check_resolves() {
-    std::printf("framed check (the live ck-6kvq.15 repro)\n");
+    std::printf("framed check (the repro)\n");
     rapidjson::Document d = parse(kFramedCheck);
     CHECK(!d.HasParseError());
 
@@ -67,7 +67,7 @@ static void test_framed_check_resolves() {
     CHECK(a.Size() == 1);
     CHECK(a[0].IsString() && std::strcmp(a[0].GetString(), "tk_00000005") == 0);
 
-    // NEGATIVE CONTROL: the pre-fix read finds nothing here. If this ever
+    // NEGATIVE CONTROL: the superseded read finds nothing here. If this ever
     // starts passing, the control has stopped controlling and these tests are
     // no longer evidence of anything.
     CHECK(legacy_lookup(d, "tickets") == false);
@@ -158,9 +158,9 @@ static void test_mixed_and_degenerate_framings() {
     CHECK(!action_has(mixed, nullptr));
 }
 
-// The list_valid_decisions frame the MCP server put on the socket in the
-// 2026.11 pilots (budget0 e1 bridge-full.log line 143872, Bhoja 11329), and the
-// pre-fix read (top-level "decisions" only) as the negative control: it found
+// The list_valid_decisions frame the MCP server put on the socket in a recorded run,
+// and the
+// superseded read (top-level "decisions" only) as the negative control: it found
 // nothing, so submit_decision_eval served the light list of every decision.
 static const char* kFramedDecisions =
     "{\"action\":\"list_valid_decisions\",\"params\":{\"character_id\":11329,"
@@ -174,7 +174,7 @@ static void test_decision_request_framed_and_flat() {
     CHECK(n.size() == 1 && n[0] == "visit_local_shrine_decision");
     CHECK(h.empty());
     rapidjson::Document d = parse(kFramedDecisions);
-    CHECK(legacy_lookup(d, "decisions") == false);          // the pre-fix read saw none
+    CHECK(legacy_lookup(d, "decisions") == false);          // the superseded read saw none
 
     std::vector<uint32_t> h2; std::vector<std::string> n2;   // flat and mixed still read
     CHECK(decision_request("{\"action\":\"list_valid_decisions\",\"decisions\":[\"a\",2728205313]}", &h2, &n2));
@@ -199,7 +199,7 @@ static void test_decision_unmatched_names_the_unknown() {
     CHECK(all.size() == 1 && all[0] == "x");
 }
 
-// Discover(what="scheme_targets") sends scheme_action
+// discover(what="scheme_targets") sends scheme_action
 // with action "check"; the dispatch guard treats exactly that as a read.
 static void test_scheme_check_is_a_read() {
     std::printf("call_is_read_only: scheme_action check is a read, start/cancel are not\n");
@@ -220,7 +220,7 @@ static void test_scheme_check_is_a_read() {
 }
 
 int main() {
-    std::printf("test_action_args — ck-6kvq.15 params-fallback regression\n\n");
+    std::printf("test_action_args — params-fallback regression\n\n");
     test_framed_check_resolves();
     test_flat_check_still_resolves();
     test_singular_ticket_both_framings();

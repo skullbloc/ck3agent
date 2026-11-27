@@ -1,4 +1,4 @@
-// scope_slot_policy.h —. Who may write RandomScopeManager+0x20.
+// scope_slot_policy.h — Who may write RandomScopeManager+0x20.
 //
 // THE ENGINE PUBLISHES THAT SLOT WITH `xchg`, AND KEEPS EACH FRAME'S SAVED
 // PREDECESSOR INSIDE ITS OWN OBJECT. Disassembled from the shipped binary
@@ -44,7 +44,7 @@
 //
 // ── AND THE COMPARE-EXCHANGE CANNOT SEE IT EITHER ───────────────────
 // This paragraph used to end "Only the compare-exchange can." That is wrong,
-// and it is the sentence that let the deploy-50 wedge run for a whole episode.
+// and it is the sentence that let the slot wedge run for a whole episode.
 //
 // The CAS can only see a change since OUR OWN ARM. It cannot see that `saved`
 // was ALREADY dead at the moment we captured it. THE GUARD VALIDATES THE SLOT;
@@ -54,7 +54,7 @@
 //     restore  observes our fake -> Write    puts F back
 //
 // every condition the rule checks is satisfied, on every cycle, forever. In
-// deploy-50 slot01 that is exactly what happened: ONE refused restore
+// one episode, that is exactly what happened: ONE refused restore
 // (restore_refused 0->1 at log line 11028) left a foreign value in the slot,
 // and the next ~97 arms each re-displaced it and each put it back, with
 // restore_refused frozen at 1 the whole time, until an engine thread read it
@@ -66,7 +66,7 @@
 // not a better restore value: there is no value the engine can be guaranteed
 // to accept. NULL re-creates the null-deref the arm exists to prevent (any
 // thread then inside a scope check faults), and leaving our own fake in place
-// leaves a scope tagged with OUR tid, which the engine checks — the d50 fault
+// leaves a scope tagged with OUR tid, which the engine checks — a recorded fault
 // landed on +0x10, the tid field, so that check demonstrably runs.
 #pragma once
 
@@ -74,6 +74,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#if defined(_WIN32)
+#include <cstring>   // std::strlen: the Windows suffix of format_scope_slot_counters
+#endif
 
 namespace bridge {
 
@@ -108,7 +111,7 @@ inline const char* restore_verdict_name(RestoreVerdict v) {
 // sites place their arm AFTER their `sigsetjmp`, so a fault leaves OUR OWN
 // `g_fake_scope` in the slot for the rest of the process, and every later arm
 // then loads it as `saved` and counts an engine displacement that never
-// happened. deploy-50's arm_displaced_live=97 is a sum over both populations
+// happened. One episode's arm_displaced_live=97 is a sum over both populations
 // and cannot be split after the fact. Hence a classifier, not a predicate.
 enum class SlotState {
     Null,       // the designed case — no scope published. Arming is safe.
@@ -131,10 +134,10 @@ inline const char* slot_state_name(SlotState s) {
     return "unknown";
 }
 
-// ── the latch (progenitor ruling "Latch + measure") ────────────────
+// ── the latch (latch, and measure) ──────────────────────────────────
 // From the FIRST refused restore, the bridge stops touching the slot for the
 // rest of the PROCESS. Not the first non-NULL slot: non-NULL was 97 events in
-// d50 and all of them were downstream of the single refusal, so latching on
+// one recorded episode and all of them were downstream of the single refusal, so latching on
 // non-NULL would cost every arming verb for the rest of any episode that
 // wedges, while latching on the refusal costs them only after the one event
 // that actually proves the slot untrustworthy.
@@ -169,7 +172,7 @@ inline const char* scope_latched_note() {
 
 // The read half. discover(decisions) is not an action, and telling a seat its
 // "action is unavailable" when it asked for a listing would misdescribe what
-// it lost. Progenitor wording, 2026-10-06.
+// it lost.
 inline const char* scope_latched_read_note() {
     return "decision listing is unavailable for the rest of this episode: the "
            "bridge stopped using the engine's RNG scope after a safety check "
@@ -212,7 +215,7 @@ inline std::uint64_t g_restore_noop = 0;
 // heartbeat while several threads arm, and two of them (the tid table and the
 // published/ran pair) give wrong ANSWERS rather than merely losing a count if
 // they tear. The plain four are a pre-existing race left as it was; widening
-// this bead to fix them would put an untested change in a crash-path commit.
+// this code to fix them would put an untested change in a crash-path commit.
 
 //: the three states of the slot at the arm, from slot_state(). These replace
 //: `arm_displaced_live` as the thing to read; that counter is kept, still
@@ -222,11 +225,11 @@ inline std::atomic<std::uint64_t> g_arm_slot_own_fake{0};
 inline std::atomic<std::uint64_t> g_arm_slot_foreign{0};
 
 //: THE WEDGE DETECTOR. `saved` points at a node whose first qword should be a
-//: pointer to the RNG object Y; in the d50 fault that qword was 0xa, an
+//: pointer to the RNG object Y; in the recorded fault that qword was 0xa, an
 //: unmapped small integer, because the frame had been reused. Non-zero here
 //: means the slot held a pointer into dead memory AT THE MOMENT OF THE ARM —
 //: which is the state no inspection of `saved` was thought able to see. It
-//: needs no tid and no live game, and it would have fired on d50's FIRST arm
+//: needs no tid and no live game, and it fires on the FIRST arm
 //: after the refusal instead of ~39,000 log lines later.
 inline std::atomic<std::uint64_t> g_arm_saved_node_unmapped{0};
 
@@ -240,20 +243,20 @@ inline std::atomic<std::uint64_t> g_arm_refused_latched{0};
 //:     arm_called_while_latched == 0
 //:
 //: and ANY non-zero value is a site whose latch guard is missing — a refusal
-//: that silently became "proceed without arming", the outcome the ruling
+//: that silently became "proceed without arming", the outcome the rule
 //: rejected.
 //:
 //: THIS COMMENT USED TO CLAIM `== war_validity_skipped_latched`, AND THAT WAS
-//: WRONG TWICE (found). The war site I named as the one legitimate
+//: WRONG TWICE. The war site I named as the one legitimate
 //: reacher tests the latch in an `else if` BEFORE the arm, so it never
 //: reaches arm at all and contributes ZERO, not one. Meanwhile
 //: run_effect_tree_walk_hardened DID reach the arm while latched, because it
 //: armed first and tested after — so the counter was neither zero nor equal
 //: to the war count, and a `called > skipped` test MASKED a real unguarded
-//: site in exactly the episodes the "skip the check, make the war" ruling
+//: site in exactly the episodes the "skip the check, make the war" rule
 //: creates: one unguarded site plus one latched war is (1,1), which that test
 //: reads as clean. The walk site then tested the latch before arming (and was
-//: deleted with the scripted-effect path in), which is what
+//: deleted with the scripted-effect path), which is what
 //: makes `== 0` true by construction rather than by argument.
 inline std::atomic<std::uint64_t> g_arm_called_while_latched{0};
 
@@ -265,8 +268,8 @@ inline std::atomic<std::uint64_t> g_arm_called_while_latched{0};
 inline std::atomic<std::uint64_t> g_law_diagnostic_skipped_latched{0};
 
 //: 1989 only: the latch made us skip the OPTIONAL CB-validity pre-check and
-//: proceed through the engine's own fail-open path. Progenitor ruling
-//: 2026-10-06, "Skip the check, make the war" — counted separately because it
+//: proceed through the engine's own fail-open path ("skip the check, make the
+//: war") — counted separately because it
 //: is the one latched site that still MUTATES, so it can never be read off
 //: `arm_refused_latched`.
 inline std::atomic<std::uint64_t> g_war_validity_skipped_latched{0};
@@ -363,6 +366,147 @@ inline void note_restore_ran(std::uint64_t tid) {
     }
 }
 
+// ── a restore that defers, and a fake that is inert ──
+// A test game tripped the latch with observed = a node on the
+// MAIN thread's stack (0x7ffe38fe6b58) and saved = 0, and died 3 game years later
+// with that same node still in the slot. Decompiled from the shipped binary
+// (Ghidra = ELF + 0x100000; md5 09ba163bbff47f2eb8a69692536307e6):
+//
+//   * The engine pushes onto the global +0x20 slot (outside console handlers) at
+//     two sites: FUN_0396f0e0 (main thread, every frame while a game is loaded:
+//     push a node at rsp+0x18 via FUN_07848e60, run the queued console commands,
+//     pop) and FUN_060a8c80 (session thread, the daily seed). The pop
+//     (FUN_07848d80) is a PLAIN store of the predecessor the push captured, so a
+//     main-thread node pushed over our fake pops back to OUR FAKE.
+//   * The owner tag of the scope on top is [[slot]]+0x10. For our fake that is
+//     g_fake_rng.tid. Exactly five engine functions read it (every xref of
+//     FUN_0784a4a0): four draw checks (FUN_07848f10/f80/9000/9070: on a mismatch
+//     they log "Calling global random function without having called
+//     ALLOW_RANDOM_IN_SCOPE in this thread" ONCE per process and then draw
+//     anyway) and the suspend FUN_07848ea0 ("if the scope is mine": xchg slot->0,
+//     later a PLAIN store of what it took). The suspend's check-then-xchg is not
+//     atomic: with our fake left in the slot tagged with the game thread, a
+//     main-thread push landing between its check and its xchg is taken and
+//     written back after the main thread popped it -- a dead stack node in the
+//     slot, self-perpetuating. Worker threads dereference [[slot]]+0x10 on every
+//     job; that is the fault.
+//
+// A first version also held the engine mutex at RandomScopeManager+0x60 across the
+// window. That DEADLOCKED the game live, and the lock was
+// deleted: the main thread's FUN_0396f0e0 takes the engine's game-state lock
+// (FUN_076fbbf0: GameStateAcquisitionMutex, GameStateMutex, then releases the
+// acquisition mutex) for the whole frame and locks +0x60 INSIDE it; the console
+// effect the bridge calls takes the same game-state lock (FUN_041f52d0 ->
+// FUN_076fbbf0(.., 2, "console_command_implementation.cpp:488")). Holding +0x60
+// before the effect inverted the engine's order (game state -> +0x60).
+//
+// What remains, with no engine lock taken anywhere:
+//   1. a restore that finds an engine node pushed OVER OURS (the node's captured
+//      prev is our fake) DEFERS: one CAS (fake -> saved) is re-tried at every
+//      drain/IPC anchor and at the next arm. It never latches for being
+//      unresolved; an arm that finds it still unresolved does not arm (counted
+//      arm_refused_pending) and the pending restore stays for the anchors.
+//   2. the fake carries the arming thread's tag ONLY while an arm on that thread
+//      is open. Every outermost restore, and every anchor, sets it back to 0, a
+//      value no pthread_self() has. A fake that is left in the slot (a deferral
+//      in flight, a latch, a restore skipped by a siglongjmp) is then inert: no
+//      thread's suspend passes its owner check, so the stale-node mechanism above
+//      cannot start from it.
+//   A refusal whose node is NOT over ours (a stale node) still latches.
+inline constexpr std::uint64_t RANDOM_SCOPE_OWNER_FIELD = 0x10;  // owner pthread_t (CAS 0->self by FUN_0784a0f0, xchg by FUN_0784a450)
+inline constexpr std::uint64_t RANDOM_SCOPE_NODE_PREV   = 0x18;  // a pushed node's captured predecessor
+//: the fake's owner tag outside an open arm: pthread_self() is never 0.
+inline constexpr std::uint64_t FAKE_SCOPE_IDLE_TAG = 0;
+
+// One restore attempt. cas(expected_inout) is the compare-exchange of the slot
+// from *expected_inout (our fake) to `saved`; on failure it leaves the observed
+// value in *expected_inout. Write when it wrote, else restore_verdict's answer.
+template <class Cas>
+inline RestoreVerdict restore_once(Cas cas, std::uint64_t fake, std::uint64_t saved,
+                                   std::uint64_t* observed_out) {
+    std::uint64_t expected = fake;
+    if (cas(&expected)) {
+        if (observed_out) *observed_out = fake;
+        return RestoreVerdict::Write;
+    }
+    if (observed_out) *observed_out = expected;
+    return restore_verdict(expected, fake, saved);
+}
+
+// A refused restore: defer it, or latch? Defer only when the slot's node was
+// pushed on top of OUR fake (its captured prev is our fake): its pop gives our
+// fake back. Anything else is a value we cannot reason about.
+enum class RefusalAction { Defer, Latch };
+inline RefusalAction refusal_action(std::uint64_t observed_node_prev,
+                                    std::uint64_t our_fake_scope,
+                                    bool a_deferral_is_already_pending) {
+    if (a_deferral_is_already_pending) return RefusalAction::Latch;
+    return observed_node_prev == our_fake_scope ? RefusalAction::Defer : RefusalAction::Latch;
+}
+
+inline const char* refusal_action_name(RefusalAction a) {
+    return a == RefusalAction::Defer ? "defer" : "latch";
+}
+
+// What an arm does while a deferred restore is pending: resolve it
+// (one CAS) and arm, or do not arm. Never latch for it.
+enum class PendingAtArm { Arm, DoNotArm };
+inline PendingAtArm pending_at_arm(bool pending, bool resolved_now) {
+    return (!pending || resolved_now) ? PendingAtArm::Arm : PendingAtArm::DoNotArm;
+}
+
+// The fake's owner tag after a restore. It stays the arming
+// thread's only while another arm on that thread is still open (nesting).
+inline std::uint64_t fake_tag_after_restore(int open_arms_after, std::uint64_t current_tag) {
+    return open_arms_after > 0 ? current_tag : FAKE_SCOPE_IDLE_TAG;
+}
+
+//: restores refused with an engine node over ours, deferred instead of latched.
+inline std::atomic<std::uint64_t> g_restore_deferred{0};
+//: deferred restores that later found our fake back and wrote `saved` -- each
+//: one is a latch, and a fake left in the slot for good, that did not happen.
+inline std::atomic<std::uint64_t> g_restore_deferred_ok{0};
+//: Arms that found a deferred restore still unresolved and did not arm.
+inline std::atomic<std::uint64_t> g_arm_refused_pending{0};
+//: Anchors that found open arms on their thread (a skipped restore)
+//: and set the fake's tag back to idle.
+inline std::atomic<std::uint64_t> g_fake_tag_reset_at_anchor{0};
+
+// ── Script actions and the watchdog, unconditional ─────────────
+// Hung 14 of 15 script actions into the 5 s watchdog and every counter
+// read "healthy": the watchdog wrote nothing when it fired. These make a hang
+// visible on the first heartbeat after it.
+//: script actions that reached the engine call / returned from it / came back
+//: by a siglongjmp (watchdog or fault). started == returned + jumped + (one in flight).
+inline std::atomic<std::uint64_t> g_sact_started{0};
+inline std::atomic<std::uint64_t> g_sact_returned{0};
+inline std::atomic<std::uint64_t> g_sact_jumped{0};
+//: SIGALRM watchdog jumps, any site (bumped in the signal handler: a lock-free
+//: atomic add is async-signal-safe).
+inline std::atomic<std::uint64_t> g_watchdog_fired{0};
+//: jumps after which the jumping thread still owned an engine game-state mutex
+//: (GameStateAcquisitionMutex or GameStateMutex): the game will freeze.
+inline std::atomic<std::uint64_t> g_jump_engine_lock_held{0};
+
+// The engine's game-state mutexes, Linux ELF RVAs (read only, for
+// the post-jump check; the bridge never locks or unlocks them). Each is a
+// 40-byte pthread_mutex_t (NORMAL) followed by its name pointer, built by
+// FUN_08247400(mutex, name) at ELF 0x33d8ded..0x33d8e21: 0xc5b3480 with
+// "GameStateDestructionMutex", 0xc5b34b0 with "GameStateAcquisitionMutex",
+// 0xc5b34e0 with "GameStateMutex". HIGH (the three ctor calls in objdump +
+// the ctor's decompile storing the name at +0x28). The hang's main thread
+// waited on 0xc5b34b0, owned by the session thread.
+inline constexpr std::uint64_t GAME_STATE_ACQUISITION_MUTEX_LINUX = 0x0c5b34b0;
+inline constexpr std::uint64_t GAME_STATE_MUTEX_LINUX             = 0x0c5b34e0;
+inline constexpr std::uint64_t PTHREAD_MUTEX_OWNER_FIELD          = 0x08;  // glibc __data.__owner (tid)
+
+// The post-jump verdict: which game-state mutexes the jumping thread still owns.
+// 0 none, 1 acquisition, 2 game state, 3 both.
+inline int jump_lock_mask(int my_tid, int acquisition_owner, int game_state_owner) {
+    if (my_tid <= 0) return 0;
+    return (acquisition_owner == my_tid ? 1 : 0) | (game_state_owner == my_tid ? 2 : 0);
+}
+
 inline std::uint64_t arm_never_restored() {
     const std::uint64_t published = g_arm_published.load(std::memory_order_relaxed);
     const std::uint64_t ran = g_restore_ran.load(std::memory_order_relaxed);
@@ -379,7 +523,11 @@ inline const char* format_scope_slot_counters(char* buf, std::size_t n) {
                   "arm_saved_node_unmapped=%llu "
                   "arm_published=%llu restore_ran=%llu arm_never_restored=%llu "
                   "arm_tid_distinct=%llu arm_tid_overflow=%llu "
-                  "arm_overlap_other_tid_unleaked=%llu arm_open_tids_max=%llu",
+                  "arm_overlap_other_tid_unleaked=%llu arm_open_tids_max=%llu "
+                  "restore_deferred=%llu restore_deferred_ok=%llu "
+                  "arm_refused_pending=%llu fake_tag_reset_at_anchor=%llu "
+                  "sact_started=%llu sact_returned=%llu sact_jumped=%llu "
+                  "watchdog_fired=%llu jump_engine_lock_held=%llu",
                   (unsigned long long)g_arm_displaced_live,
                   (unsigned long long)g_arm_cas_failed,
                   (unsigned long long)g_restore_refused,
@@ -399,7 +547,24 @@ inline const char* format_scope_slot_counters(char* buf, std::size_t n) {
                   (unsigned long long)g_arm_tid_distinct.load(std::memory_order_relaxed),
                   (unsigned long long)g_arm_tid_overflow.load(std::memory_order_relaxed),
                   (unsigned long long)g_arm_overlap_other_tid_unleaked.load(std::memory_order_relaxed),
-                  (unsigned long long)g_arm_open_tids_max.load(std::memory_order_relaxed));
+                  (unsigned long long)g_arm_open_tids_max.load(std::memory_order_relaxed),
+                  (unsigned long long)g_restore_deferred.load(std::memory_order_relaxed),
+                  (unsigned long long)g_restore_deferred_ok.load(std::memory_order_relaxed),
+                  (unsigned long long)g_arm_refused_pending.load(std::memory_order_relaxed),
+                  (unsigned long long)g_fake_tag_reset_at_anchor.load(std::memory_order_relaxed),
+                  (unsigned long long)g_sact_started.load(std::memory_order_relaxed),
+                  (unsigned long long)g_sact_returned.load(std::memory_order_relaxed),
+                  (unsigned long long)g_sact_jumped.load(std::memory_order_relaxed),
+                  (unsigned long long)g_watchdog_fired.load(std::memory_order_relaxed),
+                  (unsigned long long)g_jump_engine_lock_held.load(std::memory_order_relaxed));
+#if defined(_WIN32)
+    // The post-jump lock check reads glibc mutexes at Linux addresses; the Windows build never
+    // looks (script_jump_engine_lock_mask), so its 0 is "not looked", said beside the count.
+    {
+        const std::size_t used = std::strlen(buf);
+        if (used < n) std::snprintf(buf + used, n - used, " jump_engine_lock_check=not_on_windows");
+    }
+#endif
     return buf;
 }
 

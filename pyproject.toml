@@ -45,7 +45,8 @@ path = "ck3agent/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ck3agent"]
-exclude = ["**/test_*.py", "**/__pycache__"]
+# test-only data stays in the sdist: no runtime module reads it
+exclude = ["**/test_*.py", "**/__pycache__", "ck3agent/server/conftest.py", "ck3agent/server/fixtures", "ck3agent/server/pipeline_polarity_expected.txt"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/ck3agent", "/tests", "/tools", "/docs", "/README.md", "/LICENSE", "/NOTICE", "/THIRD_PARTY_LICENSES.md", "/CITATION.cff", "/VERSION", "/UPSTREAM"]  # anchored: no nested README.md
@@ -60,7 +61,35 @@ testpaths = ["ck3agent/server", "tests"]
 # deselected: ck3agent/server/test_no_clock_advice_in_prose.py::test_every_allowed_line_still_exists_and_still_matches
 #   its allowed lines are in research-tree docs (docs/campaign-bug-backlog.md, ...), which do not ship
 # deselected: ck3agent/server/test_proposals.py::test_the_classes_mirror_the_generators_first_set_and_the_design_table
-#   reads scripts/proposal_overrides.py (shipped renamed, ck3agent/proposal_mod/) and docs/design/incoming-proposals.md (does not ship); the overlay's tests/test_proposal_mod.py checks the same mirror on the shipped generator
+#   reads scripts/proposal_overrides.py (shipped renamed, ck3agent/proposal_mod/) and the research tree's design note (does not ship); the overlay's tests/test_proposal_mod.py checks the same mirror on the shipped generator
 # deselected: ck3agent/server/test_reply_key_census.py::test_CONTROL_live_replies_sit_inside_the_parse
-#   reads ck3agent/hooks/fixtures (raw replies of a research live867 launch), which do not ship
-addopts = "-q -p no:cacheprovider --deselect ck3agent/server/test_handshake_observer_kwarg.py::test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it --deselect ck3agent/server/test_seat_declaration.py::TheSeatDeclaration::test_agent_py_deliberately_does_NOT_declare --deselect ck3agent/server/test_no_clock_advice_in_prose.py::test_every_allowed_line_still_exists_and_still_matches --deselect ck3agent/server/test_proposals.py::test_the_classes_mirror_the_generators_first_set_and_the_design_table --deselect ck3agent/server/test_reply_key_census.py::test_CONTROL_live_replies_sit_inside_the_parse"
+#   reads ck3agent/hooks/fixtures (raw replies of a research launch on the 867 save), which do not ship
+# deselected: ck3agent/server/test_seat_reservations.py::test_PRE_FIX_CONTROL_the_pre_fix_tree_sends_the_reserved_add
+#   reads a pre-fix blob from the repository's history, which an export does not have
+# deselected: ck3agent/server/test_seat_reservations.py::test_NON_DISCRIMINATING_CONTROL_an_unreserved_add_applies_in_both_trees
+#   reads a pre-fix blob from the repository's history, which an export does not have
+# deselected: ck3agent/server/test_seat_reservations.py::test_NEGATIVE_CONTROL_without_the_env_add_is_byte_for_byte_the_pre_fix
+#   reads a pre-fix blob from the repository's history, which an export does not have
+# deselected: ck3agent/server/test_seat_reservations.py::test_R1_CONTROL_the_superseded_parser_locked_the_seat
+#   reads a pre-fix blob from the repository's history, which an export does not have
+# deselected: ck3agent/server/test_reply_paging.py::test_the_base_pin_is_the_base_commits_file
+#   reads a base commit from the repository's history, which an export does not have
+# deselected: ck3agent/server/test_succession_verdict.py::test_the_verdict_reads_the_simulation_the_bridge_emits
+#   reads ck3agent/hooks/fixtures (raw replies of a research launch on the 867 save), which do not ship
+# deselected: ck3agent/server/test_succession_verdict.py::test_succession_plan_observe_and_the_hook_say_the_same
+#   reads ck3agent/hooks/fixtures (raw replies of a research launch on the 867 save), which do not ship
+# deselected: ck3agent/server/test_succession_verdict.py::test_no_reply_states_a_retired_succession_field
+#   reads ck3agent/hooks/fixtures (raw replies of a research launch on the 867 save), which do not ship
+# deselected: ck3agent/server/test_succession_verdict.py::test_one_crown_title_and_no_map_keeps_the_simulation_verdict
+#   reads ck3agent/hooks/fixtures (raw replies of a research launch on the 867 save), which do not ship
+# deselected: ck3agent/server/test_succession_levers.py::test_a_renamed_field_keeps_its_windows_probe_agreement
+#   runs the Windows offset generator from re/, which does not ship (its generated headers ship instead)
+# deselected: ck3agent/server/test_crown_loss_news_cut.py::test_1_RED_the_base_drops_the_loss_news_and_leaves_room
+#   reads reply_fit.py at a pinned research-tree commit through git, which an export's history does not hold
+# deselected: ck3agent/server/test_crown_loss_news_cut.py::test_3_RED_the_base_offers_the_veto_that_is_set
+#   reads news.py at a pinned research-tree commit through git, which an export's history does not hold
+# deselected: ck3agent/server/test_inline_safety_static.py::test_the_registry_reading_agrees_with_the_census
+#   runs scripts/bridge_action_census.py, which does not ship
+# deselected: ck3agent/server/test_inline_safety_static.py::test_CONTROL_pinned_base_the_uint64_spelling_was_seen
+#   reads the bridge at a pinned research-tree commit through git, which an export's history does not hold
+addopts = "-q -p no:cacheprovider --deselect ck3agent/server/test_handshake_observer_kwarg.py::test_the_HARNESS_client_forwards_it_to_a_callee_that_accepts_it --deselect ck3agent/server/test_seat_declaration.py::TheSeatDeclaration::test_agent_py_deliberately_does_NOT_declare --deselect ck3agent/server/test_no_clock_advice_in_prose.py::test_every_allowed_line_still_exists_and_still_matches --deselect ck3agent/server/test_proposals.py::test_the_classes_mirror_the_generators_first_set_and_the_design_table --deselect ck3agent/server/test_reply_key_census.py::test_CONTROL_live_replies_sit_inside_the_parse --deselect ck3agent/server/test_seat_reservations.py::test_PRE_FIX_CONTROL_the_pre_fix_tree_sends_the_reserved_add --deselect ck3agent/server/test_seat_reservations.py::test_NON_DISCRIMINATING_CONTROL_an_unreserved_add_applies_in_both_trees --deselect ck3agent/server/test_seat_reservations.py::test_NEGATIVE_CONTROL_without_the_env_add_is_byte_for_byte_the_pre_fix --deselect ck3agent/server/test_seat_reservations.py::test_R1_CONTROL_the_superseded_parser_locked_the_seat --deselect ck3agent/server/test_reply_paging.py::test_the_base_pin_is_the_base_commits_file --deselect ck3agent/server/test_succession_verdict.py::test_the_verdict_reads_the_simulation_the_bridge_emits --deselect ck3agent/server/test_succession_verdict.py::test_succession_plan_observe_and_the_hook_say_the_same --deselect ck3agent/server/test_succession_verdict.py::test_no_reply_states_a_retired_succession_field --deselect ck3agent/server/test_succession_verdict.py::test_one_crown_title_and_no_map_keeps_the_simulation_verdict --deselect ck3agent/server/test_succession_levers.py::test_a_renamed_field_keeps_its_windows_probe_agreement --deselect ck3agent/server/test_crown_loss_news_cut.py::test_1_RED_the_base_drops_the_loss_news_and_leaves_room --deselect ck3agent/server/test_crown_loss_news_cut.py::test_3_RED_the_base_offers_the_veto_that_is_set --deselect ck3agent/server/test_inline_safety_static.py::test_the_registry_reading_agrees_with_the_census --deselect ck3agent/server/test_inline_safety_static.py::test_CONTROL_pinned_base_the_uint64_spelling_was_seen"

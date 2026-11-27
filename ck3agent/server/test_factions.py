@@ -1,6 +1,6 @@
-"""Faction management from both seats (F16): the rows a player reads and the
+"""Faction management from both seats: the rows a player reads and the
 writes he sends, against a recording gateway. The replies are shaped like the
-bridge's (factions.cpp) as seen live in runs l10-scout1 and l10-dev2."""
+bridge's (factions.cpp) as seen live in two faction test runs."""
 from __future__ import annotations
 
 import asyncio
@@ -85,12 +85,12 @@ def test_enumerate_carries_the_games_verdict_and_reason():
     lib = unav["create liberty_faction against Eraq"]
     assert lib["blocked"]["gate"] == "faction_refused"
     assert "Crown Authority" in lib["blocked"]["summary"]
-    press = next(r for r in res["unavailable"] if r["do_call"]["args"]["action"] == "press_demand")
+    press = next(r for r in res["unavailable"] if r["do_call"]["args"]["args"]["action"] == "press_demand")
     assert press["blocked"]["summary"] == "Discontent is below 100"
     assert press["demand"]["war_if_refused"] == "independence_faction_war"
-    join = next(r for r in res["unavailable"] if r["do_call"]["args"]["action"] == "join")
+    join = next(r for r in res["unavailable"] if r["do_call"]["args"]["args"]["action"] == "join")
     assert join["blocked"]["summary"] == "You are at war"
-    assert any(r["do_call"]["args"] == {"action": "leave", "faction_id": 69} for r in res["available"])
+    assert any(r["do_call"]["args"]["args"] == {"action": "leave", "faction_id": 69} for r in res["available"])
 
 
 def test_an_independent_ruler_is_told_why_there_is_nothing():
@@ -132,7 +132,7 @@ def _leave(reads, result):
 
 
 def _unread(env):
-    """A write that ran whose second read could not be made (ruling)."""
+    """A write that ran whose second read could not be made."""
     assert env["ok"] is True and env["verdict"] == "pending", env
     assert env["pending"]["drains_when"] == "readback", env["pending"]
     assert env["pending"]["raw_reason"] == "write_unconfirmed"
@@ -140,10 +140,10 @@ def _unread(env):
 
 
 def test_a_leave_the_second_read_cannot_see_is_never_applied():
-    """w-l10-factions-1 review: the leave read the actor's own liege when the reply
-    named no target, and a missing faction or a failed read passed as left."""
+    """A leave whose reply names no target does not read the actor's own liege in
+    its place, and a missing faction or a failed read does not pass as left."""
     # no target named: the actor's liege is not read in its place
-    # ruling: the bridge reported the leave done, so a second read that
+    # the rule: the bridge reported the leave done, so a second read that
     # could not be made is pending readback (ok:true, sent), never rejected.
     gw, env = _leave({"query_factions": {"factions": []}}, {"faction_disbanded": True})
     _unread(env)
@@ -177,8 +177,8 @@ def _with_demand(**demand):
 
 
 def test_a_pressed_demand_is_read_back_from_the_leaders_own_read():
-    """w-l10-factions-1 review: press_demand's applied rested on the bridge's own
-    demand_sent, and its readback copied the same reply's state_after."""
+    """press_demand's applied does not rest on the bridge's own demand_sent,
+    and its readback does not copy the same reply's state_after."""
     gw, env = _press(_with_demand(can_press_now=False, demand_cooldown_until="0869.09.21",
                                   reason="You have to wait until 21 September, 869"))
     assert env["verdict"] == "applied"
@@ -249,8 +249,8 @@ def test_the_liege_reads_members_threat_and_levers():
     assert f["members"][0]["name"] == "X" and f["discontent"] == 62.0 and f["power_pct_of_liege"] == 58.5
     assert env["result"]["demand_response"] == "accept"
     lev = f["levers"]
-    assert lev["gift"]["do_call"] == {"intent": "interact",
-                                      "args": {"interaction": "gift_interaction", "target_id": A}}
+    assert lev["gift"]["do_call"] == {"tool": "do", "args": {"intent": "interact",
+                                      "args": {"interaction": "gift_interaction", "target_id": A}}}
     # The council is a read: the seats the leader holds, never an appoint call
     # (the game's seat swap cannot seat a leader who has no seat).
     assert lev["on_council"] == [] and "council_seat" not in lev
@@ -278,7 +278,7 @@ def test_the_liege_reads_the_ultimatum_as_a_chance_never_a_due_date():
 
 
 def test_python_relays_the_bridges_demand_state_and_has_no_rule_of_its_own():
-    """MAJOR 4 (witness w-l10-factions-3): ai_may_press was defined three times. The
+    """ai_may_press was defined three times. The
     bridge's classify_faction_demand is the one rule; Python copies its fields.
 
     Proof by disagreement: rows whose older fields (ultimatum_active,
@@ -333,7 +333,7 @@ def test_the_bridge_classifies_the_demand_in_one_function():
 
 
 def test_a_bridge_precheck_is_said_in_plain_words_not_as_the_games_rule():
-    """MAJOR 2 (witness w-l10-factions-3): not_the_faction_leader, not_a_member and
+    """not_the_faction_leader, not_a_member and
     actor_has_no_liege are the bridge's own checks, made before the game is asked.
     They were faction_refused, whose description says the summary is the game's
     reason, with the raw code as the summary."""
@@ -354,7 +354,7 @@ def test_a_bridge_precheck_is_said_in_plain_words_not_as_the_games_rule():
                                         leader_name="Y")])
     env = run(R.do_impl(Gw({"query_joinable_factions": opts}), action_class="factions_to_join",
                         character_id=A))
-    press = [r for r in env["result"]["unavailable"] if r["do_call"]["args"]["action"] == "press_demand"][0]
+    press = [r for r in env["result"]["unavailable"] if r["do_call"]["args"]["args"]["action"] == "press_demand"][0]
     assert press["blocked"]["gate"] == "faction_precondition"
     assert press["blocked"]["summary"].startswith(f"you are not this faction's leader; the leader is Y ({B})")
 
@@ -380,7 +380,7 @@ def test_the_games_refusal_is_faction_refused_with_the_games_text_only():
 
 
 #: query_interaction_check results as the bridge gives them (ai_eval_hook.cpp
-#: execute_interaction_check_intent). The texts are the game's (run l10fx5-live).
+#: execute_interaction_check_intent). The texts are the game's, from a test run.
 def _NO_GROUNDS(t):
     return {"target_id": t, "sendable": False, "refused_by": "send_conditions_not_met",
             "engine_reason": "You have no reason to imprison them", "answer": "maybe", "accept_score": 12.0}
@@ -416,7 +416,7 @@ def test_the_imprison_lever_is_the_imprison_targets_row():
         assert len(rows) == 1
         row = {k: v for k, v in rows[0].items() if k != "label"}
         assert row == lever
-        assert row["do_call"]["args"] == {"interaction": "imprison_interaction", "target_id": A}
+        assert row["do_call"]["args"]["args"] == {"interaction": "imprison_interaction", "target_id": A}
         assert (row["blocked"] is None) is sendable
         assert row["game_check"]["sendable"] is sendable
         if sendable:
@@ -477,14 +477,14 @@ def test_imprison_targets_offers_the_likeliest_first():
              "query_realm": {"vassals": [{"id": A, "name": "a"}, {"id": B, "name": "b"},
                                          {"id": 7, "name": "c"}]}})
     res = run(R.do_impl(gw, action_class="imprison_targets", character_id=LIEGE))["result"]
-    assert [(r["do_call"]["args"]["target_id"], r["answer"], r["accept_score"]) for r in res["available"]] == \
+    assert [(r["do_call"]["args"]["args"]["target_id"], r["answer"], r["accept_score"]) for r in res["available"]] == \
         [(7, "yes", 153.5), (B, "maybe", 71.0), (A, "maybe", 12.0)]
     checks = [p for a, p in gw.reads if a == "query_interaction_check"]
     assert checks == [{"actor_id": LIEGE, "interaction_type": "imprison_interaction", "candidates": [A, B, 7]}]
 
 
 def test_a_yes_is_the_games_answer_not_a_certainty():
-    """MAJOR 3: "yes" was shipped as chance_pct 100 while targets read
+    """A "yes" was shipped as chance_pct 100 while targets read
     "yes" stayed free in 2 of 3 runs (13327: yes, score 239, sent, never imprisoned).
     A row carries the game's answer and the raw score; a chance only where the game
     defines one: a "maybe" in the maybe band (above 0, below 100), the score being
@@ -515,7 +515,7 @@ def test_imprison_targets_checks_the_named_targets():
     gw = Gw({"query_imprisonment_reasons": {"reasons": []},
              "query_interaction_check": _check(_MAYBE(B, 30.0))})
     res = run(R.do_impl(gw, action_class="imprison_targets", character_id=LIEGE, candidates=[B]))["result"]
-    assert [r["do_call"]["args"]["target_id"] for r in res["available"]] == [B]
+    assert [r["do_call"]["args"]["args"]["target_id"] for r in res["available"]] == [B]
     assert [a for a, _ in gw.reads if a == "query_realm"] == []
     assert [p for a, p in gw.reads if a == "query_interaction_check"] == [
         {"actor_id": LIEGE, "interaction_type": "imprison_interaction", "candidates": [B]}]
@@ -639,8 +639,8 @@ def test_every_refusal_the_bridge_code_can_emit_is_said_in_words():
 
 
 def test_at_war_and_war_id_are_the_bridges_one_reading():
-    """MAJOR 2/5: the bridge read faction+0xC1 (not the war) and Python
-    patched it (at_war or a war id not marked ended). The bridge now reads the war
+    """The bridge read faction+0xC1 (not the war) and Python
+    patched it (at_war or a war id not marked ended). The bridge reads the war
     itself (faction_war.h), so Python relays at_war as given, and the war id is the
     full id the war reads give (33554451 = generation 2, slot 19), never masked."""
     fac = {"character_id": LIEGE, "factions": [
@@ -688,8 +688,8 @@ def test_a_faction_write_the_drain_ran_with_no_reply_is_PENDING_READBACK_not_rej
     """A faction write is an "on_execute" lever (LEVERS ("faction", "*")): a write
     that ran is read back in the call. When the handler's reply never came, the
     drain's verdict is read (success) and the read-back cannot be made, so the
-    reply is pending readback with result.sent, ok:true (ruling).
-    answered pending clock_advances (a days-wait), rejected write_unconfirmed."""
+    reply is pending readback with result.sent, ok:true. A days-wait is
+    answered pending clock_advances; a lost reply is rejected write_unconfirmed."""
     gw = Gw({"query_dispatch_result": {"status": "success", "dispatch_id": "fa_1_2_3"}},
             write_reply=TIMED_OUT)
     env = run(R.do_impl(gw, intent="faction", character_id=A,

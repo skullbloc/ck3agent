@@ -1,4 +1,4 @@
-// test/test_diag_dtor.cpp —: the diag record dtor is the function the engine calls.
+// test/test_diag_dtor.cpp — the diag record dtor is the function the engine calls.
 //
 // THE BUG: ck3::trigger_eval_funcs::DIAG_OBJECT_DTOR was 0x04a5b060, the middle of a
 // sort helper (Ghidra FUN_04b5af30). Every failing decision eval jumped there and
@@ -7,16 +7,16 @@
 //
 // THE FIXTURE is not written from a model: it is the 99 bytes of EVAL_WITH_FAILURES
 // (header 0x0753ddc0) and the first 21 bytes of the real dtor (0x0595b060) copied from
-// the CK3 1.18.3.1 binary, MD5 09ba163bbff47f2eb8a69692536307e6 (the build the core
-// dump ck3_20260625_152901_ivar867 was taken from; its text is file-backed, so the
+// the CK3 1.18.3.1 binary, MD5 09ba163bbff47f2eb8a69692536307e6 (the build the 867
+// start dump was taken from; its text is file-backed, so the
 // dump itself does not carry it). The test checks the HEADER against the ENGINE:
 //   1. the call at EVAL_WITH_FAILURES+0x3b names the header's DIAG_OBJECT_DTOR
-//      (red on the pre-fix header: it names 0x0595b060, the header said 0x04a5b060);
+//      (red on the superseded header: it names 0x0595b060, the header said 0x04a5b060);
 //   2. the dtor's first store is the diag vtable 0x0bf14e30 (Ghidra image VA: the
 //      decompile of FUN_05a5b060 opens `*param_1 = &UNK_0bf14e30`, the value the
 //      trigger_diag comment names), a second source independent of the call site;
 //   3. resolve_diag_dtor over the engine bytes returns base + the dtor;
-//   4. CONTROLS that run: the pre-fix value is refused by the same check; a site
+//   4. CONTROLS that run: the superseded value is refused by the same check; a site
 //      whose opcode or displacement is changed is refused; an unmapped site is refused.
 #include "diag_dtor.h"
 
@@ -86,7 +86,7 @@ int main() {
     CHECK(bridge::resolve_diag_dtor(base, mapped) == base + te::DIAG_OBJECT_DTOR);
 
     // 4. controls (each must refuse)
-    CHECK(bridge::witnessed_call_target(site, site_off, kPreFixDtor) == 0);   // the pre-fix header
+    CHECK(bridge::witnessed_call_target(site, site_off, kPreFixDtor) == 0);   // the superseded header
     uint8_t bad[5];
     std::memcpy(bad, site, 5); bad[0] = 0xE9;                                 // jmp, not call
     CHECK(bridge::witnessed_diag_dtor_offset(bad) == 0);

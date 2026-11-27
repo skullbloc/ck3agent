@@ -8,7 +8,7 @@ until the human stops you.
 
 | Tool | Kind | Use |
 |------|------|-----|
-| `observe` | read | once per cycle, first: standing, wars, factions, succession verdict, the personality axes, what changed. `depth="full"` adds the AI's evaluations |
+| `observe` | read | once per cycle, first: standing, wars, factions, succession verdict, the personality axes, what changed. `depth="full"` adds the AI's evaluations; `depth="news"` answers only what changed since the last news read |
 | `inspect` | read | one subject in depth: `wars`, `war_score`, `succession`, `council`, `claims`, `factions`, `vassals`, `laws`, `schemes`, `pending`, ... |
 | `query` | read | one `domain` or up to 5 `domains`: `realm`, `faction_threat`, `neighbors`, `event_log`, `characters`, ... |
 | `discover` | read | validate before acting: `interactions`, `decisions`, `acceptance`, `valid_cbs_strict`, `targets`, ... |
@@ -94,7 +94,7 @@ across the game).
 - **Take another:** `session(action="add", character_id=<id>)`. The first
   ruler stays the primary. `control` is different: it switches the primary to
   the new ruler and lets go of the old one. `ck3agent run` can bind them all
-  before your first turn (`CK3_AGENT_CHARACTER_ID=13902,12145`).
+  before your first turn (`CK3_AGENT_CHARACTER_ID=<id1>,<id2>`).
 - **Know what you hold:** `whoami` gives the primary as `controlled` and every
   ruler you hold in `my_claims`.
 - **Pin `character_id` on every call** for every ruler: `observe`,
@@ -129,13 +129,13 @@ across the game).
 6. **Let time pass.** `session(action="wait", seconds=60)`: it unpauses, lets
    the clock run for that long, pauses again and returns the start and end
    dates. Up to 110 seconds per call; call it again for longer. Keep speed 1
-   to 3 with `session(action="speed", speed=N)`; above 3 is set to 3, and
-   refused at war (`speed_refused_at_war`). Never wait with `sleep` in Bash: Claude
+   to 3 with `session(action="speed", speed=N)`; any other speed is refused and
+   nothing is written (at war `speed_refused_at_war`, otherwise `invalid_argument`). Never wait with `sleep` in Bash: Claude
    Code refuses a sleep of 30 seconds or more. Then start the next cycle.
 
 ## Rules of thumb
 
-- Survive first. High stress, a faction above about 80 %, and no heir are emergencies; expansion waits.
+- Survive first. High stress, a faction above 80 % of your power, and no heir are emergencies; expansion waits.
 - Partition follows the number of eligible heirs, not realm size.
   `succession_plan` is the verdict (`outcome`: intact, splits with the `breaker`, or
   undetermined; `passes_intact` true/false/null); `observe` states the same one. It
@@ -149,8 +149,8 @@ across the game).
   ally's war with `join_war`.
 - **A surrender is always taken, and it is your defeat.** The game charges the
   loser's penalty of the war's casus belli: prestige and often gold, and the
-  war's goal is lost. In the 2026.11 pilots each surrender cost 15 to 350 prestige
-  and up to 590 gold (one ruler went into debt); the reply's `before` and
+  war's goal is lost. A surrender can cost hundreds of prestige and several
+  hundred gold, enough to put a ruler in debt; the reply's `before` and
   `after` show what it took. Surrender only to stop a war that will cost more
   if it runs on (the enemy is winning toward his own demands). A stalled war
   that costs you nothing is cheaper left open. Never re-declare a war you have
@@ -161,17 +161,23 @@ across the game).
   it is above 1.33× the enemy's strength; call allies into the war
   (`call_ally`), or leave it open. Do not re-declare on the same target. Offer white peace if the enemy may take it; if he refuses,
   prefer waiting it out to surrendering.
+- **A slow siege is not a stalled one.** Each siege row in
+  `inspect(subject="war_stance")` has `status`, `progress` of
+  `progress_needed_max`, `eta_days` and `next`: what holds it (a garrison larger
+  than your men there, a battle, armies marching on, none on the holding) and
+  the lever. A fort of level 4 or more without siege weapons (onager or mangonel
+  men-at-arms) takes a year or more; a held army sieges only where it stands.
 - **Fabricating a claim.** List the titles you can fabricate on with
-  `do(action_class="fabricate_targets")` and copy a row's `do_call` (the court
-  chaplain's `task_fabricate_claim`). The `generate_claim` scheme targets a
+  `do(action_class="fabricate_targets")` and send a row's `do_call` (a `{tool,
+  args}` call: the court chaplain's `task_fabricate_claim`). The `generate_claim` scheme targets a
   title, and the scheme tools refuse it (`scheme_type_targets_a_title`).
-- **Large reads.** `query(domain="conquest_targets")` gives 25 rows, the
+- **Large reads.** `query(domain="conquest_targets")` gives 10 rows, the
   conquerable ones first (`max_results` or `verbose` for more; `plan_war` ranks
   the same targets in a few rows); `inspect(subject="war_score")` without
   `war_id` gives your own wars; `do(action_class="decisions")` evaluates the
   names in `candidates` and returns only those. `do(action_class="interactions")`
-  is about 76,000 characters (`discover(what="interactions")` is smaller): call
-  it rarely and once.
+  is a very long reply, tens of thousands of characters
+  (`discover(what="interactions")` is smaller): call it rarely and once.
 - Never guess an action name. Enumerate with `do(action_class=...)`
   or `discover(what="interactions")` and copy the row.
 - On a connection error, wait and retry once, then `session(action="health")` and report.

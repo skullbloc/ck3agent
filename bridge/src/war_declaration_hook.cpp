@@ -124,7 +124,7 @@ static void read_war_fields(uintptr_t war_ptr, WarDeclarationRecord& rec) {
     // on_tick), so SCHEDULE resolution for both principals — but do NOT drain
     // the cache synchronously here.
     //
-    // crash2 20260626: synchronously draining populate_name_cache() for both
+    // A recorded crash: synchronously draining populate_name_cache() for both
     // belligerents of EVERY war declaration, under heavy concurrent-war churn,
     // repeatedly fed freshly-dead/freed belligerent objects to the engine's
     // name resolver → heap free-list corruption. The single on_tick drain
@@ -150,7 +150,7 @@ static void read_war_fields(uintptr_t war_ptr, WarDeclarationRecord& rec) {
     }
 
     // Each side's participants (the first 16), read by war_side.h. (The
-    // count used to be the array's raw count, which a negative read kept
+    // count is not the array's raw count, which a negative read kept
     // negative, beside slots left 0 for an unreadable participant.)
     rec.atk_participant_count = war_side::ids(war_ptr, ck3::war_obj::ATK_PARTICIPANT, rec.atk_participants, 16);
     rec.def_participant_count = war_side::ids(war_ptr, ck3::war_obj::DEF_PARTICIPANT, rec.def_participants, 16);

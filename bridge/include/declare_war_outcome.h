@@ -5,8 +5,8 @@
 // After the dispatch the war is the game's. The handler reads the actor's war
 // count before and after; a count read that faulted cannot say whether a war
 // was made, so the answer is "war_unverified" (war_created unknown), never
-// "dispatched_but_no_war", which says the pipeline made none
-// (minor 9).
+// "dispatched_but_no_war", which says the pipeline made none.
+//
 #pragma once
 
 namespace bridge {

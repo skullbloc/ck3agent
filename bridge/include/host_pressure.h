@@ -1,8 +1,8 @@
 // host_pressure.h — the host's pressure-stall figures (Linux PSI), for the
 // SLOW REQUEST line.
 //
-// live proof l13f-gl10l-r: a bridge-internal get_tick_info held the IPC
-// serving thread for >10 s with the drain lock free. The node's pcp archive
+// A live proof: a bridge-internal get_tick_info held the IPC
+// serving thread for >10 s with the drain lock free. The test host's pcp archive
 // for that window shows the cause was the HOST, not a bridge lock: available
 // memory ~0.2 GB of 31, swap exhausted, memory full-stall 35-44 % and io
 // full-stall 72-75 % (10 s averages), load 46-74 on 6 cores, ending when the

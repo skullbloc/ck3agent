@@ -47,7 +47,7 @@ the handler table in `bridge/src/action_registry.inc`, from the bridge to the ag
 
 | Module | Role |
 |--------|------|
-| `ck3agent/server/mcp_server.py` | registers the 13 tools with FastMCP; owns the socket; `query`, `discover`, `steer` and `pass_turn` are implemented here |
+| `ck3agent/server/mcp_server.py` | registers the 13 tools with FastMCP (by default: `msg_send`, `note_read`, `note_write` and `guide_read` register too only when a scripted environment declares a scheduled run's channel, notepad or guide); owns the socket; `query`, `discover`, `steer` and `pass_turn` are implemented here |
 | `ck3agent/server/tools.py` | maps `query` domains, `discover` targets and the act-shaped write params to bridge actions |
 | `ck3agent/server/redesign.py` | the goal-shaped tools: `observe`, `inspect`, `cbs`, `plan_war`, `succession_plan`, `set_phase`, `declare_war`, `do`, `session`. Also the one envelope, the gate table, the `set_phase` presets and the `do` intent table. No I/O; it calls the bridge through a gateway that never changes the clock. |
 | `ck3agent/server/bridge_client.py`, `async_bridge_client.py` | NDJSON framing, request ids, the v2 handshake in observe or control mode |
@@ -81,7 +81,7 @@ named gate too: `bridge_disconnected`, `read_timeout`, `write_unconfirmed`,
 
 ## Steering, not scripting
 
-The model sets a posture: 10 personality axes that the native AI reads every
+The model sets a posture: 9 personality axes that the native AI reads every
 tick. It forces a specific action only after
 validating it, with `declare_war` from a `plan_war` row or with `do`. Armies,
 sieges and counter-offers stay with the game's AI. That keeps a cycle cheap

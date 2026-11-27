@@ -1,13 +1,13 @@
-// Regression test for: the bridge must render dates with CK3's real
+// Regression test: the bridge must render dates with CK3's real
 // calendar (31/28/31/30/31/30/31/31/30/31/30/31, never leap), not twelve
 // 30-day months.
 //
 // Build: CMake target `test_game_date` (BUILD_BRIDGE_TESTS=ON).
 // Run:   ./test_game_date   (exits non-zero on failure)
 //
-// The pre-fix formula produced month 13 for days-of-year 360..364 and drifted
+// The superseded formula produced month 13 for days-of-year 360..364 and drifted
 // by up to four days the rest of the year. GROUND TRUTH pinned below: the raw
-// game-date word read out of ~/ck3_dumps/william_1066_baseline.core is
+// game-date word read out of a core dump of the 1066 baseline save is
 // 53144904, and the save CK3 itself wrote at that same instant carries
 // meta_date=1066.10.9 (filename Duke_William_II_of_Normandy_1066_10_09.ck3).
 // The old formula said 1066.10.12.
@@ -63,7 +63,7 @@ static void test_ground_truth_william_1066() {
 }
 
 // Walk every day of a long span: no month 13, no out-of-range day, exact
-// round-trip. 1066..1086 is the paper's horizon; go wider to be safe.
+// round-trip. 1066..1086 is the declared horizon; go wider to be safe.
 static void test_full_sweep_no_phantom_month() {
     const int32_t first = ymd_to_total_days(800, 1, 1);
     const int32_t last  = ymd_to_total_days(1300, 1, 1);
@@ -165,7 +165,7 @@ static void test_month_index() {
     CHECK(rollovers == 36, "three game years must produce exactly 36 month rollovers, not 39");
 }
 
-// The concrete defects observed in the E0 paper series (ep-...-e0-paper-9eae1e0e):
+// The concrete defects observed in a null-mode episode series:
 // three of 99 samples carried an impossible month. Whatever total_days those
 // samples really were, no total_days may now render as month 13.
 static void test_e0_series_dates_are_impossible_now() {

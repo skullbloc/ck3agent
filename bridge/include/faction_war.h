@@ -1,4 +1,4 @@
-// faction_war.h — a faction's war, as the game itself reads it (F16).
+// faction_war.h — a faction's war, as the game itself reads it.
 //
 // The game's "faction is in war" check, CFactionPressDemandCommand::CanExecute
 // (CAN_FIRE_ULTIMATUM, Ghidra FUN_05f8ca90, the source of the press refusal
@@ -15,7 +15,7 @@
 //
 // faction_v2::AT_WAR_FLAG (+0xC1) is not this: it is the tick's copy of +0xB9, the
 // "a player is concerned" flag (FUN_05fa42a0), and read false for faction 95 at war
-// (w-l10-factions-5, war 51). re_factions.md section 8.
+// (a faction test run, war 51). re_factions.md section 8.
 //
 // The war id given out is the war's own WAR_ID, the full handle every war read
 // gives (query_wars, query_war_*, the observation), so a faction row's war_id can be

@@ -1,31 +1,30 @@
 // test_unavailability.cpp — host unit tests for per-session unavailability
 // accounting and the episode policy.
 //
-// built the accounting (R3 as reversed: the clock runs and a capped
-// agent's cost is MEASURED, not prevented). replaced the GATE, on the
-// progenitor's ruling of 2026-09-13:
+// The accounting (the clock runs and a capped
+// agent's cost is MEASURED, not prevented), and the GATE's
+// rule:
 //
 //   ANOMALOUS IS A WALL-CLOCK JUDGEMENT. A gap between a control session's
 //   activities counts as unavailability only if it exceeds 3 heartbeat
 //   intervals = 360 WALL-SECONDS. `unavailable_game_days` is then the GAME-DAYS
 //   those anomalous gaps SPANNED, and more than X of them invalidates.
 //
-// then made X ITSELF A RULE: "5% of the episode's DECLARED horizon,
+// Then X became ITSELF A RULE: "5% of the episode's DECLARED horizon,
 // unsteered". 365 is that rule evaluated at the registered 20-game-year horizon
 // (7300 game-days) and is wrong at every other one — on the smoke horizon
 // (1568 game-days) the rule says 78 and the constant said 365, 4.7x too
 // permissive. Test 15 is that rule; test 16 is the ledger with no X at all.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §2.7, §2.10, §6.1.
-// Pre-registration §7.1 (the covariate) and §7.3 (X = 5% of the declared
-// horizon; 365 at the registered 20-game-year one —).
+// The covariate, and X = 5% of the declared horizon (365 at a 20-game-year
+// one).
 //
 // No CK3 binary, no game, no engine: the ledger takes GAME DAY NUMBERS and
 // MONOTONIC WALL MILLISECONDS, both passed in. Two units on purpose — the gate
 // is in the AGENT's clock (lateness is a property of the agent) and the
 // covariate is in the WORLD's clock (what the absence cost the experiment).
 //
-// THE NEGATIVE CONTROL (test 9) is the point, and it is the one e0 specified:
+// THE NEGATIVE CONTROL (test 9) is the point, and it is the one the experiment design specified:
 // the SUPERSEDED mechanism — every gap of at least 30 game-days counted in
 // full — is run against the SAME healthy heartbeat history and must FAIL. Same
 // input, same rate, ZERO versus thousands of game-days: that single case
@@ -69,7 +68,7 @@ static int g_failures = 0;
 
 static void section(const char* name) { printf("\n[%s]\n", name); }
 
-// A fresh ledger with the pre-registered numbers: the 360-wall-second anomaly
+// A fresh ledger with the declared numbers: the 360-wall-second anomaly
 // gate, and X = 365 game-days — which is NOT a constant but the rule's answer
 // at the REGISTERED horizon (1066.09.15 -> 1086.09.15, 7300 game-days x 0.05).
 // Every legacy test below models an episode on that horizon, which is why its
@@ -100,10 +99,10 @@ static const uint64_t W0 = 1'000'000;
 // ── THE TWO NAMED CONDITIONS these tests model ─────────────────────────────
 //
 // Every wall-clock number below is stated WITH its rate and condition, because
-// a threshold quoted without them is the defect this bead was filed for.
+// a threshold quoted without them is the hazard this code guards against.
 //
-// FAST: the E0 NULL free-running rate measured on the test host and corroborated by
-//   Appendix A.19 — ~1.73 game-days per wall-second. One R3 heartbeat interval
+// FAST: the NULL free-running rate measured on the test host and corroborated by
+//   The measured rate — ~1.73 game-days per wall-second. One R3 heartbeat interval
 //   (120 wall-seconds) spans 208 game-days here.
 static const int64_t kFastDaysPerBeat = 208;      // 208 days / 120 s = 1.733 gd/s
 //
@@ -114,14 +113,14 @@ static const int64_t kFastDaysPerBeat = 208;      // 208 days / 120 s = 1.733 gd
 static const uint64_t kBeatMs = 120'000;          // the R3 heartbeat, 120 s
 
 // ===========================================================================
-// 1. e0 CONTROL #1 — A HEALTHY HEARTBEAT ACCRUES ZERO
+// 1. CONTROL #1 — A HEALTHY HEARTBEAT ACCRUES ZERO
 // ===========================================================================
 // The discriminating case. 120 wall-seconds is under the 360-second gate, so a
 // perfectly available agent accrues NOTHING — at a rate where every one of its
 // gaps spans 208 GAME-days, which under the superseded game-day gate was
 // counted in full (test 9).
 static void test_healthy_heartbeat_accrues_nothing() {
-    section("e0 CONTROL #1: a 120s heartbeat at 1.73 game-days/wall-second accrues ZERO");
+    section("CONTROL #1: a 120s heartbeat at 1.73 game-days/wall-second accrues ZERO");
     UnavailabilityLedger& l = fresh();
 
     l.note_session("s1", D0, W0);
@@ -160,18 +159,18 @@ static void test_healthy_heartbeat_accrues_nothing() {
 }
 
 // ===========================================================================
-// 2. e0 CONTROL #2 — A TEN-MINUTE SILENCE IS ONE ANOMALOUS SPAN
+// 2. CONTROL #2 — A TEN-MINUTE SILENCE IS ONE ANOMALOUS SPAN
 // ===========================================================================
 static void test_ten_minute_silence_is_one_anomaly() {
-    section("e0 CONTROL #2: a 10-wall-minute silence accrues its spanned game-days "
+    section("CONTROL #2: a 10-wall-minute silence accrues its spanned game-days "
             "as ONE anomalous span");
     UnavailabilityLedger& l = fresh();
 
     l.note_session("s1", D0, W0);
     l.note_activity("s1", D0, W0);
 
-    // Ten wall-minutes of silence. The clock keeps running — that IS the G3'
-    // reversal — so the world moves 600 s x 1.733 = 1040 game-days meanwhile.
+    // Ten wall-minutes of silence. The clock keeps running (there is no
+    // gate), so the world moves 600 s x 1.733 = 1040 game-days meanwhile.
     const int64_t  dark_days = 5 * kFastDaysPerBeat;      // 1040
     const uint64_t dark_ms   = 5 * kBeatMs;               // 600 s
     for (int i = 1; i <= 5; ++i)
@@ -257,7 +256,7 @@ static void test_detach_resume_sums() {
     CHECK(!u->ended, "but NOT ended — the claim is pinned");
     CHECK_EQ(u->unavailable_game_days, dark_days, "and accruing through the detachment");
 
-    // bead .5's resume: the SAME session_id is re-registered. That is an ATTACH,
+    // a sibling task's resume: the SAME session_id is re-registered. That is an ATTACH,
     // never a reset — zeroing the cursor here would erase the very gap the
     // covariate exists to measure.
     l.note_session("s1", D0 + dark_days, W0 + dark_ms);
@@ -294,7 +293,7 @@ static void test_phantom_session_keeps_accruing() {
     CHECK(u->over_threshold, "well past X=365, so this session invalidates");
     CHECK(l.episode_invalid(),
           "a phantom session inflates the covariate to invalidation rather than "
-          "quietly disappearing from the record (§2.7 knock-on to ck-6kvq.5)");
+          "quietly disappearing from the record (§2.7 knock-on)");
 }
 
 // ===========================================================================
@@ -308,10 +307,10 @@ static void test_exclusion_threshold() {
     section("X = 365 cumulative GAME-DAYS spanned by anomalous gaps");
     UnavailabilityLedger& l = fresh();
     CHECK_EQ(l.exclusion_days(), 365,
-             "X at the REGISTERED horizon (ck-2ngg: the rule's answer at "
+             "X at the REGISTERED horizon (the rule's answer at "
              "1066.09.15 -> 1086.09.15, not a constant)");
     CHECK(l.exclusion_armed(), "and it is ARMED, so a verdict means something");
-    CHECK_EQ(l.anomaly_wall_seconds(), 360, "and the RULED gate (2026-09-13)");
+    CHECK_EQ(l.anomaly_wall_seconds(), 360, "and the declared gate");
 
     l.note_session("s1", D0, W0);
     l.note_activity("s1", D0, W0);
@@ -374,7 +373,7 @@ static void test_time_hygiene() {
 // 8. A session that connects and never speaks is unavailable from connect
 // ===========================================================================
 // PRESERVED THROUGH THE GATE CHANGE, because the semantics carry even though
-// the numbers do not: this is SILENT arm, and a session that connects
+// the numbers do not: this is the SILENT arm, and a session that connects
 // and says nothing must be anomalous from the moment it connected.
 static void test_silent_from_connect() {
     section("a session that handshakes and never speaks");
@@ -398,12 +397,12 @@ static void test_silent_from_connect() {
 // ===========================================================================
 // 9. THE NEGATIVE CONTROL — the SUPERSEDED mechanism, on the same input
 // ===========================================================================
-// e0 specified this one, and it is the discriminating case: the earlier
+// The experiment design specified this one, and it is the discriminating case: the superseded
 // rule was "every gap of at least min_span_days (30) GAME-DAYS counts IN FULL".
 // Run it over the SAME healthy heartbeat history test 1 accrues ZERO on.
 //
 // It is computed from the RECORDED gaps rather than by reconfiguring the ledger
-// — which is the point twice over: the old rule is gone from the product, and
+// — which is the point twice over: the superseded rule is gone from the product, and
 // the record kept in both units is rich enough to re-derive ANY gate offline,
 // which is the property whose absence let a 26x error live in a comment block.
 static void test_negative_control_superseded_mechanism() {
@@ -578,7 +577,7 @@ static void test_episode_policy() {
           "and the claim pin is OFF — free play keeps multi-agent-control.md Q5 "
           "byte for byte, including orphan-to-native");
     CHECK_EQ(p.unavail_anomaly_wall_s, 360,
-             "the RULED anomaly gate: 3 x the 120-second R3 heartbeat");
+             "the declared anomaly gate: 3 x the 120-second heartbeat");
     // WITH NO DECLARED HORIZON THERE IS NO X. Not 365 — the bridge
     // refuses to judge rather than borrowing another horizon's answer.
     CHECK(!p.unavail_exclusion_armed,
@@ -587,11 +586,11 @@ static void test_episode_policy() {
           "and typed: exclusion_unarmed_no_horizon");
     CHECK_EQ(p.unavail_exclusion_days, 0, "with no X standing behind it");
     CHECK(p.unavail_exclusion_fraction > 0.049 && p.unavail_exclusion_fraction < 0.051,
-          "THE pre-registered constant on this axis is the FRACTION, 0.05");
+          "THE declared constant on this axis is the FRACTION, 0.05");
     CHECK(std::string(episode_mode_name(p.mode)) == "free_play", "wire name");
 
     setenv("CK3_EPISODE_MODE", "experiment", 1);
-    setenv("CK3_EPISODE_ID", "ep-20260912T000000Z-a-paper", 1);
+    setenv("CK3_EPISODE_ID", "ep-20260101T000000Z-a-test", 1);
     setenv("CK3_UNAVAIL_ANOMALY_WALL_S", "240", 1);
     setenv("CK3_EPISODE_HORIZON_START", kRegisteredHorizonStart, 1);
     setenv("CK3_EPISODE_HORIZON_END",   kRegisteredHorizonEnd,   1);
@@ -601,12 +600,12 @@ static void test_episode_policy() {
     CHECK(episode_pins_claims(),
           "THE CLAIM PIN IS ON: a dropped socket must not release a claim and "
           "ai_ctrl+0x28 must not be re-enabled — the surviving half of R3");
-    CHECK(p.episode_id == "ep-20260912T000000Z-a-paper", "episode id carried");
+    CHECK(p.episode_id == "ep-20260101T000000Z-a-test", "episode id carried");
     CHECK(p.unavail_exclusion_armed, "a DECLARED horizon arms the exclusion");
     CHECK_EQ(p.horizon_game_days, 7300, "the registered horizon, in game-days");
     CHECK_EQ(p.unavail_exclusion_days, 365,
              "and X is the RULE's answer for it — 7300 x 0.05 — which is the "
-             "number the paper cites, unmoved");
+             "number the exclusion rule states, unmoved");
     CHECK(p.horizon_start_game_date == std::string(kRegisteredHorizonStart)
           && p.horizon_end_game_date == std::string(kRegisteredHorizonEnd),
           "the horizon it derived from is carried VERBATIM, so a bundle can be "
@@ -767,19 +766,19 @@ static void test_synthetic_episode_seal() {
     }
 
     // ── A FINDING, ASSERTED SO IT CANNOT BE FORGOTTEN ──────────────────────
-    // At the E0 free-running rate the two ruled constants are in tension: the
+    // At the null-mode free-running rate the two declared constants are in tension: the
     // 360-second gate spans ~623 game-days there, which is ALREADY past X=365.
     // So at that rate the FIRST anomalous gap invalidates the episode, and X
     // cannot discriminate a brief lapse from a dead agent. It is not a defect in
-    // this code — both numbers behave exactly as ruled — and the numbers are the
-    // pre-registration's to change after measures the ARM rate. It is
+    // this code — both numbers behave exactly as declared — and the numbers are the
+    // experiment design's to change once the ARM rate is measured. It is
     // asserted here so the tension is visible in a test run rather than only in
     // a comment.
     CHECK(mercia->unavailable_game_days > 365,
           "FINDING: at 1.73 game-days/wall-second the smallest possible anomaly "
           "(just over 360 s) already spans ~623 game-days, so the FIRST anomaly "
           "crosses X=365 — the gate is coarser than X at this rate. Reportable "
-          "to the pre-registration, not fixable here");
+          "to the experiment design, not fixable here");
     CHECK(l.episode_invalid(),
           "which is why this synthetic episode reads INVALID on two brief lapses");
 
@@ -827,7 +826,7 @@ static void test_both_units() {
     for (const UnavailSpan& sp : u->spans) {
         CHECK(sp.wall_measured, "each gap says its wall duration is KNOWN");
         CHECK(sp.days > 0 && sp.wall_seconds > 0.0,
-              "and carries BOTH units side by side — the pairing ck-ijfa found "
+              "and carries BOTH units side by side — the pairing found "
               "nothing could check");
     }
     CHECK(!u->spans[0].anomalous, "the 120-second gap is not anomalous");
@@ -859,14 +858,14 @@ static void test_both_units() {
 // ===========================================================================
 // 15. X IS A RULE, NOT A CONSTANT
 // ===========================================================================
-// THE DEFECT: `exclusion_days_ = 365` stored the rule's answer at ONE horizon
+// THE HAZARD: `exclusion_days_ = 365` stored the rule's answer at ONE horizon
 // and applied it to all of them. The two are indistinguishable at the
-// registered horizon and nowhere else — shape exactly, and permissive
+// registered horizon and nowhere else — the shape exactly, and permissive
 // everywhere it is wrong, which is why no episode ever showed a symptom.
 static void test_exclusion_is_a_rule() {
     section("X = round(0.05 x declared horizon), in GAME-DAYS");
 
-    // ── THE REGRESSION: the number the paper cites does not move ───────────
+    // ── THE REGRESSION: the declared number does not move ───────────
     const ExclusionRule reg = resolve_exclusion_rule(kRegisteredHorizonStart,
                                                      kRegisteredHorizonEnd);
     CHECK(reg.armed, "the registered horizon arms the exclusion");
@@ -891,11 +890,11 @@ static void test_exclusion_is_a_rule() {
     CHECK_EQ(smoke.exclusion_days, 78, "1568 x 0.05 = 78.4, rounds to 78");
     CHECK(smoke.exclusion_days * 4 < kExclusionDaysAtRegisteredHorizon,
           "THE DEFECT, measured: the constant 365 is more than 4x the rule's "
-          "answer here — and it is 23% of the whole horizon, so a smoke episode "
+          "answer here — and it is 23% of the whole horizon, so an episode "
           "judged at 365 could not be excluded at all");
 
     // ── THE CALENDAR IS THE ENGINE'S, AND IT MATTERS BY EXACTLY 3 DAYS ─────
-    // own spec quoted 1571 game-days and X = 79 for this horizon.
+    // A first spec quoted 1571 game-days and X = 79 for this horizon.
     // That is the UNIFORM 30-DAY-MONTH arithmetic of scripts/meter_lane.py's
     // `_ordinal()`, which that module documents as CADENCE ARITHMETIC ONLY and
     // never writes to a row. The ledger's day numbers come from the engine's
@@ -912,13 +911,13 @@ static void test_exclusion_is_a_rule() {
              "one the ledger counts in, so 78 is the rule's answer");
 
     // ── THE OTHER 'REGISTERED HORIZON' IN THE REPO ────────────────────────
-    // docs/multi-instance.md (and the deleted E0 runbook) offer
+    // An older multi-instance runbook offered
     // `--horizon 1086.1.1` as "the full paper horizon". It is 7043 game-days —
     // 257 short of twenty game-years — and the rule's answer there is 352, not
     // 365. THE RULE DID NOT CREATE THIS DISCREPANCY; IT CREATED THE ABILITY TO
     // SEE IT. Under the constant both spellings got 365, so no test, no reader
     // and no artefact could tell them apart — the ambiguity was invisible, not
-    // absent. Which one the pre-registration means is its call, and the harness
+    // absent. Which one the experiment design means is its call, and the harness
     // declares it per episode either way.
     const ExclusionRule runbook = resolve_exclusion_rule("1066.09.15", "1086.01.01");
     CHECK_EQ(runbook.horizon_game_days, 7043, "1066.09.15 -> 1086.01.01");
@@ -977,7 +976,7 @@ static void test_exclusion_is_a_rule() {
           "1066.02.30 is a date CK3 cannot produce, and is refused rather than "
           "silently becoming 2 March");
     CHECK(!is_game_date("1066.13.01"),
-          "month 13 — the ck-05mg rendering bug's own artefact — is refused");
+          "month 13 — the rendering bug's own artefact — is refused");
     CHECK(is_game_date("1066.9.15") && is_game_date("1066.09.15"),
           "both the padded and unpadded spellings the harness may emit parse");
 }
@@ -985,8 +984,8 @@ static void test_exclusion_is_a_rule() {
 // ===========================================================================
 // 16. AN UNARMED LEDGER JUDGES NOTHING — and says so
 // ===========================================================================
-// THE NEGATIVE-CONTROL SHAPE ASKED FOR, run inline against the SAME
-// session history: the pre-fix constant passes an episode the rule excludes.
+// THE NEGATIVE-CONTROL SHAPE THE EXCLUSION RULE ASKED FOR, run inline against the SAME
+// session history: the superseded constant passes an episode the rule excludes.
 static void test_unarmed_ledger_and_the_prefix_control() {
     section("no declared horizon => UNARMED: nothing is judged, and that is "
             "visible");
@@ -1015,10 +1014,10 @@ static void test_unarmed_ledger_and_the_prefix_control() {
           "exclusion_armed() is a required companion question");
 
     // ── DECLARED IS NOT OBSERVED, AND THE BUNDLE SAYS BOTH ────────────────
-    // Raised while this bead was in flight. X is 5% of the
-    // DECLARED horizon, as ruled — so an episode that declares twenty
+    // X is 5% of the
+    // DECLARED horizon, by rule — so an episode that declares twenty
     // game-years and stops after 5000 days has a tolerance proportional to an
-    // observation it did not make. The ruling stands; what must not stand is
+    // observation it did not make. The rule stands; what must not stand is
     // that being invisible. The ledger reports what it actually SAW, beside the
     // declared horizon, and never feeds it back into the threshold.
     CHECK_EQ(l.observed_game_days(), 5000,
@@ -1031,12 +1030,12 @@ static void test_unarmed_ledger_and_the_prefix_control() {
           "both in the bundle, 'declared 20 years, ran 1' is legible as a "
           "purchase instead of indistinguishable from an honest long run");
 
-    // ── THE PRE-FIX CONTROL, on one input ─────────────────────────────────
-    // A smoke episode (horizon 1568 game-days) with one session unsteered for
-    // 120 game-days. The RULE's X there is 78: excluded. The pre-fix CONSTANT
+    // ── THE SUPERSEDED CONTROL, on one input ─────────────────────────────────
+    // An episode (horizon 1568 game-days) with one session unsteered for
+    // 120 game-days. The RULE's X there is 78: excluded. The superseded CONSTANT
     // was 365: passed. Same history, same gate, opposite verdicts — that single
     // case discriminates the two mechanisms completely, which is what test 9
-    // did for gate change.
+    // did for the gate change.
     const int64_t rule_x     = resolve_exclusion_rule("1066.09.15",
                                                       "1071.01.01").exclusion_days;
     const int64_t prefix_x   = kExclusionDaysAtRegisteredHorizon;   // the old 365
@@ -1065,7 +1064,7 @@ static void test_unarmed_ledger_and_the_prefix_control() {
 }
 
 // ===========================================================================
-// THE EXACT EXTREMA, AND THE OPEN GAP IS ONE OF THEM
+// — THE EXACT EXTREMA, AND THE OPEN GAP IS ONE OF THEM
 // ===========================================================================
 // `spans` is capped at kMaxRetainedSpans, so a reader cannot take a maximum
 // from it. The scalars exist for that, and the case this row exists for is the
@@ -1074,7 +1073,7 @@ static void test_unarmed_ledger_and_the_prefix_control() {
 // snapshot time and never enters `spans` accounting. Removing the fold in
 // render_locked leaves every closed-gap figure correct and loses exactly this.
 static void test_exact_extrema_include_the_open_gap() {
-    section("ck-48lf: the extrema are over EVERY gap, including the open one");
+    section("the extrema are over EVERY gap, including the open one");
     UnavailabilityLedger& l = fresh();
 
     l.note_session("s-open", D0, W0);
@@ -1127,8 +1126,8 @@ static void test_exact_extrema_include_the_open_gap() {
 }
 
 int main() {
-    printf("=== unavailability accounting: the WALL-CLOCK anomaly gate (ck-ijfa) "
-           "over §2.7's GAME-DAY covariate (ck-6kvq.10) ===\n");
+    printf("=== unavailability accounting: the WALL-CLOCK anomaly gate  "
+           "over §2.7's GAME-DAY covariate  ===\n");
     test_healthy_heartbeat_accrues_nothing();
     test_ten_minute_silence_is_one_anomaly();
     test_observer_traffic_never_counts();

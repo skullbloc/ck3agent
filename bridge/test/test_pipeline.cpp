@@ -1,4 +1,4 @@
-// test/test_pipeline.cpp — unit tests for the R1b apply + ticket layer.
+// test/test_pipeline.cpp — unit tests for the apply + ticket layer.
 //
 // Standalone: compiles flush_scheduler.cpp + ticket_table.cpp + flush_apply.cpp
 // with NO engine, NO game and NO CK3 binary. The plan is applied against a FAKE
@@ -8,7 +8,7 @@
 //   cmake -DBUILD_BRIDGE_TESTS=ON .. && make -j$(nproc) test_pipeline
 //   ./test_pipeline
 //
-// What is asserted maps 1:1 onto the bead's OFFLINE acceptance list:
+// What is asserted maps 1:1 onto the task's OFFLINE acceptance list:
 //   - a ticket's lifecycle across states
 //   - `check` on an unknown ticket is a TYPED refusal, not silence
 //   - a legacy request_id-keyed client still gets its result
@@ -175,10 +175,10 @@ static void test_ticket_lifecycle() {
     TicketTable t2;
     FakeEffects fx2;
     fx2.serve_returns_empty = true;
-    const uint64_t tk2 = submit(s2, t2, "s1", "query_realm", Polarity::PAUSED, "rid-2");
+    const uint64_t ticket2 = submit(s2, t2, "s1", "query_realm", Polarity::PAUSED, "rid-2");
     FlushPlan p2 = s2.plan_flush(20000, ClockReading{false, 3}, FlushTrigger::Cadence);
     apply_flush_plan(p2, fx2, t2);
-    CHECK(t2.find(tk2, &rec));
+    CHECK(t2.find(ticket2, &rec));
     CHECK(rec.state == TicketState::Failed);
     CHECK(rec.result_json.find("no_reply") != std::string::npos);
 
@@ -266,11 +266,11 @@ static void test_legacy_request_id_client() {
 
     // A call with NO request_id (a pure ticket client) is still complete and
     // simply has no request_id index entry.
-    const uint64_t tk2 = submit(s, t, "s1", "query_realm", Polarity::PAUSED, "", 20000);
+    const uint64_t ticket2 = submit(s, t, "s1", "query_realm", Polarity::PAUSED, "", 20000);
     FlushPlan p2 = s.plan_flush(40000, ClockReading{false, 3}, FlushTrigger::Cadence);
     apply_flush_plan(p2, fx, t);
     Ticket rec;
-    CHECK(t.find(tk2, &rec));
+    CHECK(t.find(ticket2, &rec));
     CHECK(rec.state == TicketState::Done);
     CHECK(!t.find_by_request_id("", &rec));
 }
@@ -540,7 +540,7 @@ static void test_cancel_racing_the_flush_is_skipped_not_served() {
 
 // ===========================================================================
 int main() {
-    std::printf("test_pipeline (ck-6kvq.9)\n");
+    std::printf("test_pipeline\n");
 
     test_ticket_lifecycle();
     test_unknown_ticket_is_typed();

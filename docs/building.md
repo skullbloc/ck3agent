@@ -52,7 +52,7 @@ Build the bridge library and the Python package yourself.
 - `ck3agent/server/` is shared with the upstream research tree and uses bare
   sibling imports such as `from tools import ...`. `ck3agent.bootstrap_server()`
   puts that directory on `sys.path`. Do not convert them here; change them upstream.
-- The export writes `VERSION`, `ck3agent/_version.py` and
+- A release writes `VERSION`, `ck3agent/_version.py` and
   `ck3agent/_bridge_meta.py`. CMake reads `VERSION`; the Python package reads
   `_version.py`. The release workflow fails unless all three match the tag.
 - `.github/workflows/release.yml` builds a `v*` tag into a draft GitHub Release.

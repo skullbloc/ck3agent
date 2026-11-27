@@ -115,7 +115,7 @@ static void* g_orig_war_score_update = nullptr;
 //   OccupationScore    — same FUN_066b4f40 iteration, plus walks the
 //                        CharacterDB → realm → held-titles → LandedTitleDB
 //                        chain for each participant. Defended by
-//                        occupation_chain_valid: validates the
+//                        occupation_chain_valid(): validates the
 //                        DB singletons + shadow-resolves each participant's
 //                        char_id to confirm the chain won't crash mid-walk.
 //                        The function has no inline occupied-counties
@@ -135,7 +135,7 @@ static void* g_orig_war_score_update = nullptr;
 //                        (char+0x1B8), and iterates the MAA_REGIMENT_REFS
 //                        CPdxArray at title_realm+0x278, looking up each
 //                        regiment id in OWNER_LINK_DB. Defended by
-//                        landless_realm_valid: validates the
+//                        landless_realm_valid(): validates the
 //                        OWNER_LINK_DB singleton, the resolved attacker's
 //                        title_realm_data, and the MAA refs array. Same
 //                        shadow-resolve pattern as occupation_chain_valid.
@@ -212,7 +212,7 @@ static bool battle_list_valid(uintptr_t wp) {
 // segfaults. Same trap applies to LandedTitleDB inside FUN_06879500.
 //
 // Sources: decompilation of FUN_066d95a0, FUN_06879500, FUN_066dab20 against
-// CK3 binary BuildID e61ff264... Cross-validated against ck3_20260404 core
+// CK3 binary BuildID e61ff264... Cross-validated against an 867 core
 // dump: 11 wars, all participants resolved cleanly (slot_count=65536 chars,
 // 32768 titles; per-character vtable=0x55f76d9507c8 mapped).
 static bool occupation_chain_valid(uintptr_t wp) {
@@ -338,7 +338,7 @@ static bool occupation_chain_valid(uintptr_t wp) {
 // Sources: decompilation of FUN_066d9080 (LandlessScore_impl) and the helper
 // thunks fn_0x0674f880 (is_landless predicate) + fn_0x06778540 (MAA-refs
 // accessor) + fn_0x066826e0 (per-link predicate); cross-validated against
-// ck3_20260404 core dump (867 AD), 11 active wars accept; six synthetic
+// core dump of an 867 game, 11 active wars accept; six synthetic
 // corruption injections (OWNER_LINK_DB unmapped, OWNER_LINK_DB.slot_count
 // overflow, title_realm sentinel 0x1, MAA count overflow, MAA data ptr
 // sentinel, attacker char_ptr unmapped) all reject.
@@ -469,10 +469,10 @@ static bool landless_realm_valid(uintptr_t wp) {
 // magic-div pattern) and the net returned, the unit every other component and
 // the engine's sum (ComputeTotalWarScore) use. The earlier fp/1000 reading made
 // this term 1000x the others and the CB-bounds clamp (+0x1738/+0x173C, in
-// points) then /1000 zeroed every total (live867 l5-r2: ticking -11, total 0).
+// points) then /1000 zeroed every total (a test run: ticking -11, total 0).
 //
-// The per-side floors were verified across 11 wars (ck3_20260404_093841.core,
-// 867 AD) and 30 wars (ck3_20260421_195552.core, 1097 AD): all enabled-byte
+// The per-side floors were verified across 11 wars (an 867 dump,
+// 867 AD) and 30 wars (the 1097 dump, 1097 AD): all enabled-byte
 // combinations and signs.
 //
 // Crash-safety: safe_read<T> uses process_vm_readv — never SIGSEGVs on
@@ -608,7 +608,7 @@ static void on_war_score_update(void* war_ptr) {
         // The engine's own sum and clamp (ComputeTotalWarScore, FUN_066ba0d0,
         // re/findings/re_war.md §8): every term is in war-score points and the
         // DEFENDER's imprisonment and occupation are SUBTRACTED. The previous sum
-        // added them and divided by 1000, so every total read 0 (live867 l5-r2:
+        // added them and divided by 1000, so every total read 0 (a test run:
         // war 10 ended in an attacker victory while its war_score read 0).
         int raw_sum = war_score_imprisonment_net(bd) + war_score_battle_net(bd)
                     + war_score_occupation_net(bd) + war_score_ticking_net(bd)

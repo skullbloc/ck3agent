@@ -96,7 +96,7 @@ def test_set_phase_unbound_writes_nothing():
 
 
 def test_CONTROL_a_bound_ruler_resolves():
-    """Non-discriminating control: passes before and after the fix."""
+    """Non-discriminating control: passes with and without the rule."""
     actor, err = run(redesign._resolve_actor(Gw(BOUND), 0, "observe"))
     assert err is None and actor["id"] == 30853
 
@@ -143,7 +143,7 @@ def test_CONTROL_whoami_bound_seat():
     assert out["result"]["controlled"]["is_controlled"] is True
 
 
-# ── control with no id used to unbind silently ──────────────────────────────
+# ── control with no id does not unbind silently ──────────────────────────────
 
 def test_control_without_an_id_is_refused_and_sends_nothing():
     gw = Gw(BOUND, write_reply={"success": True, "controlled_primary": 0,
@@ -154,11 +154,11 @@ def test_control_without_an_id_is_refused_and_sends_nothing():
     assert gw.writes == [], "the unbind must not reach the bridge"
 
 
-# ── finding 4: no phase arms the off-goal veto ─────────────────────────
+# ── no phase arms the off-goal veto ─────────────────────────
 #
 # set_phase("expansion") armed the veto process-wide although every reply about
-# it says "unvalidated". Neither the pre-registration nor
-# docs/pre-registration-conditions.md declares a phase genome or the veto, so the
+# it says "unvalidated". Neither the experiment design nor
+# its conditions declare a phase genome or the veto, so the
 # posture tool stops arming it; the explicit set_experimental call still does.
 
 @pytest.mark.parametrize("phase", sorted(redesign.PHASE_GENOME))
@@ -187,8 +187,8 @@ def test_CONTROL_the_explicit_call_still_arms_it():
     ("set_experimental", {"flag": "off_goal_veto"}),
 ])
 def test_a_switch_without_enabled_is_refused_and_writes_nothing(action, kw):
-    """ finding 4: set_experimental without enabled ARMED the flag (enabled
-    defaulted to true). Now the value is required."""
+    """set_experimental without enabled must not ARM the flag (a default of
+    true would): the value is required."""
     redesign._FLAG_WRITES.clear()
     gw = Gw(BOUND)
     out = run(redesign.session_impl(gw, action, **kw))
@@ -226,7 +226,7 @@ def test_flag_scope_is_stated_beside_last_written_here():
     assert all("null does not mean off" in f["last_written_here_scope"] for f in flags)
 
 
-# ── round 4: whoami says WHY the seat is unbound ─────────────────────────────
+# ── whoami says WHY the seat is unbound ─────────────────────────────
 
 def _seat(**row):
     base = {"session_id": "me", "primary_character_id": 0, "claimed_character_ids": []}
@@ -290,7 +290,7 @@ def test_CONTROL_whoami_observer_sentinel_is_not_a_match():
     assert out["ok"] is True and out["result"]["controlled"]["id"] == 30853
 
 
-# ── round 4: inspect's actor-scoped subjects block while unbound ────────────
+# ── inspect's actor-scoped subjects block while unbound ────────────
 
 class _DeclineAll(Gw):
     """Every read declines, as the bridge does for character_id=0 with nothing bound."""
@@ -320,7 +320,11 @@ def test_CONTROL_inspect_explicit_id_is_not_judged_by_the_unbound_rule():
     gw = _DeclineAll()
     out = run(redesign.inspect_impl(gw, subject="realm", character_id=777))
     assert out["ok"] is True
-    assert gw.reads == [("query_realm", {"character_id": 777})]
+    # inspect realm also reads the character (a vassal's count with his vassals); every read is
+    # still of the id given, none of a bound ruler
+    # (the first read is the named character's: a dead one is said before any other check)
+    assert gw.reads[:2] == [("query_character", {"character_id": 777}), ("query_realm", {"character_id": 777})]
+    assert all(p.get("character_id") == 777 for _a, p in gw.reads), gw.reads
 
 
 def test_CONTROL_inspect_unknown_subject_is_unknown_not_unbound():
@@ -328,12 +332,12 @@ def test_CONTROL_inspect_unknown_subject_is_unknown_not_unbound():
     assert out["blocked"]["gate"] == "unknown_subject"
 
 
-# ── round 4 + finding 6: ONE unbound answer, from every actor tool ─────
+# ── ONE unbound answer, from every actor tool ─────
 #
 # One list, two readers: the blocking tools are checked against the code by
 # DRIVING each with nothing bound, and against each doc by reading the paragraph
 # that names them. A tool added to the MCP surface with a character_id must be
-# classified here, or the census reds.: query, discover and steer answered
+# classified here, or the census reds. Query, discover and steer answered
 # three other ways (unmapped_refusal; ok:true with a list; errors[]); now every
 # one answers _resolve_actor's refusal, the same block.
 
@@ -373,7 +377,7 @@ def _mcp_tools_with_an_actor_param() -> set:
     import re
     src = open(os.path.join(os.path.dirname(__file__), "mcp_server.py"), encoding="utf-8").read()
     out = set()
-    for m in re.finditer(r"^@mcp\.tool\(\)\s*\n(?:async )?def (\w+)\((.*?)\)\s*->", src, re.M | re.S):
+    for m in re.finditer(r"^@mcp\.tool\([^\n]*\)\s*\n(?:async )?def (\w+)\((.*?)\)\s*->", src, re.M | re.S):
         if "character_id" in m.group(2) or "actor_id" in m.group(2):
             out.add(m.group(1))
     return out
@@ -446,7 +450,7 @@ def test_every_tool_answers_the_same_unbound_refusal(wired):
     lambda ms: ms.query(domain="characters", filter="ruler"),
     lambda ms: ms.query(domain="traits"),
     lambda ms: ms.discover(what="interactions"),
-    # List_decisions ignores its params, like list_interactions, so it
+    # list_decisions ignores its params, like list_interactions, so it
     # is a catalog too (actor_doors), whatever character_id key the server sends.
     lambda ms: ms.discover(what="decisions"),
     lambda ms: ms.query(domain="council_tasks"),

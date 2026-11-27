@@ -3,7 +3,7 @@
 A war's id is its WAR_ID: generation byte << 24 | slot index (ck3_offsets.h
 war_db::WAR_ID_*). The slot is reused after a war ends, so the index alone
 names a different war later, and two reads that emit the two forms never join.
-Before, query_war_stance (inspect war_stance, observe's stance join),
+At first, query_war_stance (inspect war_stance, observe's stance join),
 query_call_to_arms (the calls a player answers) and the WAR_CREATE_CORE reply
 (declare_war) emitted the slot index; query_wars, get_active_wars, faction rows
 (faction_war.h), war history, war declarations and observe emitted the handle.
@@ -48,6 +48,8 @@ EMITTERS = {
     ("action_handlers.cpp", "do_send_interaction", "intent.target_war_id"): "the caller's war echoed",
     ("observation.cpp", "build_wars", "safe_read<uint32_t>(war_ptr + ck3::war_obj::WAR_ID)"): "WAR_ID read",
     ("intent_dispatch.cpp", "execute_war_create_core_intent", "war_id"): "WAR_ID read (printf'd)",
+    ("ai_veto.cpp", "do_query_ai_veto", "static_cast<uint32_t>(x.object_ptr)"):
+        "an ally call's target scope value (cmd+0x318), the war's full handle (re_interaction_command.md §1)",
 }
 
 _FN = re.compile(r"^(?:static\s+)?(?:inline\s+)?[\w:<>]+[\s\*&]+(\w+)\s*\((?!.*;\s*$)")

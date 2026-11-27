@@ -1,4 +1,4 @@
-"""A dead actor is a dead actor (minor 6).
+"""A dead actor is a dead actor.
 
 Until the final fix a call from a dead character's seat answered
 `actor_dead_or_stale` (class bridge, transient, retry "now", "re-pin control via
@@ -8,7 +8,7 @@ a dead end and the two refusals contradicted each other. Both now go through
 `character_dead`, and a call about a war names the war's leaders as query_wars
 reads them now.
 
-The replies are real, from live867 run ff-g1 gl5 r1 (l5_war_outcomes, 0868.07.16,
+The replies are real, from a live 867 check (0868.07.16,
 tick 561): step 80, do(make_peace, character_id=11098, war_id=20) from the seat
 of war 20's defender after he died, and step 82, query_wars(all, verbose) in
 the same paused tick (request 1b4e2bc2-5604-4a30-b097-eb25f28a6da5), war 20's
@@ -117,7 +117,7 @@ def test_no_gate_tells_a_dead_actor_to_retry():
     assert "actor_dead_or_stale" not in set(R.RAW_REASON_TO_GATE.values())
 
 
-# ── minor 5: a war read that failed is not a war that is gone, and
+# ── A war read that failed is not a war that is gone, and
 #    war 0 is a war ──
 
 class FailedWarsGw(Gw):
@@ -165,7 +165,7 @@ def test_a_war_id_that_is_not_a_number_is_no_war():
     assert "query_wars" not in [a for a, _ in gw.reads]
 
 
-# ── minor 7: the bridge's actor refusals, one reason per cause ──
+# ── The bridge's actor refusals, one reason per cause ──
 
 REPO = HERE.parents[1]
 BRIDGE = REPO / "bridge"
@@ -230,7 +230,7 @@ def test_every_actor_refusal_site_asks_the_one_helper():
 
 
 def test_every_actor_reason_the_map_holds_has_an_emitter():
-    """Census (minor 10): every `actor_*` raw reason in
+    """Census: every `actor_*` raw reason in
     RAW_REASON_TO_GATE is a string the bridge answers somewhere (code, strings
     kept, comments stripped). A key with no emitter is dead vocabulary, and a
     map that keeps one reads as a promise the bridge never makes. Fail OPEN: the

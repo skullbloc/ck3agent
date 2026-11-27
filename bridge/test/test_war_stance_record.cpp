@@ -1,8 +1,8 @@
-// test_war_stance_record.cpp — row A3 (stance half): which
+// test_war_stance_record.cpp — the stance half: which
 // coordinator record answers a query_war_stance row, on a fixture read from the
 // 1097 core dump.
 //
-// Fixture: ck3_20260421_195552.core (1097, BuildID e61ff264..., the PROTECTED
+// Fixture: the 1097 dump (BuildID e61ff264..., the PROTECTED
 // evidence dump; the 867 dump has no records yet, ai_root+0x54 = 0). CAIManager
 // at the CAIMAN_VTABLE vptr (one hit, 0x7fb52e069c40), records
 // *(mgr+0x48)[i] for i < *(mgr+0x54) = 174, active rec+0x14 != 0, war key
@@ -18,7 +18,7 @@
 // the helper's contract, not a handler path.
 //
 // Built twice: plain (must pass) and with -DWAR_STANCE_RECORD_PREFIX_CONTROL,
-// the pre-fix last-record-wins map, registered WILL_FAIL.
+// the superseded last-record-wins map, registered WILL_FAIL.
 #include <cstdio>
 #include <cstdint>
 #include <vector>

@@ -1,7 +1,7 @@
 // The switch must work AT the cap, and must not become a way past it.
 //
 // Drives the REAL SessionRegistry in-process, which is the only place these
-// assertions are honest: established that a refusal count read from a
+// assertions are honest: a live check established that a refusal count read from a
 // sealed bundle returns 0 both when the fix works and when the evidence has
 // rotated away, so the grading cannot live in a log.
 #include "bridge.h"
@@ -116,7 +116,7 @@ int main() {
         !g_session_registry.swap_character(obs, 1000, 9003, &obs_why)
         && obs_why == "observe_mode", obs_why);
 
-    // ── RULING FIVE'S REQUIRED ROW: DETACHED and LOST STILL HOLD CLAIMS
+    // ── THE REQUIRED ROW: DETACHED and LOST STILL HOLD CLAIMS
     // (session.h:148), and the counter skips only OBSERVE. A seat that
     // reconnects WITHOUT resuming consumes two slots, so the cap must see both
     // — the guard that survives the swap and the reason control_refused is kept
@@ -138,7 +138,7 @@ int main() {
             std::to_string(lost) + " — LOST is reported, never a silent release");
     }
 
-    // ── THE SLOT-LEAK BOUNDARY the refinery asked to be graded. A swap must be
+    // ── THE SLOT-LEAK BOUNDARY the review asked to be graded. A swap must be
     // net zero at the cap; a leak of ONE slot is the failure that would let the
     // roster creep. Assert the invariant directly rather than trusting the
     // earlier equality: occupancy AND this seat's holding, across many swaps.

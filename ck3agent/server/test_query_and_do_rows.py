@@ -1,4 +1,4 @@
-"""lane-query: the query/do defects the 2026.10.0 personas hit.
+"""Query and do rows that a review of release 2026.10.0 exercised.
 
 Driven through the real redesign/tools functions with a scripted gateway, so a
 row reds on what the function SENDS and RETURNS, not on its source text. Where
@@ -54,7 +54,7 @@ class ScriptedGateway:
     async def write(self, action, params=None):
         self.writes.append((action, dict(params or {})))
         if action == "script_action" and action not in self.replies:
-            # Council_task goes through the script layer first; these
+            # council_task goes through the script layer first; these
             # rows grade the native path it falls back to (test_script_actions.py
             # grades the script path, whose `seat` key do_script_action reads).
             return {"success": False, "action": "script_action",
@@ -112,8 +112,9 @@ def test_wrong_seat_refusal_is_typed_and_names_the_task_seat():
         "requested_seat": "chancellor", "task_seat": "councillor_court_chaplain",
         "warning": warning}})
     env = _run(redesign.do_impl(gw, intent="council_task", character_id=13902,
+                                # target_title_id (council_task takes no target_id: refused unknown_argument)
                                 args={"seat": "chancellor", "task": "task_fabricate_claim",
-                                      "target_id": 329}))
+                                      "target_title_id": 329}))
     assert env["ok"] is False and env["verdict"] == "rejected"
     assert env["blocked"]["gate"] == "target_ineligible", env["blocked"]
     assert "councillor_court_chaplain" in env["blocked"]["summary"]
@@ -125,7 +126,7 @@ def test_fabricate_enumerate_prints_the_chaplain_and_the_bridge_accepts_it():
         "targets": [{"title_id": 329, "title": "c_x", "assignable": True}]}})
     env = _run(redesign.do_impl(gw, action_class="council_tasks", character_id=13902))
     row = env["result"]["available"][0]
-    assert row["do_call"]["args"]["seat"] == "court_chaplain"
+    assert row["do_call"]["args"]["args"]["seat"] == "court_chaplain"
     # The bridge compares after stripping "councillor_" and lower-casing; the
     # task's seat key for task_fabricate_claim is councillor_court_chaplain.
     # The comparison moved into council_task_family.h (norm_seat, run by
@@ -146,7 +147,7 @@ def test_laws_enumerate_reads_the_groups_the_bridge_emits():
                     "options": [{"name": "crown_authority_1", "law_id": 5, "level": 1}]}]}})
     env = _run(redesign.do_impl(gw, action_class="laws", character_id=13902))
     rows = env["result"]["available"]
-    assert [r["do_call"]["args"]["law"] for r in rows] == ["crown_authority_1"]
+    assert [r["do_call"]["args"]["args"]["law"] for r in rows] == ["crown_authority_1"]
     assert "crown_authority_0" in rows[0]["label"]
     seg = _handler_text("query_handlers.cpp", "do_query_available_law_changes")
     assert 'r.key("groups")' in seg and 'r.key("options")' in seg
@@ -172,7 +173,8 @@ def test_mercenary_rows_carry_label_troops_and_the_actor():
     row = env["result"]["available"][0]
     assert row["label"] and row["troops"] == 1451 and row["distance_px"] == 40
     codes = {w["code"] for w in env["warnings"]}
-    assert {"merc_cost_not_read", "truncated"} <= codes
+    # The price is now estimated from the game's defines (test_ally_join_and_loss_price)
+    assert {"merc_price_estimate", "truncated"} <= codes
 
 
 def test_men_at_arms_is_an_action_class_with_rows():
@@ -184,7 +186,7 @@ def test_men_at_arms_is_an_action_class_with_rows():
                   {"maa_type": "light_footmen", "recruit_cost": 45.0, "upkeep_per_stack": 0.45,
                    "affordable": True, "fielded_regiments": 2}]}})
     env = _run(redesign.do_impl(gw, action_class="men_at_arms", character_id=13902))
-    assert [r["do_call"]["args"]["maa_type"] for r in env["result"]["available"]] == ["light_footmen"]
+    assert [r["do_call"]["args"]["args"]["maa_type"] for r in env["result"]["available"]] == ["light_footmen"]
     blocked = env["result"]["unavailable"][0]["blocked"]
     assert blocked["gate"] == "insufficient_gold"
     reg = open(os.path.join(BRIDGE_SRC, "action_registry.inc")).read()
@@ -244,7 +246,7 @@ def test_set_phase_reports_a_refused_reassert():
 
 
 def test_set_phase_reads_the_ai_byte_back_not_the_write_return():
-    # F11: the bridge answers success with the byte
+    # The bridge answers success with the byte
     # as it reads after the store; a store that did not take is not reasserted.
     gw = ScriptedGateway(cid=30853, replies={"set_character_ai": {
         "success": True, "ai_enabled": False, "requested": True, "applied": False}})
@@ -284,11 +286,11 @@ def test_men_at_arms_enumerate_is_capped_and_candidates_filter():
     env = _run(redesign.do_impl(gw, action_class="men_at_arms", character_id=13902))
     rows = env["result"]["available"]
     assert len(rows) == redesign.MAA_ENUMERATE_CAP
-    assert rows[0]["do_call"]["args"]["maa_type"] == "t1", "zero-cost type must sort last"
+    assert rows[0]["do_call"]["args"]["args"]["maa_type"] == "t1", "zero-cost type must sort last"
     assert "truncated" in {w["code"] for w in env["warnings"]}
     env = _run(redesign.do_impl(gw, action_class="men_at_arms", character_id=13902,
                                 candidates=["t0", "t50"]))
-    assert sorted(r["do_call"]["args"]["maa_type"] for r in env["result"]["available"]) == ["t0", "t50"]
+    assert sorted(r["do_call"]["args"]["args"]["maa_type"] for r in env["result"]["available"]) == ["t0", "t50"]
 
 
 def test_building_rows_come_from_the_bridge_reply_and_name_the_holding_they_need():
@@ -299,13 +301,13 @@ def test_building_rows_come_from_the_bridge_reply_and_name_the_holding_they_need
     env = _run(redesign.do_impl(gw, action_class="buildings", character_id=13902))
     rows = env["result"]["available"]
     assert len(rows) == redesign.BUILDING_ENUMERATE_CAP
-    assert rows[0]["do_call"] == {"intent": "build", "args": {"building": "b_00"}}
+    assert rows[0]["do_call"] == {"tool": "do", "args": {"intent": "build", "args": {"building": "b_00"}}}
     assert "location_id" in rows[0]["needs"]
     assert "truncated" in {w["code"] for w in env["warnings"]}
     gw = ScriptedGateway(cid=13902, replies={"query_building_types": {"building_types": types}})
     env = _run(redesign.do_impl(gw, action_class="buildings", character_id=13902,
                                 candidates=["b_44"]))
-    assert [r["do_call"]["args"]["building"] for r in env["result"]["available"]] == ["b_44"]
+    assert [r["do_call"]["args"]["args"]["building"] for r in env["result"]["available"]] == ["b_44"]
     # args.location_id: each row is the game's verdict there (construction_check)
     # and its do_call is complete (no `needs`).
     checks = {
@@ -323,11 +325,11 @@ def test_building_rows_come_from_the_bridge_reply_and_name_the_holding_they_need
             "rows": [{"building": b, **checks[b]} for b in p["buildings"]]}})
     env = _run(redesign.do_impl(gw, action_class="buildings", character_id=13902,
                                 candidates=["b_01", "b_02", "b_03"], args={"location_id": 1268}))
-    av = {r["do_call"]["args"]["building"]: r for r in env["result"]["available"]}
-    un = {r["do_call"]["args"]["building"]: r for r in env["result"]["unavailable"]}
+    av = {r["do_call"]["args"]["args"]["building"]: r for r in env["result"]["available"]}
+    un = {r["do_call"]["args"]["args"]["building"]: r for r in env["result"]["unavailable"]}
     assert set(av) == {"b_01"} and set(un) == {"b_02", "b_03"}
     row = av["b_01"]
-    assert row["do_call"] == {"intent": "build", "args": {"building": "b_01", "location_id": 1268}}
+    assert row["do_call"] == {"tool": "do", "args": {"intent": "build", "args": {"building": "b_01", "location_id": 1268}}}
     assert "needs" not in row
     assert un["b_02"]["blocked"]["raw_reason"] == "construction_refused"
     assert un["b_02"]["blocked"]["summary"] == "the game refuses: This Barony already contains a Holding"
@@ -347,7 +349,7 @@ def test_building_rows_come_from_the_bridge_reply_and_name_the_holding_they_need
     assert [r["blocked"]["raw_reason"] for r in env["result"]["unavailable"]] == ["rng_scope_latched"] * 2
 
 
-# The construction validity's lines as the game wrote them (live l6fix2-live-1).
+# The construction validity's lines as the game wrote them (read live).
 _HAS_HOLDING = ("\x16warning_icon! \x15X This Barony already contains a \x15E; "
                 "\x15TOOLTIP:GAME_CONCEPT,holding Holding\x15!\x15!\x15!")
 _MISSING_GOLD = ("\x16warning_icon! \x15X Missing \x15TOOLTIP:GAME_CONCEPT,gold_i "
@@ -369,7 +371,7 @@ def test_the_games_tooltip_text_reads_plain():
     assert redesign.engine_text(_INNOVATION) == \
         "not met: The Swabian Culture has the Battlements Innovation"
     assert redesign.engine_text("\x15!\x15indent_newline:0") == ""
-    # A style named by a word (l6fin-1: "Requires that igh Serene Doge igh Orso's
+    # A style named by a word (a test run: "Requires that igh Serene Doge igh Orso's
     # Government ..." while only the style's first letter was removed).
     assert redesign.engine_text(_WORD_STYLE) == \
         "Requires that Serene Doge Orso's Government Enables Bartering"
@@ -393,7 +395,7 @@ def test_build_refusal_carries_the_games_reasons_and_a_build_sends_no_execute_fl
 
 
 def test_an_obligation_raise_is_refused_with_a_named_gate_and_the_reason():
-    # The raise refusal read as gate unmapped_refusal (l6fin4-latch-1).
+    # The raise refusal read as gate unmapped_refusal.
     gw = ScriptedGateway(cid=10465, replies={"set_obligation_level": {
         "success": False, "action": "set_obligation_level", "reason": "raise_requires_negotiation",
         "old_level": 2, "requested_level": 3}})

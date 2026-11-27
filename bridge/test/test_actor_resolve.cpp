@@ -1,7 +1,7 @@
-// test_actor_resolve.cpp —: an unnamed actor resolves by ONE rule.
+// test_actor_resolve.cpp — an unnamed actor resolves by ONE rule.
 //
 // v4 seats a king and several dukes in one game, one bridge session each. The
-// pre-fix tree resolved a request that names no actor by its handler's own
+// superseded tree resolved a request that names no actor by its handler's own
 // chain: get_controlled_character() (this session's primary, else the GLOBAL
 // mirror), or — at nine query sites, the decision eval, query_marriage_candidates
 // and queue_intent — the GLOBAL mirror first. The mirror is the first claimer's
@@ -10,7 +10,7 @@
 //
 // Two halves:
 //   A. pick_actor, the pure rule, case by case — including a grid that pins
-//      the no-seat read to TRANSCRIPTIONS of the pre-fix code (byte for byte);
+//      the no-seat read to TRANSCRIPTIONS of the superseded code (byte for byte);
 //   B. the same rule through the REAL dispatch_action of the REAL
 //      dispatch_router.cpp: the BRIDGE_ACTION macro's actor scope classifies
 //      the call (query_* reads, set_* writes) and annotates the reply. The
@@ -110,7 +110,7 @@ bool do_queue_intent(const char* /*params_json*/, std::string* out) {
     }
     return true;
 }
-// Action_handlers.cpp do_set_council_task: resolve_actor (the
+// action_handlers.cpp do_set_council_task: resolve_actor (the
 // REAL one, dispatch_router.cpp), which reads actor_id; a refused actor answers
 // actor_refusal's reason and writes nothing. g_council_wrote says whether the
 // stand-in got as far as the write (the resolve did not refuse).
@@ -158,7 +158,7 @@ std::string show(const ActorPick& p) {
     return "id=" + std::to_string(p.id) + " src=" + src(p.source) + (p.rule ? std::string(" rule=") + p.rule : "");
 }
 
-// ---- transcriptions of the PRE-FIX code, verbatim in effect ----------------
+// ---- transcriptions of the SUPERSEDED code, verbatim in effect ----------------
 // dispatch_router.cpp get_controlled_character (the id it looked up, 0 = nullptr).
 uint32_t old_get_controlled(bool have_session, uint32_t session_primary, uint32_t mirror) {
     uint32_t cid = 0;
@@ -231,7 +231,7 @@ void part_a_pure() {
     row("a08_write_never_the_player", p.id == 0 && p.source != ActorSource::PlayerGlobal, show(p));
 
     // BYTE FOR BYTE: a read with no seat declared (and every Legacy call) gives
-    // what the pre-fix code gave, over a grid of facts.
+    // what the superseded code gave, over a grid of facts.
     const uint32_t ids[] = {0u, KING, DUKE, 0xFFFFFFFFu, 0x01001234u};
     const uint32_t players[] = {0u, PLAYER, 0xFFFFFFFFu};
     long checked = 0, bad = 0;
@@ -337,7 +337,7 @@ void part_b_dispatch() {
     const uint32_t mirror = g_controlled_primary.load();
     row("b00_global_mirror_is_the_first_claimer", mirror == KING, std::to_string(mirror));
 
-    // the defect: the duke's id-less read
+    // the hazard: the duke's id-less read
     std::string r = run(duke, "query_valid_cbs", R"({"action":"query_valid_cbs"})");
     row("b01_duke_idless_read_is_the_duke", g_seen_set && g_seen.id == DUKE, show(g_seen) + " " + r);
 
@@ -384,7 +384,7 @@ void part_b_dispatch() {
         r == R"({"success":false,"action":"query_character","actor_refused":"no_actor","actor_rule":"seat_read_requires_actor"})", r);
 
     // Through the real dispatch and the real resolve_actor /
-    // resolve_character / unread_actor_key. The live defect (q13 qf4, C2): the
+    // resolve_character / unread_actor_key. The live defect: the
     // duke's session sent set_council_task naming the KING under character_id;
     // the verb read actor_id and wrote on the duke. The ownership gate vets the
     // named id first (owned_by_other), so the refusal is seen with the session's
@@ -426,7 +426,7 @@ int main() {
     part_a_pure();
     part_b_dispatch();
 #ifdef CK3_ACTOR_PRE_FIX_CONTROL
-    // The pre-fix resolver: the pure table (part A) is the same code, so it
+    // The superseded resolver: the pure table (part A) is the same code, so it
     // passes; every dispatch row that depends on the new rule must fail.
     const std::set<std::string> kPreFixFails = {
         "b01_duke_idless_read_is_the_duke",
@@ -436,7 +436,7 @@ int main() {
         "b05_unbound_write_refused_not_the_king",
         "b06_unbound_write_reason_no_actor",
         "b11_unbound_seat_query_character_typed_empty_reply",
-        // The pre-fix resolver ignores the unread key and writes
+        // The superseded resolver ignores the unread key and writes
         "b12_write_actor_under_unread_key_refused_nothing_written",
         "b13_refusal_reply_names_both_keys_exactly",
         "b18_reverse_pair_resolve_character_given_actor_id_refused",

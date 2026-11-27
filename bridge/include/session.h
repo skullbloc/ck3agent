@@ -10,7 +10,7 @@
 
 #pragma once
 
-// The resume decision is taken with identity rule, NOT a
+// The resume decision is taken with the identity rule, NOT a
 // second copy of it.  world_identity.h says so explicitly ("one identity, two
 // consumers ... do not fork it"): this is the CLAIMS consumer, and the steering
 // consumer is `declare_save_identity`.
@@ -42,7 +42,7 @@ struct ClientSlot;
 constexpr size_t MAX_CONTROLLED_WATCHLIST = 10;
 
 // Upper bound on the client-supplied handshake name a session will store.
-// client_name is taken VERBATIM from the client's frame, and since
+// client_name is taken VERBATIM from the client's frame, and
 // every session's name is echoed in every get_bridge_state reply — so an
 // oversized name would be paid for by every client on every state read, not
 // just by the one that sent it.  Truncated, never refused: the name is a label,
@@ -66,7 +66,7 @@ public:
     //
     //   ATTACHED  a live slot is bound; ordinary operation.
     //   DETACHED  the socket is gone, the session and its claims are NOT.  The
-    //             clock keeps running (G3' reversed, §2.7) and the gap is
+    //             clock keeps running (§2.7) and the gap is
     //             RECORDED as unavailability — a detached agent is a measured
     //             hole in the record, not an absent participant.
     //   LOST      DETACHED for longer than max_detach_s.  STILL HOLDS ITS
@@ -103,7 +103,7 @@ public:
     uint32_t bound_slot_gen = 0;
 
     // The save/world this session's claims were taken against (declared, never
-    // derived — world_identity.h), and world epoch at attach time
+    // derived — world_identity.h), and the world epoch at attach time
     // (0 = "the detector never spoke", the seam's unavailable sentinel).
     WorldIdentity world;
     uint64_t attach_epoch = 0;
@@ -117,7 +117,7 @@ public:
     // agent releasing its own CORPSE blinded the handoff entirely: the loop
     // `continue`d on ctrl == 0, the redirect never ran, and the seat was lost
     // silently with skip_held_heir reading 0 for a collision that happened.
-    // Measured in arma6: the agent DOES release its dead character (after 624
+    // Measured in one arm run: the agent DOES release its dead character (after 624
     // failed handoff attempts there, so that episode is not the bad case — but
     // the path is real). This field lets the handoff still see the death.
     uint32_t last_steered_character_id = 0;
@@ -126,20 +126,20 @@ public:
     // last_steered_character_id alone cannot answer it: release_character sets
     // that unconditionally, alive or dead, so nothing downstream could tell a
     // deliberate drop of a living character from a seat releasing its own corpse.
-    // ep-03 released 36552 alive, it died 3100 ticks later, and the recovery
+    // One recorded episode released 36552 alive, it died 3100 ticks later, and the recovery
     // branch seized it. Default Unknown, which handoff_subject treats as NO
     // RECOVERY — see skip_held_heir.h for why absence must not look like an answer.
     ReleaseSubjectState last_release_state = ReleaseSubjectState::Unknown;
 
     // WHAT THE CLAIM ASKED FOR, so a handoff can preserve it.
     //
-    // The succession handoff used to disable the heir's native AI whenever
+    // The succession handoff does not disable the heir's native AI whenever
     // g_agent_mode was true — and g_agent_mode is rebuilt as `primary != 0`, so it
     // is TRUE in every arm episode that has any control session at all, regardless
     // of what the claim requested. The registered design is STEER mode
     // ("the last personality steer persists; the native AI executes as it always
     // does") and do_set_controlled_character defaults disable_native_ai=false, so
-    // every succession in set28 silently promoted the heir into Drive mode.
+    // every succession in a recorded set silently promoted the heir into Drive mode.
     //
     // g_agent_mode CANNOT carry this: it answers "is anyone steering anything",
     // and the question at a handoff is "did THIS session's claim disable the AI".
@@ -185,14 +185,14 @@ public:
     //: and R3's claim pin has to separate exactly those two.
     //:
     //: last_steered_character_id survives a release but is NOT a substitute: it is
-    //: set only when primary_character_id == char_id at release, and
+    //: set only when primary_character_id == char_id at release, and the release path
     //: deliberately leaves it alone for an UndoneClaim. A session that released a
     //: non-primary claim, or whose claim was rolled back, reads 0 there — so
     //: keying on it would classify a REAL SEAT as never-claimed and destroy it,
-    //: which is the one direction the ruling forbids.
+    //: which is the one direction the rule forbids.
     //:
     //: A COUNT rather than a bool so a row can say "1 claim, then released"
-    //: instead of just "true" (bt-bbd's choice). Incremented in
+    //: instead of just "true". Incremented in
     //: note_session_claim_locked, which ALL THREE claim paths reach — both
     //: claim_character paths and swap_character, whose own comment notes it calls
     //: that function for the manifest binding even though the empty->held
@@ -204,21 +204,21 @@ public:
     //: atomic makes the read safe without inventing a lock order between them.
     std::atomic<uint64_t> claims_ever{0};
 
-    //: state (b): THE SESSION DECLARED ITSELF A SEAT, at handshake, by
+    //: State (b): THE SESSION DECLARED ITSELF A SEAT, at handshake, by
     //: sending `"episode_seat": true`. DECLARED, never inferred.
     //:
-    //: It exists for window: the world loads ~17s after the first
+    //: It exists for the window: the world loads ~17s after the first
     //: connection, so a real agent has a stretch in which claims_ever is still 0.
     //: Keying the pin on claims alone would destroy such a seat if it died there,
     //: and a genuine agent failure would leave NO unavailability behind — the
-    //: defect this bead fixes, pointed the other way.
+    //: defect this code guards against, pointed the other way.
     //:
     //: The bridge cannot work this out for itself. manifest_primary_session_ is
     //: bound by the CLAIM (note_session_claim_locked looks up
     //: ownership_[manifest_primary_char_]), so before the first claim the registry
     //: knows which character is designated but not which session will take it.
     //: The only other pre-claim facts are client_name, mode, agent_version and
-    //: capabilities — and in the shakedown-2 log the real agent did differ from the
+    //: capabilities — and in a recorded episode's log the real agent did differ from the
     //: helpers structurally (capabilities ["observe","act","pause"] against
     //: ["observe","act"]). That is a PROXY: correct until a helper gains `pause`,
     //: and one rename from the name-matching this repo forbids outright. So the
@@ -319,7 +319,7 @@ public:
 
     // Claim ownership on behalf of a session.  Returns false if already owned
     // by a different session.
-    //: lane-multi: `keep_primary` makes this an ADDITIONAL claim. A session that
+    //: `keep_primary` makes this an ADDITIONAL claim. A session that
     //: already has a primary keeps it and gains `char_id` as one more held
     //: ruler (net +1, so the cap is enforced exactly as for a first claim); a
     //: session with no primary gets `char_id` as its primary, as before. The
@@ -350,19 +350,18 @@ public:
     // Rebuild the legacy global mirrors (g_controlled_primary, g_controlled_chars,
     // g_controlled_heir).  Called after any claim/release/primary change.
     //
-    // The global primary is chosen DETERMINISTICALLY (design §1.4
-    // defect 2 / §7 item 2):
+    // The global primary is chosen DETERMINISTICALLY:
     //   1. the episode-manifest designation, if one is set and still resolvable;
     //   2. otherwise the control session with the lowest nonzero claim_seq
     //      (i.e. claim order).
     // It is never chosen by hash order of sessions_.
     //
-    // Takes mutex_ itself.  (It used to require the caller to already hold it,
+    // Takes mutex_ itself.  (It does not require the caller to already hold it,
     // while three external call sites — dispatch_router.cpp and bridge_init.cpp
-    // — called it unlocked and raced sessions_. .)
+    // — called it unlocked and raced sessions_.)
     void rebuild_legacy_mirrors();
 
-    // --- Episode-manifest designation of the global primary (design §7 item 2) ---
+    // --- Episode-manifest designation of the global primary ---
     //
     // The episode manifest names ONE claimed character as the global primary (for
     // the 1066 episode, the English king).  The designation is by character, but
@@ -439,7 +438,7 @@ public:
         // Stable and greppable; echoed in handshake_ack.resume_status.
         //   "ok" | "unknown_token" | "session_attached" | "world_changed"
         const char* status = "unknown_token";
-        // Why the identity clause ruled as it did.  Always set, always a string
+        // Why the identity clause decided as it did.  Always set, always a string
         // literal (it is copied into a C-format ack).
         const char* identity_reason = "";
         // Non-empty only on "world_changed": the characters whose claims were
@@ -451,7 +450,7 @@ public:
     // Rebind a detached session to a new slot, presenting its resume_token.
     //
     // `presented` is the identity the client vouches for (empty = vouched for
-    // nothing); `current_epoch` is world_epoch (0 = the detector is
+    // nothing); `current_epoch` is the world_epoch() (0 = the detector is
     // unavailable).  The rule, in full, is in resume_identity_verdict():
     //
     //   * same world epoch as at attach  -> ALLOW.  The world never changed, so
@@ -459,7 +458,7 @@ public:
     //   * the world changed and a declaration PROVES the same save -> ALLOW.
     //   * the world changed and nobody vouched -> DISCARD.  §6.2: "an UNVOUCHED
     //     world change must discard" — the bias here is the opposite of
-    //     Because a false negative rewrites a stranger's personality
+    //     because a false negative rewrites a stranger's personality
     //     for the rest of the episode and a false positive costs one reconnect.
     //
     // On DISCARD the claims are released, the steering-purge hook is fired, the
@@ -482,7 +481,7 @@ public:
 
     // THE SECOND ENTRY POINT.  A resume can be presented BEFORE the harness has
     // declared (the client may declare_save_identity as a separate call, which
-    // is the shape shipped and the observer lane needs).  In that case
+    // is the shape the world-identity check shipped with and the observer needs).  In that case
     // the resume abstains, and this is where the answer lands when it arrives:
     // called from `declare_save_identity` with the identity now declared, it
     // discards every session whose RECORDED world the declaration refutes.
@@ -497,7 +496,7 @@ public:
             const WorldIdentity& declared, uint64_t current_epoch,
             std::vector<uint32_t>* discarded_out);
 
-    // max_detach_s (design §6.2, abort ladder).  Promote every
+    // max_detach_s (design §6.2, the abort ladder).  Promote every
     // DETACHED session detached longer than `max_detach_ms` to LOST, and return
     // their ids ONCE — on the sweep that promotes them, not on every sweep
     // after.  `max_detach_ms == 0` disables the bound.
@@ -593,9 +592,9 @@ private:
 extern SessionRegistry g_session_registry;
 
 // ============================================================================
-// THE ABORT LADDER'S DETACH REPORT (<->)
+// THE ABORT LADDER'S DETACH REPORT
 // ============================================================================
-// shipped the `session_lost` rung and its READER, and the producer
+// The `session_lost` rung shipped and its READER, and the producer
 // was never written — its fixtures fake the file by hand.  This is the producer,
 // and it conforms to that shipped reader exactly rather than inventing a name
 // (scripts/episode_abort.sh, DETACH_F):
@@ -629,7 +628,7 @@ extern SessionRegistry g_session_registry;
 // same false positive as a stale timestamp, through a different door.
 //
 // THE OPERATOR RULE THIS REPLACES, kept because it explains the predicate
-//: "any observe session in an experiment episode must be
+// "any observe session in an experiment episode must be
 // long-lived — a per-read observer manufactures one detach event per probe."
 // THE CAREFUL THING TO DO WAS THE THING THAT BROKE IT: an author opens a fresh
 // observe session per probe precisely so as not to hold state, and that is what
@@ -686,7 +685,7 @@ bool action_is_mutation(const char* action_type);
 // flag, and an episode has several sessions. If two send it the privilege goes
 // to whoever handshakes first, and THE WRONG WINNER FAILS SILENTLY: the
 // read-lane trigger sits on a session that does no reading, reads keep stalling
-// exactly as before the fix, and the recorded observer names a plausible
+// exactly as without the rule, and the recorded observer names a plausible
 // session. This makes that case loud.
 //
 // THE CALLER MUST PASS THE MINTED MODE, never the requested one: null mode
@@ -709,9 +708,9 @@ std::string episode_observer_winner(const std::string& current,
 // actually asks — SHOULD THIS DECLARATION CONFER THE PRIVILEGE, and if not, WHY
 // — so that the applier in pipeline.cpp has no policy of its own to get wrong.
 //
-// WHY IT EXISTS. The mode floor used to be a branch at the ipc_server call site,
-// which made the guarantee a property of ONE CALLER. measured the cost:
-// deleting the call redded the lane, but KEEPING THE SPELLING AND DECLARING
+// WHY IT EXISTS. The mode floor is not a branch at the ipc_server call site,
+// which made the guarantee a property of ONE CALLER. A measurement found the cost:
+// deleting the call redded the old check, but KEEPING THE SPELLING AND DECLARING
 // ANYWAY passed 9/9 — a build that logged REFUSED and then handed the read-lane
 // trigger to a control session, which is the exact defect the floor exists to
 // prevent. A check that reds when a call is deleted and passes when it is

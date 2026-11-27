@@ -16,10 +16,13 @@
 #include "ck3_offsets.h"
 #include "action_dispatch_internal.h"  // resolve_title_realm()
 #include "pipeline.h"                 // The pulse ledger (§2.9)
-#include "scheme_engine.h"           // l3-schemes: scheme_type_by_name, scheme_can_start
+#include "scheme_engine.h"           // scheme_type_by_name, scheme_can_start
 #include "engine_bool.h"             // Bool returns read by AL
+#include "dejure_bar.h"               // create_title's de jure share by tier
 
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <unistd.h>
 #include <pthread.h>
@@ -60,7 +63,9 @@ bool on_game_thread() { return s_game_thread.load(std::memory_order_relaxed) == 
 // around the WCC call, restore after.
 //   scope layout: scope[0] = &Y ; Y={ vtable, counter@+8, ?@+0xc, tid@+0x10 }
 // =============================================================================
-constexpr uint64_t RANDOM_SCOPE_MANAGER = 0xbecd550;  // raw; +0x20 = active scope ptr
+// raw; +0x20 = active scope ptr. From the offset header: the literal 0xbecd550 that stood
+// here was the Linux RVA on every platform; Windows now gets its own value through the generator.
+constexpr uint64_t RANDOM_SCOPE_MANAGER = ck3::globals::RANDOM_SCOPE_MANAGER;
 constexpr uint64_t RANDOM_SCOPE_FIELD   = 0x20;
 
 static void fake_rng_advance(void* /*self*/, int /*n*/, unsigned /*hash*/, void* /*p*/) {
@@ -71,14 +76,14 @@ static void*    g_fake_rng_vtable[1] = { reinterpret_cast<void*>(&fake_rng_advan
 static FakeRng  g_fake_rng = { g_fake_rng_vtable, 0, 0, 0 };
 static void*    g_fake_scope[1] = { &g_fake_rng };  // scope[0] = &Y
 
-// Reusable ALLOW_RANDOM_IN_SCOPE guard (20260612). Any engine call that
+// Reusable ALLOW_RANDOM_IN_SCOPE guard. Any engine call that
 // advances the RNG scope on a thread where RandomScopeManager+0x20 is null
 // (the steered-war crash; also SET_FOCUS_APPLY, council-task effects) null-derefs
 // in FUN_0774a4b0. Arm a per-thread fake scope around the call, restore after.
 //   uint64_t saved; bool armed = arm_fake_random_scope(&saved);
 //   <engine call>;  if (armed) restore_fake_random_scope(saved);
 //
-// R1c (design §2.9): these two helpers are the ledger's single
+// These two helpers are the ledger's single
 // biggest win. ~21 call sites go through them, and SEVEN of those
 // (action_handlers.cpp do_construction_check /
 // do_construct_building / do_appoint_councillor x2 / maa_recruit /
@@ -95,6 +100,97 @@ static void*    g_fake_scope[1] = { &g_fake_rng };  // scope[0] = &Y
 // sites have, and it self-corrects after a sweep: once the sweep has healed a
 // leaked pulse there is no live slot left and a late restore is a counted stale
 // exit, not a slot stolen from someone else.
+// ── no engine lock; a deferred restore; an inert fake ─
+// scope_slot_policy.h has the decompile. A first version held the engine mutex at
+// RandomScopeManager+0x60 across arm -> engine call -> restore; the console
+// effect takes the engine's game-state lock inside that window while the main
+// thread holds the game-state lock and waits on +0x60, so the game deadlocked.
+// The lock is deleted: the bridge takes NO
+// engine lock here. What stays: a refused restore over our own fake defers
+// (never latches for being unresolved), and the fake carries the arming
+// thread's owner tag only while an arm is open on it (t_arm_open), so a fake
+// left in the slot cannot make any thread's suspend fire.
+// A read for the log line only: a fault reads as 0 and leaves the caller's
+// fault accounting as it was (the rule the arm's wedge check follows).
+static uint64_t peek_u64(uintptr_t a) {
+    if (!a || !is_mapped(a)) return 0;
+    const int faults = g_safe_read_fault_count;
+    const uintptr_t last = g_safe_read_last_fault_addr;
+    const uint64_t v = safe_read<uint64_t>(a);
+    const bool ok = g_safe_read_fault_count == faults;
+    g_safe_read_fault_count = faults;
+    g_safe_read_last_fault_addr = last;
+    return ok ? v : 0;
+}
+
+// ONE deferred restore (scope_slot_policy.h, remedy 2). Written and
+// read on the arming thread (arm_tid_distinct is 1 in every run on record) and
+// at that thread's anchors; atomics because other threads may read them.
+static std::atomic<bool>     g_pending_restore{false};
+static std::atomic<uint64_t> g_pending_saved{0};
+
+// One CAS for the pending restore, no wait. True when nothing is pending any
+// more. An unresolved deferral is NEVER latched (a latch would
+// stop the retries and leave our fake in the slot for good once the engine
+// node over it pops, which is the precondition); it stays pending for the
+// next anchor, and an arm that meets it does not arm.
+static bool resolve_pending_scope_restore() {
+    if (!g_pending_restore.load(std::memory_order_acquire)) return true;
+    volatile uint64_t* slot = reinterpret_cast<volatile uint64_t*>(
+        g_base_addr + RANDOM_SCOPE_MANAGER + RANDOM_SCOPE_FIELD);
+    if (!is_mapped(reinterpret_cast<uintptr_t>(slot))) return false;
+    const uint64_t fake = reinterpret_cast<uint64_t>(g_fake_scope);
+    const uint64_t saved = g_pending_saved.load(std::memory_order_relaxed);
+    uint64_t observed = 0;
+    const auto v = bridge::restore_once(
+        [&](uint64_t* exp) { return bridge::slot_cas_acq_rel(slot, exp, saved); },
+        fake, saved, &observed);
+    if (v == bridge::RestoreVerdict::SlotChanged) {
+        return false;
+    }
+    g_pending_restore.store(false, std::memory_order_release);
+    const uint64_t n = bridge::g_restore_deferred_ok.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 8 && bridge::g_logfile) {
+        fprintf(bridge::g_logfile,
+                "[CK3-Bridge] SCOPE RESTORE DEFERRED -> DONE: verdict=%s "
+                "saved=0x%016llx n=%llu (no latch, no fake left in the slot)\n",
+                bridge::restore_verdict_name(v), (unsigned long long)saved,
+                (unsigned long long)n);
+        fflush(bridge::g_logfile);
+    }
+    return true;
+}
+
+// Arms open on THIS thread (published, restore not yet run). The
+// fake carries this thread's owner tag only while this is above zero.
+static thread_local int t_arm_open = 0;
+
+static void fake_tag_after_restore_here() {
+    if (t_arm_open > 0) --t_arm_open;
+    g_fake_rng.tid = bridge::fake_tag_after_restore(t_arm_open, g_fake_rng.tid);
+}
+
+// The anchor (drain / IPC end of pass): this thread's dispatch is over, so no
+// arm of ours is legitimately open on it. It re-tries a deferred restore (one
+// CAS, no wait) and, if a siglongjmp skipped a restore, sets the fake's tag
+// back to idle so a fake the ledger could not heal stays inert. No lock.
+void scope_anchor_retry() {
+    (void)resolve_pending_scope_restore();
+    if (t_arm_open == 0) return;
+    t_arm_open = 0;
+    if (g_fake_rng.tid == static_cast<uint64_t>(pthread_self())) {
+        g_fake_rng.tid = bridge::FAKE_SCOPE_IDLE_TAG;
+    }
+    const uint64_t n = bridge::g_fake_tag_reset_at_anchor.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 8 && bridge::g_logfile) {
+        fprintf(bridge::g_logfile,
+                "[CK3-Bridge] SCOPE TAG RESET AT ANCHOR: an arm's restore "
+                "did not run (a siglongjmp); the fake's owner tag is idle again n=%llu\n",
+                (unsigned long long)n);
+        fflush(bridge::g_logfile);
+    }
+}
+
 bool arm_fake_random_scope(uint64_t* out_saved) {
     // The engine publishes this slot with `xchg` (a lock-free linked
     // stack; see scope_slot_policy.h for the disassembly). A plain load/store
@@ -110,13 +206,13 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
     // not read it and we do not write it — not even the load below, because a
     // load is what captures the `saved` that the restore would resurrect.
     // The caller gets false and MUST refuse rather than proceed; the one
-    // exception is the 1989 CB-validity pre-check, which the progenitor ruled
+    // exception is the 1989 CB-validity pre-check, which by rule
     // should skip and fail open (see execute_war_create_core_intent).
     if (bridge::scope_latched()) {
         // Counted as "a caller reached here while latched", NOT as a refusal:
         // the refusal is emitted at the call site, which is where the handler
         // can say so to the seat. Only 1989 is allowed to reach this line (it
-        // skips its optional check and fails open, per the ruling), so any
+        // skips its optional check and fails open, by the war-validity rule), so any
         // excess over war_validity_skipped_latched is a site I failed to
         // guard. See scope_slot_policy.h for the invariant.
         bridge::g_arm_called_while_latched.fetch_add(1, std::memory_order_relaxed);
@@ -126,6 +222,27 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
     volatile uint64_t* slot = reinterpret_cast<volatile uint64_t*>(
         g_base_addr + RANDOM_SCOPE_MANAGER + RANDOM_SCOPE_FIELD);
     if (!is_mapped(reinterpret_cast<uintptr_t>(slot))) return false;
+    // A deferred restore must be done before we arm again.
+    // If the slot is still not ours this arm reports "not armed"
+    // (as a failed compare-exchange does) and the restore STAYS pending for the
+    // anchors: no latch. Arming here would capture the engine node as `saved`,
+    // and that node is dead once it pops.
+    {
+        const bool pending = g_pending_restore.load(std::memory_order_acquire);
+        const bool resolved = pending ? resolve_pending_scope_restore() : true;
+        if (bridge::pending_at_arm(pending, resolved) == bridge::PendingAtArm::DoNotArm) {
+            const uint64_t n = bridge::g_arm_refused_pending.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 8 && bridge::g_logfile) {
+                fprintf(bridge::g_logfile,
+                        "[CK3-Bridge] SCOPE ARM SKIPPED: a deferred restore is "
+                        "still unresolved; not armed, no latch n=%llu\n", (unsigned long long)n);
+                fflush(bridge::g_logfile);
+            }
+            return false;
+        }
+    }
+    // NO engine lock (a +0x60 try-lock deadlocked the
+    // game). The owner tag is this thread's only while an arm is open here.
     g_fake_rng.tid     = static_cast<uint64_t>(pthread_self());
     g_fake_rng.counter = 0; g_fake_rng.counter2 = 0;
     g_fake_scope[0]    = &g_fake_rng;
@@ -136,7 +253,7 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
 
     // COUNT THE DISPLACEMENT, unconditionally. A non-zero `saved` means we are
     // displacing a LIVE engine scope, which is the precondition for the crash
-    // this bead exists for. Zero across a run makes that pathway impossible and
+    // this code exists for. Zero across a run makes that pathway impossible and
     // clears the bridge on evidence rather than on argument — so it must be
     // answerable from an untraced run.
     if (saved != 0) ++bridge::g_arm_displaced_live;
@@ -154,13 +271,15 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
     if (!bridge::slot_cas_acq_rel(slot, &saved, fake)) {
         ++bridge::g_arm_cas_failed;
         bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(slot));
+        if (t_arm_open == 0) g_fake_rng.tid = bridge::FAKE_SCOPE_IDLE_TAG;
         return false;              // NOT armed: the caller must not restore
     }
+    ++t_arm_open;                  // Published; the restore closes it
 
     // MEASUREMENT, after the publish so it records an arm that really
     // happened. The wedge check dereferences `saved` ONE level — the node's
     // first qword, which should point at the RNG object Y — and asks only
-    // whether that is mapped. In the d50 fault it was 0xa. This is the check
+    // whether that is mapped. In a recorded fault it was 0xa. This is the check
     // the header said no inspection of the pointer could make; it cannot
     // prove liveness, but it does catch a pointer into dead memory, which is
     // the state that actually killed the process.
@@ -171,7 +290,7 @@ bool arm_fake_random_scope(uint64_t* out_saved) {
             if (!is_mapped(static_cast<uintptr_t>(saved))) {
                 node_mapped = false;
             } else {
-                // Through safe_read. This read runs with the fake
+                // (G-raw): through safe_read. This read runs with the fake
                 // scope already PUBLISHED and no sigsetjmp of its own: a raw
                 // fault here jumped to the caller's or the drain's guard, past
                 // every restore, and left the bridge's scope in the engine's
@@ -196,6 +315,11 @@ void restore_fake_random_scope(uint64_t saved) {
     // Latched means we never armed, so there is nothing of ours in
     // the slot and no restore to make. A no-op, not a refusal — the refusal
     // already happened at the arm.
+    // Every exit below closes this thread's open arm and, at the
+    // outermost one, sets the fake's owner tag back to idle -- AFTER the CAS, so
+    // a fake that stays under an engine node (a deferral) or in the slot (a
+    // latch) comes back inert.
+    struct TagExit { ~TagExit() { fake_tag_after_restore_here(); } } tag_exit;
     if (bridge::scope_latched()) return;
 
     volatile uint64_t* slot = reinterpret_cast<volatile uint64_t*>(
@@ -214,10 +338,30 @@ void restore_fake_random_scope(uint64_t saved) {
     //
     // And note what this guard does NOT cover. It compares the SLOT,
     // so it sees only changes since our own arm; it cannot see that `saved`
-    // was already dead when we captured it. That is the deploy-50 wedge, and
+    // was already dead when we captured it. That is the slot wedge, and
     // it is why the latch below exists rather than a cleverer value here.
-    uint64_t expected = reinterpret_cast<uint64_t>(g_fake_scope);
-    const bool wrote = bridge::slot_cas_acq_rel(slot, &expected, saved);
+    //
+    // A changed slot is no longer refused at the first look. If an
+    // engine thread pushed over our fake inside the window (the main
+    // thread's per-frame console scope, 0x7ffe38fe6b58, whose predecessor was
+    // our fake), its pop puts our fake back within its section, and the CAS
+    // then succeeds. Refusing at once left our fake in the slot for good. Only a
+    // slot that does not come back to our fake within the bound is refused.
+    const uint64_t fake_u = reinterpret_cast<uint64_t>(g_fake_scope);
+    uint64_t expected = fake_u;
+    const auto v_once = bridge::restore_once(
+        [&](uint64_t* exp) { return bridge::slot_cas_acq_rel(slot, exp, saved); },
+        fake_u, saved, &expected);
+    const bool wrote = (v_once == bridge::RestoreVerdict::Write);
+    // What a pushed node over ours looks like: prev == our fake. A
+    // stale node (a wedged slot) has a prev that is not ours, or a node0 that is
+    // not the manager. Read only on a refusal, for the decision and the log.
+    uint64_t first_prev = 0, first_node0 = 0, first_owner = 0;
+    if (v_once == bridge::RestoreVerdict::SlotChanged) {
+        first_node0 = peek_u64(expected);
+        first_prev  = peek_u64(expected ? expected + bridge::RANDOM_SCOPE_NODE_PREV : 0);
+        first_owner = peek_u64(g_base_addr + RANDOM_SCOPE_MANAGER + bridge::RANDOM_SCOPE_OWNER_FIELD);
+    }
     // The restore RAN, whatever it decided. `arm_published - restore_ran` is
     // then exactly the number of arms whose restore never happened — the
     // eight sites that arm after their `sigsetjmp` cannot restore on the
@@ -231,12 +375,32 @@ void restore_fake_random_scope(uint64_t saved) {
             expected, reinterpret_cast<uint64_t>(g_fake_scope), saved);
         if (v == bridge::RestoreVerdict::NothingToDo) {
             ++bridge::g_restore_noop;
+        } else if (bridge::refusal_action(first_prev, fake_u,
+                       g_pending_restore.load(std::memory_order_acquire)) ==
+                   bridge::RefusalAction::Defer) {
+            // An engine node is over ours and its pop gives our
+            // fake back. Not a refusal yet: the anchor / the next arm retries.
+            g_pending_saved.store(saved, std::memory_order_relaxed);
+            g_pending_restore.store(true, std::memory_order_release);
+            const uint64_t n = bridge::g_restore_deferred.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 8 && bridge::g_logfile) {
+                fprintf(bridge::g_logfile,
+                        "[CK3-Bridge] SCOPE RESTORE DEFERRED: observed=0x%016llx "
+                        "node0=0x%016llx node_prev=0x%016llx(=fake) manager_owner=0x%016llx "
+                        "saved=0x%016llx n=%llu; retried at every anchor and the next arm "
+                        "(never latched for it; the fake's tag goes idle)\n",
+                        (unsigned long long)expected, (unsigned long long)first_node0,
+                        (unsigned long long)first_prev, (unsigned long long)first_owner,
+                        (unsigned long long)saved,
+                        (unsigned long long)n);
+                fflush(bridge::g_logfile);
+            }
         } else {
             ++bridge::g_restore_refused;
             // TRIP THE LATCH, and say so UNCONDITIONALLY — not behind
-            // g_trace. d50 ran with the trace off, so the one line that would
-            // have named the value in the slot was never written, and the
-            // whole diagnosis had to be rebuilt from a register dump. A latch
+            // g_trace. An episode run with the trace off otherwise never writes
+            // the one line that names the value in the slot, and the diagnosis
+            // must be rebuilt from a register dump. A latch
             // that ends an episode's verbs must explain itself in the log of
             // the run it ends.
             //
@@ -246,21 +410,26 @@ void restore_fake_random_scope(uint64_t saved) {
                 true, std::memory_order_relaxed);
             if (first && bridge::g_logfile) {
                 fprintf(bridge::g_logfile,
-                        "[CK3-Bridge] SCOPE LATCH TRIPPED (ck-zgh4): a restore was "
+                        "[CK3-Bridge] SCOPE LATCH TRIPPED: a restore was "
                         "refused, so the bridge stops using RandomScopeManager+0x20 "
                         "for the REST OF THIS PROCESS. verdict=%s observed=0x%016llx "
                         "saved=0x%016llx fake=0x%016llx slot=%p tid=%llu. The slot "
                         "held a value this process cannot reason about; putting "
                         "`saved` back would resurrect a pointer whose object may "
-                        "already be dead (the pid-174022 / deploy-50 crash). Actions "
+                        "already be dead (a crash seen in testing). Actions "
                         "that need the scope will now refuse; a clean run does NOT "
-                        "clear this.\n",
+                        "clear this. node0=0x%016llx node_prev=0x%016llx "
+                        "manager_owner=0x%016llx ("
+                        "node_prev is not our fake, so not an engine push over ours)\n",
                         bridge::restore_verdict_name(v),
                         (unsigned long long)expected,
                         (unsigned long long)saved,
                         (unsigned long long)reinterpret_cast<uint64_t>(g_fake_scope),
                         (void*)slot,
-                        (unsigned long long)pthread_self());
+                        (unsigned long long)pthread_self(),
+                        (unsigned long long)first_node0,
+                        (unsigned long long)first_prev,
+                        (unsigned long long)first_owner);
                 fflush(bridge::g_logfile);
             }
         }
@@ -280,6 +449,50 @@ void restore_fake_random_scope(uint64_t saved) {
     // and leaving it live would make the sweep "heal" it by writing the very
     // pointer we just refused.
     bridge::pulse_exit_addr(reinterpret_cast<uintptr_t>(slot));
+}
+
+// The war-creation path's arm while LATCHED. The latch
+// forbids capturing a `saved` (it may be dead), so this arms only from a NULL
+// slot: CAS 0 -> fake, nothing captured. The restore is CAS fake -> 0; a
+// refusal over our own fake defers like any other (the anchors retry it),
+// anything else is left alone (already latched; we never write a value we did
+// not see).
+static bool wcc_arm_latched_from_null() {
+    volatile uint64_t* slot = reinterpret_cast<volatile uint64_t*>(
+        g_base_addr + RANDOM_SCOPE_MANAGER + RANDOM_SCOPE_FIELD);
+    if (!is_mapped(reinterpret_cast<uintptr_t>(slot))) return false;
+    if (g_pending_restore.load(std::memory_order_acquire) && !resolve_pending_scope_restore())
+        return false;
+    g_fake_rng.tid     = static_cast<uint64_t>(pthread_self());
+    g_fake_rng.counter = 0; g_fake_rng.counter2 = 0;
+    g_fake_scope[0]    = &g_fake_rng;
+    uint64_t expected = 0;
+    if (!bridge::slot_cas_acq_rel(slot, &expected, reinterpret_cast<uint64_t>(g_fake_scope))) {
+        if (t_arm_open == 0) g_fake_rng.tid = bridge::FAKE_SCOPE_IDLE_TAG;
+        return false;
+    }
+    ++t_arm_open;
+    return true;
+}
+
+static void wcc_restore_latched_from_null() {
+    struct TagExit { ~TagExit() { fake_tag_after_restore_here(); } } tag_exit;
+    volatile uint64_t* slot = reinterpret_cast<volatile uint64_t*>(
+        g_base_addr + RANDOM_SCOPE_MANAGER + RANDOM_SCOPE_FIELD);
+    if (!is_mapped(reinterpret_cast<uintptr_t>(slot))) return;
+    const uint64_t fake = reinterpret_cast<uint64_t>(g_fake_scope);
+    uint64_t observed = 0;
+    const auto v = bridge::restore_once(
+        [&](uint64_t* exp) { return bridge::slot_cas_acq_rel(slot, exp, 0); },
+        fake, 0, &observed);
+    if (v != bridge::RestoreVerdict::SlotChanged) return;
+    const uint64_t prev = peek_u64(observed ? observed + bridge::RANDOM_SCOPE_NODE_PREV : 0);
+    if (bridge::refusal_action(prev, fake, g_pending_restore.load(std::memory_order_acquire)) ==
+        bridge::RefusalAction::Defer) {
+        g_pending_saved.store(0, std::memory_order_relaxed);
+        g_pending_restore.store(true, std::memory_order_release);
+        bridge::g_restore_deferred.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 // The in-flight intent tracker for crash recovery (g_inflight_intent_seq) and
@@ -450,7 +663,7 @@ bool execute_war_intent(Intent* intent) {
         g_base_addr + ck3::globals::AI_WAR_SUPPRESS);
     volatile uint8_t old_suppress = 0;
     volatile bool suppress_mapped = is_mapped(reinterpret_cast<uintptr_t>(war_suppress_ptr));
-    // R1c (design §2.9): THE pulse the design names. `volatile` for
+    // THE pulse the design names. `volatile` for
     // the same reason old_suppress is — it is written before the sigsetjmp below
     // and read in the recovery branch.
     //
@@ -568,7 +781,7 @@ bool execute_war_intent(Intent* intent) {
             }
         }
 
-        // Path B' override arming (/ re_path_b_prime_titles_array_20260610):
+        // Path B' override arming (re_path_b_prime_titles_array_20260610):
         // when the intent carries an explicit (target, cb_index, title_id), arm the
         // CB-selector override so the gated AI_CB_SELECTOR inside war_post_decl
         // returns our bridge-vouched (cb_ref, target_ref, titles) instead of
@@ -578,7 +791,7 @@ bool execute_war_intent(Intent* intent) {
         //
         // Triple resolution (all game-thread-available here):
         //   cb_ref     = *(CASUS_BELLI_DB.array + cb_index*8)   raw CCasusBelliType*
-        //   +0x08      = target CCharacter*  (gate vtable[2] probe only —)
+        //   +0x08      = target CCharacter*  (gate vtable[2] probe only)
         //   target_ref = target CCharacter*  (consumer reads +0x18 = defender id)
         //   titles     = {title_id} u32[1]   (live wars store plain u32 title IDs)
         // ov_title_buf lives on this stack frame; war_post_decl consumes the
@@ -636,12 +849,18 @@ bool execute_war_intent(Intent* intent) {
         // Step 3: Execute with force=1 — selects best CB, builds command, dispatches
         // force=1 bypasses pacing/probability but NOT eligibility, candidates, or CB selection.
         // Gate the AI_CB_SELECTOR observer hook to capture the S1 verdict of the
-        // selection performed inside war_post_decl (replaces replay).
+        // selection performed inside war_post_decl (it replaces the replay).
         IQLOG("  [STEP 3] calling war_post_decl(ai_ctrl=%p, rng_seed=%u, force=1) armed_override=%d @ 0x%lx\n",
               ai_ctrl, rng_seed, armed_override ? 1 : 0,
               (unsigned long)ck3::funcs::AI_WAR_POST_DECL);
         g_in_bridge_war_intent = true;
-        war_post_decl(ai_ctrl, static_cast<int>(rng_seed), 1);
+        {
+            // war_post_decl posts declare_war_interaction with flags 7 from inside the game
+            // image, as the AI's own routine war does; the marker tells the AI veto's `war` kind this post
+            // is the bridge's (recorded, never dropped)
+            bridge::OwnDispatchMark own_post;
+            war_post_decl(ai_ctrl, static_cast<int>(rng_seed), 1);
+        }
         g_in_bridge_war_intent = false;
         // Defensive: if the override was armed but the gated AI_CB_SELECTOR never
         // fired (e.g. war_post_decl bailed before the call), clear the one-shot
@@ -874,8 +1093,29 @@ bool execute_decision_intent(Intent* intent) {
     bool took_decision = false;
     std::string engine_message;
     try {
-        ai_try_decision(result_ptr, actor, decision);
+        {
+            // AI_TRY_DECISION_CORE posts CExecuteDecisionCommand with flags 7 from inside the
+            // game image, as the AI's own decision passes do; the marker tells the veto hook this
+            // post is the seat's (ai_veto.h decision_origin), so a decision veto never drops it.
+            bridge::OwnDispatchMark own_post;
+            ai_try_decision(result_ptr, actor, decision);
+        }
 
+#if defined(_WIN32)
+        // The MSVC string (as do_send_decision): size +0x10, capacity +0x18, inline
+        // while the capacity is 15 or less; the game's allocation, never freed through this CRT.
+        {
+            const size_t w_size = *reinterpret_cast<size_t*>(result_storage + 16);
+            const size_t w_cap = *reinterpret_cast<size_t*>(result_storage + 24);
+            if (w_size > 0 && w_size < 4096 && w_cap >= w_size) {
+                const char* w_data = w_cap <= 15 ? result_storage : *reinterpret_cast<const char**>(result_storage);
+                if (w_data && is_mapped_range(reinterpret_cast<uintptr_t>(w_data), w_size)) {
+                    engine_message.assign(w_data, w_size);
+                    took_decision = (engine_message.find("Took decision") != std::string::npos);
+                }
+            }
+        }
+#else
         // Engine-side std::string returned at result_storage. Layout matches
         // do_send_decision (action_handlers.cpp): size at +16, ptr/SSO at +0.
         size_t str_size = *reinterpret_cast<size_t*>(result_storage + 16);
@@ -895,6 +1135,7 @@ bool execute_decision_intent(Intent* intent) {
             char* heap_ptr = *reinterpret_cast<char**>(result_storage);
             if (heap_ptr) free(heap_ptr);
         }
+#endif
     } catch (...) {
         IQLOG("Decision intent: exception in AI_TRY_DECISION_CORE for '%s'\n", decision_name);
     }
@@ -951,7 +1192,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     extern thread_local bool g_in_protected_region;
 
     // Set if the scope latch makes us skip the CB-validity pre-check
-    // (progenitor ruling: skip the check, make the war). Declared at FUNCTION
+    // (the rule: skip the check, make the war). Declared at FUNCTION
     // scope because the reply that has to disclose it is built ~450 lines
     // below, in a different block from the gate that sets it.
     bool validity_skipped_latched = false;
@@ -1087,7 +1328,7 @@ bool execute_war_create_core_intent(Intent* intent) {
         }
 
         // Collect a sample of available CB names so a miss is self-diagnosing
-        // (A4: agents passed wrong names like 'de_jure_county_cb' — the engine
+        // (agents passed wrong names like 'de_jure_county_cb' — the engine
         // name is 'de_jure_cb'/'individual_county_de_jure_cb'). We can't list all
         // ~119, so capture CBs that match the requested prefix-ish substring, plus
         // a few common ones, into a short buffer.
@@ -1125,7 +1366,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     IQLOG("WAR_CREATE_CORE_DIRECT step=2 cb resolved: cb_type_ptr=0x%lx name='%s'\n",
           (unsigned long)cb_type_ptr, resolved_cb_name);
 
-    // 2b) #74 title-required pre-guard. Read the CB's TARGET_MODE (cb+0x738):
+    // 2b) Title-required pre-guard. Read the CB's TARGET_MODE (cb+0x738):
     //   0 = none (subjugation/vassalization/tributary — no title)
     //   6 = claim (title from claimant's claims)
     //   other (1/2/3/4/5/7) = title-targeted (conquest / de_jure / etc.)
@@ -1159,7 +1400,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     }
     IQLOG("WAR_CREATE_CORE_DIRECT step=2b target_mode=%d title_id=%d OK\n", cb_target_mode, title_id);
 
-    // 2c) Pre-creation claim validation (— claim_cb fix).
+    // 2c) Pre-creation claim validation (the claim_cb fix).
     //
     // ROOT CAUSE this guards: WAR_CREATE_CORE was called with ZERO claim/court
     // validation. The agent could press any title with any claimant; the engine
@@ -1181,7 +1422,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     // The effective claimant when none is given is the attacker (self-pressed
     // claim): the WCC arg default of 0xFFFFFFFF means "no claimant" to the
     // engine, so for a self-pressed claim_cb we both validate AND pass atk_id.
-    // #74: the pressed-claim + court-membership pre-checks below are CLAIM-CB
+    // The pressed-claim + court-membership pre-checks below are CLAIM-CB
     // specific (a conquest / de_jure / subjugation war needs NO pressed claim —
     // it derives legality from de-jure / group-trigger gates, validated by the
     // engine CB_VALIDITY_CHECK in step 2d). Scope the claim-validation block to
@@ -1282,7 +1523,7 @@ bool execute_war_create_core_intent(Intent* intent) {
             g_in_protected_region = false; watchdog_disarm();
         }
 
-        // The claimant's own unpressed claim is his to press
+        // Per claim_rule.h: the claimant's own unpressed claim is his to press
         if (!claim_rule::claim_usable(has_claim, pressed_claim, eff_claimant == atk_id))
             return reject("claim_not_pressed");
         // Court membership: pass if claimant is the attacker, or the claimant's
@@ -1292,7 +1533,7 @@ bool execute_war_create_core_intent(Intent* intent) {
 
         IQLOG("WAR_CREATE_CORE_DIRECT step=2c claim OK: pressed=1 liege=%u==atk\n", claimant_liege_id);
 
-        // 2c.1) Independent-target pre-check (a.1).
+        // 2c.1) Independent-target pre-check.
         //
         // ROOT CAUSE this guards: WAR_CREATE_CORE never validated that the
         // DEFENDER is a legal claim_cb target. claim_cb (offensive title CB)
@@ -1326,7 +1567,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                     return reject(reason_buf);
                 }
                 try {
-                    // FIX: use the AUTHORITATIVE get_liege_id_from_addr (the same read
+                    // Use the AUTHORITATIVE get_liege_id_from_addr (the same read
                     // query_character uses) instead of the raw title_realm+0x448 LIEGE_PTR.
                     // For an INDEPENDENT ruler the 0x448 pointer is non-null but points to a
                     // sentinel whose char-id reads 0xFFFFFFFF, so get_liege_id_from_addr returns
@@ -1353,7 +1594,7 @@ bool execute_war_create_core_intent(Intent* intent) {
             IQLOG("WAR_CREATE_CORE_DIRECT step=2c.1 target_independent OK: def=%u has no liege\n", def_id);
         }
 
-        // 2c.2) Alliance / truce pre-check (a.2).
+        // 2c.2) Alliance / truce pre-check.
         //
         // ROOT CAUSE this guards: the engine culls a war against an allied or
         // truced target (in_alliance / in_truce). Reuse the validated bilateral
@@ -1369,13 +1610,13 @@ bool execute_war_create_core_intent(Intent* intent) {
         // failure (helpers unmapped / list unmapped / crash) we fail OPEN — let
         // the WCC call proceed — exactly as the CB-query path degrades.
         {
-            // #119 FIX: alliance is checked via the AUTHORITATIVE relation array
+            // Alliance is checked via the AUTHORITATIVE relation array
             // (core_data+0x20 → CDiplomaticRelation; allied == REASON_COUNT@+0x94 != 0
             // && BROKEN_FLAG@+0x189 == 0), mirroring engine IsAlliedTo. The previous
             // MAYBE_GET_ALLIANCE_LIST (+0x578) search matched the attacker's WAR
             // PARTICIPANTS, FALSE-rejecting legal wars on non-allied neighbors (the
-            // exact #119 symptom that boxed the Britannia agent in). TRUCE keeps the
-            // GET_TRUCE_LIST search — that list (+0x6A0) is the genuine truce list.
+            // exact symptom that boxed the Britannia agent in). TRUCE: the
+            // attacker's slot in the same relation (truce_slot_active), not GET_TRUCE_LIST.
             auto get_truce_list = reinterpret_cast<uintptr_t(*)(void*)>(
                 bridge::game_fn(ck3::funcs::GET_TRUCE_LIST));
             auto simd_find = reinterpret_cast<uintptr_t(*)(uintptr_t, uintptr_t, void*)>(
@@ -1397,7 +1638,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                     IQLOG("WAR_CREATE_CORE_DIRECT step=2c.2 alliance/truce probe crashed (sig=%d) — failing open\n", sig);
                 } else {
                     try {
-                        // --- Alliance: authoritative relation-array walk (#119) ---
+                        // --- Alliance: authoritative relation-array walk ---
                         uintptr_t atk_core = safe_read<uintptr_t>(
                             reinterpret_cast<uintptr_t>(attacker) + ck3::character::REALM_DATA);
                         if (atk_core && is_mapped(atk_core)) {
@@ -1419,16 +1660,9 @@ bool execute_war_create_core_intent(Intent* intent) {
                                 }
                             }
                         }
-                        uintptr_t tlist = get_truce_list(attacker);
-                        if (tlist && is_mapped(tlist)) {
-                            uintptr_t t_begin = safe_read<uintptr_t>(tlist + 0);
-                            int32_t   t_count = safe_read<int32_t>(tlist + pdx_array::COUNT);
-                            if (t_begin && is_mapped(t_begin) && t_count > 0 && t_count < 1000) {
-                                uintptr_t t_end = t_begin + (size_t)t_count * 8;
-                                uintptr_t hit = simd_find(t_begin, t_end, defender);
-                                in_truce = (hit != 0 && hit != t_end) ? 1 : 0;
-                            }
-                        }
+                        // The attacker's truce slot in the pair's relation (the has_truce
+                        // rule); the GetTruceList search this replaced missed a truce the game held.
+                        in_truce = truce_slot_active(attacker, def_id) ? 1 : 0;
                     } catch (...) {
                         IQLOG("WAR_CREATE_CORE_DIRECT step=2c.2 alliance/truce probe threw — failing open\n");
                     }
@@ -1451,8 +1685,8 @@ bool execute_war_create_core_intent(Intent* intent) {
         }
     }
 
-    // 2d) AUTHORITATIVE engine CB-validity gate (— safe re-do of the
-    // revert). The cheap 2c / 2c.1 / 2c.2 pre-checks above stay as a fast-path
+    // 2d) AUTHORITATIVE engine CB-validity gate (a safe re-do of a reverted
+    // attempt). The cheap 2c / 2c.1 / 2c.2 pre-checks above stay as a fast-path
     // for the obvious cases; this is the comprehensive backstop that runs the
     // engine's full CB_VALIDITY_CHECK (Gates 0-6, incl. Gate 2's
     // allowed_for_character — holy-war faith-hostility + per-CB innovation/era
@@ -1467,8 +1701,8 @@ bool execute_war_create_core_intent(Intent* intent) {
     // stack entries mirrors ai_eval_hook.cpp:3500-3512 exactly so the engine's
     // append path never reallocs. No new offset is introduced.
     //
-    // WHY THIS IS SAFE WHERE WAS NOT — three layers:
-    //   1. arm_fake_random_scope: THE fix lacked. The CB_QUERY loop runs on
+    // WHY THIS IS SAFE WHERE A NAIVE FIX WAS NOT — three layers:
+    //   1. arm_fake_random_scope(): what a naive fix lacked. The CB_QUERY loop runs on
     //      the IPC service thread; here we are on the GAME THREAD in on_tick where
     //      RandomScopeManager+0x20 is null, so Gate-2's allowed_for_character
     //      trigger would advance RNG into a null scope and spin forever. We arm
@@ -1490,7 +1724,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     // intentionally NOT gated here to avoid over-rejection. When unsure we stay
     // narrow — same posture as 2c.1.
     {
-        // #74 DIRECTIONAL-CONQUEST ENABLER: extend the engine CB-validity gate to
+        // DIRECTIONAL-CONQUEST ENABLER: extend the engine CB-validity gate to
         // cover the directional CBs an agent uses to AIM the steered war at a
         // SPECIFIC neighbor — subjugation, conquest, invasion, vassalization,
         // tributary — in addition to claim_cb / de_jure*. This is the LEGITIMACY
@@ -1544,11 +1778,11 @@ bool execute_war_create_core_intent(Intent* intent) {
                 // Fail open: validity fn unmapped → proceed to create the war.
                 IQLOG("WAR_CREATE_CORE_DIRECT step=2d CB_VALIDITY_CHECK unmapped — failing open\n");
             } else if (bridge::scope_latched()) {
-                // PROGENITOR RULING 2026-10-06 ("Skip the check, make
-                // the war"): this is the ONE latched site that does not refuse.
+                // THE RULE (skip the check, make
+                // the war): this is the ONE latched site that does not refuse.
                 // The check it guards is an OPTIONAL pre-check whose own
                 // fallback, three lines above, is already to fail open — and
-                // declaring war is central to play, so the ruling was to keep
+                // declaring war is central to play, so the rule is to keep
                 // the verb and lose the check rather than the reverse. The
                 // stated risk, accepted: a war with no valid reason could get
                 // through, and how the engine handles that is untested.
@@ -1562,7 +1796,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                     1, std::memory_order_relaxed);
                 validity_skipped_latched = true;
                 IQLOG("WAR_CREATE_CORE_DIRECT step=2d SKIPPED: scope latched — "
-                      "failing open per ruling (war proceeds, validity unchecked)\n");
+                      "failing open by design (war proceeds, validity unchecked)\n");
             } else {
                 // Arm the per-thread fake RNG scope (THE fix). Restored on
                 // every exit path below, success or fault.
@@ -1787,9 +2021,14 @@ bool execute_war_create_core_intent(Intent* intent) {
     }
     IQLOG("WAR_CREATE_CORE_DIRECT step=6 lock_acquire done\n");
 
-    // 7) Call WAR_CREATE_CORE.
-    IQLOG("WAR_CREATE_CORE_DIRECT step=7 calling WAR_CREATE_CORE: gs=0x%lx atk=%u def=%u claimant=%u cb=0x%lx\n",
-          (unsigned long)game_state, atk_id, def_id, claimant, (unsigned long)cb_type_ptr);
+    // 7) Call WAR_CREATE_CORE. It resolves the attacker and the defender by slot and compares
+    // the WHOLE stored id with the one given (engine_id.h), so each goes in as the whole id read
+    // off the character, not its low 24 bits; the claimant, a character handle the CB keeps, too.
+    const uint32_t atk_full = char_get_id(attacker);
+    const uint32_t def_full = char_get_id(defender);
+    const uint32_t claimant_full = engine_char_id(claimant);
+    IQLOG("WAR_CREATE_CORE_DIRECT step=7 calling WAR_CREATE_CORE: gs=0x%lx atk=0x%x def=0x%x claimant=0x%x cb=0x%lx\n",
+          (unsigned long)game_state, atk_full, def_full, claimant_full, (unsigned long)cb_type_ptr);
     using WarCreateFn = uintptr_t (*)(uintptr_t game_state,
                                        uint32_t atk, uint32_t def,
                                        uint32_t claimant,
@@ -1808,20 +2047,41 @@ bool execute_war_create_core_intent(Intent* intent) {
     // (FUN_07748f10) sees a null scope and null-derefs in FUN_0774a4b0 AFTER the
     // war is allocated, unwinding it. We bind the fake RNG to this thread and
     // point the RandomScopeManager (+0x20) at it, then restore after.
-    volatile uint64_t* rng_scope_slot = reinterpret_cast<volatile uint64_t*>(
-        g_base_addr + RANDOM_SCOPE_MANAGER + RANDOM_SCOPE_FIELD);
-    volatile uint64_t saved_rng_scope = 0;
-    volatile bool rng_scope_set = false;
-    if (is_mapped(reinterpret_cast<uintptr_t>(rng_scope_slot))) {
-        g_fake_rng.tid     = static_cast<uint64_t>(pthread_self());
-        g_fake_rng.counter = 0; g_fake_rng.counter2 = 0;
-        g_fake_scope[0]    = &g_fake_rng;
-        saved_rng_scope    = *rng_scope_slot;
-        *rng_scope_slot    = reinterpret_cast<uint64_t>(g_fake_scope);
-        rng_scope_set      = true;
-        IQLOG("WAR_CREATE_CORE_DIRECT step=7 random-scope armed: slot=%p saved=0x%lx fake=%p\n",
-              (void*)rng_scope_slot, (unsigned long)saved_rng_scope, (void*)g_fake_scope);
+    //
+    // A PLAIN load and store here would be blind to the
+    // compare-exchange discipline and the latch (an ABA shape), so it goes
+    // through the same arm/restore as every other site. The
+    // rule that a latched war still proceeds is kept where it is safe: when
+    // latched, the arm is made only from a NULL slot (wcc_arm_latched_from_null,
+    // CAS 0 -> fake), which captures nothing, so its restore (CAS fake -> 0) can
+    // never resurrect a dead node -- the latch's one danger. A latched slot that
+    // is NOT null refuses (rng_scope_latched): proceeding would mean either the
+    // write the latch forbids, or WCC without a scope, whose null deref is
+    // caught by the SIGSEGV guard below as a jump out of engine code
+    // (a jump can leave an engine lock held). A transient failure to arm
+    // (a deferred restore unresolved, a lost CAS) refuses busy_deferred.
+    uint64_t saved_rng_local = 0;
+    bool rng_null_only = false;
+    // Latched: never call arm_fake_random_scope (its arm_called_while_latched
+    // count is the "unguarded site" audit; this site IS guarded).
+    const bool latched_now = bridge::scope_latched();
+    bool rng_armed_now = latched_now ? false : arm_fake_random_scope(&saved_rng_local);
+    if (latched_now) {
+        rng_armed_now = wcc_arm_latched_from_null();
+        rng_null_only = rng_armed_now;
+        if (!rng_armed_now) {
+            IQLOG("WAR_CREATE_CORE_DIRECT step=7 REFUSED: scope latched and the slot is not null\n");
+            return reject(bridge::scope_latched_reason());
+        }
+    } else if (!rng_armed_now) {
+        IQLOG("WAR_CREATE_CORE_DIRECT step=7 REFUSED: random scope not armed (transient)\n");
+        return reject("busy_deferred");
     }
+    volatile uint64_t saved_rng_scope = saved_rng_local;
+    volatile bool rng_scope_set = rng_armed_now;
+    volatile bool rng_scope_null_only = rng_null_only;
+    IQLOG("WAR_CREATE_CORE_DIRECT step=7 random-scope armed (CAS): saved=0x%lx null_only=%d fake=%p\n",
+          (unsigned long)saved_rng_scope, rng_null_only ? 1 : 0, (void*)g_fake_scope);
 
     // Tighten watchdog from 8s → 4s so the engine call surfaces
     // its result within the IPC handler's 5s poll window (do_call_war_create_core
@@ -1843,9 +2103,9 @@ bool execute_war_create_core_intent(Intent* intent) {
             // engine call returns. A wedge between this line and step=7 returned
             // means the engine call itself is the wedge point, and the watchdog
             // must convert it into a timeout reject within 4s.
-            IQLOG("WAR_CREATE_CORE_DIRECT step=7 PRE_WCC_CALL: fn=0x%lx gs=0x%lx atk=%u def=%u clmt=%u cb=0x%lx params=%p date=0x%lx opt_titles=%p\n",
+            IQLOG("WAR_CREATE_CORE_DIRECT step=7 PRE_WCC_CALL: fn=0x%lx gs=0x%lx atk=0x%x def=0x%x clmt=0x%x cb=0x%lx params=%p date=0x%lx opt_titles=%p\n",
                   (unsigned long)(bridge::game_fn(ck3::funcs::WAR_CREATE_CORE)),
-                  (unsigned long)game_state, atk_id, def_id, claimant,
+                  (unsigned long)game_state, atk_full, def_full, claimant_full,
                   (unsigned long)cb_type_ptr,
                   (void*)cb_params_buf,
                   (unsigned long)current_date_ptr,
@@ -1857,7 +2117,7 @@ bool execute_war_create_core_intent(Intent* intent) {
                 // that param_8 provides — passing NULL here loses the title and
                 // the engine culls the war.
                 returned_war = war_create_core(
-                    game_state, atk_id, def_id, claimant,
+                    game_state, atk_full, def_full, claimant_full,
                     cb_type_ptr, cb_params_buf,
                     current_date_ptr, opt_titles_arg);
             } catch (...) {
@@ -1894,8 +2154,9 @@ bool execute_war_create_core_intent(Intent* intent) {
     }
 
     // Restore the RandomScopeManager scope pointer (both success + crash paths).
-    if (rng_scope_set && is_mapped(reinterpret_cast<uintptr_t>(rng_scope_slot))) {
-        *rng_scope_slot = saved_rng_scope;
+    if (rng_scope_set) {
+        if (rng_scope_null_only) wcc_restore_latched_from_null();
+        else                     restore_fake_random_scope(saved_rng_scope);
     }
     IQLOG("WAR_CREATE_CORE_DIRECT step=7 returned: crashed=%d war_ptr=0x%lx\n",
           crashed ? 1 : 0, (unsigned long)returned_war);
@@ -1968,7 +2229,7 @@ bool execute_war_create_core_intent(Intent* intent) {
     {
         // When the latch made us skip the CB-validity pre-check, the
         // reply SAYS SO. A war the seat cannot tell apart from a validated one
-        // is the outcome the ruling's accepted risk would otherwise hide.
+        // is the outcome the rule's accepted risk would otherwise hide.
         char buf[512];
         snprintf(buf, sizeof(buf),
                  "{\"war_created\":%s,\"war_id\":%u,\"is_null_sentinel\":%s,"
@@ -1994,7 +2255,7 @@ bool execute_war_create_core_intent(Intent* intent) {
 }
 
 // =============================================================================
-// SCHEME start — execute_scheme_intent (#132, re/findings/re_schemes.md)
+// SCHEME start — execute_scheme_intent (re/findings/re_schemes.md)
 //
 // Two native calls. First CanStartScheme (scheme_engine.cpp), the engine's answer
 // to "may OWNER start TYPE on TARGET": the type's `allow` and `valid` script
@@ -2023,7 +2284,7 @@ bool execute_war_create_core_intent(Intent* intent) {
 // Confirm the owner now OWNS a scheme of `type_ptr` targeting `target_id` — same
 // owned-scheme walk as do_query_schemes (core_data+0x98 ref list → SCHEME_REFDB).
 // Returns the matching scheme's packed id (or 0). Fault-tolerant via safe_read*.
-// want_id != 0: match only the scheme with that id (lane-scheme: the readback
+// want_id != 0: match only the scheme with that id (the readback
 // must confirm the scheme the call RETURNED, not any scheme of the same shape).
 static uint32_t confirm_owned_scheme(void* owner, uintptr_t type_ptr,
                                      uint32_t target_id, uint32_t want_id) {
@@ -2130,7 +2391,7 @@ bool execute_scheme_cancel_intent(Intent* intent) {
         bridge::game_fn(ck3::funcs::REMOVE_ACTIVE_SCHEME));
 
     uint64_t saved_rng = 0;
-    // scope latch: a restore was refused earlier in this process,
+    // Scope latch: a restore was refused earlier in this process,
     // so the slot cannot be reasoned about. REFUSE rather than proceed
     // unarmed — proceeding is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -2227,7 +2488,7 @@ bool execute_scheme_intent(Intent* intent) {
     // before CanStartScheme is asked about a character target it does not take.
     if (const char* why = scheme_target_refusal(type_ptr)) return reject(why);
 
-    // The game's own question first (l3-schemes): CanStartScheme runs the scheme
+    // The game's own question first: CanStartScheme runs the scheme
     // type's `allow` and `valid` triggers, an existing scheme and the cooldown, none
     // of which CreateActiveScheme checks. A refusal carries the engine's reasons:
     // the trigger that failed, its block and where the script wrote it.
@@ -2252,8 +2513,8 @@ bool execute_scheme_intent(Intent* intent) {
     // and artifact (re/findings/re_scheme_start_args.md). A bridge-started scheme
     // has neither, so we pass exactly what the engine's start_scheme effect passes
     // when those scopes are absent: the two DB null objects, read live. This
-    // REPLACES replaying a pointer captured from some earlier AI start (lane-scheme
-    // 2026-10-18): that pointer was a real CTaskContract/CArtifact whenever the
+    // REPLACES replaying a pointer captured from some earlier AI start
+    // (2026-10-18): that pointer was a real CTaskContract/CArtifact whenever the
     // observed start carried one -- an object that can be destroyed, and someone
     // else's -- and requiring a capture refused every scheme type the AI had not
     // happened to start since the bridge loaded (no_arg_template_captured).
@@ -2290,7 +2551,7 @@ bool execute_scheme_intent(Intent* intent) {
         bridge::game_fn(ck3::funcs::CREATE_ACTIVE_SCHEME));
 
     uint64_t saved_rng = 0;
-    // scope latch: a restore was refused earlier in this process,
+    // Scope latch: a restore was refused earlier in this process,
     // so the slot cannot be reasoned about. REFUSE rather than proceed
     // unarmed — proceeding is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -2327,7 +2588,7 @@ bool execute_scheme_intent(Intent* intent) {
     watchdog_disarm();
     if (rng_armed) restore_fake_random_scope(saved_rng);
 
-    // ENGINE REFUSAL. lane-scheme 2026-10-18, measured live: SCHEME_NULL
+    // ENGINE REFUSAL. 2026-10-18, measured live: SCHEME_NULL
     // (base + 0x0bf1cb20) is the SLOT that holds the null-scheme object's
     // pointer (the Jomini DB/null pair: SCHEME_REFDB at N, null at N+8), and
     // CreateActiveScheme returns the VALUE in it -- `return _DAT_0c01cb20;`, and
@@ -2384,7 +2645,7 @@ bool execute_scheme_intent(Intent* intent) {
 }
 
 // =============================================================================
-// #131 — de-jure-control integrity gate for create_title (INTEGRITY FIX)
+// De-jure-control integrity gate for create_title
 // =============================================================================
 // The engine's own vt[7] CanExecute gate (FUN_067cacf0 -> FUN_0621a500 ->
 // FUN_06218550) faithfully runs CK3's scripted `can_create` trigger. For the
@@ -2402,7 +2663,7 @@ bool execute_scheme_intent(Intent* intent) {
 // "bypass" flag is 0 in our observer game, and the player-list bypass list is
 // empty — both verified live.)
 //
-// FIX (policy gate, stricter-than-vanilla BY DESIGN): for KINGDOM/EMPIRE-tier
+// For KINGDOM/EMPIRE-tier
 // (tier >= 4) creates, after the engine gate PASSES, independently compute the
 // realm-inclusive de-jure-control fraction (de-jure counties whose holder's
 // top-liege chain reaches the acting ruler) and REFUSE below a real majority
@@ -2412,7 +2673,7 @@ bool execute_scheme_intent(Intent* intent) {
 // Recursively collect tier-2 (county) de-jure descendants of `title_id`.
 // SHARED helper (external linkage): also used by do_query_dejure_progress in
 // query_handlers.cpp so the read-only de-jure meter reuses the exact same
-// SUB_TITLE_ARRAY(0x258)/SUB_TITLE_COUNT(0x264) walk the #131 create_title gate
+// SUB_TITLE_ARRAY(0x258)/SUB_TITLE_COUNT(0x264) walk the create_title gate
 // uses — no offset duplication. Pure safe_read; depth/size capped; cycle-guarded
 // via `seen`. Declared in action_dispatch_internal.h.
 void collect_dejure_counties(uint32_t title_id, std::vector<uint32_t>& out,
@@ -2456,7 +2717,7 @@ bool char_in_realm_of(uint32_t cid, uint32_t ruler) {
 
 // THE de-jure share: the counties under `title_id` (de jure) and
 // how many of them a character in `ruler`'s realm holds (char_in_realm_of).
-// The #131 create_title gate (dejure_control_fraction) and the meter
+// The create_title de-jure gate (dejure_control_fraction) and the meter
 // (do_query_dejure_progress) both count through it; `rows`, when given, gets
 // one entry per county for the meter's verbose list.
 DejureShare dejure_share(uint32_t title_id, uint32_t ruler, std::vector<DejureCounty>* rows) {
@@ -2481,8 +2742,10 @@ DejureShare dejure_share(uint32_t title_id, uint32_t ruler, std::vector<DejureCo
 
 namespace {
 
-constexpr int    CREATE_TITLE_DEJURE_MIN_TIER   = 4;     // kingdom & empire
-constexpr double CREATE_TITLE_DEJURE_MIN_FRAC   = 0.51;  // realm must hold a majority
+// The de-jure gate's share is the game's own rule by tier (dejure_bar.h: a kingdom at
+// least half, an empire more than 80%; a tier with no game text 51%). It was 51% from a kingdom
+// up. Built and ctest-run; not proven live.
+using bridge::dejure_bar::CREATE_TITLE_DEJURE_MIN_TIER;
 
 // title tier via *(title + TITLE_TYPE_PTR) + TITLE_TYPE_TIER (2=county..5=empire)
 static int title_tier(uintptr_t title_obj) {
@@ -2507,13 +2770,13 @@ static double dejure_control_fraction(uint32_t title_id, uint32_t ruler,
 } // anonymous namespace
 
 // =============================================================================
-// The price of a title (re/findings/re_create_title_action.md "")
+// — the price of a title (re/findings/re_create_title_action.md)
 // =============================================================================
 // CanCreateTitle (FUN_0621a500) and CreateTitle_Apply (FUN_0621b800) choose the
 // currency the same way and price it with the same functions; this asks those
 // functions, never a table typed here. The gate compares have >= cost; the apply
 // charges the cost (Halfdan's d_lancaster: 214.86 -> -30.48; Murchad's k_ireland:
-// 17.85 -> -302.21, both through the earlier bridge, which read the gate's bool
+// 17.85 -> -302.21, both through the superseded bridge, which read the gate's bool
 // refusal as a pass — engine_bool.h).
 CreateTitlePrice create_title_price(void* ruler, uintptr_t title_obj) {
     CreateTitlePrice p;
@@ -2569,19 +2832,19 @@ void fill_create_title_cmd(uint8_t* cmd, uint32_t ruler_handle, uint32_t title_i
 }
 
 // =============================================================================
-// #111 — execute_create_title_intent (re/findings/re_create_title_action.md)
+// execute_create_title_intent (re/findings/re_create_title_action.md)
 // =============================================================================
 // LEGITIMATE de-jure create-title for a CHOSEN AI ruler. Builds a
 // CCreateTitleCommand (the command the "Create Title" UI button builds), asks its
 // IsValid (the engine's CanCreateTitle: de-jure control, not extant, the price) and
-// the price (create_title_price), applies the #131 de-jure-majority bar for
+// the price (create_title_price), applies the de-jure-majority bar for
 // kingdoms and empires, and only then runs the command's Execute synchronously
-// under a PLAYER_CHAR_ID swap (#115: the deferred player-command queue is never
+// under a PLAYER_CHAR_ID swap (the deferred player-command queue is never
 // drained in observer mode). Execute applies the cost and creates the title.
 //
-// Until this lane IsValid's bool was read as a
-// 64-bit integer, so a refused create passed (engine_bool.h) and rulers minted titles
-// they could not pay for. A ruler short of the price is now refused
+// IsValid's bool is read as a bool (engine_bool.h): read as a
+// 64-bit integer, a refused create passes and rulers mint titles
+// they cannot pay for. A ruler short of the price is refused
 // "create_title_cannot_afford", the price in console_output.
 //
 // Crash-safety: armed fake-RNG scope (the cost eval may advance the RNG → same
@@ -2648,7 +2911,7 @@ bool execute_create_title_intent(Intent* intent) {
     bool eligible = true;
 
     uint64_t saved_rng = 0;
-    // scope latch: a restore was refused earlier in this process,
+    // Scope latch: a restore was refused earlier in this process,
     // so the slot cannot be reasoned about. REFUSE rather than proceed
     // unarmed — proceeding is what ignoring the arm's false would do.
     if (bridge::scope_latched()) {
@@ -2675,7 +2938,7 @@ bool execute_create_title_intent(Intent* intent) {
         fill_create_title_cmd(cmd, ruler_handle, title_id);
 
         // ── SAFETY PRE-GATE: IsValid(cmd, NULL), as the UI handler FUN_04de1ac0 calls it ──
-        // A C++ bool: AL only (engine_bool.h). Until the whole of RAX was
+        // A C++ bool: AL only (engine_bool.h). At first the whole of RAX was
         // tested here, and the garbage above AL turned every refusal that reached the
         // end of CanCreateTitle (gold, de-jure, piety level) into a pass.
         auto is_valid = reinterpret_cast<bridge::EngineBoolFn<void*, void*>>(
@@ -2684,7 +2947,7 @@ bool execute_create_title_intent(Intent* intent) {
         // The price, from the engine's own cost functions. A ruler short of it is
         // refused with the price whatever IsValid said (the gate skips its cost leg
         // for one duchy case; the apply charges it always). An unknown price leaves
-        // the verdict to IsValid, which now reads right.
+        // the verdict to IsValid, which reads it right.
         const CreateTitlePrice price = create_title_price(actor, title_obj);
         const bool short_of = price.known && price.have < price.cost;
         if (price.known) {
@@ -2711,7 +2974,7 @@ bool execute_create_title_intent(Intent* intent) {
             return false;
         }
 
-        // ── #131 INTEGRITY GATE: stricter-than-vanilla de-jure control ───────────
+        // ── INTEGRITY GATE: stricter-than-vanilla de-jure control ───────────
         // The engine gate above can PASS a kingdom/empire with ZERO de-jure control
         // (vanilla power-projection formation falls through to `always = yes` under
         // the default game rule). For tier >= 4 we additionally require the ruler's
@@ -2719,7 +2982,7 @@ bool execute_create_title_intent(Intent* intent) {
         // territorial claim — and refuse otherwise. Bounded reads; runs inside the
         // sigsetjmp-protected region so a stray fault unwinds cleanly.
         //
-        // #131 FIX (2026-06-25): the original `total == 0 → refuse` arm hard-blocked
+        // A `total == 0 → refuse` arm would hard-block
         // titular kingdoms with a CONFUSING `..._0_of_0_counties` territorial string.
         // The 2026-06-25 follow-up over-corrected it to a DEFER (refuse=false), which
         // opened a legitimacy HOLE: a titular tier>=4 title (e.g. k_danelaw, id 13) has
@@ -2731,7 +2994,7 @@ bool execute_create_title_intent(Intent* intent) {
         // negotiate_the_danelaw_decision → british_isles.1011, which re-parents every
         // k_england de-jure duchy, adds the succession law, and destroys k_england).
         //
-        // #131 TITULAR-HOLE FIX (2026-06-28, re_create_title_titular_hole.md, option iii):
+        // TITULAR HOLE (re_create_title_titular_hole.md, option iii):
         // REFUSE every titular (0-de-jure) tier>=4 create_title with a TYPED verdict that
         // names the decision route. A titular title has 0 de-jure land → 0 control is the
         // FLOOR of "insufficient control", not an exemption from it. This still refuses
@@ -2748,7 +3011,9 @@ bool execute_create_title_intent(Intent* intent) {
                 int held = 0, total = 0;
                 double frac = dejure_control_fraction(title_id, ruler_handle, &held, &total);
                 bool titular = (total == 0);
-                bool refuse = titular || (frac < CREATE_TITLE_DEJURE_MIN_FRAC);
+                (void)frac;
+                const bool share_short = bridge::dejure_bar::short_of(tgt_tier, held, total);
+                bool refuse = titular || share_short;
                 if (refuse) {
                     eligible = false;
                     base_dtor(cmd);
@@ -2768,12 +3033,12 @@ bool execute_create_title_intent(Intent* intent) {
                         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                                  "create_title_refused_titular_use_decision");
                     } else {
-                        IQLOG("create_title: REFUSED by #131 de-jure gate — tier=%d held=%d/%d "
+                        IQLOG("create_title: REFUSED by the de-jure-majority gate — tier=%d held=%d/%d "
                               "(%.1f%%) < required %.0f%% (engine gate passed but ruler lacks "
                               "territorial de-jure control)\n",
                               tgt_tier, held, total,
                               100.0 * (double)held / (double)total,
-                              100.0 * CREATE_TITLE_DEJURE_MIN_FRAC);
+                              bridge::dejure_bar::required_pct(tgt_tier));
                         snprintf(intent->rejection_reason, sizeof(intent->rejection_reason),
                                  "create_title_refused_insufficient_de_jure_control_%d_of_%d_counties",
                                  held, total);
@@ -2782,18 +3047,18 @@ bool execute_create_title_intent(Intent* intent) {
                     return false;
                 }
                 if (total > 0) {
-                    IQLOG("create_title: #131 de-jure gate PASS — tier=%d held=%d/%d (%.1f%%) "
+                    IQLOG("create_title: de-jure-majority gate PASS — tier=%d held=%d/%d (%.1f%%) "
                           ">= required %.0f%%\n", tgt_tier, held, total,
                           100.0 * (double)held / (double)total,
-                          100.0 * CREATE_TITLE_DEJURE_MIN_FRAC);
+                          bridge::dejure_bar::required_pct(tgt_tier));
                 }
             }
         }
 
-        // ── #115 ROOT-CAUSE FIX (2026-06-22): SYNCHRONOUS gated Execute ───────────
-        // The #111 build dispatched via GAME_COMMAND_DISPATCH (the deferred PLAYER-
-        // command queue) — first with mode 0xe, then (this session) mode 7. BOTH
-        // silently no-op'd: the gate passed, "executed=1", but the title never
+        // ── SYNCHRONOUS gated Execute ───────────
+        // Not GAME_COMMAND_DISPATCH (the deferred PLAYER-
+        // command queue): with mode 0xe and with mode 7 it
+        // silently no-ops: the gate passed, "executed=1", but the title never
         // minted AND no gold/prestige was deducted, i.e. the command's Execute NEVER
         // RAN. Root cause: the game runs in OBSERVER mode (PLAYER_CHAR_ID =
         // 0xFFFFFFFF), and the player-command queue is only drained/applied for the
@@ -2801,7 +3066,7 @@ bool execute_create_title_intent(Intent* intent) {
         // are never executed. (A transient swap around DISPATCH cannot help: the
         // drain happens on a later tick, outside our window.)
         //
-        // FIX: after the vt[7] CanExecute gate PASSES, run the command's Execute
+        // After the vt[7] CanExecute gate PASSES, run the command's Execute
         // (vt-resolved CREATE_TITLE_CMD_EXECUTE = FUN_067cabf0) SYNCHRONOUSLY right
         // here — exactly what the engine's drain would do — under a PLAYER_CHAR_ID
         // swap to the acting ruler. Execute resolves ruler@+0x20 + title@+0x24 and
@@ -2810,7 +3075,7 @@ bool execute_create_title_intent(Intent* intent) {
         // ineligible ruler is
         // refused by the gate above before Execute is ever reached. The swap is
         // restored immediately after the call (and on every fault/exception path).
-        // R1c (§2.9): PLAYER_CHAR_ID is the most consequential pulsed
+        // PLAYER_CHAR_ID is the most consequential pulsed
         // global in the bridge — leaking the swap turns an OBSERVER world into a
         // PLAYER game for the rest of the process. Every local path here already
         // restores; the ledger covers the one path none of them can, a siglongjmp

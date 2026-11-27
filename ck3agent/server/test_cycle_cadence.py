@@ -1,4 +1,4 @@
-"""v3 §7.2 / §7.1: the seat's cycle is measured in GAME-DAYS.
+"""The seat's cycle is measured in GAME-DAYS.
 
 `session(action="wait", game_days=N)` loops bounded waits until the date has
 advanced N days, planned from the measured clock rate; an ask over the
@@ -7,7 +7,7 @@ registered cadence (CK3_CYCLE_GAME_DAYS) is refused, never clamped; without
 fake gateway and sleep stub as test_session_wait, with a clock that advances
 at a RATE per slept second — the thing seconds cannot express.
 
-Red on 0a969f2e: `session` has no game_days; cycle_cadence does not exist.
+Red without the rule: `session` has no game_days; cycle_cadence does not exist.
 """
 import asyncio
 import sys
@@ -142,13 +142,13 @@ def test_a_bad_game_days_argument_is_invalid_and_a_stalled_clock_stops_the_loop(
     assert r["stopped"] == cc.STOP_NO_PROGRESS and r["game_days_advanced"] < 200
     assert len(gw.slept) <= cc.MAX_WAIT_CALLS
     # v4: an ask beyond v3's 3,650 game-days is a wait, not an
-    # invalid argument (red at 2f021e4b: invalid_argument, 0..3650)
+    # invalid argument (red without the rule: invalid_argument, 0..3650)
     out = _wait(Clock(rate=1.0, stall_after_s=20), monkeypatch, seconds=60, game_days=4000)
     assert out["blocked"]["gate"] == "cycle_not_reached"
 
 
 def test_a_wait_at_or_past_the_registered_horizon_is_refused_and_before_it_is_not(monkeypatch):
-    """v3 §7.2 (Study 0 round 2, signing blocker c): the seat is never told
+    """The seat is never told
     the horizon; a wait made at or past it is `horizon_reached`, nothing is
     waited, and without the env the public behaviour is unchanged."""
     monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
@@ -183,7 +183,7 @@ def _wait_env(start, end, **res):
 
 
 def test_the_cycle_is_the_registered_cadence_in_game_days_across_waits_not_any_wait_that_waited():
-    """v3 §5.2 / §7.2, signing blocker f: ONE cycle. A seat waiting one day
+    """ONE cycle. A seat waiting one day
     per call does not get a fresh send quota per call."""
     c = cc.CycleCounter.from_env({cc.CYCLE_GAME_DAYS_ENV: "90"})
     assert c.cadence_days == 90 and c.cycle == 0
@@ -278,9 +278,9 @@ class AlarmClock(Clock):
 
 
 def test_smoke17_ten_days_is_ten_days_on_the_alarm(monkeypatch):
-    """Wait(seconds=30, game_days=10) at ~1.67 d/s returned
+    """wait(seconds=30, game_days=10) at ~1.67 d/s returned
     game_days_advanced 25, calls 1, stopped game_days_reached (the 15 s probe).
-    Red before: the server sent a plain unpause_game and slept the probe."""
+    Red without the rule: the server sent a plain unpause_game and slept the probe."""
     monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
     gw = AlarmClock(rate=1.67, start="867.01.26")
     out = _wait(gw, monkeypatch, seconds=30, game_days=10)
@@ -433,7 +433,7 @@ def test_an_error_inside_the_wait_still_disarms_the_alarm(monkeypatch):
 
 
 def test_CONTROL_a_no_progress_end_with_the_game_running_disarms_on_base_too(monkeypatch):
-    """Not discriminating (the pre-fix code paused here as well): the path where
+    """Not discriminating (the superseded code paused here as well): the path where
     the game is running at the end, kept so every exit has a row."""
     monkeypatch.delenv(cc.CYCLE_GAME_DAYS_ENV, raising=False)
     gw = AlarmClock(rate=0.0)

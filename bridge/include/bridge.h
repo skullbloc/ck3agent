@@ -117,7 +117,7 @@ inline bool is_mapped_range(uintptr_t addr, size_t len) {
 }
 
 // =============================================================================
-// safe_read fault flag (Option 3 from)
+// safe_read fault flag
 //
 // safe_read<T> returns T{} on failure with no error channel. Callers that
 // need to distinguish "value is 0" from "memory was unreadable" can opt in
@@ -147,7 +147,7 @@ inline uintptr_t safe_read_last_fault() {
     return g_safe_read_last_fault_addr;
 }
 // The fault record a nested bracket found on entry, added back on its exit
-// (FaultScope; audit 3(iii)): a handler reached from another handler
+// (FaultScope): a handler reached from another handler
 // clears the flag for its own reads, and without this its exit left the
 // caller's record wiped. Added, not replaced: the caller (and the dispatch
 // wrapper, which says degraded for a handler that left no reply) still sees the
@@ -177,7 +177,7 @@ inline void log_degraded_read(const char* action) {
     fprintf(g_logfile, "\n");
 }
 
-// The reply for a read that faulted (ff3 N1): ONE string, answered by the
+// The reply for a read that faulted: ONE string, answered by the
 // reader's sigsetjmp recovery (ipc_server.cpp) when a raw access faults and by
 // a handler whose safe_read faulted on a value it cannot answer without (an
 // actor id, a personality pointer, a war count, the idler's player id). A
@@ -664,7 +664,7 @@ void watchdog_disarm();
 // =============================================================================
 
 // Start the Unix domain socket server on a background thread.
-// Nullptr (the default) means "this instance's socket" —
+// nullptr (the default) means "this instance's socket" —
 // bridge::instance_socket_path(), which is the legacy /tmp/ck3-agent.sock on
 // the default instance. Never hardcode the literal at a call site again.
 bool start_ipc_server(const char* socket_path = nullptr);
@@ -676,7 +676,7 @@ void stop_ipc_server();
 // DLL_PROCESS_DETACH at process exit: the OS has already ended the IPC threads,
 // and joining under the loader lock would hang; give up their handles so the
 // CRT's static destructors do not std::terminate on a joinable std::thread
-// (a game exit was turned into an abort() fail-fast, P5 full11).
+// (a game exit was turned into an abort() fail-fast on a Windows build).
 void abandon_ipc_threads();
 #endif
 
@@ -721,7 +721,7 @@ bool send_observation(const char* json_data, size_t len);
 //: inside the inline-query window unicasts to the CALLING client — correct for a
 //: reply and wrong for a record. emit_management_ledger_record ran there and its
 //: rows went to the agent instead of the observer the ARM relay drains: zero of
-//: ~386 management calls in ep-02, with the frame itself well-formed throughout.
+//: ~386 management calls in a recorded episode, with the frame itself well-formed throughout.
 //:
 //: Use this for anything whose audience is "whoever is listening", regardless of
 //: which thread emits it. It is a separate function rather than a flag on
@@ -800,10 +800,11 @@ void shutdown_event_handler();
 // who asked; nothing else in the bridge reaches those primitives
 // (bridge/scripts/inline_safety_static.py fails a row on any other site).
 //   kind:   Pause, Unpause, or Speed (`speed` is the display speed 1-5; the
-//           primitive caps it at 3).
+//           primitive caps it at 3, or at the speed the episode declared above 3:
+//           registered_speed.h clamp_speed_write).
 //   origin: Session (the player's clock verbs), AutoRespond (the no-agent auto-respond fallback
 //           clearing the game's own event pause), ObserveMode (the operator's
-//           observer bring-up), Pipeline (the pre-registered pipeline's clock).
+//           observer bring-up), Pipeline (the declared pipeline's clock).
 // One count per call per origin, whether or not the state changed; get_tick_info
 // publishes them as clock_writes. A faulted read inside the primitive writes
 // nothing and leaves the fault counted for the caller to answer.
@@ -847,7 +848,7 @@ int game_get_speed();
 //
 // A DEFERRED call (CB validity, acceptance, trigger eval, decision eval, faction
 // verdicts, interaction cascade) submits a game-thread query slot and polls for
-// the verdict.: the handler runs on the game thread and services its own
+// the verdict. The handler runs on the game thread and services its own
 // slot there; query_interaction_check polls from the IPC thread while the drain
 // services its check intent. run_deferred_single_flight() runs the
 // call's submit+poll closure under ONE single-flight lock so two callers cannot
@@ -855,7 +856,7 @@ int game_get_speed();
 enum class DeferredDrainStatus {
     Ok = 0,            // service() ran — `out` is service()'s result
     // 1 was DrainUnavailable (the pause pulse found no tick), retired with the
-    // pulse in; the value of BusyDeferred is kept so the pinned pre-fix
+    // pulse; the value of BusyDeferred is kept so the pinned superseded
     // control in scripts/acceptance_deferred_refusal.py compares equal.
     BusyDeferred = 2,  // the single-flight lock was held past the lock budget
 };
@@ -1034,6 +1035,23 @@ void init_offgoal_war_veto_hook();
 // Install the liege's demand-response hook on AI_PICK_EVENT_OPTION (factions.cpp;
 // first-tick deferred init). Inert until set_faction_demand_response names a liege.
 void init_faction_demand_hook();
+void faction_demand_daily();   // Once per daily tick (the controlled characters the hook records for)
+void init_army_orders();   // The switches; the hold hook only when CK3_BRIDGE_ARMY_HOLD=1
+void init_ai_veto();       // CK3_BRIDGE_AI_VETO; the shared dispatch hook unless it is "0"
+void ai_veto_daily();      // Once per daily tick on the game thread (watch + price)
+uint32_t ai_veto_carry(uint32_t from_id, uint32_t to_id);   // The dead ruler's vetoes to his heir at the handoff
+size_t event_rules_carry(uint32_t from_id, uint32_t to_id);   // The dead ruler's event rules to his heir at the handoff
+// Set around the bridge's own flags-7 GameCommandDispatch call (the TLS
+// pipeline's interaction send): the veto's cross-check that a post is the bridge's, beside the
+// return-address test. Scoped; nests (restores the previous mark).
+struct OwnDispatchMark {
+    OwnDispatchMark();
+    ~OwnDispatchMark();
+    OwnDispatchMark(const OwnDispatchMark&) = delete;
+    OwnDispatchMark& operator=(const OwnDispatchMark&) = delete;
+private:
+    uintptr_t prev_;
+};
 
 // Releases every council-task pin of a ruler (council_suppress_hook.cpp). Declared
 // here too so the on_tick dead-ruler handoff path (bridge_init.cpp) can clear a
@@ -1061,7 +1079,7 @@ bool dispatch_action(const char* action_type, const char* params_json,
 bool dispatch_action_with_response(const char* action_type, const char* params_json,
                                     std::string* response_out);
 
-// D1-C / FIX 3.1: true iff `action_type` has a dispatch case. Generated from
+// True iff `action_type` has a dispatch case. Generated from
 // the SAME table (action_registry.inc) as the dispatch chain, so registration
 // and dispatch cannot drift. Used by the IPC reader to fast-fail unknown
 // action names inline instead of letting them queue to g_msg_queue (where a
@@ -1085,6 +1103,10 @@ void* lookup_interaction(const char* interaction_type);
 
 // Look up a character by ID (returns nullptr if not found)
 void* lookup_character(uint32_t char_id);
+
+// The whole character id (slot + generation byte) a game function compares, for a full id or
+// its low 24 bits; the argument unchanged when no live character answers (engine_id.h).
+uint32_t engine_char_id(uint32_t char_id);
 
 // Hash a string using the game's CRC-like hash function
 uint32_t game_string_hash(const char* data, uint32_t len);
@@ -1155,7 +1177,7 @@ extern std::atomic<bool> g_initialized;
 extern std::atomic<bool> g_agent_mode;   // true = agent controls AI, false = passthrough
 extern std::atomic<uint64_t> g_tick_id;
 
-// #123: live "tick":N,"game_date":"YYYY.MM.DD" JSON fragment (no surrounding
+// Live "tick":N,"game_date":"YYYY.MM.DD" JSON fragment (no surrounding
 // commas) for stamping the MCP envelope clock into every response. Defined in
 // ipc_server.cpp; reused by the game-thread drain path in bridge_init.cpp.
 std::string build_envelope_clock_fragment();
@@ -1165,7 +1187,7 @@ std::string build_envelope_clock_fragment();
 // resilience for normal play. When true: the catch path calls
 // bridge_strict_check_abort(site), which logs and abort()s — turning every
 // previously-silent pointer-validation miss into a crash signal during test
-// runs. See / ADR-0001.
+// runs. See ADR-0001.
 extern std::atomic<bool> g_strict_mode;
 
 // Called from each sigsetjmp catch path. No-op unless g_strict_mode is set, in

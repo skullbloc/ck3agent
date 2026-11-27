@@ -1,9 +1,9 @@
 // Count every typed refusal, so a fix that made a caller's bug QUIET
 // does not also make it invisible.
 //
-// WHY THIS EXISTS. stopped `{"character_id":0}` from crashing the
+// WHY THIS EXISTS. The guard stopped `{"character_id":0}` from crashing the
 // bridge. Before it, that input produced four unmissable recovered SIGSEGVs in
-// armb1; after it, the call is refused with a typed reason and the episode
+// a recorded arm run; after it, the call is refused with a typed reason and the episode
 // carries on. THE CALLER'S BUG IS UNCHANGED — only its visibility changed. The
 // sole evidence it is still happening is one log line, and nothing counted it:
 // not the heartbeat, not the bundle. A reader who does not grep that exact
@@ -14,7 +14,7 @@
 // header rather than a one-off counter:
 //   - log rotation truncated the trace it existed to preserve
 //   - the backpressure throttle hid drops 2-99 process-wide
-//   - turned four SIGSEGVs into one uncounted line (this bead)
+//   - a fix can turn four SIGSEGVs into one uncounted line (this code)
 // Each time, the thing that made a problem LEGIBLE was removed by the thing
 // that made it SAFE.
 //
@@ -26,7 +26,7 @@
 //
 // Lock-free by construction: a fixed enum-indexed table of atomics. Refusals
 // are rare, but they are recorded from the reader thread and the game thread
-// both, and after I am not adding a mutex to a path that a siglongjmp
+// both, and I am not adding a mutex to a path that a siglongjmp
 // can escape.
 #pragma once
 
@@ -42,7 +42,7 @@ extern FILE* g_logfile;
 // without adding it here is the failure this guards against, so the acceptance
 // counts REFUSING sites against this enum and reds when they diverge.
 enum class RefusalReason : uint8_t {
-    kCharacterIdInvalid = 0,   // Character_id <= 0 for set_character_ai
+    kCharacterIdInvalid = 0,   // character_id <= 0 for set_character_ai
     kAiControllerUnmapped,     // Controller non-null but +0x28 unreadable
     kAiControllerUnbound,      // Decision actor's AI controller unbound
     kCount
@@ -71,12 +71,12 @@ inline const char* refusal_name(RefusalReason r) {
 // initialiser rather than removing one. Measured against this header in a TU
 // that calls record_refusal: `= {}` -> _GLOBAL__sub_I = 0; without it -> 1.
 //
-// Caught. reply_record.h one header over braces every counter `{0}`
-// for this reason — I had already solved it and then wrote the array without.
+// reply_record.h one header over braces every counter `{0}` for the same
+// reason.
 //
 // No check is added here for it: test_init_order owns this property repo-wide
 // and measures real initialisers. A second spelling of it in this acceptance is
-// precisely what cost two lanes on.
+// precisely the drift this avoids.
 inline std::atomic<uint64_t> g_refusals[static_cast<size_t>(RefusalReason::kCount)] = {};
 
 inline void record_refusal(RefusalReason r) {

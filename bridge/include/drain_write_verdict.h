@@ -26,7 +26,7 @@
 
 namespace bridge {
 
-// The actor a drained call names, for its record (surface-eval finding 3:
+// The actor a drained call names, for its record (once
 // every steer row read actor_id 0). The client sends
 // {"action", "params": {...}, "request_id"}, so the actor is under params; the
 // drain read only the TOP level and so recorded 0 for every Mechanism-B write.

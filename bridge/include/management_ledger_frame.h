@@ -1,16 +1,16 @@
 #pragma once
 //: ONE composition, TWO readers.
 //:
-//: The bytes the management ledger record puts on the wire used to be assembled
+//: The bytes the management ledger record puts on the wire are not assembled
 //: inline in emit_management_ledger_record, and the only thing that tested them
-//: (bridge/test/mgmt_ledger_probe.cpp) re-assembled its OWN copy around one real
+//: (a host probe the research tree keeps) re-assembled its OWN copy around one real
 //: helper. So the composition — the caller_request_id head, the action/verb/
 //: success tail, the refusal annotations — was exercised by nothing that a change
-//: to it could break, and acceptance_324r fed the relay's records_in a HAND-BUILT
+//: to it could break, and an acceptance fed the relay's records_in a HAND-BUILT
 //: dict shaped to what records_in wanted.
 //:
 //: A fixture written to the CONSUMER's shape cannot falsify the PRODUCER's shape.
-//: That is not hypothetical here: relay row was green while ep-02's
+//: That is not hypothetical here: the relay row was green while a recorded episode's
 //: sealed bundle contained zero ledger rows, because both halves agreed with each
 //: other and neither was ever compared to the emitter.
 //:

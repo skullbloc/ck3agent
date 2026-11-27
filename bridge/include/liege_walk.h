@@ -2,7 +2,7 @@
 //
 // query_handlers.cpp's get_top_realm_ruler_id walks get_liege_id_from_addr hop
 // by hop until a ruler with no liege is reached; that ruler is the top liege
-// (an independent character walks to its OWN id). The walk used to return the
+// (an independent character walks to its OWN id). The walk does not return the
 // id it had reached so far when it could not go on (a liege it could not look
 // up, a liege loop, 30 hops): from the first hop that is the character's own id,
 // so a VASSAL whose liege did not resolve read as INDEPENDENT (top == self), and

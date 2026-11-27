@@ -338,7 +338,7 @@ def test_format_action_menu_smoke() -> None:
 
 def main() -> int:
     print("=" * 60)
-    print("action_selector test suite (ck-3hij9.3)")
+    print("action_selector test suite")
     print("=" * 60)
 
     test_rejects_missing_type()

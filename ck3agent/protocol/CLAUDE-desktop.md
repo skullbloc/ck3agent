@@ -68,13 +68,13 @@ if another ruler dies, add its heir yourself.
 
 ## Rules of thumb
 
-- Survive first: stress, a faction above about 80 %, and no heir come before expansion.
+- Survive first: stress, a faction above 80 % of your power, and no heir come before expansion.
 - Never guess an action name; enumerate and copy the row.
 - `plan_war` offers a claim war only on a pressed claim; an unpressed claim
   is in `excluded` (`claim_not_pressed`): press the claim first.
 - A surrender is always taken and is your defeat: the game charges the
-  casus belli's penalty (2026.11 pilots: 15 to 350 prestige and up to 590
-  gold each). A stalled war that costs nothing is cheaper left open; never
+  casus belli's penalty, which can be hundreds of prestige and several hundred
+  gold. A stalled war that costs nothing is cheaper left open; never
   re-declare a war you just surrendered.
 - `attacker_not_sieging` cycle after cycle: this toolkit cannot move the army;
   the AI sieges only when it is above 1.33× the enemy's strength; call allies

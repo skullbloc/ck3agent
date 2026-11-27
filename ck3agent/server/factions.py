@@ -1,4 +1,4 @@
-"""Faction management from both seats (F16).
+"""Faction management from both seats.
 
 The vassal's seat:
   do(action_class="factions_to_join")   every faction type the vassal may create
@@ -210,6 +210,11 @@ def option_rows(res: dict) -> tuple[list, list, list]:
 # the liege's seat: who threatens me, and what can I do about them?
 # ---------------------------------------------------------------------------
 
+def _FL():
+    import faction_letters  # noqa: PLC0415 - the one faction power
+    return faction_letters
+
+
 async def liege_view(gw, character_id: int, actor_id: int) -> dict:
     """The factions aimed at `character_id`, with their members, threat, demand
     state and the levers against each leader."""
@@ -239,8 +244,10 @@ async def liege_view(gw, character_id: int, actor_id: int) -> dict:
             "county_member_count": f.get("county_member_count"),
             "discontent": t.get("discontent", f.get("discontent_pct")),
             "discontent_threshold": thr.get("discontent_threshold_pct", fac.get("discontent_threshold_pct")),
-            "power_pct_of_liege": t.get("power_pct_of_liege"),
-            "threat_level": t.get("threat_level"),
+            # The one faction power (faction_letters.faction_power, the game's own number against its
+            # threshold 80) and the threat graded by it, as query and observe's news read them
+            "power_pct_of_liege": _FL().faction_power(t),
+            "threat_level": _FL().graded_threat(t) if t else None,
             **_ultimatum(t),
             # The bridge's one reading (faction_war.h): the faction's war as the
             # game's own press check resolves it; war_id is the war's full id, the
@@ -292,7 +299,7 @@ def _leader_levers(leader_id: int, seats: list, imprison: dict) -> dict:
     # the council already (re_resolution_appoint.md, precondition FUN_05c851f0):
     # it cannot seat a leader who has no seat, and moving a sitting leader to
     # another seat gives him nothing; the ruler's AI also moves him back to the
-    # seat his skills suit (runs l10-p5-r2, l10-p6-r2, w-l10-factions-1: back
+    # seat his skills suit (three faction test runs: back
     # within 45 days).
     holds = [s.get("position_key") for s in seats if s.get("holder_id") == leader_id]
     return {
@@ -380,6 +387,24 @@ async def do_faction(gw, args: dict, character_id: int, actor: dict) -> dict:
         params["faction_type"] = ft
         if _int(args.get("liege_id")):
             params["target_id"] = _int(args.get("liege_id"))
+        # (a seated game, 1077.09-1078.10: independence_faction created three times against the same liege, each
+        # answered `applied` because the readback found him a member of the faction he was already in): a create
+        # of a faction type he is already in against that liege is refused with the faction he is in
+        lg = _int(args.get("liege_id"))
+        if not lg:
+            me = await gw.read("query_character", {"character_id": actor_id})
+            me = me.get("character") if isinstance(me, dict) and isinstance(me.get("character"), dict) else me
+            lg = _int((me or {}).get("liege_id")) if isinstance(me, dict) else 0
+        if lg:
+            fac = await gw.read("query_factions", {"character_id": lg})
+            for f in (fac.get("factions") if isinstance(fac, dict) else None) or []:
+                if isinstance(f, dict) and f.get("faction_type") == ft and \
+                        actor_id in {_int(m) for m in f.get("members") or []}:
+                    return rejected(R.why_blocked(
+                        "invalid_argument", raw_reason="already_member",
+                        summary=f"you are already in {ft} {f.get('faction_id')} against {lg}: nothing was sent "
+                                f"(its discontent and demand: inspect factions)",
+                        fix={"faction_id": _int(f.get("faction_id"))}))
     else:
         if not faction_id:
             return rejected(R.why_blocked("missing_required_argument",
@@ -396,8 +421,8 @@ async def do_faction(gw, args: dict, character_id: int, actor: dict) -> dict:
         if reason == "experimental_write_disabled":
             return rejected(R.experimental_gate_blocked(raw, "faction_action"))
         if reason in ("intent_timeout_no_result", "") and not res:
-            # The handler's own wait for the drain ran out (amendment 3, stage
-            # 1): settle_write reads the verdict back. A refusal is the game's. A
+            # The handler's own wait for the drain ran out (stage 1 of a
+            # write): settle_write reads the verdict back. A refusal is the game's. A
             # faction write is an "on_execute" lever (redesign.LEVERS ("faction",
             # "*")): a write that ran is read back in the same call, and here it
             # cannot be (the faction and liege the second read needs are in the
@@ -414,7 +439,7 @@ async def do_faction(gw, args: dict, character_id: int, actor: dict) -> dict:
                                         "drain": drain["row"]})
             if conf["sent"] and lever["shows"] == "on_execute":
                 # it ran, and the reply naming the faction to read back never came:
-                # pending readback, ok:true, never rejected (ruling)
+                # pending readback, ok:true, never rejected
                 return R.envelope("do", verdict="pending", actor=actor, game=gw.game(),
                                   pending=R.write_pending(
                                       "readback", game_date_at_submit=submitted_on,
@@ -459,7 +484,7 @@ async def do_faction(gw, args: dict, character_id: int, actor: dict) -> dict:
     if verdict == "unconfirmed":
         # The bridge reported it done and the second read could not be made: the
         # write ran, so it is pending readback, ok:true, never rejected
-        # (ruling: no write the drain ran is rejected for a reading the server
+        # (the rule: no write the drain ran is rejected for a reading the server
         # could not make).
         return R.envelope("do", verdict="pending", actor=actor, game=gw.game(),
                           result=dict(result, sent=True),
@@ -486,7 +511,7 @@ async def _second_read(gw, action: str, res: dict, actor_id: int, faction_id: in
 
     create / join / leave read the member array on the liege the faction is aimed
     at (the bridge names it: target_id, or liege_id for create; never the actor's
-    own liege, which is not always the target: run l10-dev3). press_demand reads
+    own liege, which is not always the target: a faction test run). press_demand reads
     the faction's demand from the leader's side on a later tick
     (query_joinable_factions), where the engine's press check must now refuse."""
     if action == "press_demand":
@@ -534,6 +559,32 @@ async def _second_read(gw, action: str, res: dict, actor_id: int, faction_id: in
     return "unconfirmed", rb
 
 
+def demand_answer_effects(fac: Any, resp: str) -> "dict | None":
+    """{demand letter: {the option the answer takes: what it does}} for the letters of the factions now against the
+    ruler (query_factions' types, faction_letters.letters), read from the files (event_prices.option_effects_brief);
+    None for the AI's answer, or when no faction is listed or no letter is read."""
+    import event_prices as _ep  # noqa: PLC0415
+    FL = _FL()
+    if resp not in ("accept", "refuse"):
+        return None
+    types = sorted({str(f.get("type") or f.get("faction_type")) for f in ((fac or {}).get("factions") or [])
+                    if isinstance(f, dict) and (f.get("type") or f.get("faction_type"))}) if isinstance(fac, dict) \
+        else []
+    letters, _why = FL.letters()
+    out: dict = {}
+    for t in types:
+        ev = (letters or {}).get(t)
+        opts, _w = FL.letter_options(ev) if ev else (None, "")
+        key = next((o["key"] for o in opts or [] if (FL.is_refuse_key(o["key"]) if resp == "refuse"
+                                                         else FL.is_accept_key(o["key"]))), None)
+        if ev and key:
+            out[ev] = {"faction_type": t, key: _ep.option_effects_brief(ev, key)}
+    if not out:
+        return None
+    out["note"] = _ep.OPTION_EFFECTS_NOTE
+    return out
+
+
 async def _respond_demand(gw, args: dict, actor_id: int, actor: dict) -> dict:
     R = _R()
     resp = str(args.get("response") or "").strip()
@@ -556,6 +607,9 @@ async def _respond_demand(gw, args: dict, actor_id: int, actor: dict) -> dict:
     result = {"intent": "faction", "action": "respond_demand", "response": resp,
               "readback": {"via": "query_factions", "demand_response": stored},
               "applies_to": "every faction demand made of this ruler from now on, until changed"}
+    oe = demand_answer_effects(fac, resp)
+    if oe:
+        result["option_effects"] = oe
     if stored != resp:
         return R.envelope("do", ok=False, verdict="rejected", actor=actor, game=gw.game(),
                           result=result,

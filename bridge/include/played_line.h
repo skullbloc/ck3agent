@@ -1,5 +1,5 @@
 // played_line.h — WHO THE LINE IS NOW: the two decisions the heir handoff makes,
-// as pure functions over values (METERLINE).
+// as pure functions over values (the played-line meter).
 //
 // ONE DEFINITION, TWO CALLERS, BOTH IN THE BRIDGE. `bridge_init.cpp`
 // `check_controlled_handoff` follows a control session's character through

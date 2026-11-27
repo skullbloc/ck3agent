@@ -1091,7 +1091,7 @@ static BuildIdResult check_build_id(uintptr_t base_addr) {
 
     // Resolved FIRST and unconditionally: the strictness witness must exist
     // even for a binary that matches, and even for one whose BuildID cannot be
-    // read at all. Both of those are exactly the cases where the old code
+    // read at all. Both of those are exactly the cases where the superseded code
     // recorded nothing.
     bridge::BuildIdWitness w;
     bridge::resolve_build_id_strictness(w);
@@ -1166,11 +1166,11 @@ void observe_build_id(uintptr_t base_addr) {
     // log. check_build_id() already does exactly this and sets the witness; it
     // simply never ran, because its only caller does not.
     //
-    // IT DOES NOT ABORT, deliberately. The bead's refusal lives in the DRIVER,
+    // IT DOES NOT ABORT, deliberately. The task's refusal lives in the DRIVER,
     // at episode start, where a mismatch costs one second instead of ~2.2 h of
     // node time — and where it can say WHICH of five legs failed. Making this
     // abort would change what a bridge does to a running game on the strength
-    // of a bead about what a bundle records.
+    // of a task about what a bundle records.
     (void)check_build_id(base_addr);
 }
 
@@ -1187,7 +1187,7 @@ bool run_resolver(uintptr_t base_addr, ResolvedOffsets* out) {
         // Enabled by compile-time flag CK3_STRICT_BUILD_ID, or at runtime via
         // CK3_STRICT_BUILD_ID=1 environment variable. Runtime env var overrides
         // the compile-time default in both directions (0 to relax, 1 to enforce).
-        // Resolved ONCE, in check_build_id, so the same value the
+        // Resolved ONCE, in check_build_id(), so the same value the
         // handshake publishes is the value that decides here. Two derivations
         // of one rule is how a bundle ends up asserting a strictness the
         // resolver did not act on.

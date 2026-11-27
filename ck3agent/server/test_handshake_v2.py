@@ -11,7 +11,7 @@ of the server side in `bridge/src/ipc_server.cpp`:
     reason, session_id, session_mode, session_state}` and releases the slot
     (closing the connection) when `status != "ok"`.
 
-What the defect was: every python client sent `{"type":"handshake",
+What the hazard was: every python client sent `{"type":"handshake",
 "agent_version":..., "capabilities":[...]}` with no `protocol_version` and no
 `mode`, so the bridge minted an implicit CONTROL session for everyone and
 observe mode — finished on the bridge since M1 — was unreachable.
@@ -228,7 +228,7 @@ class FakeBridgeSocket:
 
     def _handle_action(self, msg: dict):
         """Only `declare_save_identity` — the one action the resume path needs
-        (entry point). Everything else is ignored, as an unmodelled
+        (the entry point). Everything else is ignored, as an unmodelled
         action would be by a bridge that has no such handler."""
         for act in msg.get("actions", []):
             if act.get("action") != "declare_save_identity":
@@ -338,7 +338,7 @@ def test_client_name_alone_implies_protocol_version_2():
 
 
 # ---------------------------------------------------------------------------
-# Observe mode — the whole point of the bead
+# Observe mode — the whole point of the task
 # ---------------------------------------------------------------------------
 
 def test_observe_mode_is_requested_and_honoured():

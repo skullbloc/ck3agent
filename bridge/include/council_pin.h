@@ -1,4 +1,4 @@
-// council_pin.h — the per-seat council-task pin (wave 12).
+// council_pin.h — the per-seat council-task pin.
 //
 // WHAT THE NATIVE AI DOES (re/findings/re_council_ai.md, HIGH):
 //   CAIManager::PostExecute (image 0x04dedfd0) runs bucket 3 (FUN_04ded5f0) ->
@@ -12,7 +12,7 @@
 //   Bucket 3 comes round per ruler every 180 days (duke and up; 360 county,
 //   720 barony: the tier table at 0x0c16d508, 867 dump).
 //
-// THE PRE-FIX LOCK NEVER MATCHED. council_suppress_hook hooked FUN_04dca2a0 and
+// THE SUPERSEDED LOCK NEVER MATCHED. council_suppress_hook hooked FUN_04dca2a0 and
 // read the ruler id at arg+0x18 — but the arg is the CAIStrategy, whose +0x18 is
 // the CCharacter POINTER. Its low 24 bits never equal an id (867 dump: 0 of
 // 4593 landed rulers' AI objects). The test's control rebuilds that read and

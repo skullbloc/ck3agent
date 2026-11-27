@@ -1,6 +1,6 @@
 // The claim pin must be keyed on CLAIMS, not on being a control session.
 //
-// shakedown-2 sealed INVALID on unavailability_over_x with the agent blameless: its
+// A recorded episode sealed INVALID on unavailability_over_x with the agent blameless: its
 // seat had 70 activities and zero unavailable days. Two driver helpers did it —
 // episode-driver-C-steer-probe (0 activities) and episode-driver-C-speed-pin (2) —
 // which handshake in CONTROL mode, do one job and close. The detach branch pinned
@@ -156,22 +156,22 @@ int main() {
         }
     }
 
-    // ══ THE THREE STATES, as the progenitor ruled them ══
+    // ══ THE THREE STATES ══
     //
     // Only state (a) changes behaviour. (b) and (c) must reach the SAME predicate
     // value that today's code reaches, and the rows below assert the predicate
     // rather than the log line, because the predicate is what the branch keys on.
     //
-    // THE SHIPPED PREDICATE, CALLED — not re-spelled. My first version of this was a
-    // local lambda repeating `!declared && claims_ever == 0`, which would have gone on
-    // passing if the branch's own copy had drifted: it tested my copy, not the code.
+    // THE SHIPPED PREDICATE, CALLED — not re-spelled. A
+    // local lambda repeating `!declared && claims_ever == 0` would go on
+    // passing if the branch's own copy drifted: it would test a copy, not the code.
     // bridge::never_an_episode_participant is the one body the detach path calls.
     auto never_a_participant = [](const bridge::Session* x) {
         return bridge::never_an_episode_participant(x->declared_seat.load(),
                                                    x->claims_ever.load());
     };
 
-    // (b) A DECLARED SEAT THAT NEVER CLAIMED — pre-claim window. The world
+    // (b) A DECLARED SEAT THAT NEVER CLAIMED — the pre-claim window. The world
     // loads ~17s after first connection; a seat that dies in there must stay a
     // MEASURED HOLE, not vanish.
     {

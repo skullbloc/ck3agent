@@ -3,7 +3,7 @@
 In experiment mode the bridge pins every detached CONTROL session, claim or no
 claim. The driver's own `steer-probe` and `speed-pin` helpers are control
 sessions that never claim anything — the probe issues no verb at all, the pin
-issues only `set_speed` and `get_tick_info` — and in deploy-31's shakedown 2
+issues only `set_speed` and `get_tick_info` — and in a shakedown
 they each accrued 364 days of a 365-day episode and invalidated a run whose
 agent session had 70 activities and zero unavailable days (3 sessions counted,
 1 declared, 2 over threshold).
@@ -15,7 +15,7 @@ accident, and no exclusion list exists to drift.
 
 THESE ROWS DRIVE THE FRAME rather than reading the source. A row asserting
 "mcp_server.py contains seat_declaration_kwargs" would pass against a call that
-never executes — which is exactly defect, a census counting one
+never executes — which is exactly the hazard, a census counting one
 literal while the arm path reached none.
 """
 

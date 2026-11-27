@@ -3,7 +3,7 @@
 preprocessing in a bridge source.
 
 clang-cl accepts GNU extensions cl.exe rejects (__attribute__, __atomic_*
-builtins, statement expressions, ...). The node builds the Windows targets with
+builtins, statement expressions, ...). The test host builds the Windows targets with
 clang-cl, so a GNU spelling in shared code compiled there and failed only on the
 public windows-latest leg (1489 cl.exe errors on 2026.12.5). This script
 re-runs every compile command in compile_commands.json with /E and scans the
@@ -147,8 +147,8 @@ def scan_ast(entry: dict, root: Path) -> tuple[list[str], str | None]:
 def run_dump(cmd: list[str], cwd: str | None, root: Path) -> tuple[list[str], str | None]:
     # stderr to a file, not a second pipe: the dump is read off stdout to its end
     # before anything reads stderr, so a file whose warnings fill a stderr pipe
-    # (64 KiB) blocked clang in its write and this in its read for good (lane
-    # VREAD's gate: ai_eval_hook.cpp, runtime_resolver.cpp, snapshot.cpp, an hour).
+    # (64 KiB) blocked clang in its write and this in its read for good (the
+    # realm read's gate: ai_eval_hook.cpp, runtime_resolver.cpp, snapshot.cpp, an hour).
     with tempfile.TemporaryFile(mode="w+", errors="replace") as ef:
         p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=ef, text=True, errors="replace")
         hits = same_type_casts(p.stdout, root, cwd or "")

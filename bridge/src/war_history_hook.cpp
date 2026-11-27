@@ -17,7 +17,7 @@
 #include "war_side.h"   // a war's participant ids: the one reader of that layout
 #include "engine_text.h"               // war names are rendered text: one cleaner
 #include "game_date.h"
-// landed: the world-reset registry is on main, so the __has_include
+// The world-reset registry exists, so the __has_include
 // guard this file shipped with is gone and the include is unconditional.
 #include "world_epoch.h"
 
@@ -34,7 +34,7 @@ using fn_war_end = void (*)(void*, void*, int, unsigned int);
 // across saves. Its lifetime is the loaded WORLD, not the process. Without the
 // reset, loading a different save leaves terminations recorded in the PREVIOUS
 // world matchable by a reused war id, so query_war_history could answer a
-// question about this world with a row from the last one. The gap the bead
+// question about this world with a row from the last one. The gap the task
 // documented as "closes by itself when cdd1701 merges" is closed here.
 static void reset_war_history() { war_history().clear(); }
 
@@ -64,7 +64,7 @@ static bool capture_war(uintptr_t wp, int outcome, WarEndRecord* rec) {
     if (!wp || wp < 0x10000 || !is_mapped(wp)) return false;
 
     // Only a real CWar. A NullWar sentinel or a recycled slot carries another
-    // vtable, and copying one would put a phantom war in the paper's record.
+    // vtable, and copying one would put a phantom war in the record.
     uintptr_t vtable = safe_read<uintptr_t>(wp + ck3::war_obj::VTABLE);
     if (vtable != g_base_addr + ck3::war_obj::CWAR_VTABLE) return false;
 

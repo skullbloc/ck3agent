@@ -5,7 +5,7 @@
 //
 // WHAT THIS IS TODAY: ONE CELL IN THE LINUX BRIDGE. libck3_bridge.so does not
 // link this layer; it compiles one cell of it, the session pass
-// (src/os/session_pass.cpp, shared with Windows since). Otherwise bridge_init.cpp,
+// (src/os/session_pass.cpp, shared with Windows). Otherwise bridge_init.cpp,
 // runtime_resolver.cpp, ipc_server.cpp, launcher_bypass.cpp and
 // action_handlers.cpp still call their own Linux code directly, exactly as
 // before. Routing the bridge through it is the rest of P2, one call site at a

@@ -1,8 +1,8 @@
-// MAJOR 2: construction_check's list mode must not arm the
+// construction_check's list mode must not arm the
 // fake random scope while the scope latch is set.
 //
 // A row whose restore trips the latch (the slot moved under the arm,
-// scope_slot_policy.h) used to leave every later row of the same list arming while
+// scope_slot_policy.h) does not leave every later row of the same list arming while
 // latched: the handler tested the latch once, at entry. latch_guarded_rows.h tests
 // it before every row; this probe drives that loop with a row that trips the latch
 // mid-list and reads the invariant `arm_called_while_latched == 0`.
@@ -66,7 +66,7 @@ int main() {
     row("a_clear_latch_asks_every_row", n_asked == N && n_refused == 0,
         std::to_string(n_asked) + " asked");
 
-    // ── negative control: the pre-fix shape (one test at entry, then a plain
+    // ── negative control: the superseded shape (one test at entry, then a plain
     //    loop) arms the three later rows while latched ─────────────────────────
     reset();
     if (!bridge::scope_latched()) {

@@ -1,5 +1,5 @@
-// test_line_watch.cpp — the played line followed per tick (METERLINE;
-// bridge/include/line_watch.h). Engine-free: titles and holders are a map.
+// test_line_watch.cpp — the played line followed per tick
+// (bridge/include/line_watch.h). Engine-free: titles and holders are a map.
 //
 // The case the watch exists for (witness follow-up 2): the king's primary is
 // k_france; he gains e_hre and dies between two 30-day meter samples. A meter
@@ -187,7 +187,7 @@ int main() {
         CHECK(played_line::watches().size() == played_line::watches().size(), "the global registry exists");
     }
 
-    {   // fix10 defect 2: one watch per seated line (K and five dukes), independent.
+    {   // one watch per seated line (K and five dukes), independent.
         // The registry carries kMaxWatches (8) watches, so a COUNCIL episode's six
         // lines need no extension; a duke's death moves the duke's watch to its
         // heir and leaves the K watch exactly as it was (the K's behaviour is

@@ -1,4 +1,4 @@
-// pipeline_mode.cpp — the mode policy table (R8). See pipeline_mode.h.
+// pipeline_mode.cpp — the mode policy table. See pipeline_mode.h.
 //
 // Pure. <cstring> is the only include, and getenv is deliberately NOT called
 // here: `parse_pipeline_mode` takes the string so the caller owns the
@@ -37,7 +37,7 @@ PipelineMode parse_pipeline_mode(const char* s, bool* recognised) {
 // THE NEGATIVE CONTROL LIVES HERE, behind CK3_NULL_MODE_LEGACY_POLICY.
 //
 // Built with that define, the five predicates below revert to the policy the
-// bridge actually had before this bead: `pipeline_active()` was `mode !=
+// bridge actually had without it: `pipeline_active()` was `mode !=
 // Legacy`, everything else was derived from it or from `mode == Pipeline`, and
 // nothing consulted the mode about control sessions or the gate at all. The
 // CMake target `test_pipeline_mode_negative_control` compiles exactly that and
@@ -50,7 +50,7 @@ bool mode_buffers_calls(PipelineMode m)   { return m != PipelineMode::Legacy; }
 bool mode_runs_flush_loop(PipelineMode m) { return m != PipelineMode::Legacy; }
 bool mode_owns_clock(PipelineMode m)      { return m == PipelineMode::Pipeline; }
 bool mode_admits_control_sessions(PipelineMode)  { return true; }
-// Pre- an observe session could never issue a clock verb: `set_speed` is
+// At first an observe session could never issue a clock verb: `set_speed` is
 // a mutation and the dispatch gate refused it `observe_mode`, full stop.
 bool mode_admits_observer_clock_verbs(PipelineMode) { return false; }
 

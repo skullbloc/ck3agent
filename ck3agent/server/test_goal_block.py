@@ -1,14 +1,14 @@
 """What an experiment seat's `observe` says about the goal, the
 resume-prompt delivery of its messages, and observe during a stall.
 
-Seat review of set v3-registered-2, problem 5: no score, no end date and no
-cycle count reached a seat. Every row drives `mcp_server.observe` with the game
+Without the goal block no score, no end date and no cycle count reaches a
+seat. Every row drives `mcp_server.observe` with the game
 doubled (the bridge replies, keyed as the emitter writes them:
 query_handlers.cpp build_char_profile `id`/`alive`, emit_played_line,
 do_query_realm `character_id`/`has_realm`/`realm_total_counties`); the goal
 path itself is not doubled.
 
-Red on 8cef520a: goal_block does not exist; observe has no `goal`; a stalled
+Red without the rule: goal_block does not exist; observe has no `goal`; a stalled
 bridge's observe reads ok true; channel.deliver takes no `via`.
 """
 import asyncio
@@ -121,7 +121,7 @@ def cell(monkeypatch, seat="K", open_env=True):
 # ── the schedule position (cycle_cadence, the one authority) ────────────────
 
 def test_schedule_position_outside_a_cell_says_so_and_carries_no_numbers():
-    assert cc.schedule_position("869.04.03", {}) == {"state": "not_an_experiment_episode"}
+    assert cc.schedule_position("869.04.03", {}) == {"state": "no_scheduled_run"}
 
 
 def test_schedule_position_reads_the_cells_own_schedule():
@@ -145,7 +145,7 @@ def test_schedule_position_reads_the_cells_own_schedule():
 def test_outside_an_experiment_the_goal_is_stated_absent_not_zeros(game):
     env = run(ms.observe(character_id=K_ID))
     assert list(env["result"])[0] == "goal"
-    assert env["result"]["goal"] == {"state": "not_an_experiment_episode"}
+    assert env["result"]["goal"] == {"state": "no_scheduled_run"}
     # no goal read was made: the watch is never armed outside a cell
     assert not any(p.get("played_line") for _a, p in game["reads"])
 
@@ -216,7 +216,7 @@ def test_an_unreadable_schedule_is_named_and_carries_no_numbers(game, monkeypatc
     assert g["state"] == cc.POS_SCHEDULE_UNREADABLE and "R" not in g
 
 
-# ── observe during a stall (carried defect, SMOKE6: ok=True over a 93 s stall) ──
+# ── observe during a stall (a recorded defect: ok=True over a 93 s stall) ──
 
 def test_a_bridge_that_answers_none_of_observes_reads_is_not_ok(game):
     game["stall"] = True

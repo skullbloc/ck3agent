@@ -1,6 +1,6 @@
-"""cycle_cadence.py — the seat's decision cycle, measured in GAME-DAYS (v3 §7.2, §7.1).
+"""cycle_cadence.py — the seat's decision cycle, measured in GAME-DAYS.
 
-Owner ruling 2026-11-04: a seat's cycle is every 90 game-days (`cycle.game_days`
+The rule: a seat's cycle is every 90 game-days (`cycle.game_days`
 in the conditions block, §9), the registered horizon is ten game-years
 (867.01.03 → 877.01.03, §7.2; so §7.1's single constant gives X =
 round(0.05 × 3650) = 183 game-days), and the cycle is HARNESS-ENFORCED in
@@ -11,7 +11,7 @@ rate is a property of the host.
 
 THE ONE DEFINITION of five things, read by the server (`redesign.session_impl`
 `wait`; `mcp_server.session` counts the cycle; the channel's quota is keyed on
-it), the launcher (the cell's seat env, `dry_cell.build_plan`, sets the env from
+it), the experiment's seat launcher (not shipped; it sets each seat's env from
 the block and the episode's horizon) and the bundle's lineage reader
 (`scripts/seat_lineage_record`):
 
@@ -26,7 +26,7 @@ the block and the episode's horizon) and the bundle's lineage reader
     at or past it is REFUSED (`horizon_reached`): the harness ends the seat,
     and the seat is never told the date — it learns
     the horizon only by reaching it. Absent = the public behaviour, unchanged.
-  * `CycleCounter` — THE seat's cycle index (v3 §5.2, §7.2: ONE cycle, not
+  * `CycleCounter` — THE seat's cycle index (ONE cycle, not
     two). Under a registered cadence a cycle ends when the game date has
     advanced ≥ the cadence since the cycle began, across however many
     `session(action="wait")` calls it took — a seat waiting one day per call
@@ -44,7 +44,7 @@ the block and the episode's horizon) and the bundle's lineage reader
     the pause alarm (below); the 2026.12.0 smoke measured 25 days for an ask of
     10 from its 15 s probe alone.
   * `date_from_ordinal` — the inverse of `ordinal`, in the bridge's spelling
-    (`%04d.%02d.%02d`): the target date of a game-day wait. Since then a
+    (`%04d.%02d.%02d`): the target date of a game-day wait. A
     `game_days` wait hands that target to the bridge (`unpause_game
     {"pause_at": ...}`), whose game thread pauses on the first pass at or past
     it (bridge/include/pause_alarm.h); the reply stops `alarm`.
@@ -58,14 +58,14 @@ from typing import Any, Mapping, Optional
 
 CYCLE_GAME_DAYS_ENV = "CK3_CYCLE_GAME_DAYS"
 HORIZON_END_ENV = "CK3_EPISODE_HORIZON_END"
-#: 2026.12.4 (cell0 gaps 5+7): the registered horizon START,
+#: The registered horizon START,
 #: the same spelling the bridge's episode policy reads. Its presence is what
 #: makes a seat's server a CELL seat (`cell_schedule`): every
 #: `session(action="wait")` then returns at the next cycle boundary, start +
 #: k x cadence, capped at the horizon end, whatever `seconds` it asked for.
 #: Absent = the published wait, unchanged.
 HORIZON_START_ENV = "CK3_EPISODE_HORIZON_START"
-#: (v4, the fixed 3,650-game-day ceiling on a `game_days` ask is
+#: (v4: the fixed 3,650-game-day ceiling on a `game_days` ask is
 #: deleted. It was v3's ten-year horizon, and v4's horizon is declared per
 #: registration (up to 150 game-years for the unsteered pilot). An ask is bounded
 #: by the registered cadence when one is declared (`R_OVER_CADENCE`), by the
@@ -181,7 +181,7 @@ class CellSchedule:
     @property
     def n_boundaries(self) -> int:
         """The boundaries of the whole horizon, the end's included: THE count of
-        cycles a cell has (the runner's plan and v3 §7.2 read it here). 3,650
+        cycles a cell has (the runner's plan reads it here). 3,650
         game-days at 90 is 41: forty whole cycles and a last one of 50 days."""
         return self.cycle_index(self.end)
 
@@ -235,7 +235,7 @@ CYCLE_NOT_A_CELL = "not_a_cell"
 
 def episode_cycle(environ: Optional[Mapping[str, str]], game_date: Any
                   ) -> tuple[Optional[int], Optional[str]]:
-    """THE EPISODE CYCLE at `game_date` (item 4a): `(index, None)`
+    """THE EPISODE CYCLE at `game_date`: `(index, None)`
     by the cell's one schedule (`cell_schedule(...).cycle_index`), or
     `(None, why)`: `CYCLE_NOT_A_CELL` when no schedule is declared, else what
     could not be read (the schedule, or the date). The one derivation every
@@ -246,23 +246,24 @@ def episode_cycle(environ: Optional[Mapping[str, str]], game_date: Any
     if sched is None and err is None:
         return None, CYCLE_NOT_A_CELL
     if err is not None:
-        return None, f"the cell's schedule is unreadable: {err}"
+        return None, f"the run's schedule is unreadable: {err}"
     o = ordinal(game_date)
     if o is None:
         return None, f"the game date at the call ({game_date!r}) does not read as Y.M.D"
     return sched.cycle_index(o), None
 
 
-#: `schedule_position`'s states: no cell (free play, nothing to say), a cell whose
-#: schedule cannot be read (refused, named), a date that cannot be read, or read.
-POS_NOT_A_CELL = "not_an_experiment_episode"
+#: `schedule_position`'s states: no scheduled run (free play, nothing to say), a
+#: scheduled run whose schedule cannot be read (refused, named), a date that cannot
+#: be read, or read.
+POS_NOT_A_CELL = "no_scheduled_run"
 POS_SCHEDULE_UNREADABLE = R_CELL_SCHEDULE_UNREADABLE
 POS_DATE_UNREAD = "game_date_unread"
 POS_READ = "read"
 
 
 def schedule_position(game_date: Any, environ: Optional[Mapping[str, str]] = None) -> dict:
-    """Where `game_date` sits on the cell's schedule (v4 §6): THE
+    """Where `game_date` sits on the cell's schedule: THE
     position both readers state, `observe`'s goal block and `ck3agent run`'s
     per-turn record. Every number comes from `cell_schedule` (the cycle
     authority the cell wait and the channel's cycle stamp use); none is
@@ -277,7 +278,7 @@ def schedule_position(game_date: Any, environ: Optional[Mapping[str, str]] = Non
         spelling), `days_left` (game-days to the horizon end, never negative),
         `horizon_reached`.
 
-    Not a cell: `{"state": "not_an_experiment_episode"}`, nothing else (no
+    No scheduled run: `{"state": "no_scheduled_run"}`, nothing else (no
     zeros). A cell whose schedule is unreadable or a date that is not Y.M.D:
     the state names it and carries no numbers."""
     env = os.environ if environ is None else environ
@@ -326,7 +327,7 @@ def plan_wait(remaining_days: int, *, elapsed_s: float, advanced_days: int,
     return max(1, min(want, cap))
 
 
-# ── the cycle (v3 §5.2 / §7.2: one definition) ──────────────────────────────
+# ── the cycle (one definition) ──────────────────────────────
 
 def wait_completed(action: str, envelope: Any) -> bool:
     """Did this `session` reply WAIT? A boundary candidate is a wait that

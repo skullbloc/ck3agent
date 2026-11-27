@@ -1,13 +1,10 @@
-// unavailability.h — R3 as REVERSED: the clock runs; unavailability is measured
+// unavailability.h — the clock runs; unavailability is measured.
 //
 //
-// Design of record: docs/design/event-pipeline-conductor.md §2.7 (rewritten
-// 2026-09-12), §2.10, §6.1. Pre-registration §7.1/§7.3.
+// Part of the event pipeline (pipeline.h).
 //
-// WHAT THIS REPLACES. R3 was originally "a session-cap stall means the window
-// HOLDS and the world waits". That was built as a checkpoint clock gate
-// (decision G3', overseer GO 2026-09-10). On 2026-09-12 the progenitor REVERSED
-// G3': in experiment mode THE CLOCK RUNS, and what a capped agent costs the
+// WHAT THIS IS. A session-cap stall does NOT hold the world: in experiment
+// mode THE CLOCK RUNS, and what a capped agent costs the
 // experiment is MEASURED instead of prevented:
 //
 //   * per control session, per episode, record the game-date spans in which the
@@ -17,7 +14,7 @@
 //   * an episode in which any English session exceeds X cumulative game-days
 //     is INVALID — archived and reported, never silently dropped.
 //
-// THE ANOMALY GATE (PROGENITOR RULING, 2026-09-13, via bt-bbd —).
+// THE ANOMALY GATE.
 // A gap between a control session's activities counts as UNAVAILABILITY only if
 // it exceeds THREE HEARTBEAT INTERVALS = 360 WALL-SECONDS, measured from
 // wall-clock stamps on the activity records. Under three beats is a slow turn;
@@ -28,7 +25,7 @@
 // X IS A RULE, NOT A CONSTANT. "5% of the horizon unsteered" is the
 // threshold; 365 is that rule EVALUATED AT THE REGISTERED 20-game-year horizon
 // (7300 game-days x 0.05 = 365.0) and is wrong at every other one. This ledger
-// used to store `exclusion_days_ = 365` outright, so a smoke episode whose
+// does not store `exclusion_days_ = 365` outright, so an episode whose
 // whole horizon is 1568 game-days was judged against a number 4.7x larger than
 // its own rule — permissive, therefore symptomless. X is now COMPUTED per
 // episode from the harness's DECLARED horizon and handed to configure() along
@@ -46,12 +43,12 @@
 // See exclusion_rule.h for the rule and episode_policy.h for its constants.
 //
 // WHAT THIS SUPERSEDES, and why, because the failure is worth keeping.
-// gated in GAME-DAYS: a gap of at least `min_span_days` (30) counted
+// The old gate counted GAME-DAYS: a gap of at least `min_span_days` (30) counted
 // IN FULL. That number was derived under the GATED design — 30 game-days was one
 // agent turn because the world WAITED for the agent — and it crossed the
-// same-day G3' reversal with its justification intact. Once the clock
+// same-day reversal with its justification intact. Once the clock
 // free-runs, the game-days a gap spans are a function of GAME SPEED and have
-// nothing to do with whether the agent was late. arithmetic:
+// nothing to do with whether the agent was late. The arithmetic:
 //
 //   at the test host's free-running ~1.73 game-days/wall-second, one HEALTHY
 //   2-minute heartbeat interval spans ~204 game-days. 204 >= 30, so under the
@@ -72,7 +69,7 @@
 //   * GAME-DAYS measure what the anomaly COST the experiment, because what a
 //     missing agent costs is world-time its character went unsteered.
 // Anything that mixes the two — a game-day threshold on an agent's punctuality,
-// a wall-clock threshold on experimental cost — is the class of error this bead
+// a wall-clock threshold on experimental cost — is the class of error this code
 // was filed for, and it was invisible because only one unit was ever recorded.
 //
 // EVERY GAP IS RECORDED IN BOTH UNITS, always: game-days AND wall-seconds, per
@@ -90,7 +87,7 @@
 //
 // TIME IS A GAME DAY NUMBER, never a formatted date. The bridge's own
 // `(raw_date - DATE_EPOCH)/24` is monotone and exact; "YYYY.MM.DD" is a display
-// string (and was wrong until). Wall stamps are MONOTONIC milliseconds
+// string (and was once wrong). Wall stamps are MONOTONIC milliseconds
 // from the same clock the conductor already reads.
 //
 // PURE. No engine dependencies; host-tested with no CK3 binary
@@ -138,7 +135,7 @@ struct UnavailSpan {
 
 // One control session's record. Kept after the session ends: a session that is
 // gone keeps accruing, because a phantom agent is exactly what the covariate is
-// supposed to make visible (§2.7 knock-on to — a refused resume must
+// supposed to make visible (§2.7's knock-on to session resume: a refused resume must
 // inflate the covariate, not quietly vanish).
 struct UnavailSession {
     std::string session_id;
@@ -171,7 +168,7 @@ struct UnavailSession {
     bool     spans_truncated       = false;
 
     // THE EXTREMA, OVER EVERY GAP, because `spans` is capped and a
-    // reader cannot get a maximum out of a truncated list. Measured on d50:
+    // reader cannot get a maximum out of a truncated list. Measured on one recorded episode:
     // `spans_truncated` was true on all six seats with 128 retained of 418-853
     // gaps, and the figure that travelled -- "max gap <=66 s on all six" --
     // was the maximum over the RETAINED spans. The same episode's longest gap
@@ -197,13 +194,13 @@ struct UnavailSession {
 // At most this many spans are RETAINED per session. The totals and the counts
 // stay exact when it bites; only the itemisation is lost.
 //
-// AN ANOMALOUS GAP ALWAYS GETS IN. When the list is full, an anomalous
+// AN ANOMALOUS GAP ALWAYS GETS IN, by design. When the list is full, an anomalous
 // gap EVICTS the oldest non-anomalous one, because the anomalous gaps ARE the
 // covariate and a chatty session must not be able to crowd its own evidence out
 // of the record with ordinary turn-taking.
 constexpr size_t kMaxRetainedSpans = 128;
 
-// THE PRE-REGISTERED ANOMALY GATE, in wall-seconds: three intervals of the R3
+// THE DECLARED ANOMALY GATE, in wall-seconds: three intervals of the R3
 // 120-second heartbeat. Overridable for a pilot via CK3_UNAVAIL_ANOMALY_WALL_S
 // and PUBLISHED in telemetry, so an episode's bundle always says which number
 // it was measured under.
@@ -246,11 +243,11 @@ public:
     void note_session_ended(const std::string& session_id);
 
     // FORGET the record entirely — a SEPARATE VERB, not a flag on the one
-    // above, and the distinction is the whole bead.
+    // above, and the distinction is the whole task.
     //
     // note_session_ended keeps the record and keeps accruing, which is correct and
     // documented: a seat that is gone for good was still a seat, and its silence is
-    // the covariate. But shakedown 3 on deploy-32 showed the bridge destroying both
+    // the covariate. But a recorded episode showed the bridge destroying both
     // driver helpers — its log reads "UNDECLARED CLAIMLESS DETACH — destroying, not
     // pinning" twice — while unavailability_game_days STILL reported both, each
     // `ended: true`, each with one open span of 364 days and `over_threshold: true`.
@@ -280,11 +277,11 @@ public:
     uint64_t day_regressions() const;
     bool     has_day() const;
 
-    // ── DECLARED vs OBSERVED (raised) ──────────
-    // X is 5% of the DECLARED horizon, as ruled. That makes the tolerance a
+    // ── DECLARED vs OBSERVED ──────────
+    // X is 5% of the DECLARED horizon, by rule. That makes the tolerance a
     // property of the episode's CONFIGURATION, and an episode that declares
     // twenty game-years and stops after one has bought a budget proportional to
-    // an observation it never made. The ruling is the ruling — but the bundle
+    // an observation it never made. The rule is the rule — but the bundle
     // must make the purchase LEGIBLE rather than leave "declared 20, ran 20"
     // indistinguishable from "declared 20, ran 1".
     //

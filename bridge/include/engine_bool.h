@@ -11,12 +11,12 @@
 // IsValid through `uint64_t (*)(void*, void*)` and tested all 64 bits, so every
 // refusal that reached the end of CanCreateTitle (the gold, the de-jure and the
 // piety-level legs) read as "valid", and a ruler with 17 gold minted k_ireland
-// (surface-eval finding 14; re/findings/re_create_title_action.md).
+// (re/findings/re_create_title_action.md).
 //
 // Call such a function through EngineBoolFn: the compiler then reads AL and nothing
 // else. Engine functions that really return an integer keep their integer type.
 // bridge/test/test_engine_bool.cpp calls stubs that return AL = 0 under nonzero
-// upper bits through this alias and through the pre-fix shape (its control).
+// upper bits through this alias and through the superseded shape (its control).
 
 namespace bridge {
 

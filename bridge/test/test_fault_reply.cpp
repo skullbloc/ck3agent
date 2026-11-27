@@ -1,8 +1,8 @@
-// test_fault_reply.cpp — ff3 N1 (minor 1). NO GAME.
+// test_fault_reply.cpp — a read that faulted is answered. NO GAME.
 //
 // THE CLAIM: a read that faulted on a path the reader thread serves inline is
-// answered, never passed off as a 0. safe_read answers T{} on a fault; before
-// this fix the swept handlers never looked at the fault flag, so an unreadable
+// answered, never passed off as a 0. safe_read answers T{} on a fault; a
+// handler that never looks at the fault flag passes an unreadable
 // player id read as player 0 (the player guard then guarded nothing, and
 // set_controlled_character would take the player), get_player_character
 // answered player_character_id 0, and get_bridge_state said nothing.
@@ -22,7 +22,7 @@
 //   [3] the handlers: get_player_character, get_controlled_roster and
 //       set_controlled_character answer memory_access_fault on an unreadable
 //       player id (and the take does not happen); get_bridge_state says degraded.
-//   [4] a write handler (ff4 P1, REJECT): a read that faults
+//   [4] a write handler (the REJECT case): a read that faults
 //       BEFORE the store refuses (memory_access_fault) and the store is not
 //       made, read back from the byte; a read that faults AFTER the store (the
 //       read-back) answers success with degraded, the fault count and what was
@@ -32,23 +32,22 @@
 //       read-back faulting while the write did not. The toggles store an image
 //       global no read decides, so they have no "before".
 //   [5] the reply the dispatch wrapper makes for a handler that faulted and
-//       left none says degraded (R1 shape (a)), and
+//       left none says degraded (shape (a)), and
 //       get_offset_validation's own verdict is offsets_degraded, so the fault
 //       marker is not suppressed by it (shape (b)).
 //   [6] release_character's degraded reply says whether the character's native
-//       AI was handed back (minor 8).
+//       AI was handed back.
 //   [7] declare_war's verdict after its dispatch: a war count that could not be
-//       read is war_unverified, never dispatched_but_no_war (minor 9).
+//       read is war_unverified, never dispatched_but_no_war.
 //   [8] the dynasty name: NAME (+0x80) only (the custom-name branch
-//       deleted in: +0x110 overlaps HOUSES_ARRAY).
+//       deleted: +0x110 overlaps HOUSES_ARRAY).
 //   [9] the house (NAME +0x248), culture (+0x260/+0x1C8) and faith
 //       (FAITH_DB keyed at +0x08; DISPLAY_NAME/FAITH_KEY) readers, and
 //       emit_char_names through them.
 //
-// CONTROLS (run by hand, recorded in the commits): this source against the
-// pre-fix dispatch_router.cpp (blob of cleanup/final-fix 720e5757) fails [3];
-// against the 5bf5cc7b personality.cpp and dispatch_router.cpp it fails [4]
-// and [5].
+// CONTROLS (run by hand): this source against a dispatch_router.cpp without
+// the fault reply fails [3]; against a personality.cpp and dispatch_router.cpp
+// without the name read it fails [4] and [5].
 #include "action_dispatch_internal.h"
 #include "session.h"
 #include "pipeline.h"
@@ -237,7 +236,7 @@ bool scoped_reply(uintptr_t read_at, const char* reply, std::string* out) {
 }  // namespace
 
 int main() {
-    std::cout << "=== ff3 N1: a read that faulted is answered, never a silent 0 ===\n";
+    std::cout << "=== a read that faulted is answered, never a silent 0 ===\n";
     const uintptr_t img = build_image();
     g_char_is_alive = &host_char_is_alive;
     const uintptr_t unreadable = img + ck3::globals::PLAYER_CHAR_ID;
@@ -267,7 +266,7 @@ int main() {
         check(out == MEMORY_ACCESS_FAULT_REPLY, "the memory_access_fault reply is untouched: " + out);
     }
 
-    std::cout << "[2b] FaultScope nests (L14 S4, audit 3(iii)): a handler another calls\n"
+    std::cout << "[2b] FaultScope nests (audit 3(iii)): a handler another calls\n"
                  "     leaves its caller's fault record as it found it\n";
     {
         std::string inner;
@@ -469,12 +468,12 @@ int main() {
         check(is(declare_war_outcome(true, false, false, true), false, "rejected"), "rejected: rejected");
     }
 
-    std::cout << "[8] the dynasty name (L14 S4, FB M-2): NAME, whatever +0x110/+0x130 hold\n";
+    std::cout << "[8] the dynasty name: NAME, whatever +0x110/+0x130 hold\n";
     {
         // A stand-in dynasty object inside the image (its range is mapped), with
         // libstdc++ string control blocks {data ptr, size} pointing at text in it.
         // +0x110 holds a string block and +0x130 is set: the reader must not
-        // look (in the ivar867 dump +0x110 is an image pointer and +0x118 the
+        // look (in the 867 dump +0x110 is an image pointer and +0x118 the
         // houses array in all 12,025 dynasties).
         const uintptr_t d = img + kDynOff, txt = img + kDynOff + 0x400;
         std::memcpy(reinterpret_cast<void*>(txt), "Karling", 8);
@@ -491,10 +490,10 @@ int main() {
         check(dynasty_name(0).empty(), "no dynasty object: \"\"");
     }
 
-    std::cout << "[9] house, culture and faith names (L14 FB M-1): the readers' offsets and lookups\n";
+    std::cout << "[9] house, culture and faith names (M-1): the readers' offsets and lookups\n";
     {
         // Stand-in HOUSE_DB / CULTURE_INDEXED_DB / FAITH_DB, one object each,
-        // shaped as the ivar867 dump has them: a house and a culture carry their
+        // shaped as the 867 dump has them: a house and a culture carry their
         // id at +0x10 (ENTRY_KEY_REF), a faith at +0x08 with a pointer at +0x10.
         const uintptr_t B = img + kNameOff;
         auto str = [&](uintptr_t at, uintptr_t text, const char* v) {

@@ -1,5 +1,5 @@
-// test/acceptance_n6_ownership.cpp — (R2) N=6 ownership acceptance,
-// HOST lane.
+// test/acceptance_n6_ownership.cpp — N=6 ownership acceptance, on the
+// host (no game).
 //
 // This is an ACCEPTANCE, not a unit test, and the difference is deliberate:
 //
@@ -45,7 +45,7 @@
 // Stub globals referenced by session.cpp when compiled standalone (identical to
 // the set test_session_registry provides).
 namespace bridge {
-// Session.cpp now links world_identity.cpp (judge_same_save
+// session.cpp now links world_identity.cpp (the judge_same_save
 // — one identity rule, not a second copy), which reaches world_epoch.cpp's
 // guarded reads. These are the globals those engine-free TUs reference when the
 // game is not there.
@@ -117,8 +117,7 @@ std::string json_escape(const std::string& in) {
     return out;
 }
 
-// The 1066 shape: one king plus five earls, which is exactly the N the epic
-// asks for (design §R, arm A: N=6 on the English side).
+// The 1066 shape: one king plus five earls, six seats on the English side.
 const uint32_t kKing = 6001;
 const uint32_t kEarls[5] = {6002, 6003, 6004, 6005, 6006};
 
@@ -336,7 +335,7 @@ static void phase_registry(std::vector<Session*>& ctrl, Session* obs) {
     check("P6", "registry snapshot is BYTE-stable across map churn", stable);
 
     // Every claimed character in the registry appears in the derived watchlist,
-    // and nothing else does — the live lane's "roster agrees with the registry"
+    // and nothing else does — the live check's "roster agrees with the registry"
     // check, done here where it can be proven exhaustively.
     bool agree = g_controlled_chars.size() == 6;
     for (uint32_t cid : g_controlled_chars) {
@@ -625,7 +624,7 @@ int main(int argc, char** argv) {
     }
 
     if (!g_quiet)
-        printf("ck-6kvq.11 — N=6 ownership acceptance (HOST lane)\n\n");
+        printf("N=6 ownership acceptance (host check)\n\n");
 
     std::vector<Session*> ctrl;
     Session* obs = nullptr;

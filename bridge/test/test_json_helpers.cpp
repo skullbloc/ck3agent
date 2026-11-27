@@ -1,4 +1,4 @@
-// Regression test for: json_get_string must not clobber earlier
+// Regression test: json_get_string must not clobber earlier
 // returned pointers when called multiple times for different string params.
 //
 // Build: handled by CMake target `test_json_helpers` (BUILD_BRIDGE_TESTS=ON).
@@ -31,8 +31,8 @@ static int failures = 0;
     } \
 } while (0)
 
-// Scenario from bead: do_query_memory_probe reads base, address, offset,
-// global_name back-to-back. Pre-fix, the single thread_local buffer meant all
+// Scenario from task: do_query_memory_probe reads base, address, offset,
+// global_name back-to-back. With a single thread_local buffer all
 // four pointers aliased the last value.
 static void test_memory_probe_four_strings() {
     const char* json =
@@ -55,7 +55,7 @@ static void test_memory_probe_four_strings() {
           "rotating pool must return distinct buffer addresses");
 }
 
-// Scenario from bead: do_query_resolve_global reads name + address.
+// Scenario from task: do_query_resolve_global reads name + address.
 static void test_resolve_global_two_strings() {
     const char* json =
         R"({"params":{"name":"PLAYER_CHAR_ID","address":"0xABCDEF"}})";

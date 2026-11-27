@@ -1,0 +1,2385 @@
+{
+"source": "every seat-ruler death and survivor read in recorded seated games and live checks; `game` tells the games apart (a letter per game, nothing more)",
+"rows": [
+{
+"game": "A",
+"ruler": 31506,
+"date": "1068.09.15",
+"age": 43.5,
+"health": 4.45,
+"died": false,
+"lo": null,
+"hi": 0.2
+},
+{
+"game": "B",
+"ruler": 12015,
+"date": "0867.01.01",
+"age": 43.84,
+"health": 3.66,
+"died": false,
+"lo": null,
+"hi": 1.0
+},
+{
+"game": "C",
+"ruler": 12015,
+"date": "0867.01.01",
+"age": 43.84,
+"health": 3.66,
+"died": false,
+"lo": null,
+"hi": 1.0
+},
+{
+"game": "D",
+"ruler": 31762,
+"date": "1066.11.27",
+"age": 39.91,
+"health": 4.25,
+"died": false,
+"lo": null,
+"hi": 1.04
+},
+{
+"game": "E",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 0.86,
+"hi": 1.18
+},
+{
+"game": "E",
+"ruler": 36303,
+"date": "1067.11.19",
+"age": 19.81,
+"health": 4.14,
+"died": false,
+"lo": null,
+"hi": 14.69
+},
+{
+"game": "E",
+"ruler": 36303,
+"date": "1074.08.10",
+"age": 26.53,
+"health": 4.19,
+"died": false,
+"lo": null,
+"hi": 7.97
+},
+{
+"game": "E",
+"ruler": 36303,
+"date": "1075.11.14",
+"age": 27.79,
+"health": 4.19,
+"died": false,
+"lo": null,
+"hi": 6.71
+},
+{
+"game": "E",
+"ruler": 36303,
+"date": "1081.10.02",
+"age": 33.68,
+"health": 3.53,
+"died": false,
+"lo": null,
+"hi": 0.82
+},
+{
+"game": "F",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 1.7,
+"hi": 1.74
+},
+{
+"game": "F",
+"ruler": 31762,
+"date": "1067.10.15",
+"age": 40.8,
+"health": 4.25,
+"died": true,
+"lo": 0.62,
+"hi": 0.66
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1068.06.12",
+"age": 20.37,
+"health": 4.17,
+"died": true,
+"lo": 22.37,
+"hi": 22.39
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1071.02.01",
+"age": 23.01,
+"health": 4.17,
+"died": true,
+"lo": 19.73,
+"hi": 19.75
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1073.02.24",
+"age": 25.07,
+"health": 4.17,
+"died": true,
+"lo": 17.67,
+"hi": 17.69
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1074.02.24",
+"age": 26.07,
+"health": 4.17,
+"died": true,
+"lo": 16.67,
+"hi": 16.69
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1080.07.31",
+"age": 32.51,
+"health": 3.94,
+"died": true,
+"lo": 10.23,
+"hi": 10.25
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1083.07.26",
+"age": 35.49,
+"health": 3.82,
+"died": true,
+"lo": 7.25,
+"hi": 7.27
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1084.09.05",
+"age": 36.6,
+"health": 3.82,
+"died": true,
+"lo": 6.14,
+"hi": 6.16
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1089.03.26",
+"age": 41.16,
+"health": 3.44,
+"died": true,
+"lo": 1.58,
+"hi": 1.6
+},
+{
+"game": "F",
+"ruler": 36303,
+"date": "1090.10.25",
+"age": 42.74,
+"health": 0.0,
+"died": true,
+"lo": 0.0,
+"hi": 0.02
+},
+{
+"game": "F",
+"ruler": 34580,
+"date": "1090.11.02",
+"age": 50.5,
+"health": 3.36,
+"died": false,
+"lo": null,
+"hi": 5.87
+},
+{
+"game": "F",
+"ruler": 34580,
+"date": "1092.11.02",
+"age": 52.5,
+"health": 3.11,
+"died": false,
+"lo": null,
+"hi": 3.87
+},
+{
+"game": "F",
+"ruler": 34580,
+"date": "1093.11.02",
+"age": 53.5,
+"health": 2.61,
+"died": false,
+"lo": null,
+"hi": 2.87
+},
+{
+"game": "G",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 5.84,
+"hi": 6.06
+},
+{
+"game": "G",
+"ruler": 31762,
+"date": "1068.03.06",
+"age": 41.19,
+"health": 4.25,
+"died": true,
+"lo": 4.37,
+"hi": 4.59
+},
+{
+"game": "G",
+"ruler": 31762,
+"date": "1070.04.10",
+"age": 43.28,
+"health": 4.25,
+"died": true,
+"lo": 2.27,
+"hi": 2.49
+},
+{
+"game": "G",
+"ruler": 36303,
+"date": "1072.10.07",
+"age": 24.69,
+"health": 4.17,
+"died": false,
+"lo": null,
+"hi": 7.26
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 22.28,
+"hi": 22.44
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1068.07.23",
+"age": 41.57,
+"health": 4.13,
+"died": true,
+"lo": 20.42,
+"hi": 20.59
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1070.03.31",
+"age": 43.26,
+"health": 3.88,
+"died": true,
+"lo": 18.74,
+"hi": 18.9
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1071.06.21",
+"age": 44.48,
+"health": 3.9,
+"died": true,
+"lo": 17.51,
+"hi": 17.68
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1073.09.26",
+"age": 46.74,
+"health": 3.77,
+"died": true,
+"lo": 15.25,
+"hi": 15.41
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1080.04.26",
+"age": 53.33,
+"health": 3.27,
+"died": true,
+"lo": 8.67,
+"hi": 8.83
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1081.06.30",
+"age": 54.51,
+"health": 1.92,
+"died": true,
+"lo": 7.49,
+"hi": 7.65
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1082.12.26",
+"age": 55.99,
+"health": 3.15,
+"died": true,
+"lo": 6.0,
+"hi": 6.16
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1085.12.26",
+"age": 58.99,
+"health": 2.85,
+"died": true,
+"lo": 3.0,
+"hi": 3.16
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1086.12.26",
+"age": 59.99,
+"health": 2.88,
+"died": true,
+"lo": 2.0,
+"hi": 2.16
+},
+{
+"game": "H",
+"ruler": 31762,
+"date": "1088.12.26",
+"age": 61.99,
+"health": 2.63,
+"died": true,
+"lo": 0.0,
+"hi": 0.16
+},
+{
+"game": "H",
+"ruler": 36303,
+"date": "1089.02.25",
+"age": 41.07,
+"health": 3.67,
+"died": true,
+"lo": 6.64,
+"hi": 6.7
+},
+{
+"game": "H",
+"ruler": 36303,
+"date": "1092.04.25",
+"age": 44.24,
+"health": 3.55,
+"died": true,
+"lo": 3.47,
+"hi": 3.53
+},
+{
+"game": "H",
+"ruler": 36303,
+"date": "1095.02.17",
+"age": 47.05,
+"health": 3.3,
+"died": true,
+"lo": 0.66,
+"hi": 0.72
+},
+{
+"game": "H",
+"ruler": 54727,
+"date": "1095.11.07",
+"age": 3.5,
+"health": 4.93,
+"died": false,
+"lo": null,
+"hi": 0.86
+},
+{
+"game": "I",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 24.39,
+"hi": 24.42
+},
+{
+"game": "I",
+"ruler": 31762,
+"date": "1069.04.27",
+"age": 42.33,
+"health": 4.27,
+"died": true,
+"lo": 21.77,
+"hi": 21.81
+},
+{
+"game": "I",
+"ruler": 31762,
+"date": "1070.04.27",
+"age": 43.33,
+"health": 4.27,
+"died": true,
+"lo": 20.77,
+"hi": 20.81
+},
+{
+"game": "I",
+"ruler": 31762,
+"date": "1071.06.21",
+"age": 44.48,
+"health": 4.15,
+"died": true,
+"lo": 19.62,
+"hi": 19.66
+},
+{
+"game": "I",
+"ruler": 31762,
+"date": "1072.09.04",
+"age": 45.68,
+"health": 4.15,
+"died": true,
+"lo": 18.42,
+"hi": 18.46
+},
+{
+"game": "I",
+"ruler": 31762,
+"date": "1079.06.20",
+"age": 52.48,
+"health": 3.65,
+"died": true,
+"lo": 11.62,
+"hi": 11.66
+},
+{
+"game": "I",
+"ruler": 31762,
+"date": "1090.12.31",
+"age": 64.01,
+"health": 1.3,
+"died": true,
+"lo": 0.09,
+"hi": 0.13
+},
+{
+"game": "I",
+"ruler": 36303,
+"date": "1091.02.18",
+"age": 43.05,
+"health": 2.94,
+"died": false,
+"lo": null,
+"hi": 5.58
+},
+{
+"game": "I",
+"ruler": 36303,
+"date": "1095.07.03",
+"age": 47.43,
+"health": 2.94,
+"died": false,
+"lo": null,
+"hi": 1.2
+},
+{
+"game": "J",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": false,
+"lo": null,
+"hi": 19.5
+},
+{
+"game": "J",
+"ruler": 31762,
+"date": "1068.09.18",
+"age": 41.72,
+"health": 4.25,
+"died": false,
+"lo": null,
+"hi": 17.49
+},
+{
+"game": "J",
+"ruler": 31762,
+"date": "1072.05.25",
+"age": 45.41,
+"health": 4.15,
+"died": false,
+"lo": null,
+"hi": 13.8
+},
+{
+"game": "J",
+"ruler": 31762,
+"date": "1075.01.27",
+"age": 48.08,
+"health": 4.02,
+"died": false,
+"lo": null,
+"hi": 11.13
+},
+{
+"game": "J",
+"ruler": 31762,
+"date": "1077.03.04",
+"age": 50.18,
+"health": 3.77,
+"died": false,
+"lo": null,
+"hi": 9.03
+},
+{
+"game": "J",
+"ruler": 31762,
+"date": "1078.09.29",
+"age": 51.75,
+"health": 3.77,
+"died": false,
+"lo": null,
+"hi": 7.46
+},
+{
+"game": "K",
+"ruler": 31506,
+"date": "1067.02.08",
+"age": 41.9,
+"health": 4.58,
+"died": true,
+"lo": 4.0,
+"hi": 4.21
+},
+{
+"game": "K",
+"ruler": 36124,
+"date": "1071.07.04",
+"age": 24.65,
+"health": 4.78,
+"died": true,
+"lo": 1.59,
+"hi": 1.8
+},
+{
+"game": "K",
+"ruler": 37111,
+"date": "1073.04.22",
+"age": 21.3,
+"health": 2.05,
+"died": true,
+"lo": 0.79,
+"hi": 1.0
+},
+{
+"game": "L",
+"ruler": 31506,
+"date": "1071.11.27",
+"age": 46.7,
+"health": 4.22,
+"died": true,
+"lo": 8.4,
+"hi": 8.6
+},
+{
+"game": "L",
+"ruler": 31506,
+"date": "1079.09.15",
+"age": 54.5,
+"health": 1.7,
+"died": true,
+"lo": 0.6,
+"hi": 0.8
+},
+{
+"game": "M",
+"ruler": 36124,
+"date": "1085.07.04",
+"age": 38.65,
+"health": 3.98,
+"died": false,
+"lo": null,
+"hi": 11.2
+},
+{
+"game": "M",
+"ruler": 36124,
+"date": "1088.09.15",
+"age": 41.85,
+"health": 3.92,
+"died": false,
+"lo": null,
+"hi": 8.0
+},
+{
+"game": "N",
+"ruler": 31506,
+"date": "1074.06.26",
+"age": 49.28,
+"health": 4.37,
+"died": true,
+"lo": 17.26,
+"hi": 17.68
+},
+{
+"game": "N",
+"ruler": 31506,
+"date": "1078.01.24",
+"age": 52.86,
+"health": 4.12,
+"died": true,
+"lo": 13.69,
+"hi": 14.11
+},
+{
+"game": "N",
+"ruler": 31506,
+"date": "1082.09.30",
+"age": 57.54,
+"health": 3.8,
+"died": true,
+"lo": 9.0,
+"hi": 9.42
+},
+{
+"game": "O",
+"ruler": 31506,
+"date": "1068.09.25",
+"age": 43.53,
+"health": 4.33,
+"died": true,
+"lo": 18.26,
+"hi": 18.91
+},
+{
+"game": "O",
+"ruler": 31506,
+"date": "1071.09.16",
+"age": 46.5,
+"health": 4.22,
+"died": true,
+"lo": 15.28,
+"hi": 15.93
+},
+{
+"game": "O",
+"ruler": 37528,
+"date": "1088.08.22",
+"age": 33.5,
+"health": 4.42,
+"died": true,
+"lo": 5.28,
+"hi": 6.13
+},
+{
+"game": "O",
+"ruler": 37528,
+"date": "1089.08.22",
+"age": 34.5,
+"health": 2.97,
+"died": true,
+"lo": 4.28,
+"hi": 5.13
+},
+{
+"game": "O",
+"ruler": 76495,
+"date": "1094.10.08",
+"age": 6.5,
+"health": 5.22,
+"died": false,
+"lo": null,
+"hi": 1.94
+},
+{
+"game": "P",
+"ruler": 31506,
+"date": "1067.09.15",
+"age": 42.5,
+"health": 4.58,
+"died": true,
+"lo": 12.17,
+"hi": 12.29
+},
+{
+"game": "P",
+"ruler": 31506,
+"date": "1069.11.17",
+"age": 44.67,
+"health": 4.47,
+"died": true,
+"lo": 10.0,
+"hi": 10.12
+},
+{
+"game": "P",
+"ruler": 31506,
+"date": "1077.05.14",
+"age": 52.16,
+"health": 3.6,
+"died": true,
+"lo": 2.51,
+"hi": 2.63
+},
+{
+"game": "P",
+"ruler": 31506,
+"date": "1079.11.16",
+"age": 54.67,
+"health": 1.95,
+"died": true,
+"lo": 0.0,
+"hi": 0.12
+},
+{
+"game": "P",
+"ruler": 55606,
+"date": "1079.12.31",
+"age": 40.54,
+"health": 4.51,
+"died": false,
+"lo": null,
+"hi": 16.71
+},
+{
+"game": "P",
+"ruler": 55606,
+"date": "1084.07.15",
+"age": 45.08,
+"health": 4.29,
+"died": false,
+"lo": null,
+"hi": 12.17
+},
+{
+"game": "P",
+"ruler": 55606,
+"date": "1087.04.28",
+"age": 47.86,
+"health": 4.06,
+"died": false,
+"lo": null,
+"hi": 9.38
+},
+{
+"game": "P",
+"ruler": 55606,
+"date": "1094.12.17",
+"age": 55.5,
+"health": 3.69,
+"died": false,
+"lo": null,
+"hi": 1.74
+},
+{
+"game": "Q",
+"ruler": 31506,
+"date": "1067.11.30",
+"age": 42.71,
+"health": 4.45,
+"died": true,
+"lo": 14.2,
+"hi": 14.73
+},
+{
+"game": "Q",
+"ruler": 31506,
+"date": "1068.11.30",
+"age": 43.71,
+"health": 4.45,
+"died": true,
+"lo": 13.2,
+"hi": 13.73
+},
+{
+"game": "Q",
+"ruler": 31506,
+"date": "1072.11.01",
+"age": 47.63,
+"health": 4.22,
+"died": true,
+"lo": 9.27,
+"hi": 9.8
+},
+{
+"game": "Q",
+"ruler": 36124,
+"date": "1090.08.06",
+"age": 43.74,
+"health": 4.26,
+"died": false,
+"lo": null,
+"hi": 6.11
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1066.09.15",
+"age": 41.5,
+"health": 4.55,
+"died": true,
+"lo": 20.32,
+"hi": 20.87
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1067.09.15",
+"age": 42.5,
+"health": 4.58,
+"died": true,
+"lo": 19.32,
+"hi": 19.87
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1068.12.21",
+"age": 43.77,
+"health": 4.45,
+"died": true,
+"lo": 18.05,
+"hi": 18.6
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1070.09.02",
+"age": 45.46,
+"health": 4.45,
+"died": true,
+"lo": 16.35,
+"hi": 16.9
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1072.10.28",
+"age": 47.62,
+"health": 4.35,
+"died": true,
+"lo": 14.2,
+"hi": 14.75
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1074.11.25",
+"age": 49.69,
+"health": 4.22,
+"died": true,
+"lo": 12.12,
+"hi": 12.67
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1077.07.06",
+"age": 52.31,
+"health": 4.1,
+"died": true,
+"lo": 9.51,
+"hi": 10.06
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1079.03.06",
+"age": 53.98,
+"health": 4.1,
+"died": true,
+"lo": 7.84,
+"hi": 8.39
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1080.06.21",
+"age": 55.27,
+"health": 3.97,
+"died": true,
+"lo": 6.55,
+"hi": 7.1
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1081.06.21",
+"age": 56.27,
+"health": 3.85,
+"died": true,
+"lo": 5.55,
+"hi": 6.1
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1085.04.14",
+"age": 60.08,
+"health": 3.6,
+"died": true,
+"lo": 1.74,
+"hi": 2.29
+},
+{
+"game": "R",
+"ruler": 31506,
+"date": "1087.01.09",
+"age": 61.82,
+"health": 3.47,
+"died": true,
+"lo": 0.0,
+"hi": 0.55
+},
+{
+"game": "S",
+"ruler": 31506,
+"date": "1070.01.01",
+"age": 44.79,
+"health": 4.43,
+"died": false,
+"lo": null,
+"hi": 3.0
+},
+{
+"game": "S",
+"ruler": 31506,
+"date": "1071.03.13",
+"age": 45.99,
+"health": 4.45,
+"died": false,
+"lo": null,
+"hi": 1.8
+},
+{
+"game": "S",
+"ruler": 31506,
+"date": "1072.03.13",
+"age": 46.99,
+"health": 4.45,
+"died": false,
+"lo": null,
+"hi": 0.8
+},
+{
+"game": "T",
+"ruler": 31506,
+"date": "1070.01.01",
+"age": 44.79,
+"health": 4.43,
+"died": false,
+"lo": null,
+"hi": 3.0
+},
+{
+"game": "T",
+"ruler": 31506,
+"date": "1071.03.12",
+"age": 45.99,
+"health": 4.32,
+"died": false,
+"lo": null,
+"hi": 1.8
+},
+{
+"game": "T",
+"ruler": 31506,
+"date": "1072.04.16",
+"age": 47.09,
+"health": 4.32,
+"died": false,
+"lo": null,
+"hi": 0.71
+},
+{
+"game": "U",
+"ruler": 31506,
+"date": "1070.01.01",
+"age": 44.79,
+"health": 4.43,
+"died": false,
+"lo": null,
+"hi": 3.0
+},
+{
+"game": "U",
+"ruler": 31506,
+"date": "1071.05.13",
+"age": 46.16,
+"health": 3.58,
+"died": false,
+"lo": null,
+"hi": 1.63
+},
+{
+"game": "V",
+"ruler": 31506,
+"date": "1075.01.01",
+"age": 49.79,
+"health": 3.85,
+"died": false,
+"lo": null,
+"hi": 5.0
+},
+{
+"game": "V",
+"ruler": 31506,
+"date": "1077.07.11",
+"age": 52.32,
+"health": 3.25,
+"died": false,
+"lo": null,
+"hi": 2.47
+},
+{
+"game": "W",
+"ruler": 31506,
+"date": "1075.01.01",
+"age": 49.79,
+"health": 3.85,
+"died": false,
+"lo": null,
+"hi": 3.0
+},
+{
+"game": "X",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 2.97,
+"hi": 3.04
+},
+{
+"game": "X",
+"ruler": 31762,
+"date": "1067.12.09",
+"age": 40.95,
+"health": 4.13,
+"died": true,
+"lo": 1.74,
+"hi": 1.8
+},
+{
+"game": "X",
+"ruler": 31762,
+"date": "1069.03.08",
+"age": 42.2,
+"health": 3.12,
+"died": true,
+"lo": 0.49,
+"hi": 0.55
+},
+{
+"game": "X",
+"ruler": 36303,
+"date": "1069.09.28",
+"age": 21.66,
+"health": 4.14,
+"died": false,
+"lo": null,
+"hi": 26.96
+},
+{
+"game": "X",
+"ruler": 36303,
+"date": "1072.12.15",
+"age": 24.88,
+"health": 4.21,
+"died": false,
+"lo": null,
+"hi": 23.75
+},
+{
+"game": "X",
+"ruler": 36303,
+"date": "1076.09.08",
+"age": 28.61,
+"health": 4.21,
+"died": false,
+"lo": null,
+"hi": 20.02
+},
+{
+"game": "X",
+"ruler": 36303,
+"date": "1078.04.16",
+"age": 30.21,
+"health": 4.21,
+"died": false,
+"lo": null,
+"hi": 18.41
+},
+{
+"game": "X",
+"ruler": 36303,
+"date": "1083.05.10",
+"age": 35.28,
+"health": 3.94,
+"died": false,
+"lo": null,
+"hi": 13.35
+},
+{
+"game": "X",
+"ruler": 36303,
+"date": "1084.06.20",
+"age": 36.39,
+"health": 3.94,
+"died": false,
+"lo": null,
+"hi": 12.24
+},
+{
+"game": "X",
+"ruler": 36303,
+"date": "1085.07.29",
+"age": 37.5,
+"health": 3.9,
+"died": false,
+"lo": null,
+"hi": 11.13
+},
+{
+"game": "X",
+"ruler": 36303,
+"date": "1086.07.29",
+"age": 38.5,
+"health": 3.87,
+"died": false,
+"lo": null,
+"hi": 10.13
+},
+{
+"game": "Y",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": false,
+"lo": null,
+"hi": 14.28
+},
+{
+"game": "Y",
+"ruler": 31762,
+"date": "1067.12.09",
+"age": 40.95,
+"health": 4.25,
+"died": false,
+"lo": null,
+"hi": 13.05
+},
+{
+"game": "Y",
+"ruler": 31762,
+"date": "1069.04.04",
+"age": 42.27,
+"health": 4.25,
+"died": false,
+"lo": null,
+"hi": 11.73
+},
+{
+"game": "Y",
+"ruler": 31762,
+"date": "1070.05.23",
+"age": 43.4,
+"health": 4.25,
+"died": false,
+"lo": null,
+"hi": 10.59
+},
+{
+"game": "Y",
+"ruler": 31762,
+"date": "1071.07.26",
+"age": 44.58,
+"health": 4.25,
+"died": false,
+"lo": null,
+"hi": 9.42
+},
+{
+"game": "Y",
+"ruler": 31762,
+"date": "1074.01.08",
+"age": 47.03,
+"health": 4.13,
+"died": false,
+"lo": null,
+"hi": 6.97
+},
+{
+"game": "Y",
+"ruler": 31762,
+"date": "1078.09.25",
+"age": 51.74,
+"health": 3.0,
+"died": false,
+"lo": null,
+"hi": 2.25
+},
+{
+"game": "Z",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 11.34,
+"hi": 11.38
+},
+{
+"game": "Z",
+"ruler": 31762,
+"date": "1067.12.19",
+"age": 40.98,
+"health": 4.13,
+"died": true,
+"lo": 10.08,
+"hi": 10.12
+},
+{
+"game": "Z",
+"ruler": 31762,
+"date": "1069.03.02",
+"age": 42.18,
+"health": 4.0,
+"died": true,
+"lo": 8.88,
+"hi": 8.92
+},
+{
+"game": "Z",
+"ruler": 31762,
+"date": "1074.02.14",
+"age": 47.13,
+"health": 3.9,
+"died": true,
+"lo": 3.93,
+"hi": 3.97
+},
+{
+"game": "Z",
+"ruler": 36303,
+"date": "1078.02.03",
+"age": 30.01,
+"health": 4.07,
+"died": false,
+"lo": null,
+"hi": 18.62
+},
+{
+"game": "Z",
+"ruler": 36303,
+"date": "1079.06.03",
+"age": 31.35,
+"health": 4.07,
+"died": false,
+"lo": null,
+"hi": 17.28
+},
+{
+"game": "Z",
+"ruler": 36303,
+"date": "1081.02.02",
+"age": 33.01,
+"health": 4.03,
+"died": false,
+"lo": null,
+"hi": 15.62
+},
+{
+"game": "Z",
+"ruler": 36303,
+"date": "1083.11.10",
+"age": 35.78,
+"health": 3.9,
+"died": false,
+"lo": null,
+"hi": 12.85
+},
+{
+"game": "Z",
+"ruler": 36303,
+"date": "1086.10.14",
+"age": 38.71,
+"health": 3.9,
+"died": false,
+"lo": null,
+"hi": 9.92
+},
+{
+"game": "Z",
+"ruler": 36303,
+"date": "1092.06.25",
+"age": 44.41,
+"health": 3.57,
+"died": false,
+"lo": null,
+"hi": 4.22
+},
+{
+"game": "Z",
+"ruler": 36303,
+"date": "1094.08.02",
+"age": 46.51,
+"health": 3.44,
+"died": false,
+"lo": null,
+"hi": 2.12
+},
+{
+"game": "AA",
+"ruler": 31506,
+"date": "1066.11.27",
+"age": 41.7,
+"health": 4.55,
+"died": false,
+"lo": null,
+"hi": 4.4
+},
+{
+"game": "AA",
+"ruler": 31506,
+"date": "1071.02.08",
+"age": 45.9,
+"health": 4.12,
+"died": false,
+"lo": null,
+"hi": 0.21
+},
+{
+"game": "AB",
+"ruler": 31506,
+"date": "1084.07.04",
+"age": 59.3,
+"health": 3.45,
+"died": true,
+"lo": 6.4,
+"hi": 6.59
+},
+{
+"game": "AC",
+"ruler": 31506,
+"date": "1067.09.15",
+"age": 42.5,
+"health": 4.47,
+"died": true,
+"lo": 10.07,
+"hi": 10.32
+},
+{
+"game": "AC",
+"ruler": 31506,
+"date": "1068.11.25",
+"age": 43.69,
+"health": 4.47,
+"died": true,
+"lo": 8.88,
+"hi": 9.13
+},
+{
+"game": "AC",
+"ruler": 31506,
+"date": "1071.06.14",
+"age": 46.25,
+"health": 4.37,
+"died": true,
+"lo": 6.32,
+"hi": 6.57
+},
+{
+"game": "AC",
+"ruler": 31506,
+"date": "1072.06.14",
+"age": 47.25,
+"health": 4.24,
+"died": true,
+"lo": 5.32,
+"hi": 5.57
+},
+{
+"game": "AC",
+"ruler": 31506,
+"date": "1073.06.14",
+"age": 48.25,
+"health": 4.12,
+"died": true,
+"lo": 4.32,
+"hi": 4.57
+},
+{
+"game": "AC",
+"ruler": 31506,
+"date": "1075.11.13",
+"age": 50.66,
+"health": 4.12,
+"died": true,
+"lo": 1.91,
+"hi": 2.16
+},
+{
+"game": "AC",
+"ruler": 31506,
+"date": "1077.10.10",
+"age": 52.57,
+"health": 1.95,
+"died": true,
+"lo": 0.0,
+"hi": 0.25
+},
+{
+"game": "AC",
+"ruler": 42431,
+"date": "1078.01.10",
+"age": 4.5,
+"health": 4.64,
+"died": true,
+"lo": 0.0,
+"hi": 0.06
+},
+{
+"game": "AC",
+"ruler": 64514,
+"date": "1078.02.03",
+"age": 2.98,
+"health": 5.25,
+"died": false,
+"lo": null,
+"hi": 18.62
+},
+{
+"game": "AC",
+"ruler": 64514,
+"date": "1088.05.30",
+"age": 13.3,
+"health": 5.55,
+"died": false,
+"lo": null,
+"hi": 8.29
+},
+{
+"game": "AC",
+"ruler": 64514,
+"date": "1093.01.29",
+"age": 17.97,
+"health": 5.55,
+"died": false,
+"lo": null,
+"hi": 3.63
+},
+{
+"game": "AD",
+"ruler": 31506,
+"date": "1067.09.15",
+"age": 42.5,
+"health": 4.58,
+"died": true,
+"lo": 13.84,
+"hi": 14.34
+},
+{
+"game": "AD",
+"ruler": 31506,
+"date": "1071.06.13",
+"age": 46.24,
+"health": 4.35,
+"died": true,
+"lo": 10.1,
+"hi": 10.59
+},
+{
+"game": "AD",
+"ruler": 31506,
+"date": "1076.04.30",
+"age": 51.12,
+"health": 3.92,
+"died": true,
+"lo": 5.22,
+"hi": 5.71
+},
+{
+"game": "AD",
+"ruler": 31506,
+"date": "1077.09.27",
+"age": 52.53,
+"health": 3.75,
+"died": true,
+"lo": 3.81,
+"hi": 4.31
+},
+{
+"game": "AD",
+"ruler": 31506,
+"date": "1078.12.15",
+"age": 53.75,
+"health": 2.95,
+"died": true,
+"lo": 2.59,
+"hi": 3.09
+},
+{
+"game": "AD",
+"ruler": 66780,
+"date": "1082.01.17",
+"age": 12.5,
+"health": 5.19,
+"died": false,
+"lo": null,
+"hi": 14.66
+},
+{
+"game": "AD",
+"ruler": 66780,
+"date": "1084.01.17",
+"age": 14.5,
+"health": 5.19,
+"died": false,
+"lo": null,
+"hi": 12.66
+},
+{
+"game": "AD",
+"ruler": 66780,
+"date": "1085.01.25",
+"age": 15.52,
+"health": 5.19,
+"died": false,
+"lo": null,
+"hi": 11.64
+},
+{
+"game": "AE",
+"ruler": 31506,
+"date": "1066.09.15",
+"age": 41.5,
+"health": 4.55,
+"died": true,
+"lo": 10.57,
+"hi": 10.61
+},
+{
+"game": "AE",
+"ruler": 31506,
+"date": "1068.04.16",
+"age": 43.09,
+"health": 4.45,
+"died": true,
+"lo": 8.98,
+"hi": 9.02
+},
+{
+"game": "AE",
+"ruler": 31506,
+"date": "1071.01.12",
+"age": 45.83,
+"health": 4.0,
+"died": true,
+"lo": 6.24,
+"hi": 6.29
+},
+{
+"game": "AE",
+"ruler": 31506,
+"date": "1072.03.05",
+"age": 46.97,
+"health": 3.87,
+"died": true,
+"lo": 5.09,
+"hi": 5.14
+},
+{
+"game": "AE",
+"ruler": 36124,
+"date": "1077.04.25",
+"age": 30.46,
+"health": 4.65,
+"died": false,
+"lo": null,
+"hi": 19.39
+},
+{
+"game": "AE",
+"ruler": 36124,
+"date": "1080.04.21",
+"age": 33.45,
+"health": 4.6,
+"died": false,
+"lo": null,
+"hi": 16.4
+},
+{
+"game": "AE",
+"ruler": 36124,
+"date": "1081.06.19",
+"age": 34.61,
+"health": 4.63,
+"died": false,
+"lo": null,
+"hi": 15.24
+},
+{
+"game": "AE",
+"ruler": 36124,
+"date": "1084.04.12",
+"age": 37.42,
+"health": 4.65,
+"died": false,
+"lo": null,
+"hi": 12.42
+},
+{
+"game": "AE",
+"ruler": 36124,
+"date": "1087.03.11",
+"age": 40.34,
+"health": 3.88,
+"died": false,
+"lo": null,
+"hi": 9.51
+},
+{
+"game": "AE",
+"ruler": 36124,
+"date": "1089.03.12",
+"age": 42.34,
+"health": 3.75,
+"died": false,
+"lo": null,
+"hi": 7.51
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1066.09.15",
+"age": 41.5,
+"health": 4.55,
+"died": true,
+"lo": 10.92,
+"hi": 11.0
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1067.09.15",
+"age": 42.5,
+"health": 4.47,
+"died": true,
+"lo": 9.92,
+"hi": 10.0
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1069.02.15",
+"age": 43.92,
+"health": 4.35,
+"died": true,
+"lo": 8.5,
+"hi": 8.59
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1070.11.09",
+"age": 45.65,
+"health": 4.35,
+"died": true,
+"lo": 6.77,
+"hi": 6.85
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1073.01.20",
+"age": 47.85,
+"health": 4.35,
+"died": true,
+"lo": 4.57,
+"hi": 4.66
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1074.02.28",
+"age": 48.95,
+"health": 4.22,
+"died": true,
+"lo": 3.47,
+"hi": 3.55
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1075.02.28",
+"age": 49.95,
+"health": 4.1,
+"died": true,
+"lo": 2.47,
+"hi": 2.55
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1076.02.28",
+"age": 50.95,
+"health": 3.97,
+"died": true,
+"lo": 1.47,
+"hi": 1.55
+},
+{
+"game": "AF",
+"ruler": 31506,
+"date": "1077.08.16",
+"age": 52.42,
+"health": 2.52,
+"died": true,
+"lo": 0.0,
+"hi": 0.08
+},
+{
+"game": "AF",
+"ruler": 36124,
+"date": "1077.09.16",
+"age": 30.85,
+"health": 4.67,
+"died": true,
+"lo": 9.83,
+"hi": 10.58
+},
+{
+"game": "AF",
+"ruler": 36124,
+"date": "1078.10.18",
+"age": 31.94,
+"health": 4.67,
+"died": true,
+"lo": 8.74,
+"hi": 9.49
+},
+{
+"game": "AF",
+"ruler": 36124,
+"date": "1080.03.12",
+"age": 33.34,
+"health": 4.67,
+"died": true,
+"lo": 7.34,
+"hi": 8.09
+},
+{
+"game": "AF",
+"ruler": 36124,
+"date": "1081.03.21",
+"age": 34.36,
+"health": 4.67,
+"died": true,
+"lo": 6.31,
+"hi": 7.06
+},
+{
+"game": "AF",
+"ruler": 36124,
+"date": "1082.03.21",
+"age": 35.36,
+"health": 4.67,
+"died": true,
+"lo": 5.31,
+"hi": 6.06
+},
+{
+"game": "AF",
+"ruler": 36124,
+"date": "1083.03.21",
+"age": 36.36,
+"health": 4.67,
+"died": true,
+"lo": 4.31,
+"hi": 5.06
+},
+{
+"game": "AF",
+"ruler": 36124,
+"date": "1086.02.14",
+"age": 39.26,
+"health": 4.45,
+"died": true,
+"lo": 1.42,
+"hi": 2.16
+},
+{
+"game": "AF",
+"ruler": 42587,
+"date": "1088.04.13",
+"age": 6.5,
+"health": 4.6,
+"died": false,
+"lo": null,
+"hi": 8.42
+},
+{
+"game": "AF",
+"ruler": 42587,
+"date": "1094.05.29",
+"age": 12.63,
+"health": 4.55,
+"died": false,
+"lo": null,
+"hi": 2.29
+},
+{
+"game": "AG",
+"ruler": 12015,
+"date": "0867.01.01",
+"age": 43.84,
+"health": 3.66,
+"died": true,
+"lo": 8.05,
+"hi": 8.44
+},
+{
+"game": "AG",
+"ruler": 12015,
+"date": "0868.01.01",
+"age": 44.84,
+"health": 3.53,
+"died": true,
+"lo": 7.05,
+"hi": 7.44
+},
+{
+"game": "AG",
+"ruler": 12015,
+"date": "0874.01.16",
+"age": 50.88,
+"health": 2.79,
+"died": true,
+"lo": 1.01,
+"hi": 1.4
+},
+{
+"game": "AG",
+"ruler": 12015,
+"date": "0875.01.21",
+"age": 51.89,
+"health": 2.67,
+"died": true,
+"lo": 0.0,
+"hi": 0.38
+},
+{
+"game": "AG",
+"ruler": 14577,
+"date": "0875.06.09",
+"age": 31.43,
+"health": 4.44,
+"died": false,
+"lo": null,
+"hi": 13.65
+},
+{
+"game": "AG",
+"ruler": 14577,
+"date": "0876.07.05",
+"age": 32.5,
+"health": 4.32,
+"died": false,
+"lo": null,
+"hi": 12.58
+},
+{
+"game": "AG",
+"ruler": 14577,
+"date": "0877.12.27",
+"age": 33.98,
+"health": 4.19,
+"died": false,
+"lo": null,
+"hi": 11.1
+},
+{
+"game": "AG",
+"ruler": 14577,
+"date": "0880.09.24",
+"age": 36.72,
+"health": 3.94,
+"died": false,
+"lo": null,
+"hi": 8.36
+},
+{
+"game": "AG",
+"ruler": 14577,
+"date": "0885.06.01",
+"age": 41.41,
+"health": 3.69,
+"died": false,
+"lo": null,
+"hi": 3.67
+},
+{
+"game": "AG",
+"ruler": 14577,
+"date": "0886.12.15",
+"age": 42.94,
+"health": 3.57,
+"died": false,
+"lo": null,
+"hi": 2.13
+},
+{
+"game": "AG",
+"ruler": 14577,
+"date": "0888.01.09",
+"age": 44.01,
+"health": 3.44,
+"died": false,
+"lo": null,
+"hi": 1.07
+},
+{
+"game": "AH",
+"ruler": 28101,
+"date": "1066.09.15",
+"age": 63.0,
+"health": 3.09,
+"died": true,
+"lo": 4.09,
+"hi": 4.11
+},
+{
+"game": "AH",
+"ruler": 28101,
+"date": "1069.12.15",
+"age": 66.25,
+"health": 2.75,
+"died": true,
+"lo": 0.84,
+"hi": 0.86
+},
+{
+"game": "AH",
+"ruler": 34471,
+"date": "1070.10.26",
+"age": 30.1,
+"health": 2.5,
+"died": true,
+"lo": 8.74,
+"hi": 8.76
+},
+{
+"game": "AH",
+"ruler": 34471,
+"date": "1076.07.12",
+"age": 35.8,
+"health": 2.41,
+"died": true,
+"lo": 3.03,
+"hi": 3.05
+},
+{
+"game": "AI",
+"ruler": 12015,
+"date": "0867.01.01",
+"age": 43.84,
+"health": 3.66,
+"died": true,
+"lo": 11.78,
+"hi": 11.82
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 18.6,
+"hi": 18.85
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1068.01.07",
+"age": 41.02,
+"health": 4.13,
+"died": true,
+"lo": 17.29,
+"hi": 17.54
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1069.12.24",
+"age": 42.98,
+"health": 4.0,
+"died": true,
+"lo": 15.32,
+"hi": 15.57
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1071.03.09",
+"age": 44.19,
+"health": 4.0,
+"died": true,
+"lo": 14.11,
+"hi": 14.36
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1075.06.12",
+"age": 48.45,
+"health": 3.75,
+"died": true,
+"lo": 9.86,
+"hi": 10.11
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1080.03.21",
+"age": 53.23,
+"health": 1.15,
+"died": true,
+"lo": 5.08,
+"hi": 5.33
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1081.03.21",
+"age": 54.23,
+"health": 3.5,
+"died": true,
+"lo": 4.08,
+"hi": 4.33
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1082.03.21",
+"age": 55.23,
+"health": 3.5,
+"died": true,
+"lo": 3.08,
+"hi": 3.33
+},
+{
+"game": "AJ",
+"ruler": 31762,
+"date": "1085.04.20",
+"age": 58.31,
+"health": 1.8,
+"died": true,
+"lo": 0.0,
+"hi": 0.25
+},
+{
+"game": "AJ",
+"ruler": 56200,
+"date": "1085.07.20",
+"age": 3.5,
+"health": 4.79,
+"died": false,
+"lo": null,
+"hi": 11.15
+},
+{
+"game": "AJ",
+"ruler": 56200,
+"date": "1086.11.17",
+"age": 4.83,
+"health": 4.79,
+"died": false,
+"lo": null,
+"hi": 9.83
+},
+{
+"game": "AJ",
+"ruler": 56200,
+"date": "1088.04.16",
+"age": 6.24,
+"health": 4.81,
+"died": false,
+"lo": null,
+"hi": 8.41
+},
+{
+"game": "AJ",
+"ruler": 56200,
+"date": "1094.04.23",
+"age": 12.26,
+"health": 5.04,
+"died": false,
+"lo": null,
+"hi": 2.39
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1066.09.15",
+"age": 39.71,
+"health": 4.22,
+"died": true,
+"lo": 22.27,
+"hi": 22.29
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1068.01.12",
+"age": 41.03,
+"health": 4.13,
+"died": true,
+"lo": 20.94,
+"hi": 20.96
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1069.01.13",
+"age": 42.04,
+"health": 4.0,
+"died": true,
+"lo": 19.94,
+"hi": 19.96
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1070.04.26",
+"age": 43.32,
+"health": 4.0,
+"died": true,
+"lo": 18.66,
+"hi": 18.67
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1072.10.08",
+"age": 45.77,
+"health": 4.0,
+"died": true,
+"lo": 16.21,
+"hi": 16.22
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1073.11.05",
+"age": 46.85,
+"health": 4.0,
+"died": true,
+"lo": 15.13,
+"hi": 15.15
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1075.12.24",
+"age": 48.98,
+"health": 3.88,
+"died": true,
+"lo": 12.99,
+"hi": 13.01
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1076.12.24",
+"age": 49.98,
+"health": 3.88,
+"died": true,
+"lo": 11.99,
+"hi": 12.01
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1077.12.24",
+"age": 50.98,
+"health": 3.88,
+"died": true,
+"lo": 10.99,
+"hi": 11.01
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1078.12.24",
+"age": 51.98,
+"health": 3.88,
+"died": true,
+"lo": 9.99,
+"hi": 10.01
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1080.03.19",
+"age": 53.22,
+"health": 3.75,
+"died": true,
+"lo": 8.76,
+"hi": 8.78
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1081.04.13",
+"age": 54.29,
+"health": 3.75,
+"died": true,
+"lo": 7.69,
+"hi": 7.71
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1082.06.29",
+"age": 55.5,
+"health": 3.63,
+"died": true,
+"lo": 6.48,
+"hi": 6.5
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1083.06.29",
+"age": 56.5,
+"health": 3.5,
+"died": true,
+"lo": 5.48,
+"hi": 5.5
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1084.06.29",
+"age": 57.5,
+"health": 3.38,
+"died": true,
+"lo": 4.48,
+"hi": 4.5
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1085.09.02",
+"age": 58.67,
+"health": 3.25,
+"died": true,
+"lo": 3.3,
+"hi": 3.32
+},
+{
+"game": "AK",
+"ruler": 31762,
+"date": "1087.05.31",
+"age": 60.42,
+"health": 2.0,
+"died": true,
+"lo": 1.56,
+"hi": 1.58
+},
+{
+"game": "AK",
+"ruler": 36303,
+"date": "1088.12.29",
+"age": 40.92,
+"health": 3.8,
+"died": false,
+"lo": null,
+"hi": 7.71
+},
+{
+"game": "AK",
+"ruler": 36303,
+"date": "1090.11.07",
+"age": 42.77,
+"health": 3.64,
+"died": false,
+"lo": null,
+"hi": 5.86
+},
+{
+"game": "AK",
+"ruler": 36303,
+"date": "1093.06.17",
+"age": 45.38,
+"health": 3.39,
+"died": false,
+"lo": null,
+"hi": 3.24
+},
+{
+"game": "AK",
+"ruler": 36303,
+"date": "1095.02.24",
+"age": 47.07,
+"health": 3.44,
+"died": false,
+"lo": null,
+"hi": 1.56
+},
+{
+"game": "AK",
+"ruler": 36303,
+"date": "1096.03.15",
+"age": 48.13,
+"health": 3.32,
+"died": false,
+"lo": null,
+"hi": 0.5
+}
+],
+"added": [
+{
+"by": "succession line reads",
+"rows": "game AH, rulers 28101 and 34471 (health from that game's succession_plan death_estimate reads; age 63 at the start, 34471's from his age 26 at 1066.09.15), game AI, ruler 12015 (a second 867 Francia game: age and health of the 867.01.01 start as in the games B and C rows, death 11.8 years later)"
+},
+{
+"by": "goal chain reads",
+"rows": "games AJ (31762 and 56200) and AK (31762 and 36303), two seated 1066 Munster games: the census's own rows for them (35 reads; scripted games of a few months were not added)"
+}
+]
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Incoming-proposal queue: the INSTALL-TIME GENERATOR of the game side's
-interaction copies (grown from prototype; design:
-docs/design/incoming-proposals.md).
+interaction copies (grown from the prototype; design:
+docs/incoming-proposals.md).
 
 It reads the INSTALLED game's own `common/character_interactions/*.txt` and
 writes, for the mod `ck3agent_proposals` (ck3agent/proposal_mod/), files that
@@ -56,7 +56,7 @@ MARK = "# ck3agent:proposal"
 # interaction key -> (class, application family). The class is the unit a
 # seat's answer policy is set on; the family is how an answer is applied
 # (design, "Applying an answer"). One constant per class: a class the live rows
-# show cannot be held (call_to_war, peace) is removed by DELETING its
+# show cannot be held is removed by DELETING its
 # constant, its line in FIRST_SET, its rows in the design table and its row in
 # bridge/include/script_templates.h kProposalClasses (the mirror tests red on
 # any one left behind), never by a rewrite.
@@ -529,14 +529,14 @@ def _is_class(cls: str) -> str:
     return f"var:ck3agent_proposal_class = flag:{cls}"
 
 
-#: What a log line prints. Live runs i11p3-i11p9: a log line's string sees the
+#: What a log line prints. In live games a log line's string sees the
 #: saved scopes the CONTEXT began with (the interaction's actor and recipient in
 #: on_send: GetID printed the bridge's ids) and nothing the script saved during the
 #: run: SCOPE.ScriptValue('x') is a script value DEFINITION (printed 0), a variable
 #: on sC('recipient') printed in on_send and 0 in the list and the story's re-check,
 #: and sC('actor') printed 4294967295 in the list although the scope dump showed it
 #: saved. A GLOBAL variable read with GetGlobalVariable('x') printed the right
-#: values in the list (i11p9: DIAG|forms|1|36122). So each line first copies what it
+#: values in the list (DIAG|forms|1|36122). So each line first copies what it
 #: prints into global variables (named ck3a_*; set only while a marked seat's offer
 #: is logged) and prints those.
 #: The script effect every line is written with (INFO: the game drops
@@ -585,8 +585,8 @@ DATE = f"{_sv('ck3a_y')}.{_sv('ck3a_m')}.{_sv('ck3a_d')}"
 def kinds_files(lifted: dict[str, dict], kinds: dict[str, tuple[str, str]] = FIRST_SET) -> dict[str, str]:
     """The two generated new-key files' text. LIFTED: key -> {on_accept,
     on_decline, auto_accept, validity: [bodies], flags: [send option flags]}."""
-    head = ("# GENERATED at install by scripts/proposal_overrides.py from the installed game's\n"
-            "# common/character_interactions. Never edit, never ship (lane QMOD).\n")
+    head = ("# GENERATED at install by proposal_mod/proposal_overrides.py from the installed game's\n"
+            "# common/character_interactions. Never edit, never ship.\n")
     classes = list(dict.fromkeys(c for c, _ in kinds.values()))
     eff, trg = [head], [head]
     for key, (cls, family) in kinds.items():

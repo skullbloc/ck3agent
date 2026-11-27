@@ -1,4 +1,4 @@
-// pulse_ledger.cpp — R1c. See pulse_ledger.h for the why.
+// pulse_ledger.cpp — the pulse ledger. See pulse_ledger.h for the why.
 //
 // No engine dependencies on purpose: memory goes through PulseMemory, so this
 // whole file — crash path included — is host-compiled by test_pulse_ledger.

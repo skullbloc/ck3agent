@@ -26,8 +26,8 @@ strict routers. Each returned the ACK as the answer — which has no success, no
 gold, no dynasty_id — and then ran one frame out of phase forever. Silent: no
 exception, no timeout, no non-zero exit.
 
-LIVE EVIDENCE, 2026-09-13 (on the test host, on a main-based bridge). The
-node's READINESS PROBE read that first frame as the result of query_character,
+LIVE EVIDENCE (a bridge built from main). A host's
+READINESS PROBE read that first frame as the result of query_character,
 found no dynasty_id, and reported "the character DB is not live" — a CONFIDENT
 WRONG ANSWER ABOUT THE WORLD, and indistinguishable from a dead world. The
 payload arrived only via a later `check` carrying that ticket. That is why this
@@ -96,10 +96,10 @@ LIVE_STATES = frozenset({"pending", "running"})
 # falling back to `check`. The push is cheaper — no round trip, and it carries
 # the attribution spine verbatim — so it gets first refusal.
 PUSH_GRACE_S = 0.5
-# ...but never blind for longer than this. A flush period is seconds (the node
+# ...but never blind for longer than this. A flush period is seconds (a test host
 # saw flush_eta_ms 9999), and a client that simply waits it out is a client that
 # cannot tell "not flushed yet" from "my push was lost" — which is the state the
-# readiness probe was in when it declared a live world dead. So ask
+# Readiness probe was in when it declared a live world dead. So ask
 # early, once. The check reply carries the ticket's OWN remaining flush_eta_ms,
 # so the poll interval corrects itself to the real flush period immediately
 # afterwards: two round trips in the worst case, not a poll storm.
@@ -136,12 +136,21 @@ def frame_matches(msg, request_id):
     """
     if not isinstance(msg, dict):
         return "skip"
+    # A drain RECORD is broadcast to every session keyed `caller_request_id`,
+    # never `request_id` (ipc_server.cpp), so that no reader takes it for a
+    # reply. It is skipped before the id-less tolerance below, whoever's id it names.
+    if "caller_request_id" in msg:
+        return "skip"
     rid = msg.get("request_id")
     if request_id and rid == request_id:
         return "match"
     if rid is not None:
         return "skip"
     if msg.get("type") in PIPELINE_PUSH_TYPES:
+        return "skip"
+    # A pipeline result frame echoes the request_id of the call it answers; one
+    # without it, to a caller that sent an id, answers somebody else.
+    if request_id and msg.get("type") == "result":
         return "skip"
     return "match"
 

@@ -1,6 +1,6 @@
 #pragma once
-// The scheme reads and the engine's own start check, in one place (l3-schemes,
-// re/findings/re_schemes.md). Every handler that reports a scheme -- the owned list,
+// The scheme reads and the engine's own start check, in one place
+// (re/findings/re_schemes.md). Every handler that reports a scheme -- the owned list,
 // the incoming list, the push observation -- and every scheme write -- start, cancel,
 // check -- goes through these, so a field means the same thing wherever it appears.
 

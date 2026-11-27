@@ -155,7 +155,7 @@ struct RipAnchor {
     const char* label;
 };
 
-// leg (e). OBSERVE the loaded binary's ELF BuildID and publish it (with
+// Leg (e). OBSERVE the loaded binary's ELF BuildID and publish it (with
 // the process's effective CK3_STRICT_BUILD_ID) into bridge::build_id_witness().
 //
 // SEPARATE FROM run_resolver() ON PURPOSE, and the reason is a finding rather
@@ -163,7 +163,7 @@ struct RipAnchor {
 // bridge invokes it — only the three Zydis discovery helpers below are used
 // (ai_eval_hook.cpp), which is visible in every real bridge.log, none of which
 // contains the resolver's "Starting runtime resolver" banner or its "ELF
-// BuildID" line. So the BuildID check the bead set out to surface had never run
+// BuildID" line. So the BuildID check the task set out to surface had never run
 // in production at all, and wiring the witness to it would have shipped a leg
 // that reports `unchecked` forever and refuses every registered episode.
 //

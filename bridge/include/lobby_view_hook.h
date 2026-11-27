@@ -1,4 +1,4 @@
-// lobby_view_hook.h —
+// lobby_view_hook.h
 //
 // Captures the live CJominiMultiplayerLobbyView singleton via an inline
 // constructor hook. See bridge/src/lobby_view_hook.cpp for the rationale.
@@ -14,7 +14,7 @@ bool install_lobby_view_hook();
 
 // Live singleton pointer. nullptr until the engine constructs the lobby view
 // (after a save loads with multiplayer/observer flags set). Subsequent
-// destruction does NOT clear this — a follow-up bead can add a destructor
+// destruction does NOT clear this — a follow-up task can add a destructor
 // hook if invalidation is needed.
 void* get_lobby_view_singleton();
 

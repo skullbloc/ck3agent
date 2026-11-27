@@ -1,12 +1,12 @@
 // The SUCCESSION handoff at a full roster.
 //
-// check_controlled_handoff() used to claim the heir and release the corpse
+// check_controlled_handoff() does not claim the heir and release the corpse
 // afterwards, which asks for a slot while holding the only one available. At
 // 10/10 that is unsatisfiable by construction, so the seat stayed pointed at a
 // corpse and the function re-walked up to 64 candidates every tick — 2,574
 // watchlist_full lines in diag25, none of which said anything the first had not.
 //
-// These rows are at the REGISTRY, not in a log: established that a
+// These rows are at the REGISTRY, not in a log: a live check established that a
 // refusal count read from a sealed bundle returns 0 both when the fix works and
 // when the evidence has rotated away, so the grading cannot live in a log.
 #include "bridge.h"
@@ -104,7 +104,7 @@ int main() {
     }
 
     // ── THE DELETED LINE WAS A NO-OP, MEASURED RATHER THAN ASSERTED.
-    // check_controlled_handoff used to call release_character(ctrl) after the
+    // check_controlled_handoff does not call release_character(ctrl) after the
     // claim. The swap already took the corpse out in the same locked step, so
     // that call can only return false now. Showing it returns false is what
     // makes deleting it safe; leaving it would have read like the mechanism that
@@ -113,7 +113,7 @@ int main() {
         !g_session_registry.release_character(seat, corpse),
         "the corpse left with the swap; release(corpse) is already false");
 
-    // ── CASE IS PRESERVED, NOT SWALLOWED. The walk exists for a
+    // ── The CASE IS PRESERVED, NOT SWALLOWED. The walk exists for a
     // COLLISION: the game's heir is already held by another session. If the swap
     // quietly succeeded there it would seize another seat's character, and the
     // walk would become unreachable — the fix eating the case it must leave

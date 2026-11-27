@@ -7,10 +7,10 @@ dispatch below it is UNCORRELATED BY CONSTRUCTION: it carries no request_id,
 or one belonging to somebody else.
 
 The bridge has never emitted a frame of type `action_result`.
-deleted the protocol entry that described one (`ipc_protocol.json`
+A cleanup deleted the protocol entry that described one (`ipc_protocol.json`
 `action_response` and its tick_flow step) together with both clients' branches
-for it. On the MCP server's listener (the B path, the runtime the arms run,
-decision G6) such a frame now reaches the terminal else: it is counted in
+for it. On the MCP server's listener (the B path, the runtime the arms run)
+such a frame now reaches the terminal else: it is counted in
 `unhandled_frames`, delivered to nobody, and stored nowhere. The A-path rows
 live in test_pipeline_ack_correlation.py, which imports agent.py.
 

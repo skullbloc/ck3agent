@@ -13,7 +13,7 @@
 // The --replay mode exists so scripts/test_budget_enforcement.py can feed a
 // RECORDED CLAUDE-CLI TRANSCRIPT through this exact code rather than through a
 // python re-implementation of it. A second opinion about when an agent is out
-// of budget is precisely what this bead must not ship.
+// of budget is precisely what this code must not ship.
 
 #include "budget_ledger.h"
 
@@ -155,7 +155,7 @@ static void test_spend_accrues_per_session_per_game_year() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Cache traffic is RECORDED and NEVER billed (D4).
+// 2. Cache traffic is RECORDED and NEVER billed.
 // ---------------------------------------------------------------------------
 static void test_cache_recorded_never_billed() {
     section("cache read/write recorded, never billed (D4)");
@@ -516,7 +516,7 @@ static int run_replay(const char* path) {
 int main(int argc, char** argv) {
     if (argc >= 3 && std::strcmp(argv[1], "--replay") == 0) return run_replay(argv[2]);
 
-    std::printf("test_budget_ledger (ck-6kvq.13, R6)\n");
+    std::printf("test_budget_ledger\n");
     test_spend_accrues_per_session_per_game_year();
     test_cache_recorded_never_billed();
     test_refusal_fires_exactly_at_the_ceiling();

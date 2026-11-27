@@ -3,7 +3,7 @@
 The registered prompt says "You ARE Harold Godwinson" — present tense — while
 the driver expects the agent to seize control of itself as an early act and the
 tool that does it is described as "you rarely call this". The materials
-disagree. e0 ruled binding to be SETUP, not a strategic act under study, so it
+disagree. The experiment design treats binding as SETUP, not a strategic act under study, so it
 is repaired in machinery and NOT by editing a word the agent reads.
 
 The load-bearing property is NOT "a claim is sent". It is that the claim is sent
@@ -27,7 +27,7 @@ class _Client:
     `ack=None` must mean A FAILED HANDSHAKE, not "use the default". The first
     version of this helper coalesced None to a successful ack, so the
     failed-handshake test could not express its own case and reported a defect
-    in the code that was really a defect in the fixture. Same shape as
+    in the code that was really a defect in the fixture. Same shape as the
     `character_id` helper: a double that cannot represent the condition under
     test agrees with whatever the code does.
     """
@@ -70,7 +70,7 @@ def test_NO_declared_character_means_NO_claim(monkeypatch):
     """THE GATE. Absence is a state, never a default and never character 0.
 
     This is what keeps the repair out of every interactive MCP session and out
-    of any arm that declares no character — including E0, which forbids writes.
+    of any arm that declares no character — including null mode, which forbids writes.
     """
     c, st, sent = _bind(monkeypatch, None)
     assert sent == [], f"claimed with nothing declared: {sent}"
@@ -81,7 +81,7 @@ def test_a_declared_character_IS_claimed_before_the_first_turn(monkeypatch):
     c, st, sent = _bind(monkeypatch, "30853")
     assert sent == [("set_controlled_character",
                      {"character_id": 30853, "disable_native_ai": False})]
-    # lane-prebind added `bound_at` (the reply's clock stamp; this fake has none)
+    # The reply carries `bound_at` (the reply's clock stamp; this fake has none)
     # and `wait` (the fake ack names no session_state: nothing waited, nothing seen).
     assert st.prebind == {"character_id": 30853, "ok": True, "reason": None,
                           "bound_at": {"tick": None, "date": None},
@@ -89,7 +89,7 @@ def test_a_declared_character_IS_claimed_before_the_first_turn(monkeypatch):
 
 
 def test_a_REFUSED_claim_is_RECORDED_not_assumed(monkeypatch):
-    """ lesson applied in the same file: a write whose reply is never
+    """The lesson applied in the same file: a write whose reply is never
     read leaves the client believing something that did not happen. The agent
     still runs — it can claim for itself, exactly as it does today."""
     c, st, sent = _bind(monkeypatch, "30853",
@@ -123,16 +123,16 @@ def test_the_handshake_is_v2_and_NAMED(monkeypatch):
     c, st, sent = _bind(monkeypatch, None)
     assert c.handshake_kwargs is not None
     assert c.handshake_kwargs.get("client_name"), "the session must be NAMED"
-    # THE MODE MUST BE control, AND THIS IS NOT COSMETIC. measured the
+    # THE MODE MUST BE control, AND THIS IS NOT COSMETIC. A measurement found the
     # claim handler live: it refuses observe-mode sessions outright — "observe-
     # mode sessions cannot claim characters". Passing `observe` here would make
     # the pre-bind fail with a signature IDENTICAL to the bug it fixes: roster
-    # empty, agent idle, nothing obviously wrong. Two beads (claim and
-    # v2 keywords) land in one edit, and this is precisely the line
+    # empty, agent idle, nothing obviously wrong. Two tasks (the claim and
+    # The v2 keywords) land in one edit, and this is precisely the line
     # where that swap would go unnoticed.
     assert c.handshake_kwargs.get("mode") == "control", (
         "an observe-mode session CANNOT claim a character; passing observe here "
-        "reproduces the exact failure this bead fixes")
+        "reproduces the exact failure this change fixes")
 
 
 def test_a_failed_handshake_claims_NOTHING(monkeypatch):

@@ -1,8 +1,8 @@
-// flush_apply.h — R1b: applying a FlushPlan against real effects.
+// flush_apply.h — applying a FlushPlan against real effects.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §2.3, §2.4, §2.8.
+// Part of the event pipeline (pipeline.h).
 //
-// split the flush in two on purpose: FlushScheduler emits a PLAN and
+// The flush is split in two on purpose: FlushScheduler emits a PLAN and
 // performs no effect. This file is the other half — it walks the plan's ordered
 // script and calls an EFFECTS interface for each step, driving the ticket table
 // as it goes. The effects interface is abstract for exactly the reason the

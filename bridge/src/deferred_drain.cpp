@@ -2,14 +2,14 @@
 //
 // A DEFERRED call (CB validity, acceptance, trigger eval, decision eval, the
 // faction verdicts, the interaction cascade) submits one of the game-thread
-// query slots and polls for its verdict.: the handler itself runs on the
+// query slots and polls for its verdict. The handler itself runs on the
 // game thread (is_game_state_query) and services its own slot inline there;
 // query_interaction_check polls from the IPC thread while the drain services its
 // check intent.
 //
-/// D3: that drain runs after every session pass, paused or running, so
+// D3: that drain runs after every session pass, paused or running, so
 // a deferred call no longer needs the clock to run. The pause "pulse" this file
-// used to open around a paused call (record the pause flag, unpause until a
+// does not open around a paused call (record the pause flag, unpause until a
 // tick ran, re-pause) is deleted with that need, and with it the
 // drain_unavailable refusal it answered when no tick came and the
 // pulse acceptance. What stays is what was never about the clock:
@@ -46,10 +46,10 @@ static constexpr int LOCK_BUDGET_MS = 12000;
 static std::timed_mutex g_deferred_drain_lock;
 
 // ── THE TYPED REFUSAL IS COUNTED ──────────────────────────────────
-// busy_deferred used to survive ONLY in the reply frame it was written into.
+// busy_deferred does not survive ONLY in the reply frame it was written into.
 // Every queued response on this socket is BROADCAST and request_id is the only
 // discriminator, so the one surviving copy of a wedged-lock event travelled by
-// exactly the mechanism exist because of. A refusal nobody
+// exactly the mechanism the refusal counters exist because of. A refusal nobody
 // can count is a refusal whose ABSENCE cannot be read as evidence.
 // DEFINED IN src/deferred_counters.cpp, NOT HERE: dispatch_router.cpp reports it
 // and several host test targets compile dispatch_router.cpp against stubs, so
@@ -123,12 +123,12 @@ DeferredDrainStatus run_deferred_single_flight(
 }
 
 // The deferred-slot submitters: handlers that submit a game-thread query slot
-// and poll for its verdict.: all but query_interaction_check are
+// and poll for its verdict. All but query_interaction_check are
 // game-thread reads (is_game_state_query) that service their own slot inline
 // there (service_slots_if_game_thread); query_interaction_check enqueues a check
 // intent and polls from the IPC thread (is_bridge_internal_query). Every one is
 // dispatched under the single-flight lock above (ipc_server.cpp). (query_conquest_targets
-// left this set in: it calls the strict CB evaluation directly on the game thread.)
+// left this set: it calls the strict CB evaluation directly on the game thread.)
 bool is_deferred_drain_action(const char* action_type) {
     if (!action_type) return false;
     static const char* deferred[] = {
@@ -145,8 +145,8 @@ bool is_deferred_drain_action(const char* action_type) {
         "query_trigger_result",
         "list_valid_decisions",
         "list_decisions_annotated",
-        "query_joinable_factions",      // F16: engine faction verdicts (factions.cpp)
-        "query_interaction_check",            // F16: the send pipeline's checks, drained, nothing sent
+        "query_joinable_factions",      // engine faction verdicts (factions.cpp)
+        "query_interaction_check",            // the send pipeline's checks, drained, nothing sent
         "probe_interaction_cascade",
         "probe_gate_4_slots",
     };

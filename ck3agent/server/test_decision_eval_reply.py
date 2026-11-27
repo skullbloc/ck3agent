@@ -1,7 +1,7 @@
-""" defects 3 (the 186K decisions reply) and 6 (decisions_annotated /
+"""Defects 3 (the 186K decisions reply) and 6 (decisions_annotated /
 valid_decisions answering the plain list): one root cause, two doors.
 
-THE TRANSCRIPTS. scale0 n8/s2 (Charles 12015, 0867.05.28):
+THE TRANSCRIPTS. A recorded seat (Charles 12015, 0867.05.28):
   do(action_class="decisions", candidates=["merge_aquitaine_decision"])
   -> "Error: result (186,485 characters) exceeds maximum allowed tokens"
      {"result":{"action_class":"decisions","available":[],"unavailable":[
@@ -28,7 +28,7 @@ THIS FILE: the server never passes an unevaluated list through again.
       reply is small
   E2  an evaluated reply keeps only the decisions asked for
   E3  discover(decisions_annotated|valid_decisions) without decisions is a
-      missing argument and sends nothing (it used to fetch the light list)
+      missing argument and sends nothing (it does not fetch the light list)
   E4  discover's annotated read refuses the light reply the same way (one reading,
       redesign.decision_eval_rows, behind both doors)
 """

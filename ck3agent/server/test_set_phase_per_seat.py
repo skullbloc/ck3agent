@@ -1,10 +1,10 @@
-""" deploy-51 — `set_phase` writes nothing outside the calling seat.
+"""`set_phase` writes nothing outside the calling seat.
 
-RULED by the progenitor, verbatim: "Remove the world-wide write". The option
-read: "set_phase stops touching the world-wide war switch. Seats lose that lever
-but can still declare wars directly with declare_war. Removes the cross-seat
-coupling and the A/B-vs-C imbalance; disclosed as a change in what seats can do,
-with no pooling across it."
+THE RULE: set_phase does not touch the world-wide war switch. Seats lose that
+lever but can still declare wars directly with declare_war. That removes the
+coupling between seats (one seat's phase changing every other ruler's war
+declarations); it is disclosed as a change in what seats can do, and runs on
+either side of it are not pooled.
 
 WHAT IT USED TO DO. Every phase pin called
 `toggle_ai_subsystem(subsystem="DeclareWar")` — ONE engine byte gating offensive
@@ -13,8 +13,8 @@ WORLD-WIDE blast radius" in its own result, which was honest about a thing that
 should not have been on a per-seat verb.
 
 WHY IT MATTERED MORE THAN A BLAST RADIUS:
-  - SIX seats called it every cycle in arms A and B; ONE did in arm C. So the
-    seats of a multi-seat arm were coupled through a global byte and were never
+  - SIX seats called it every cycle in two recorded multi-seat sets; ONE did in a third. So the
+    seats of a multi-seat game were coupled through a global byte and were never
     independent — and the coupling itself DIFFERED BY ARM.
   - it is the only ENGINE-ENFORCED declaration lever, so removing it changes
     what a seat can DO, not only what it reads.
@@ -70,7 +70,7 @@ def _run(phase, cid=30853):
 
 
 def test_set_phase_NEVER_writes_the_world_wide_DeclareWar_byte():
-    """THE ROW THE RULING ASKED FOR. Driven, not grepped."""
+    """The rule's own row: set_phase never writes the world-wide byte. Driven, not grepped."""
     gw, env = _run("expansion")
     actions = [a for a, _ in gw.writes]
     assert "toggle_ai_subsystem" not in actions, (
@@ -80,7 +80,7 @@ def test_set_phase_NEVER_writes_the_world_wide_DeclareWar_byte():
 
 @pytest.mark.parametrize("phase", sorted(redesign.PHASE_GENOME))
 def test_NO_phase_writes_the_global_byte(phase):
-    """Every phase, not just the one that used to set it ON. The old code routed
+    """Every phase, not just the one that used to set it ON. The superseded code routed
     the phase's disposition to the global byte in BOTH directions — expansion
     turned it on, defensive phases turned it OFF, which froze the world's AI
     declarations — so a row that only checked `expansion` would miss half of it."""
@@ -89,8 +89,8 @@ def test_NO_phase_writes_the_global_byte(phase):
 
 
 def test_TWO_SEATS_WITH_OPPOSITE_PHASES_leave_the_global_byte_untouched():
-    """The control the ruling named. Two seats, opposite phases, as the six seats
-    of an arm-A episode did to each other every cycle."""
+    """The control the rule named. Two seats, opposite phases, as seats sharing
+    one game do to each other every cycle."""
     phases = sorted(redesign.PHASE_GENOME)
     a, b = phases[0], phases[-1]
     assert a != b, "need two distinct phases for this to be a real opposition"
@@ -167,7 +167,7 @@ class FaultingGateway(RecordingGateway):
 
 def test_a_faulted_personality_write_blocks_the_phase():
     """The personality write IS the phase. Its fault used to
-    become a `personality_write_warning` beside verdict applied. RED on b84e3634."""
+    become a `personality_write_warning` beside verdict applied. RED without the rule."""
     gw = FaultingGateway({"error": "memory_access_fault"})
     env = asyncio.run(redesign.set_phase_impl(gw, phase="expansion", character_id=30853))
     assert env.get("verdict") == "rejected" and env.get("ok") is False, env

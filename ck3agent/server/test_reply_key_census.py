@@ -1,4 +1,4 @@
-""" (N4-1): every unit-test double of a query_realm,
+"""Every unit-test double of a query_realm,
 query_character, query_title_succession, query_title_hierarchy, query_council,
 get_controlled_roster or query_succession_simulation reply carries only keys the
 bridge writes.
@@ -48,13 +48,13 @@ TARGETS = {
     # The danelaw duchy count read "titles"/"title_key"/"de_jure_kingdom",
     # none of which do_query_title_hierarchy (emit_title_info) writes.
     "query_title_hierarchy": "do_query_title_hierarchy",
-    # Good_guardian_candidates read seats/character_id from a double the
+    # good_guardian_candidates read seats/character_id from a double the
     # bridge never writes (do_query_council writes council[]/holder_id).
     "query_council": "do_query_council",
-    #: multi_actor (now actor_gate) read `characters`/`controlled`; the bridge
+    # Witness M1: multi_actor() (now actor_gate) read `characters`/`controlled`; the bridge
     # writes `roster` (dispatch_router.cpp do_get_controlled_roster).
     "get_controlled_roster": "do_get_controlled_roster",
-    #: heir_plan read `succession_law`/`law`; the simulation
+    # Witness m1: heir_plan read `succession_law`/`law`; the simulation
     # writes neither (query_handlers.cpp do_query_succession_simulation).
     "query_succession_simulation": "do_query_succession_simulation",
 }
@@ -62,8 +62,8 @@ TARGETS = {
 #: The fail-open floors, per reply: how many keys its emitter must be parsed to
 #: write (beside the envelope) and how many doubles the finder must find.
 #: do_get_controlled_roster writes four keys (action, primary_character_id,
-#: roster, player_character_id) and two modules double it as it stood at
-#: 03f19352; every other target keeps the floors it had.
+#: roster, player_character_id) and two modules double it; every other target
+#: keeps the floors it had.
 MIN_EMITTED = {"get_controlled_roster": 4}
 MIN_DOUBLES = {"get_controlled_roster": 2}
 
@@ -222,7 +222,7 @@ def emitted_paths(handler: str) -> tuple[frozenset, list]:
             p = p[1:]
         if p:
             out.add(p)
-    # 2026.12.6: a handler that opens a FaultScope has its reply SPLICED (not
+    # A handler that opens a FaultScope has its reply SPLICED (not
     # .key()-written) with the keys mark_reply_degraded appends when a read
     # faulted (action_dispatch_internal.h, FaultScope's destructor). Read from
     # that splice, never retyped.
@@ -746,7 +746,7 @@ def test_the_parse_reads_nesting_and_helpers():
     assert {("house_name",), ("faith",), ("faith_key",), ("personality", "boldness"),
             ("degraded",)} <= ch
     assert ("held_title_count",) in realm and ("titles",) not in realm
-    # Core_data+0x170 is the merit stock and +0x2E8 base health: query_character
+    # core_data+0x170 is the merit stock and +0x2E8 base health: query_character
     # writes `merit` and no `monthly_income`; query_realm's income has no `accumulated`.
     assert ("merit",) in ch and ("monthly_income",) not in ch
     assert ("income_breakdown", "total_monthly") in ch
@@ -758,7 +758,7 @@ def test_the_parse_reads_nesting_and_helpers():
                 ("held_titles", "[]", "de_jure_kingdom")} & th
     # A count out of range or a held title that did not resolve is an
     # error with the raw count (title_count_clamped, a helper handed the builder),
-    # never an empty held_titles. RED on 24cac589 (the count was zeroed silently).
+    # never an empty held_titles. RED without the rule (the count was zeroed silently).
     assert {("error",), ("count_field",), ("raw_count",), ("max_count",), ("index",)} <= th
 
 
@@ -778,7 +778,7 @@ def _reply_paths(o, pre=()) -> set:
                                      "state_867_liege_with_factions.json"])
 def test_CONTROL_live_replies_sit_inside_the_parse(fixture):
     """The parse against the game: the hook fixtures are RAW bridge replies from
-    a live 867 launch (l7-hook-1, provenance in each file). Every key path they
+    a live 867 launch (provenance in each file). Every key path they
     carry for a TARGETS action is one the parse found, so the parse is not
     narrower than the bridge (a too-narrow parse would red honest doubles)."""
     import json

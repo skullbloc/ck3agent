@@ -1,8 +1,8 @@
-"""The scheme routes a player uses (F5):
+"""The scheme routes a player uses:
 discover(what="scheme_types"), discover(what="scheme_targets") and
 do(intent="scheme") start/cancel, against a fake gateway that records every bridge
-call. What the bridge does with them is proven live (scripts/live867/scenarios/
-l3_schemes_matrix.py); these pin what the server sends and how it reads the reply."""
+call. What the bridge does with them is proven live (a live scenario
+in the research tree); these pin what the server sends and how it reads the reply."""
 import asyncio
 import pathlib
 import re
@@ -113,7 +113,7 @@ def test_the_readback_is_a_different_read_than_the_write():
 
 
 def test_the_engine_refusal_carries_the_engine_reasons():
-    # The bridge's row shape since then S4 (scheme_engine.cpp emit_reasons).
+    # The bridge's row shape (scheme_engine.cpp emit_reasons).
     reasons = [{"check": "allow", "text": ""}]
     gw = _Gateway({"success": False, "reason": "engine_refused_can_start_scheme",
                    "result": {"created": False, "engine_reasons": reasons}})
@@ -148,7 +148,7 @@ def test_every_wordless_row_the_bridge_sends_says_what_it_is():
     """The rows scheme_engine.cpp sends with text "" (emit_reasons:
     allow / valid / trigger and sink_method_not_modelled; scheme_can_start:
     owner_invalid / target_invalid) never read "the game gives no detail": the
-    game was not asked. RED on b84e3634 (trigger, sink_method_not_modelled,
+    game was not asked. RED without the rule (trigger, sink_method_not_modelled,
     owner_invalid and target_invalid all said NO_GAME_DETAIL)."""
     rows = [{"check": c, "text": ""} for c in
             ("allow", "valid", "trigger", "sink_method_not_modelled",
@@ -174,7 +174,7 @@ def test_the_scheme_check_names_mirror_the_bridge():
 
 # --- cancel ------------------------------------------------------------------
 
-#: The witness's run (w-l3-schemes-1, steps 123-128): learn_language 10465->10447
+#: A recorded run (steps 123-128): learn_language 10465->10447
 #: started as id 152, the cancel applied, and the AI's next scheme got id 152.
 MINE = {"scheme_id": 152, "type": "learn_language", "target_id": 10447,
         "start_date": 244042142049125040}
@@ -371,7 +371,7 @@ def _literals(ns: str) -> dict:
 
 def test_no_scheme_field_has_two_literals():
     """A second literal for one field drifts: the Windows generator maps each by
-    its own rule (the witness's run: CAP_TYPE by the probe, CATEGORY by a slot run).
+    its own rule (a test run: CAP_TYPE by the probe, CATEGORY by a slot run).
     A second name is defined from the first."""
     for ns in SCHEME_NAMESPACES:
         by_value: dict = {}
@@ -408,7 +408,7 @@ def test_every_scheme_success_chance_comes_from_one_reader():
 
 def _bridge_refused_row(debug=False):
     """A refused row in the bridge's shape (scheme_engine.cpp emit_reasons).
-    debug=True is the a0a2fff3 shape (the script place under debug)."""
+    debug=True is a debug build's shape (the script place under debug)."""
     trig = {"check": "allow", "text": ""}
     entry = {"check": "engine_entry", "text": "You already have a Scheme against them"}
     if debug:
@@ -448,7 +448,7 @@ def _refused_via_server(row):
 def test_a_refused_scheme_row_says_words_and_nothing_else(debug):
     """Each reason is {check, summary}: the game's words for an engine entry, that
     the bridge does not read the words for a trigger, and no script place even when a bridge
-    still sends one (debug=True: the a0a2fff3 bridge's shape)."""
+    still sends one (debug=True: a debug build's shape)."""
     import redesign as R
     row = _refused_via_server(_bridge_refused_row(debug))
     trig, entry = row["reasons"]
@@ -472,12 +472,12 @@ def test_the_bridge_reports_no_script_place():
 
 
 def test_the_discover_description_promises_no_debug_on_a_scheme_row():
-    """ int round 3: S4 deleted the scheme row's `debug` end to end, and the
-    discover description S2 wrote still sent the player to it. The taught words
+    """The scheme row's `debug` is deleted end to end, and the
+    discover description once still sent the player to it. The taught words
     for a refused scheme row name only {check, summary}."""
-    import os
-    src = open(os.path.join(os.path.dirname(__file__), "mcp_server.py"), encoding="utf-8").read()
-    body = src[src.index("scheme_targets: whom the actor"):src.index("scheme: For what=scheme_targets")]
+    import tool_text   # The descriptions live in tool_text
+    body = tool_text.DISCOVER[tool_text.DISCOVER.index("scheme_targets (scheme"):]
+    body = body[:body.index("Lists with")]
     assert "{check, summary}" in body
     for word in ("debug", "file", "line", "block"):
         assert word not in body, word

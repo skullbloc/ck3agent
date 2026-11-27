@@ -1,7 +1,7 @@
-// test_war_scope.cpp — row A3: query_war_stance's row rule on a
+// test_war_scope.cpp — query_war_stance's row rule on a
 // fixture read from the 867 core dump, through the REAL json_get_int.
 //
-// Fixture: the core dump ck3_20260625_152901_ivar867 (CLAUDE.md, "Runtime probing") (867.01.01,
+// Fixture: the 867 start dump (867.01.01,
 // BuildID e61ff264...), WAR_DB = *(base+0x0bed8888), table *(db+0x20), capacity
 // *(db+0x2c) = 1024; every slot whose war+0x08 low-24 equals the slot and whose
 // war+0x2F8 (IS_ENDED) is 0 — the ten active wars — with war+0x228
@@ -9,7 +9,7 @@
 // The dump's controlled ruler 14859 is primary attacker in wars 3 and 4.
 //
 // Built twice: plain (must pass) and with -DWAR_SCOPE_PREFIX_CONTROL, the
-// pre-fix scope read, registered WILL_FAIL (it lists no war for 14859, which is
+// superseded scope read, registered WILL_FAIL (it lists no war for 14859, which is
 // the A3 reply: `wars []` with records matched).
 #include <cstdio>
 #include <cstdint>

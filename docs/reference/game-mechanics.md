@@ -128,7 +128,7 @@ Each can be assigned a task.
 (verified by RE in this build: `task_fabricate_claim` routes to the Court Chaplain
 seat). So to fabricate a claim you must have a **Court Chaplain seated**; an empty
 chaplain seat means `task_fabricate_claim` has no one to execute it and NO claim is
-ever produced (this silently stalled fabrication in a live run — see L29). Before/while
+ever produced (this silently stalled fabrication in a live run). Before/while
 assigning fabrication: confirm the chaplain seat is filled (`query(domain="council")`
 shows `vacant_positions`), and fabrication speed scales with the chaplain's **Learning**,
 not the Chancellor's Diplomacy. A ruler with ministries fabricates through the

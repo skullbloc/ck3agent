@@ -37,7 +37,7 @@ constexpr uint32_t kAllWars = 0;
 // `raw` is json_get_int(params, "war_id") as the handler received it.
 inline uint32_t from_param(int raw) {
 #ifdef WAR_SCOPE_PREFIX_CONTROL
-    return static_cast<uint32_t>(raw);           // the pre-fix read (ctest control)
+    return static_cast<uint32_t>(raw);           // the superseded read (ctest control)
 #else
     return raw == -1 ? kAllWars : static_cast<uint32_t>(raw);
 #endif

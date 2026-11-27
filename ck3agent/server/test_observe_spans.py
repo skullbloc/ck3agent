@@ -1,4 +1,4 @@
-"""Observe_v2's reads are issued together, and the acceptance test is unchanged.
+"""observe_v2's reads are issued together, and the acceptance test is unchanged.
 
 HOST ONLY. A counting fake gateway; no bridge, no game.
 
@@ -9,14 +9,14 @@ set. It is the tool seats are told to call first and they route around it:
   * `_settled_dejure` issued one read then polled up to 6 more, so 1-7 bridge
     reads, and `observe_impl` called it TWICE IN SEQUENCE (k_ireland, then
     e_britannia) -- up to FOURTEEN reads before the main batch began.
-    (deleted the poll: `_dejure_pair` is one batch.)
+    (The poll is deleted: `_dejure_pair` is one batch.)
   * `get_ai_personality` was a sixth span of its own, 160 lines below, on
     EVERY call. 93% of calls are depth="brief" (539 of 582 measured over
-    d45-d50), so it was on the hot path every time.
+    the recorded episodes), so it was on the hot path every time.
 
 WHAT IS NOT CLAIMED HERE. These rows prove the calls are ISSUED TOGETHER. They
 say nothing about wall-clock: the bridge serves reads through the game thread
-and whether concurrency helps is a live question, which deploy-51's first slot
+and whether concurrency helps is a live question, which a first slot
 answers. A latency number measured in an asyncio fixture would be a number
 about asyncio.
 
@@ -88,7 +88,7 @@ class ObserveSpans(unittest.IsolatedAsyncioTestCase):
             encoding="utf-8", errors="replace")
         i = src.index("async def observe_impl")
         body = src[i:i + 9000]
-        # names the literal batch (`_reads := [...]`) so its failed
+        # The code names the literal batch (`_reads := [...]`) so its failed
         # reads can be named (observe_read_failures); it is still one literal
         batch_start = body.index("read_many(_reads := [")
         batch_end = body.index("])", batch_start)

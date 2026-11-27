@@ -85,7 +85,10 @@ def _reached() -> dict:
     out = {}
     for _d, (action, build) in tools.QUERY_DOMAIN_MAP.items():
         out[action] = set(build({}))
-    for what in tools._DISCOVER_RESOLVED:
+    # Acceptance and war_targets are composed (redesign.acceptance_impl,
+    # war_targets_impl) and still send these reads (the acceptance fallback, the
+    # candidate list); resolve_discover keeps their params.
+    for what in tools._DISCOVER_RESOLVED + ("acceptance", "war_targets"):
         action, params = tools.resolve_discover({"what": what})
         out[action] = set(params)
     return out

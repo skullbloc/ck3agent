@@ -1,4 +1,4 @@
-"""Docs/research.md states facts about the bridge source. Check them.
+"""docs/research.md states facts about the bridge source. Check them.
 
 The B8 defect was a doc and a code change made in parallel that disagreed in
 the merged tree, with nothing to notice. Each test below reads the claim from
@@ -259,11 +259,99 @@ def test_emit_action_log_writes_session_id_and_kind_on_every_dispatch():
 from personality_axes import AXES  # noqa: E402
 
 
-def test_phase_table_matches_PHASE_GENOME():
-    redesign = pytest.importorskip("redesign")
-    rows = {}
-    for line in _section(_doc(), "`set_phase` presets").splitlines():
+def phase_table(section: str) -> tuple[dict, list[str]]:
+    """({phase: {axis: value}}, problems) for the doc's set_phase table. Strict:
+    a header, a row or the prose count with a column more or less than the
+    code's axes is a problem (zip would drop the extra column silently)."""
+    rows, probs = {}, []
+    head = [c.strip() for c in next(l for l in section.splitlines() if l.startswith("| Phase |")).strip("|").split("|")]
+    if len(head) - 1 != len(AXES):
+        probs.append(f"header names {len(head) - 1} axis columns, the code has {len(AXES)}: {head[1:]}")
+    for a, h in zip(AXES, head[1:]):
+        if a[:4] != h.rstrip(".")[:4]:
+            probs.append(f"column {h!r} is not the axis {a!r}")
+    n = re.search(r"writes these (\d+) personality axes", section)
+    if not n or int(n.group(1)) != len(AXES):
+        probs.append(f"the prose says {n.group(1) if n else 'no'} axes, the code has {len(AXES)}")
+    for line in section.splitlines():
         m = re.match(r"\| `([a-z_]+)` \|(.*)\|\s*$", line)
         if m:
-            rows[m.group(1)] = dict(zip(AXES, (int(x) for x in m.group(2).split("|"))))
+            vals = [int(x) for x in m.group(2).split("|")]
+            if len(vals) != len(AXES):
+                probs.append(f"{m.group(1)}: {len(vals)} values, the code has {len(AXES)} axes")
+            rows[m.group(1)] = dict(zip(AXES, vals))
+    return rows, probs
+
+
+def test_phase_table_matches_PHASE_GENOME():
+    redesign = pytest.importorskip("redesign")
+    rows, probs = phase_table(_section(_doc(), "`set_phase` presets"))
+    assert probs == []
     assert rows == redesign.PHASE_GENOME
+
+
+def test_CONTROL_the_phase_table_check_reds_on_an_extra_column_and_a_wrong_count():
+    """The check must see what zip() hid: a tenth column, a wrong axis count in
+    the prose, a row one value short. Each mutant of the real section is red."""
+    sec = _section(_doc(), "`set_phase` presets")
+    assert phase_table(sec)[1] == []
+    extra = "\n".join(l + " 60 |" if re.match(r"\| `[a-z_]+` \|", l) else
+                      (l + " domin. |" if l.startswith("| Phase |") else l) for l in sec.splitlines())
+    assert any("axis columns" in p for p in phase_table(extra)[1])
+    assert any("values" in p for p in phase_table(extra)[1])
+    assert any("prose says" in p for p in phase_table(re.sub(r"these \d+ personality", "these 10 personality", sec))[1])
+    short = re.sub(r"(\| `expansion` \|.*?)\| -?\d+ \|\s*$", r"\1|", sec, flags=re.M)
+    assert any("expansion: 8 values" in p for p in phase_table(short)[1])
+
+
+# ── strictness controls: every doc table a test here guards ──────────────────
+#
+# A test that claims to guard a doc table must red when the table drifts. Each
+# control writes a mutated copy of research.md (a row dropped, a row added) to a
+# temp file, points _doc at it, and runs the guard: it must fail. The set_phase
+# table has its own control above (a column added).
+
+def _drop_first(doc: str, heading: str, row: str) -> str:
+    sec = _section(doc, heading)
+    line = next(l for l in sec.splitlines() if l.startswith(row))
+    return doc.replace(sec, sec.replace(line + "\n", "", 1), 1)
+
+
+def _add_row(doc: str, heading: str, row: str) -> str:
+    sec = _section(doc, heading)
+    last = [l for l in sec.splitlines() if l.startswith("| `")][-1]
+    return doc.replace(sec, sec.replace(last + "\n", last + "\n" + row + "\n", 1), 1)
+
+
+def _logged(doc: str, f) -> str:
+    sec = _section(doc, "What is recorded")
+    m = re.search(r"Logged as `management`:(.*?)Not logged:", sec, re.S)
+    return doc.replace(m.group(1), f(m.group(1)), 1)
+
+
+MUTANTS = [
+    ("env row dropped", test_env_table_lists_exactly_what_the_bridge_reads,
+     lambda d: _drop_first(d, "Bridge environment variables", "| `CK3")),
+    ("env row added", test_env_table_lists_exactly_what_the_bridge_reads,
+     lambda d: _add_row(d, "Bridge environment variables", "| `CK3_NOT_READ_BY_THE_BRIDGE` | nothing |")),
+    ("logged verb dropped", test_kLoggedMgmt_is_the_documented_management_list,
+     lambda d: _logged(d, lambda s: s.replace("`pause_game`, ", "", 1))),
+    ("logged verb added", test_kLoggedMgmt_is_the_documented_management_list,
+     lambda d: _logged(d, lambda s: "`not_a_verb`, " + s)),
+    ("unlogged verb added", test_not_logged_list_is_every_other_mutating_management_verb,
+     lambda d: d.replace("Not logged: reads, and", "Not logged: reads, and `not_a_verb`,", 1)),
+    ("phase row dropped", test_phase_table_matches_PHASE_GENOME,
+     lambda d: _drop_first(d, "`set_phase` presets", "| `rebuild`")),
+]
+
+
+@pytest.mark.parametrize("name,guard,mutate", MUTANTS, ids=[m[0] for m in MUTANTS])
+def test_CONTROL_each_guard_reds_on_a_mutated_copy_of_the_doc(name, guard, mutate, tmp_path, monkeypatch):
+    doc = _doc()
+    bad = mutate(doc)
+    assert bad != doc, f"{name}: the mutation did not apply (the control would be vacuous)"
+    copy = tmp_path / "research.md"
+    copy.write_text(bad, encoding="utf-8")
+    monkeypatch.setitem(globals(), "_doc", lambda: copy.read_text(encoding="utf-8"))
+    with pytest.raises(AssertionError):
+        guard()

@@ -1,4 +1,4 @@
-""" deploy-51 item (3) — `do` never says "applied" for a queued action.
+"""`do` never says "applied" for a queued action.
 
 THE BRIDGE WAS THE HONEST PARTY. `do_send_interaction`'s enqueue path replies
 (action_handlers.cpp:531-535):
@@ -120,7 +120,7 @@ def test_an_EXPLICIT_failure_is_still_rejected():
     assert (env or {}).get("ok") is False
 
 
-# ── amendment 3: "later" is the NEXT PASS, and the server reads it ────────
+# ── "later" is the NEXT PASS, and the server reads it ────────
 
 class DrainGateway(Gateway):
     """The bridge drains the queued intent on the next pass, paused or running:
@@ -167,7 +167,7 @@ def _drain_do(rows, monkeypatch, interaction="befriend_interaction", purses=None
 
 
 def test_a_queued_write_the_drain_RAN_is_SENT_and_pending_never_applied(monkeypatch):
-    """ ruling: `applied` needs an effect the server read back.
+    """The rule: `applied` needs an effect the server read back.
     The drain's "success" says it was SENT; LEVERS has no readback for befriend,
     so it is pending until the clock advances, result.sent true, with what to
     check. The round-1 server answered applied on the bare dispatch success."""
@@ -216,7 +216,7 @@ def test_a_queued_write_whose_verdict_is_never_read_is_pending_NEXT_PASS(monkeyp
     assert gw.dispatch_reads == 1 + len(redesign.DRAIN_SCHEDULE_S)
 
 
-# ── ruling: a stage-1 lever is applied once its effect is read ─
+# ── a stage-1 lever is applied once its effect is read ─
 
 D = "0867.03.01"
 
@@ -225,7 +225,7 @@ def test_a_GIFT_whose_exact_amount_moved_on_the_pass_is_APPLIED(monkeypatch):
     """gift_interaction is an "on_execute" lever: the drain ran it, and the
     sender's purse fell by exactly what the recipient's rose, with no game day
     between the readings: applied, with the amount. The do() tail takes no clock
-    reading for it, so the answer is the same paused or running. answered
+    reading for it, so the answer is the same paused or running. The superseded code answered
     pending clock_advances."""
     gw, env = _drain_do([{"status": "success"}], monkeypatch, interaction="gift_interaction",
                         purses=[(100.0, 10.0, D), (60.0, 50.0, D)])
@@ -243,9 +243,9 @@ def test_a_GIFT_whose_gold_did_not_move_after_the_pass_is_UNCONFIRMED(monkeypatc
 
 
 def test_the_DRAIN_REFUSAL_outranks_a_readback_that_would_resolve(monkeypatch):
-    """Witness r4 m1: settle_write ran the readback before it looked at the
-    drain's refusal, so a refused gift whose purses moved anyway (another
-    transfer the same pass) read applied. The refusal now comes first."""
+    """settle_write looks at the drain's refusal before the readback: a refused
+    gift whose purses moved anyway (another transfer the same pass) does not
+    read applied. The refusal comes first."""
     gw, env = _drain_do([{"status": "rejected", "rejection_reason": "target_would_reject"}],
                         monkeypatch, interaction="gift_interaction",
                         purses=[(100.0, 10.0, D), (60.0, 50.0, D)])
@@ -254,12 +254,12 @@ def test_the_DRAIN_REFUSAL_outranks_a_readback_that_would_resolve(monkeypatch):
 
 
 def test_a_GIFT_reading_across_a_daily_tick_is_PENDING_READBACK_never_rejected(monkeypatch):
-    """Witness r4 m1 and r5 G1 (ruling). Running, a daily tick between the
+    """Running, a daily tick between the
     readings pays income or takes an expense, so the transfer cannot be told
     from it: the reading is not made (never applied on a wrong amount), and a
     gift the drain RAN is never rejected for a reading the server could not
     make: pending, drains_when "readback", ok:true, result.sent, raw_reason
-    write_unconfirmed. answered ok:false rejected write_unconfirmed, which the
+    write_unconfirmed. The superseded code answered ok:false rejected write_unconfirmed, which the
     player could read as "not sent" and gift twice."""
     gw, env = _drain_do([{"status": "success"}], monkeypatch, interaction="gift_interaction",
                         purses=[(100.0, 10.0, D), (60.0 + 7.0, 50.0, "0867.03.02")])
@@ -281,7 +281,7 @@ def test_a_GIFT_whose_clean_reading_shows_another_amount_is_not_applied(monkeypa
 
 
 def test_EXECUTOR_RETURNED_NO_VERDICT_is_a_write_that_ran_not_a_refusal(monkeypatch):
-    """Witness r5 n5: the drain records `rejected: executor_returned_no_verdict`
+    """The drain records `rejected: executor_returned_no_verdict`
     when an executor ran and set no verdict (intent_queue.cpp finish). The write
     may have landed, so it is pending readback with result.sent, ok:true, never a
     refusal the player would answer by sending it again."""
@@ -309,4 +309,4 @@ def test_every_do_tail_lever_with_a_readback_has_one():
     for k, r in redesign.LEVERS.items():
         assert r["shows"] in ("on_execute", "days") and r.get("evidence"), k
         if r["shows"] == "on_execute":
-            assert r.get("readback") and r.get("absent") in ("declined", "unconfirmed"), k
+            assert r.get("readback") and r.get("absent") == "unconfirmed", k

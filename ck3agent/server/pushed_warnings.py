@@ -1,4 +1,4 @@
-"""Pushed warnings: what a seat is told without having to think to look (v4 draft section 6).
+"""Pushed warnings: what a seat is told without having to think to look.
 
 `observe`'s `result.warnings` is a list of one-line items, each
 `{"trigger", "topic", "line"}`: the trigger is an id of TRIGGERS (the
@@ -152,7 +152,7 @@ def vassal_read_request(vids: list[int]) -> tuple[str, dict]:
     """The ONE bridge read for every direct vassal's realm: query_realm
     with `character_ids`, answered from one walk of the character table
     (query_handlers.cpp query_realm_batch). It replaced one query_realm per vassal,
-    each its own ~0.9 s walk: the re-pilot king's 32 took ~30 s and most came back
+    each its own ~0.9 s walk: a recorded king's 32 took ~30 s and most came back
     unread."""
     return "query_realm", {"character_ids": list(vids)}
 

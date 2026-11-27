@@ -1,4 +1,4 @@
-""" designed-not-made items, made in the integration.
+"""The designed-not-made items, made in one integration pass.
 
   F  fabricate_targets empty: the reply names the council seat it used and what
      the bridge said (Cui 13191, an administrative ruler, got an empty list and
@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 R = pytest.importorskip("redesign")
-from test_lane_query import ScriptedGateway                       # noqa: E402
+from test_query_and_do_rows import ScriptedGateway                      # noqa: E402
 import test_plan_war_claim_rows as PW                              # noqa: E402
 
 BRIDGE = Path(__file__).resolve().parents[2] / "bridge" / "src" / "action_handlers.cpp"
@@ -62,7 +62,7 @@ def test_F_CONTROL_a_list_with_rows_carries_no_empty_warning():
         "success": True, "targets": [{"title_id": 329, "title": "c_x", "assignable": True}]}})
     env = _run(R.do_impl(gw, action_class="fabricate_targets", character_id=13191))
     assert "fabricate_targets_empty" not in [w["code"] for w in env["warnings"]]
-    assert env["result"]["available"][0]["do_call"]["args"]["seat"] == R.FABRICATE_CLAIM_SEAT
+    assert env["result"]["available"][0]["do_call"]["args"]["args"]["seat"] == R.FABRICATE_CLAIM_SEAT
 
 
 # ── P ─────────────────────────────────────────────────────────────────────────

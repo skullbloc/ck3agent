@@ -1,10 +1,10 @@
 // exclusion_rule.h — X IS A RULE, NOT A CONSTANT.
 //
-// Design of record: pre-registration §7.1. Predecessors: (the
-// covariate), (the wall-clock anomaly gate + the both-units rule),
+// It builds on the unavailability covariate (unavailability.h) and on the
+// wall-clock anomaly gate with its both-units rule.
 //
 //
-// ─── THE DEFECT THIS EXISTS TO END ─────────────────────────────────────────
+// ─── THE HAZARD THIS GUARDS AGAINST ─────────────────────────────────────────
 // `unavailability.h` stored `exclusion_days_ = 365`. 365 is not a threshold —
 // it is the RULE "X is 5% of the episode's horizon, unsteered" EVALUATED AT ONE
 // HORIZON: the registered 20-game-year run, 7300 game-days x 0.05 = 365.0
@@ -15,15 +15,15 @@
 //   1066.09.15 -> 1086.09.15 (20 y)           7300     365         365   ==
 //   1066.09.15 -> 1071.01.01 (smoke)          1568      78         365   4.7x
 //
-// A smoke episode judged at 365 cannot be excluded at all: its entire horizon
+// An episode judged at 365 cannot be excluded at all: its entire horizon
 // is 1568 game-days, so a session would have to be unsteered for 23% of the run
 // before the constant noticed, where the rule notices at 5%. The number agreed
-// with its meaning in exactly one configuration — shape exactly.
+// with its meaning in exactly one configuration — the shape exactly.
 //
 // ─── THE RULE ──────────────────────────────────────────────────────────────
 //   X = round(FRACTION x (horizon_end - horizon_start), in GAME-DAYS)
 //
-// FRACTION is the single pre-registered constant: 0.05, overridable for a pilot
+// FRACTION is the single declared constant: 0.05, overridable for a pilot
 // via CK3_UNAVAIL_EXCLUSION_FRACTION and PUBLISHED beside every value it
 // produced. The HORIZON is DECLARED by the harness at episode start — the
 // bridge never guesses one, never substitutes a default, and never derives one
@@ -36,7 +36,7 @@
 // ─── NO HORIZON => UNARMED, TYPED, NEVER 365 ───────────────────────────────
 // An episode that declares no horizon has no X. The bridge REFUSES to arm the
 // exclusion rather than falling back to the constant, because falling back is
-// precisely the defect: it would judge an unknown-length episode against a
+// precisely the hazard: it would judge an unknown-length episode against a
 // 20-year number. `armed == false` carries a typed reason, nothing is flagged
 // over threshold, and the seal marks `unavailability_over_x` NOT EVALUABLE. An
 // unevaluated criterion must never read as a passed one.
@@ -48,7 +48,7 @@
 // `_ordinal()` in scripts/meter_lane.py, which is documented there as CADENCE
 // ARITHMETIC ONLY and is never written to a row. The two disagree by 3 days on
 // any horizon starting 15 September, and mixing them is the same class of
-// units error as the one was filed for. See test_unavailability's
+// units error the clock-rate meter exists to prevent. See test_unavailability's
 // exclusion lane, which asserts both numbers side by side.
 //
 // PURE. Header-only, no engine reads, no globals, no allocation beyond the
@@ -69,7 +69,7 @@ namespace bridge {
 
 
 // The rule, resolved for ONE episode. Everything a reader needs to re-derive
-// the number offline is in here, which is the property applied to X:
+// the number offline is in here, which is the clock-rate meter's rule applied to X:
 // the value, the fraction it came from, and the horizon it was measured over.
 struct ExclusionRule {
     bool        armed = false;

@@ -1,21 +1,19 @@
 // episode_policy.h — the episode's MODE, and nothing else.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §2.7, §6.1.
+// Part of the event pipeline (pipeline.h).
 //
 // WHY THIS FILE EXISTS AT ALL. Two unrelated behaviours need to know "is this a
-// pre-registered experiment episode, or free play?":
+// declared experiment episode, or free play?":
 //
 //   * §2.9's pulse-leak CONTAINMENT (abort the episode, refuse further
 //     control-session work) — experiment mode only;
 //   * §2.7's CLAIM PIN (a dropped socket must not release a claim and must not
 //     re-enable `ai_ctrl+0x28`) — experiment mode only, free-play keeps
-//     docs/design/multi-agent-control.md Q5 byte for byte.
+//     the multi-agent control design byte for byte.
 //
-// Until 2026-09-12 both read the answer off `CheckpointGate::policy().mode`,
-// because the checkpoint clock gate happened to own the env parsing. The
-// progenitor REVERSED G3' that day and the gate was withdrawn from the
-// experiment path (§2.7); the mode outlived it, so it lives here now, in a
-// module small enough that nothing has to be withdrawn from it next time.
+// Neither reads it off a clock gate: there is none (the clock runs in an
+// experiment), so the mode lives here, in a module small enough that nothing
+// has to be withdrawn from it.
 //
 // PURE. No engine dependencies, host-tested with no CK3 binary.
 
@@ -42,15 +40,15 @@ const char* episode_mode_name(EpisodeMode m);
 // consumes them, and the acceptance reads them out of this file.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// THE pre-registered constant on the unavailability axis, and now the only one:
+// THE declared constant on the unavailability axis, and now the only one:
 // X is this FRACTION of the episode's declared horizon. Published beside every
 // value it produced; overridable for a pilot via CK3_UNAVAIL_EXCLUSION_FRACTION.
 constexpr double kDefaultExclusionFraction = 0.05;
 
-// THE REGISTERED HORIZON, spelled once: the paper's twenty game-years.
+// THE REGISTERED HORIZON, spelled once: the declared twenty game-years.
 // 1066.09.15 -> 1086.09.15 is 7300 game-days EXACTLY on the engine's calendar.
 //
-// NOT 1086.01.01, which docs/multi-instance.md (and the deleted E0 runbook)
+// NOT 1086.01.01, which an older multi-instance runbook
 // offered as "the full paper horizon": that is 7043 game-days, 19.3
 // game-years, and the rule's answer there is 352, not 365. Both spellings are
 // in live use — 1086.09.15 in scripts/test_episode_abort.sh and
@@ -60,8 +58,8 @@ constexpr double kDefaultExclusionFraction = 0.05;
 // DID NOT CREATE THIS DISCREPANCY, IT CREATED THE ABILITY TO SEE ONE THAT WAS
 // ALWAYS THERE. Under the old constant both spellings produced 365, so no test,
 // no reader and no artefact could tell them apart — the ambiguity was perfectly
-// invisible rather than absent. Which one the pre-registration means is the
-// pre-registration's call, and the harness DECLARES it per episode either way.
+// invisible rather than absent. Which one the experiment design means is the
+// experiment design's call, and the harness DECLARES it per episode either way.
 constexpr const char* kRegisteredHorizonStart = "1066.09.15";
 constexpr const char* kRegisteredHorizonEnd   = "1086.09.15";
 
@@ -70,7 +68,7 @@ constexpr const char* kRegisteredHorizonEnd   = "1086.09.15";
 // NOT a policy knob and never read at runtime. It is a named ANCHOR so that the
 // UNITS table below has a C++ symbol to be audited against
 // (scripts/acceptance_threshold_units.py), and so that a change to the rule
-// which MOVES the number the paper cites fails a test instead of passing one.
+// which MOVES the declared number fails a test instead of passing one.
 // bridge/test/test_unavailability.cpp asserts it equals what
 // resolve_exclusion_rule() actually computes for that horizon, so it cannot
 // drift into a lie the way the runtime constant it replaces did.
@@ -84,13 +82,13 @@ constexpr const char* kUnarmedBadHorizon = "exclusion_unarmed_bad_horizon";
 struct EpisodePolicy {
     EpisodeMode mode = EpisodeMode::FreePlay;
 
-    // Minted by the harness (bead .2), handed to the bridge at episode start and
+    // Minted by the harness (a sibling task), handed to the bridge at episode start and
     // stamped onto every record (§6.1). "" until .2 lands; never omitted from
-    // the wire, so the lanes coding against the shape keep a stable key set.
+    // the wire, so the consumers coding against the shape keep a stable key set.
     std::string episode_id;
 
-    // THE EXPERIMENTAL ARM (/ R4). Lower-cased, or "" when the
-    // episode does not declare one (free play, and every pre-R4 harness). It is
+    // THE EXPERIMENTAL ARM. Lower-cased, or "" when the
+    // episode does not declare one (free play, and any harness that names no arm). It is
     // carried HERE, in the episode's own config: the arm is a property of the
     // episode, stamped into the handshake and the launch record. An
     // unrecognised value is kept verbatim; nothing in the bridge branches on
@@ -125,10 +123,10 @@ struct EpisodePolicy {
     // scripts/threshold_units.py — never by reading a row here.
     //
     // READ THE CONDITIONS AS WHAT THEY ARE, AND NOTE WHAT IS MISSING.
-    //   e0_null_free_running      MEASURED. E0 null mode, no control sessions,
-    //                             clock free-running (Appendix A.19; corroborated
+    //   e0_null_free_running      MEASURED. null mode, no control sessions,
+    //                             clock free-running (measured; corroborated
     //                             live). GAME SPEED UNRECORDED — which
-    //                             is itself part of the defect.
+    //                             is itself part of the hazard.
     //   speed3_metered_measured   MEASURED on the test host during a live
     //                             metered episode at CK3 SPEED 3: 1.584
     //                             game-days/wall-second, 15.6 game-years/wall-hour,
@@ -139,14 +137,14 @@ struct EpisodePolicy {
     //                             the RETIRED game-day numbers were worked at,
     //                             under the WITHDRAWN checkpoint gate.
     //
-    // NONE OF THEM IS THE ARM CONDITION. The progenitor has ruled CK3 SPEED 2
-    // for every arm AND for E0; no rate has been measured at speed 2, so the
+    // NONE OF THEM IS THE ARM CONDITION. The rule is CK3 SPEED 2
+    // for every arm AND for null mode; no rate has been measured at speed 2, so the
     // row that will one day govern these thresholds — `arm_speed2_measured` —
     // is deliberately ABSENT rather than filled in from the speed-3 figure or
-    // from a free-running one. Add it when measures the pair, and cite
+    // from a free-running one. Add it when a measurement covers the pair, and cite
     // THAT row in the gate's derivation.
     //
-    // AND READ THE FIRST TWO ROWS AGAINST THE LAST TWO. At the E0 null rate the
+    // AND READ THE FIRST TWO ROWS AGAINST THE LAST TWO. At the null-mode rate the
     // 360-second gate spans ~623 game-days, which is already past X = 365: the
     // gate is COARSER than X there, so the FIRST anomalous gap would invalidate
     // an episode and X could not tell a brief lapse from a dead agent. At the
@@ -154,11 +152,11 @@ struct EpisodePolicy {
     // Same two numbers, opposite regimes, decided entirely by a rate nobody has
     // measured in an arm. That tension is REAL, it is asserted in
     // bridge/test/test_unavailability.cpp so a test run shows it, and resolving
-    // it is the pre-registration's call after measures the arm rate —
+    // it is the experiment design's call once the arm rate is measured —
     // not an edit anyone should make here.
     //
     // ═══════════════════════════════════════════════════════════════════════
-    // §2.7's UNAVAILABILITY COVARIATE — the pre-registration numbers, carried
+    // §2.7's UNAVAILABILITY COVARIATE — the experiment design numbers, carried
     // here so one `init_from_env` owns every episode-shaped knob.
     // ═══════════════════════════════════════════════════════════════════════
     //
@@ -166,9 +164,9 @@ struct EpisodePolicy {
     // CONDITION, and scripts/acceptance_threshold_units.py FAILS this file if
     // one is not. That rule exists because of what it caught:
     //
-    //   this block used to derive its numbers at ~0.75 game-years/hour and
+    //   this block does not derive its numbers at ~0.75 game-years/hour and
     //   justify them by citing "the measured ~19 game-years/hour" — which is
-    //   real, but it is APPENDIX A.19's E0 NULL-MODE figure (63 wall-minutes
+    //   real, but it is the measured NULL-MODE figure (63 wall-minutes
     //   for 20 game-years, no control sessions, clock free-running), not a
     //   measurement of the condition the thresholds govern. The two rates are
     //   26x apart. Both halves were sound; only their PAIRING was wrong, and
@@ -179,33 +177,33 @@ struct EpisodePolicy {
     // THE MEASURED RATES ON RECORD, each with the condition it was measured in.
     // Neither is an arm rate. Do not quote one without its condition:
     //
-    //   E0 NULL, free-running (Appendix A.19, corroborated's live E0
+    //   NULL, free-running (measured, and corroborated by a live null-mode
     //   set 1066.9.15 -> 1071.1.1): ~19 game-years/wall-hour ~= 1.73 game-days
     //   per wall-second. NO control sessions. GAME SPEED UNRECORDED.
     //
-    //   SPEED 3, metered, with a control session attached (node,
+    //   SPEED 3, metered, with a control session attached (test host,
     //   2026-09-12): 1.584 game-days/wall-second = 15.6 game-years/wall-hour,
     //   days-per-tick 1.000 exactly.
     //
-    //   ARM AT THE RULED SPEED 2 (A/B/C, six control sessions on the R3
+    //   ARM AT THE DECLARED SPEED 2 (A/B/C, six control sessions on the
     //   heartbeat, pipeline mode): NOT MEASURED. The bridge now measures it —
     //   get_tick_info
     //   `pipeline.unavailability.clock_rate`, carried into run_summary.json as
     //   `arm_rate_game_days_per_wall_second`. `measured:false`
     //   means NOT MEASURED and must be reported as such, never filled in from
-    //   the E0 figure.
+    //   the null-mode figure.
     //
     // AND THE ROOT NOBODY HAD PINNED: the episode's GAME SPEED was an
     // UNSPECIFIED PRE-REGISTRATION PARAMETER, and every wall-clock figure here
     // is a function of it. That is how two honest rates could disagree by 26x —
-    // they are two speeds. The progenitor has since RULED SPEED 2 for every arm
-    // and for E0, which closes the parameter but does not supply the number: no
+    // they are two speeds. The rule is now SPEED 2 for every arm
+    // and for null mode, which closes the parameter but does not supply the number: no
     // rate has been measured at speed 2 yet. The speed is published beside every
     // measured rate (`clock_rate.condition.speed_min/speed_max`) for exactly
     // this reason, and a rate measured across a speed CHANGE reports a range so
     // it cannot be quoted as one speed's.
     //
-    // ── THE ANOMALY GATE (PROGENITOR RULING, 2026-09-13, via bt-bbd) ────────
+    // ── THE ANOMALY GATE ─────────────────────────────────────────────────────
     //
     // A gap between a control session's activities is UNAVAILABILITY only if it
     // exceeds THREE HEARTBEAT INTERVALS, measured in WALL-CLOCK from stamps on
@@ -218,18 +216,18 @@ struct EpisodePolicy {
     //                         clock, so it is invariant to game speed and to the
     //                         clock rate. That invariance is the reason the gate
     //                         moved into wall-clock.
-    //   IN GAME-DAYS          NOT FIXED, and deliberately so. At the E0 null
+    //   IN GAME-DAYS          NOT FIXED, and deliberately so. At the null-mode
     //                         rate (1.73 gd/s) 360 s spans ~623 game-days; at
     //                         the ~0.75 game-years/hour worked example (0.076
     //                         gd/s) it spans ~27. The span is RECORDED per gap
     //                         at the run's own measured rate, never assumed.
     //
     // WHAT THIS SUPERSEDED, kept because the failure is the lesson.
-    // gated in GAME-DAYS — `min_span_days = 30`, a gap of at least
+    // The old gate counted GAME-DAYS — `min_span_days = 30`, a gap of at least
     // 30 game-days counted IN FULL — and derived that 30 as "one agent turn at
     // the cadence §2.7 itself used (~6.5 wall-minutes)". That was TRUE UNDER THE
     // GATED DESIGN, where the world WAITED for each agent, so 30 game-days
-    // really was one turn. The progenitor reversed G3' the same day: the clock
+    // really was one turn. The gate was withdrawn the same day: the clock
     // free-runs. The number crossed the reversal with its justification intact,
     // and after the reversal the game-days a gap spans are a function of GAME
     // SPEED and say nothing about whether the agent was late:
@@ -252,7 +250,7 @@ struct EpisodePolicy {
 
     // ── X, THE EXCLUSION THRESHOLD — A RULE, NOT A CONSTANT ───────
     //
-    // RULED 2026-09-12, RESTATED 2026-09-13 (the progenitor, via bt-bbd): more
+    // THE RULE: more
     // than X cumulative GAME-DAYS spanned by ANOMALOUS gaps on any English
     // session invalidates the episode, and
     //
@@ -263,23 +261,23 @@ struct EpisodePolicy {
     // 7300 game-days, x 0.05 = 365.0 exactly — and it is wrong at every other
     // horizon. The smoke horizon (1066.09.15 -> 1071.01.01) is 1568 game-days,
     // where the rule says 78 and the constant said 365: 4.7x too PERMISSIVE,
-    // which is why nothing ever showed a symptom. A smoke episode judged at 365
+    // which is why nothing ever showed a symptom. An episode judged at 365
     // cannot be excluded at all — its whole horizon is 1568 days, so a session
     // would have to sit unsteered for 23% of the run before the constant
-    // noticed. Same shape as degeneracy ceiling: a ruled MEANING and
+    // noticed. Same shape as the degeneracy ceiling: a declared MEANING and
     // a coded CONSTANT that agree in exactly one configuration.
     //
     // THE ARITHMETIC AND ITS CALENDAR. The span is computed through
-    // ck3::game_date (REAL month lengths), because that is the
+    // ck3::game_date (the REAL month lengths), because that is the
     // calendar the ledger's day numbers come from. It is NOT the uniform
     // 30-day-month `_ordinal()` in scripts/meter_lane.py, which that module
     // documents as CADENCE ARITHMETIC ONLY and never writes to a row. On a
     // horizon starting 15 September the two disagree by 3 game-days (smoke:
     // 1568 vs 1571; X: 78 vs 79), and picking the wrong one is the same class
-    // of units error was filed for. Rounding is round-half-away-from-
+    // of units error the clock-rate meter exists to prevent. Rounding is round-half-away-from-
     // zero on the product; the span is non-negative, so that is round-half-up.
     //
-    //   THE CONSTANT          the FRACTION, 0.05 — the one pre-registered
+    //   THE CONSTANT          the FRACTION, 0.05 — the one declared
     //                         number on this axis. Overridable for a pilot via
     //                         CK3_UNAVAIL_EXCLUSION_FRACTION and PUBLISHED
     //                         beside every value it produced.
@@ -289,7 +287,7 @@ struct EpisodePolicy {
     //                         default.
     //   NO HORIZON            UNARMED, typed `exclusion_unarmed_no_horizon`.
     //                         The bridge refuses to judge rather than falling
-    //                         back to 365 — falling back IS the defect — and
+    //                         back to 365 — falling back IS the hazard — and
     //                         the seal marks `unavailability_over_x` NOT
     //                         EVALUABLE. An unevaluated criterion must never
     //                         read as a passed one.
@@ -302,12 +300,12 @@ struct EpisodePolicy {
     //                         than retyping a row.
     //
     // STILL OPEN, and it must not be presented as settled: no rate has been
-    // measured at the RULED CK3 speed 2, so every wall-clock reading of X is a
+    // measured at the declared CK3 speed 2, so every wall-clock reading of X is a
     // worked example in a condition that is NOT the experiment's.
-    // speed table is the measurement. Until it lands, quote X in GAME-DAYS.
+    // The speed table is the measurement. Until it lands, quote X in GAME-DAYS.
     //
     // CK3_UNAVAIL_X_DAYS IS RETIRED. A direct override of X is a door
-    // back to the coded constant this bead closed: set to 365 on a smoke
+    // back to the coded constant this code guards against: set to 365 on a smoke
     // horizon it restores the exact defect, silently and permissively. The
     // fraction is the knob. Setting the retired variable changes nothing and is
     // PUBLISHED as ignored, because a retired knob that silently does nothing
@@ -371,7 +369,7 @@ struct EpisodePolicy {
 
     // Was the variable SET AT ALL? false = the establishing step never ran or
     // never reached this process; true with an empty refusal = it was set to
-    // nothing. Two operator actions that sealed one record before.
+    // nothing. Two operator actions that sealed one record before this rule.
     bool        game_speed_present  = false;
 };
 
@@ -402,19 +400,19 @@ public:
     // never 365.
     //
     // And CK3_EPISODE_GAME_SPEED, §9.4's registered game speed, which
-    // the flush planner rests at. Unset => the pre-registered default, with
+    // the flush planner rests at. Unset => the declared default, with
     // `game_speed_declared` false so the bundle can tell the two apart.
     //
     // TWO RETIRED VARIABLES, both published as ignored rather than silently
-    // dropped: CK3_UNAVAIL_MIN_SPAN_DAYS (the game-day gate —) and
-    // CK3_UNAVAIL_X_DAYS (a direct override of X —; it is the door back
+    // dropped: CK3_UNAVAIL_MIN_SPAN_DAYS (the game-day gate) and
+    // CK3_UNAVAIL_X_DAYS (a direct override of X; it is the door back
     // to the coded constant, so the fraction is the knob instead).
     void init_from_env();
 
     // LOCK-FREE on purpose. This is read on the IPC reader thread for EVERY
     // envelope (it is what keeps the §2.7 accounting off free play's hot path
-    // entirely), and acceptance is that legacy mode stays
-    // indistinguishable from the pre-change bridge in COST as well as in
+    // entirely), and the acceptance is that legacy mode stays
+    // indistinguishable from the superseded bridge in COST as well as in
     // behaviour. A mutex per envelope is not that.
     bool is_experiment() const;
 

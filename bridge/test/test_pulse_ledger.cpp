@@ -1,12 +1,10 @@
-// test_pulse_ledger.cpp — R1c host unit tests.
-//
-// Design of record: docs/design/event-pipeline-conductor.md §2.9.
+// test_pulse_ledger.cpp — the pulse ledger's host unit tests.
 //
 // No CK3 binary, no game, no engine. Memory is a FakeMemory map, so the exact
 // hazard the design describes — a `siglongjmp` out of the middle of a pulse —
 // is reproduced here with a REAL siglongjmp, not simulated with a flag.
 //
-// THE NEGATIVE CONTROL IS THE POINT (test 6). The lane proved its fix by
+// THE NEGATIVE CONTROL IS THE POINT (test 6). The world-reset fix was proved by
 // REMOVING it and watching the test reproduce the live symptom. Same discipline:
 // test 6 runs the identical crash scenario with the ledger DISABLED and asserts
 // the global is left CLOBBERED — proving the test reproduces the real failure
@@ -269,8 +267,8 @@ static void test_bookkeeping() {
 //
 //    The identical crash scenario as test 2, with the ledger DISABLED. If this
 //    test ever goes green-by-healing, the mechanism under test is not the
-//    ledger and every other assertion here is worthless. (lane proved
-//    its fix by removing it and watching the symptom come back; same here.)
+//    ledger and every other assertion here is worthless. (The world-reset fix was proved
+//    by removing it and watching the symptom come back; same here.)
 // ===========================================================================
 static void test_negative_control() {
     section("6. NEGATIVE CONTROL: with the ledger off, the global stays leaked");
@@ -370,7 +368,7 @@ static void test_experiment_mode_abort() {
     CHECK(v.leaked, "verdict latched");
     CHECK(v.episode_aborted, "*** the episode is ABORTED ***");
     CHECK(std::string(v.abort_reason) == "pulse_leak",
-          "with the TYPED reason ck-6kvq.1's ladder uses (exit 13)");
+          "with the TYPED reason ladder uses (exit 13)");
     CHECK(pulse_episode_aborted(),
           "and the bridge-wide containment flag is set, so every further "
           "control-session submission is refused {reason:\"episode_aborted\"}");
@@ -384,7 +382,7 @@ static void test_experiment_mode_abort() {
 }
 
 int main() {
-    printf("=== ck-6kvq.10 R1c: pulse ledger (§2.9) ===\n");
+    printf("=== pulse ledger (§2.9) ===\n");
     test_clean_pulse();
     test_longjmp_leak_is_caught_and_healed();
     test_flush_generation_guard();

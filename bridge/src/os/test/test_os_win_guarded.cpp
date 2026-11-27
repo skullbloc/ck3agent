@@ -1,5 +1,5 @@
 // test_os_win_guarded.cpp — os::guarded_call on Windows, the deliberate-fault
-// test (ADR 0001 P2, brief item 3): a guarded body reads an unmapped page,
+// test (ADR 0001 P2): a guarded body reads an unmapped page,
 // recovery resumes, and the region reports failure with the fault. Then the
 // process keeps running, which is the whole point. Engine-free, under wine.
 //

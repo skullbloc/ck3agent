@@ -1,9 +1,9 @@
-﻿# ck3agent incoming-proposal queue: THE class defaults (design "The answer
-# policy"). A seat's answer for a class is its character variable
+﻿# ck3agent incoming-proposal queue: THE class defaults (the answer
+# policy). A seat's answer for a class is its character variable
 # ck3agent_proposal_answer_<class> when set, else this value.
 # Codes: 1 accept, 2 decline, 3 ask_me, 4 native.
-# Mirrors: scripts/proposal_mod.py CLASS_DEFAULT and bridge/include/script_templates.h
-# kProposalClasses (test_proposal_mod.py checks all three agree).
+# The classes are bridge/include/script_templates.h kProposalClasses, the
+# generator's CLASSES and the server's (tests/test_proposal_mod.py checks those agree).
 ck3agent_proposal_default_marriage = 3
 ck3agent_proposal_default_alliance = 3
 ck3agent_proposal_default_call_to_war = 3

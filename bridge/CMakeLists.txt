@@ -77,7 +77,11 @@ set(CK3_BRIDGE_SOURCES
     src/sig_scanner.cpp
     src/intent_dispatch.cpp
     src/intent_queue.cpp          # IntentQueue members, engine-free (test_intent_lookup)
-    src/factions.cpp              # F16: faction management, both seats (re_factions.md)
+    src/factions.cpp              # faction management, both seats (re_factions.md)
+    src/seat_levers.cpp           # The seat's event answer table, its AI budget read
+    src/army_orders.cpp           # Disband / move / hold, default OFF (army_orders.h)
+    src/siege_read.cpp            # A siege's progress, need and what holds it (siege_view.h)
+    src/ai_veto.cpp               # The seat's veto of the AI's posts (ai_veto.h)
     src/snapshot.cpp
     src/session.cpp
     src/actor_resolve.cpp         # The one resolver of an unnamed actor
@@ -89,7 +93,7 @@ set(CK3_BRIDGE_SOURCES
     src/war_history.cpp
     src/war_history_hook.cpp
     src/scheme_init_hook.cpp
-    src/scheme_engine.cpp         # l3-schemes: the scheme reads + CanStartScheme (re_schemes.md)
+    src/scheme_engine.cpp         # the scheme reads + CanStartScheme (re_schemes.md)
     src/ai_cb_selector_hook.cpp
     src/marriage_observation_hook.cpp
     src/council_task_hook.cpp
@@ -100,7 +104,7 @@ set(CK3_BRIDGE_SOURCES
     src/launcher_bypass.cpp
     src/lobby_view_hook.cpp
     src/map_graph.cpp
-    # The event pipeline: a PURE scheduler + a PURE
+    # .9 — the event pipeline: a PURE scheduler + a PURE
     # ticket/apply layer + the engine-facing conductor. The first three
     # are also compiled standalone by test_pipeline (no CK3 binary).
     src/flush_scheduler.cpp
@@ -111,9 +115,8 @@ set(CK3_BRIDGE_SOURCES
     # test_pipeline_mode. NOTE FOR HOST TARGETS: dispatch_router.cpp and
     # ipc_server.cpp both call into this TU, so any test target that compiles
     # either of them must list src/pipeline_mode.cpp too or it will not link
-    # (this is how broke test_release_handler, which was added after it
-    # cut its branch — a CLEAN git merge, a semantic collision only the build
-    # could see).
+    # (a target added on a branch cut before the mode table merges cleanly and
+    # then fails to link: a semantic collision only the build can see).
     src/pipeline_mode.cpp
     # The deferred lock's refusal count. A LEAF TU for the same
     # reason pipeline_mode.cpp is one: dispatch_router.cpp reports them, so every
@@ -121,7 +124,7 @@ set(CK3_BRIDGE_SOURCES
     # in deferred_drain.cpp, which needs bridge.h and the bridge log.
     src/clock_leak_backstop.cpp
     src/deferred_counters.cpp
-    # R6: the decision-budget ledger. PURE; compiled standalone
+    # The decision-budget ledger. PURE; compiled standalone
     # by test_budget_ledger.
     src/budget_ledger.cpp
     src/action_args.cpp
@@ -129,7 +132,7 @@ set(CK3_BRIDGE_SOURCES
     # the BRIDGE-MINTED ticket. PURE (rapidjson only); compiled standalone by
     # test_drain_registry.
     src/drain_registry.cpp
-    # R1c: the pulse ledger; R3-as-reversed: the episode policy
+    # The pulse ledger, the episode policy
     # and the unavailability ledger. All PURE (no engine deps) and compiled
     # standalone by their own tests.
     src/pulse_ledger.cpp
@@ -173,15 +176,15 @@ else()
 endif()
 
 # THE MSVC STAND-IN. The public windows-latest leg compiles with cl.exe; the
-# node cross-builds with clang-cl, which accepts GNU extensions cl.exe rejects,
-# so 2026.12.1-2026.12.9 built there and failed on the public leg (1491 cl.exe
-# errors on 2026.12.9: __attribute__, the shim's __extension__ statement
-# expression in sigsetjmp, __atomic_* builtins). Under clang-cl, (1) the GNU
+# test host cross-builds with clang-cl, which accepts GNU extensions cl.exe rejects,
+# so a source can build there and fail on the public leg (cl.exe refuses
+# __attribute__, the shim's __extension__ statement expression in sigsetjmp,
+# __atomic_* builtins). Under clang-cl, (1) the GNU
 # constructs that are not single tokens are errors, and (2) msvc_standin_lint
 # (below, after the targets) preprocesses every bridge translation unit and
 # fails on any GNU-only token left in a bridge file, and reads clang's AST of
 # each unit for a reinterpret_cast from an integer to its own type (clang-cl
-# accepts it, cl.exe refuses it: C2440, the last error on 2026.12.10). Shared sources spell those
+# accepts it, cl.exe refuses it: C2440). Shared sources spell those
 # through include/ck3_compiler.h; test/check_msvc_portable.py (ctest, every
 # Linux build) reads the same rule off the source. What neither can see:
 # cl.exe's other front-end differences (two-phase lookup corners, constexpr
@@ -416,6 +419,12 @@ elseif(CK3_PLATFORM STREQUAL "windows")
             target_compile_options(test_os_win_posix_recovery PRIVATE ${_ck3_posix_fi})
             target_link_libraries(test_os_win_posix_recovery PRIVATE ck3_os)
             add_test(NAME test_os_win_posix_recovery COMMAND test_os_win_posix_recovery)
+            # The not_on_windows rows against the GENERATED Windows offsets.
+            add_executable(test_win_anchor_refusal test/test_win_anchor_refusal.cpp)
+            add_dependencies(test_win_anchor_refusal gen_win_offsets)
+            target_include_directories(test_win_anchor_refusal BEFORE PRIVATE ${_wo}
+                ${CMAKE_CURRENT_SOURCE_DIR}/include)
+            add_test(NAME test_win_anchor_refusal COMMAND test_win_anchor_refusal)
         endif()
         target_compile_definitions(ck3_bridge_win PRIVATE CK3_WIN_BRIDGE_CORE=1)
     endif()
@@ -648,7 +657,7 @@ target_link_libraries(ck3_bridge PRIVATE ${CMAKE_DL_LIBS})
 #   source (public tree, or -DCK3_ZYDIS_FROM_SOURCE=ON): pinned archives;
 #     the vendored include/ is never on the path.
 # The pin is the Zydis commit whose include/ matches the vendored headers byte
-# for byte (a95bb71, the rc1 pin, differs in 7 files). Configure fails if the
+# for byte (an earlier pin, a95bb71, differs in 7 files). Configure fails if the
 # two sets drift apart.
 set(ZYDIS_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zydis)
 option(CK3_ZYDIS_FROM_SOURCE "Build Zydis from the pinned archive even if lib64/ exists" OFF)
@@ -812,7 +821,7 @@ if(CK3_BRIDGE_STUB)
         COMMAND ${CMAKE_C_COMPILER} ${BRIDGE_STUB_FLAGS}
                 ${BRIDGE_STUB_SOURCE} -o ${BRIDGE_STUB_OUTPUT}
         DEPENDS ${BRIDGE_STUB_SOURCE}
-        COMMENT "Building i386 stub libck3_bridge_stub.so (ck-dq7ym.1)"
+        COMMENT "Building i386 stub libck3_bridge_stub.so"
         VERBATIM
     )
     add_custom_target(ck3_bridge_stub ALL DEPENDS ${BRIDGE_STUB_OUTPUT})
@@ -820,7 +829,7 @@ if(CK3_BRIDGE_STUB)
 endif()
 
 # -----------------------------------------------------------------------------
-# Unit tests (opt-in). Currently covers regression for json_get_string.
+# Unit tests (opt-in). Currently covers a regression in json_get_string.
 # Enable with: cmake -DBUILD_BRIDGE_TESTS=ON ..
 # -----------------------------------------------------------------------------
 option(BUILD_BRIDGE_TESTS "Build standalone unit tests for bridge helpers" OFF)
@@ -834,14 +843,14 @@ if(BUILD_BRIDGE_TESTS)
     #                                     g_controlled_heir, g_agent_mode)
     #   linking world_epoch.cpp too    -> ALSO g_base_addr, g_valid_ranges and
     #                                     g_ranges_mutex, for its guarded reads
-    # Since then the first implies the second, because session.cpp reaches
+    # The first implies the second, because session.cpp reaches
     # world_identity.cpp and that reaches world_epoch.cpp. So adding this
     # variable to a target is only HALF the fix: without the second group the
     # error does not go away, it MOVES to `undefined reference to g_base_addr`.
     # Discoverable only by link failure, which is why it is written here.
     #
     # EVERY host target that links src/session.cpp needs these.
-    # session.cpp takes the RESUME decision with judge_same_save
+    # session.cpp takes the RESUME decision with the judge_same_save()
     # (ONE identity rule, not a second copy of it), which pulls in the
     # engine-free TUs below. Named once so a new target cannot link session.cpp
     # and silently fail to link — or worse, so a NEGATIVE CONTROL cannot stop
@@ -852,10 +861,10 @@ if(BUILD_BRIDGE_TESTS)
     # with nothing to do with the session — acceptance_save_identity and
     # acceptance_world_reset among them. Harmless TODAY, and checked rather than
     # assumed: neither of those references episode_policy at all, so neither can
-    # read what another lane left in it. What makes it worth a comment is that
+    # read what another test left in it. What makes it worth a comment is that
     # episode_policy() has set() and init_from_env() but NO reset_for_test(), so
     # the moment a SECOND host target starts READING the policy, the first one to
-    # write it wins for the rest of the process. It would present as a lane that
+    # write it wins for the rest of the process. It would present as a test that
     # passes or fails depending on the order lanes run in main() — which is
     # exactly the symptom nobody attributes to a singleton. If that ever
     # happens, the fix is a reset seam on the holder, not a change here.
@@ -895,7 +904,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_options(test_json_helpers PRIVATE -O2 -Wall -Wextra)
 
     # A council task's seat clone, on the 867 dump's 72 types;
-    # the prefix control is the pre-fix rule and must fail.
+    # the prefix control is the superseded rule and must fail.
     foreach(_v test_council_task_family test_council_task_family_prefix_control)
         add_executable(${_v} test/test_council_task_family.cpp)
         target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -904,7 +913,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_definitions(test_council_task_family_prefix_control PRIVATE FAMILY_PREFIX_CONTROL)
 
     # The per-seat council-task pin (council_pin.h) on the 867
-    # dump's character 14859. The control is the pre-fix read (the id at the
+    # dump's character 14859. The control is the superseded read (the id at the
     # CAIStrategy's +0x18) and exits 0 only when exactly its rows 1 and 7a fail.
     foreach(_v test_council_pin test_council_pin_dispatcher_arg_control)
         add_executable(${_v} test/test_council_pin.cpp)
@@ -914,9 +923,80 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_council_pin_dispatcher_arg_control PRIVATE COUNCIL_PIN_DISPATCHER_ARG_CONTROL)
 
+    # A county council task's target province and its progress word
+    # (council_task_target.h), rows from dumps 867 and 1097.
+    add_executable(test_council_task_target test/test_council_task_target.cpp)
+    target_include_directories(test_council_task_target PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_council_task_target PRIVATE -O2 -Wall -Wextra)
+
     # The script action layer's fixed templates (script_templates.h).
     # The raw control is the probe's channel (the caller's text is the script)
     # and must fail (WILL_FAIL).
+    # A seat's standing answers to its ruler's events (event_rules.h).
+    add_executable(test_event_rules test/test_event_rules.cpp)
+    target_include_directories(test_event_rules PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_event_rules PRIVATE -O2 -Wall -Wextra)
+    # A truce is the character's slot in the pair's relation (truce_read.h).
+    add_executable(test_truce_read test/test_truce_read.cpp)
+    target_include_directories(test_truce_read PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_truce_read PRIVATE -O2 -Wall -Wextra)
+    # The army order switches, the hold table, the hold hook's drop decision.
+    add_executable(test_army_orders test/test_army_orders.cpp)
+    target_include_directories(test_army_orders PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_army_orders PRIVATE -O2 -Wall -Wextra)
+    # The veto table, the dispatch hook's decision, the attempt ring (ai_veto.h).
+    add_executable(test_ai_veto test/test_ai_veto.cpp)
+    target_include_directories(test_ai_veto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_ai_veto PRIVATE -O2 -Wall -Wextra)
+    # A title-history entry's date (zero-based month/day) and type (title_history.h).
+    # create_title's de jure share by tier (dejure_bar.h); the control is the
+    # superseded 51% rule and exits 0 only when exactly its marked rows disagree.
+    foreach(_v test_dejure_bar test_dejure_bar_pre_fix_control)
+        add_executable(${_v} test/test_dejure_bar.cpp)
+        target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_dejure_bar_pre_fix_control PRIVATE DEJURE_BAR_PRE_FIX_CONTROL)
+    # Other rulers' armies where the disband check looks (armies_around.h)
+    add_executable(test_armies_around test/test_armies_around.cpp)
+    target_include_directories(test_armies_around PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_armies_around PRIVATE -O2 -Wall -Wextra)
+
+    add_executable(test_title_history test/test_title_history.cpp)
+    target_include_directories(test_title_history PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_title_history PRIVATE -O2 -Wall -Wextra)
+    # The faction-demand letters, their refuse option, a dynamic option name (faction_demand.h).
+    add_executable(test_faction_demand test/test_faction_demand.cpp)
+    target_include_directories(test_faction_demand PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_faction_demand PRIVATE -O2 -Wall -Wextra)
+    find_package(Threads REQUIRED)
+    target_link_libraries(test_ai_veto PRIVATE Threads::Threads)
+    # Unspent lifestyle points and the perk prerequisites check (lifestyle_points.h).
+    add_executable(test_lifestyle_points test/test_lifestyle_points.cpp)
+    target_include_directories(test_lifestyle_points PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_lifestyle_points PRIVATE -O2 -Wall -Wextra)
+    # The monthly prestige/piety change from the game's cache (monthly_currency.h).
+    add_executable(test_monthly_currency test/test_monthly_currency.cpp)
+    target_include_directories(test_monthly_currency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_monthly_currency PRIVATE -O2 -Wall -Wextra)
+    # Who shares a partition succession (the late ruler's children in the line)
+    add_executable(test_partition_heirs test/test_partition_heirs.cpp)
+    target_include_directories(test_partition_heirs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_partition_heirs PRIVATE -O2 -Wall -Wextra)
+    # The line of succession with the holder's children first (heir_line.h)
+    add_executable(test_heir_line test/test_heir_line.cpp)
+    target_include_directories(test_heir_line PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_heir_line PRIVATE -O2 -Wall -Wextra)
+    # A missing parent is no parent (family_ids.h)
+    add_executable(test_family_ids test/test_family_ids.cpp)
+    target_include_directories(test_family_ids PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_family_ids PRIVATE -O2 -Wall -Wextra)
+    # A function-local `extern thread_local` inside an anonymous namespace named a
+    # symbol nothing defines; the library linked, ctest passed, and CK3 refused to load it (undefined
+    # symbol). The library must not import a non-weak bridge:: symbol.
+    add_test(NAME test_no_undefined_bridge_symbols
+             COMMAND sh -c "nm -D --undefined-only \"$<TARGET_FILE:ck3_bridge>\" | awk '$1 != \"w\"' | grep _ZN6bridge && exit 1 || exit 0")
+
     foreach(_v test_script_templates test_script_templates_raw_control)
         add_executable(${_v} test/test_script_templates.cpp)
         target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -925,7 +1005,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_definitions(test_script_templates_raw_control PRIVATE SCRIPT_TPL_RAW_CONTROL)
 
     # CrashReporter inherited the listening socket and kept
-    # it answering. The control is the earlier calls and must fail (WILL_FAIL).
+    # it answering. The control is the superseded calls and must fail (WILL_FAIL).
     foreach(_v test_listener_fd test_listener_fd_legacy_control)
         add_executable(${_v} test/test_listener_fd.cpp src/listener_fd.cpp)
         target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -941,9 +1021,9 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_pause_alarm PRIVATE Threads::Threads)
     target_compile_options(test_pause_alarm PRIVATE -O2 -Wall -Wextra)
 
-    # Query_war_stance's war scope and row rule on a fixture
+    # query_war_stance's war scope and row rule on a fixture
     # from the 867 dump, through the real json_get_int; the prefix control is
-    # the pre-fix scope read and must fail.
+    # the superseded scope read and must fail.
     foreach(_v test_war_scope test_war_scope_prefix_control)
         add_executable(${_v} test/test_war_scope.cpp src/json_helpers.cpp)
         target_include_directories(${_v} PRIVATE
@@ -957,7 +1037,7 @@ if(BUILD_BRIDGE_TESTS)
 
     # The coordinator record a war_stance row reads
     # is its own side's, on a fixture from the 1097 dump; the prefix control is
-    # the pre-fix last-record-wins map and must fail.
+    # the superseded last-record-wins map and must fail.
     foreach(_v test_war_stance_record test_war_stance_record_prefix_control)
         add_executable(${_v} test/test_war_stance_record.cpp)
         target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -966,7 +1046,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_definitions(test_war_stance_record_prefix_control PRIVATE WAR_STANCE_RECORD_PREFIX_CONTROL)
 
     # The failure-key pass runs only for a shown decision, and
-    # the skip seeds are named by their hash; the prefix control is the pre-fix
+    # the skip seeds are named by their hash; the prefix control is the superseded
     # "every failing block" rule and must fail.
     foreach(_v test_decision_eval_plan test_decision_eval_plan_prefix_control)
         add_executable(${_v} test/test_decision_eval_plan.cpp)
@@ -975,8 +1055,8 @@ if(BUILD_BRIDGE_TESTS)
     endforeach()
     target_compile_definitions(test_decision_eval_plan_prefix_control PRIVATE DECISION_EVAL_PLAN_PREFIX_CONTROL)
 
-    # Construct_building's optional location_id through
-    # the real json_get_int; the prefix control is the pre-fix read and must fail.
+    # construct_building's optional location_id through
+    # the real json_get_int; the prefix control is the superseded read and must fail.
     foreach(_v test_optional_id test_optional_id_prefix_control)
         add_executable(${_v} test/test_optional_id.cpp src/json_helpers.cpp)
         target_include_directories(${_v} PRIVATE
@@ -992,7 +1072,7 @@ if(BUILD_BRIDGE_TESTS)
     # is a CROSS-CHECK, not a second opinion: `scripts/test_multi_instance.py`
     # runs this binary and compares its answers, key for key, against the
     # python authority and the shell helper. Three transcriptions that agree
-    # are a contract; three that drift are the bug this bead removes.
+    # are a contract; three that drift are the bug this code removes.
     add_executable(test_instance_paths
         test/test_instance_paths.cpp
         src/instance_paths.cpp
@@ -1012,7 +1092,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_vassal_roster PRIVATE -O2 -Wall -Wextra)
 
-    # 2026.12.5: the bridge log's redaction of raw frames (log_redact.h,
+    # The bridge log's redaction of raw frames (log_redact.h,
     # header-only; RapidJSON decides whether a frame parses).
     add_executable(test_log_redact
         test/test_log_redact.cpp
@@ -1032,6 +1112,16 @@ if(BUILD_BRIDGE_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
     )
     target_compile_options(test_game_date PRIVATE -O2 -Wall -Wextra)
+
+    # A siege's need, slowdown, blocker and days left (siege_view.h, header-only);
+    # the control is the superseded read (the 0..20 "progress" of +0x1b0 judged at its cap) and
+    # exits 0 only when exactly its marked rows disagree with the decompiled rule.
+    foreach(_v test_siege_view test_siege_view_pre_fix_control)
+        add_executable(${_v} test/test_siege_view.cpp)
+        target_include_directories(${_v} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(${_v} PRIVATE -O2 -Wall -Wextra)
+    endforeach()
+    target_compile_definitions(test_siege_view_pre_fix_control PRIVATE SIEGE_VIEW_PRE_FIX_CONTROL)
 
     # Which war a siege belongs to (siege_attribution.h, header-only).
     add_executable(test_siege_attribution
@@ -1063,7 +1153,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_liege_walk PRIVATE -O2 -Wall -Wextra)
 
-    # METERLINE: the heir handoff's two decisions (played_line.h, header-only)
+    # The heir handoff's two decisions (played_line.h, header-only)
     # against the ONE case table the meter's Python mirror also answers to.
     add_executable(test_played_line
         test/test_played_line.cpp
@@ -1075,7 +1165,7 @@ if(BUILD_BRIDGE_TESTS)
         PLAYED_LINE_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/played_line_vectors.tsv")
     target_compile_options(test_played_line PRIVATE -O2 -Wall -Wextra)
 
-    # METERLINE: the played line followed per tick (line_watch.h, header-only).
+    # The played line followed per tick (line_watch.h, header-only).
     add_executable(test_line_watch
         test/test_line_watch.cpp
     )
@@ -1084,7 +1174,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_line_watch PRIVATE -O2 -Wall -Wextra)
 
-    # fix10: a ping or broadcast never waits on a client that is not reading
+    # A ping or broadcast never waits on a client that is not reading
     # (frame_send.h, header-only; a real socketpair).
     add_executable(test_frame_send
         test/test_frame_send.cpp
@@ -1094,7 +1184,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_frame_send PRIVATE -O2 -Wall -Wextra)
 
-    # F16: a faction's war as the game reads it (faction_war.h).
+    # A faction's war as the game reads it (faction_war.h).
     # HEADER-ONLY and engine-free: WAR_DB is a stand-in, so the rule (the whole
     # handle decides; the id given out is the war's own) is checked on a host.
     add_executable(test_faction_war
@@ -1105,7 +1195,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_faction_war PRIVATE -O2 -Wall -Wextra)
 
-    # cleanup final fix (minor 8): an unreadable death date is not
+    # An unreadable death date is not
     # "alive" (game_state.cpp's char_is_alive, compiled into the test).
     add_executable(test_char_is_alive
         test/test_char_is_alive.cpp
@@ -1117,7 +1207,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_options(test_char_is_alive PRIVATE -O2 -Wall -Wextra)
 
     # A game function declared `bool` is read by
-    # its AL only (engine_bool.h). The control reads the same stubs the pre-fix way
+    # its AL only (engine_bool.h). The control reads the same stubs the superseded way
     # (all 64 bits of RAX) and must fail.
     add_executable(test_engine_bool
         test/test_engine_bool.cpp
@@ -1136,7 +1226,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_options(test_engine_bool_prefix_control PRIVATE -O2 -Wall -Wextra)
 
     # The typed speed read. HEADER-ONLY and engine-free, so the memory
-    # fault that used to present as a legal "speed 1" is reachable host-side.
+    # fault that does not present as a legal "speed 1" is reachable host-side.
     add_executable(test_speed_read
         test/test_speed_read.cpp
     )
@@ -1145,10 +1235,21 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_speed_read PRIVATE -O2 -Wall -Wextra)
 
+    # The speed write's ceiling (3, or the speed the episode declared)
+    add_executable(test_speed_ceiling
+        test/test_speed_ceiling.cpp
+    )
+    target_include_directories(test_speed_ceiling PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_compile_definitions(test_speed_ceiling PRIVATE
+        SPEED_CEILING_EVENT_HANDLER="${CMAKE_CURRENT_SOURCE_DIR}/src/event_handler.cpp")
+    target_compile_options(test_speed_ceiling PRIVATE -O2 -Wall -Wextra)
+
     # The handler's OWN emission, on a host. `scripts/
     # acceptance_speed_fault.py` runs this to build its fixtures, so the wire
     # bytes the acceptance judges are the bridge's rather than a python model
-    # of them. Built TWICE — the second with the pre-fix arithmetic restored,
+    # of them. Built TWICE — the second with the superseded arithmetic restored,
     # as the acceptance's negative control.
     add_executable(speed_read_probe
         test/speed_read_probe.cpp
@@ -1168,9 +1269,9 @@ if(BUILD_BRIDGE_TESTS)
         CK3_SPEED_PREFIX_CONTROL=1)
     target_compile_options(speed_read_probe_prefix_control PRIVATE -O2 -Wall -Wextra)
 
-    # leg (e). The strictness witness's fixtures come from the BRIDGE's
+    # Leg (e). The strictness witness's fixtures come from the BRIDGE's
     # own code, not from a python model of it — and the negative control is the
-    # PRE-FIX rule compiled from the same source, so a control that stops
+    # SUPERSEDED rule compiled from the same source, so a control that stops
     # failing is a control whose premise the shipped code has adopted.
     add_executable(build_id_witness_probe
         test/build_id_witness_probe.cpp
@@ -1193,7 +1294,7 @@ if(BUILD_BRIDGE_TESTS)
     target_compile_options(build_id_witness_probe_prefix_control PRIVATE -O2 -Wall -Wextra)
 
     # M1: session registry + ownership table.
-    # Session.cpp now takes the RESUME decision with
+    # session.cpp now takes the RESUME decision with world_identity's
     # judge_same_save() — one identity rule, not a second copy of it — so the
     # host target links world_identity.cpp and the engine-free TUs it needs.
     add_executable(test_session_registry
@@ -1215,7 +1316,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(swap_character_probe PRIVATE Threads::Threads)
     target_compile_options(swap_character_probe PRIVATE -O2 -Wall -Wextra)
 
-    # lane-multi: several rulers in one session — an ADDED claim keeps the
+    # Several rulers in one session — an ADDED claim keeps the
     # primary and counts against the cap. Registered with ctest below.
     add_executable(add_claim_probe
         test/add_claim_probe.cpp
@@ -1229,7 +1330,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(add_claim_probe PRIVATE Threads::Threads)
     target_compile_options(add_claim_probe PRIVATE -O2 -Wall -Wextra)
 
-    # F12: the TLS guard/context offsets the bridge reads are the
+    # The TLS guard/context offsets the bridge reads are the
     # ones AI_INTERACTION_CORE's own prologue uses (tls_prologue_scan.h), and
     # ck3_offsets.h agrees with them. Decodes real bytes with the bridge's Zydis.
     add_executable(tls_prologue_scan_probe test/tls_prologue_scan_probe.cpp)
@@ -1246,7 +1347,7 @@ if(BUILD_BRIDGE_TESTS)
     endif()
     target_compile_options(tls_prologue_scan_probe PRIVATE -O2 -Wall -Wextra)
 
-    # Construction_check's list arms the fake random scope
+    # construction_check's list arms the fake random scope
     # once per row; a row that trips the scope latch leaves the later rows unarmed.
     add_executable(latch_guarded_rows_probe test/latch_guarded_rows_probe.cpp)
     target_include_directories(latch_guarded_rows_probe PRIVATE
@@ -1265,8 +1366,8 @@ if(BUILD_BRIDGE_TESTS)
     # the "claimed then released" seat and the "never claimed" helper are separated
     # by the field rather than by a fixture's say-so. Same source set as
     # rollback_state_probe: the registry plus its host deps, no game.
-    # second pass: GRADE THE LEDGER'S REPORT. The first pass proved the
-    # registry destroyed the non-participants and shakedown 3 still sealed invalid,
+    # Second pass: GRADE THE LEDGER'S REPORT. The first pass proved the
+    # registry destroyed the non-participants while an episode could still seal invalid,
     # because unavailability's note_session_ended KEEPS the record accruing. Links the
     # REAL unavailability.cpp and reads snapshot() — the thing the bundle is built
     # from — so the discriminating pair is a pair of reports, not of registry states.
@@ -1373,7 +1474,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_client_slot PRIVATE Threads::Threads)
     target_compile_options(test_client_slot PRIVATE -O2 -Wall -Wextra)
 
-    # NEGATIVE CONTROL. Identical source, built with the pre-fix guard
+    # NEGATIVE CONTROL. Identical source, built with the superseded guard
     # restored (-DCK3_SLOT_LEGACY_FD_GUARD). It MUST fail: the never-constructed
     # slot SIGSEGVs in the same statement as the production core, and the
     # handshake race orphans a session. Never run as part of a green suite —
@@ -1443,8 +1544,15 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_compile_options(test_diag_dtor PRIVATE -O2 -Wall -Wextra)
 
+    # The not_on_windows table refuses nothing against the Linux offsets.
+    add_executable(test_win_anchor_refusal test/test_win_anchor_refusal.cpp)
+    target_include_directories(test_win_anchor_refusal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets)
+    target_compile_options(test_win_anchor_refusal PRIVATE -O2 -Wall -Wextra)
+    add_test(NAME test_win_anchor_refusal COMMAND test_win_anchor_refusal)
+
     # The console-handler ABI (console_call.h) under both std::string
-    # layouts; the control lays the Windows argument out the pre-fix way and must
+    # layouts; the control lays the Windows argument out the superseded way and must
     # fail the MSVC rows.
     add_executable(test_console_call test/test_console_call.cpp)
     target_include_directories(test_console_call PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1490,13 +1598,13 @@ if(BUILD_BRIDGE_TESTS)
     # a host WITHOUT pulling the rest of the pipeline in — which is why this
     # target exists and is still the right shape for it.
     #
-    # CORRECTS WHAT USED TO BE THE REST OF THIS SENTENCE: pipeline.cpp DOES link on a host —
-    # measured, which drives the real pipeline_note_episode_open and
+    # pipeline.cpp DOES link on a host: a host test
+    # drives the real pipeline_note_episode_open and
     # reads the real pipeline_emit_state against 21 ordinary host TUs, the
     # generated dispatch-handler stubs test_release_handler already uses, and a
-    # small engine boundary (bridge/test/clock_release_probe.cpp). The sentence
-    # that used to stand here said it could not, and that belief is WHY
-    # clock release went unwitnessed through two beads: nobody tried, because the
+    # small engine boundary (bridge/test/clock_release_probe.cpp). An earlier
+    # version of this comment said it could not, and that belief is WHY
+    # clock release went unwitnessed through two tasks: nobody tried, because the
     # build file said not to. A build file states TARGETS; a comment in it states
     # a BELIEF, and a reassurance is no more a control than a warning is.
     add_executable(test_pipeline_frames test/test_pipeline_frames.cpp)
@@ -1523,8 +1631,8 @@ if(BUILD_BRIDGE_TESTS)
 
     # THE MODE POLICY TABLE. Pure — no engine, no globals,
     # no getenv — so the whole of what `null` MEANS is host-testable with no CK3
-    # binary. This is the half of that never merged (WIP 425c20b);
-    # recovered it.
+    # binary.
+    #
     add_executable(test_pipeline_mode
         test/test_pipeline_mode.cpp
         src/pipeline_mode.cpp
@@ -1538,7 +1646,7 @@ if(BUILD_BRIDGE_TESTS)
 
     # NEGATIVE CONTROL. Same two sources with
     # -DCK3_NULL_MODE_LEGACY_POLICY=1, which reverts the five predicates to the
-    # policy the bridge ACTUALLY HAD before this bead: `pipeline_active()` was
+    # policy the bridge ACTUALLY HAD without it: `pipeline_active()` was
     # `mode != Legacy`, and nothing consulted the mode about control sessions or
     # the checkpoint gate at all. It MUST fail. A test of a policy table would
     # otherwise pass by restating the table it is testing.
@@ -1558,7 +1666,7 @@ if(BUILD_BRIDGE_TESTS)
 
     # The drain correlation. Engine-free so the hand-off/settle
     # protocol can be driven on a host with no game — which is exactly where
-    # the bug hid: the pre-fix correlation keyed on the client's OPTIONAL
+    # the bug hid: the superseded correlation keyed on the client's OPTIONAL
     # request_id, and every existing test happened to send one.
     add_executable(test_drain_registry
         test/test_drain_registry.cpp
@@ -1603,7 +1711,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_pulse_ledger PRIVATE Threads::Threads)
     target_compile_options(test_pulse_ledger PRIVATE -O2 -Wall -Wextra)
 
-    # Release_character's HANDLER ORDERING.
+    # release_character's HANDLER ORDERING.
     #
     # The bug was a composition: two individually-correct guards in the wrong
     # order inside do_release_character, so every release of a session-owned
@@ -1627,7 +1735,7 @@ if(BUILD_BRIDGE_TESTS)
                 ${DISPATCH_HANDLER_STUBS}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test/gen_dispatch_handler_stubs.py
                 ${CMAKE_CURRENT_SOURCE_DIR}/include/action_dispatch_internal.h
-        COMMENT "Generating weak dispatch-handler stubs for test_release_handler (ck-sozz)"
+        COMMENT "Generating weak dispatch-handler stubs for test_release_handler"
         VERBATIM
     )
 
@@ -1638,19 +1746,19 @@ if(BUILD_BRIDGE_TESTS)
         src/json_helpers.cpp
         src/budget_ledger.cpp
         src/instance_paths.cpp
-        # Dispatch_router.cpp's observe-mode gate now asks the mode
+        # dispatch_router.cpp's observe-mode gate asks the mode
         # policy whether a null-mode observer may issue a clock verb, so it
         # needs pipeline_mode()/mode_admits_observer_clock_verbs() at link time.
         # ANY host target that compiles dispatch_router.cpp needs this TU — see
         # the note beside src/pipeline_mode.cpp in the library list above.
         src/pipeline_mode.cpp
-        # Dispatch_router.cpp's get_bridge_state reports the deferred
+        # dispatch_router.cpp's get_bridge_state reports the deferred
         # coordinator's two refusal counts, so this target needs their leaf TU
         # at link time — the same rule, one symbol later.
         src/deferred_counters.cpp
-        # Dispatch_router.cpp's clock verbs clear the game-day pause alarm.
+        # dispatch_router.cpp's clock verbs clear the game-day pause alarm.
         src/pause_alarm.cpp
-        # Get_controlled_character and the dispatch scope ask it.
+        # get_controlled_character and the dispatch scope ask it.
         src/actor_resolve.cpp
         ${DISPATCH_HANDLER_STUBS}
     )
@@ -1702,7 +1810,7 @@ if(BUILD_BRIDGE_TESTS)
     # pure table, and the same rule through the REAL dispatch_action of the REAL
     # dispatch_router.cpp (strong test handlers stand in for the engine-bound
     # ones). The negative control builds actor_resolve.cpp -DCK3_ACTOR_PRE_FIX
-    # (every call keeps its handler's historical chain, the pre-fix tree's
+    # (every call keeps its handler's historical chain, the superseded tree's
     # behaviour) and exits 0 only when EXACTLY its named rows fail.
     set(ACTOR_RESOLVE_SOURCES ${RELEASE_HANDLER_SOURCES})
     list(REMOVE_ITEM ACTOR_RESOLVE_SOURCES test/test_release_handler.cpp src/actor_resolve.cpp)
@@ -1723,7 +1831,7 @@ if(BUILD_BRIDGE_TESTS)
     add_test(NAME test_actor_resolve COMMAND test_actor_resolve)
     add_test(NAME test_actor_resolve_pre_fix_control COMMAND test_actor_resolve_pre_fix_control)
 
-    # ff3 N1: a read that faulted on an inline path is answered (memory_access_fault,
+    # A read that faulted on an inline path is answered (memory_access_fault,
     # or degraded), never a silent 0. Same sources as test_release_handler (the
     # REAL dispatch_router.cpp) against a synthetic image whose PLAYER_CHAR_ID
     # page is PROT_NONE. ff4 P1: plus the REAL personality.cpp (set_ai_personality:
@@ -1738,13 +1846,13 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_fault_reply PRIVATE Threads::Threads)
     target_compile_options(test_fault_reply PRIVATE -O2 -Wall -Wextra)
 
-    # lane-namekey: a name-cache MISS is answered as PENDING (`name_key` +
+    # A name-cache MISS is answered as PENDING (`name_key` +
     # `name_pending: true`, no `name`), never with the localization key
     # presented as the name. Same sources as test_release_handler (the REAL
     # dispatch_router.cpp) plus the REAL name_tables.cpp: the engine resolver
     # is the documented test seam set_character_name_resolver(). The negative
     # control builds dispatch_router.cpp with CK3_NAME_LEGACY_KEY_FALLBACK (the
-    # pre-fix reader) and MUST fail on the first-read assertions.
+    # superseded reader) and MUST fail on the first-read assertions.
     set(NAME_PENDING_SOURCES ${RELEASE_HANDLER_SOURCES})
     list(REMOVE_ITEM NAME_PENDING_SOURCES test/test_release_handler.cpp)
     list(APPEND NAME_PENDING_SOURCES test/name_pending_probe.cpp src/name_tables.cpp)
@@ -1760,7 +1868,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(name_pending_probe_negative_control PRIVATE Threads::Threads)
     target_compile_options(name_pending_probe_negative_control PRIVATE -O2 -Wall -Wextra)
 
-    # + B9: the REAL ipc_server.cpp on a real socket — the peer-uid
+    # The REAL ipc_server.cpp on a real socket — the peer-uid
     # check is wired at accept(), the reader caps line length and nesting.
     # Inherits ck3_bridge's compile definitions, so it parses with the
     # library's RapidJSON default flags.
@@ -1848,7 +1956,7 @@ if(BUILD_BRIDGE_TESTS)
             ENVIRONMENT "ASAN_OPTIONS=halt_on_error=1:detect_leaks=0")
     endif()
 
-    # /D2: the REAL reader serves a game-state read through the
+    # D2: the REAL reader serves a game-state read through the
     # game-thread drain (run_on_game_thread / run_game_thread_jobs) with the
     # same bytes paused or running, times out typed with no drain, and the
     # bridge goes ACTIVE on the first drain without a tick.
@@ -1877,7 +1985,7 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_game_thread_reads PRIVATE Threads::Threads)
     target_compile_options(test_game_thread_reads PRIVATE -O2 -Wall -Wextra)
 
-    # wave 13: the REAL reader serves one line per client per round,
+    # The REAL reader serves one line per client per round,
     # so a Tier-1 get_tick_info is not held behind another client's burst of
     # game-thread reads (the seated-run meter timeouts).
     add_executable(test_reader_fairness
@@ -1927,7 +2035,7 @@ if(BUILD_BRIDGE_TESTS)
     )
     target_include_directories(test_unavailability PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        # Exclusion_rule.h computes the horizon span through
+        # exclusion_rule.h computes the horizon span through
         # ck3::game_date (the ENGINE's calendar), which lives beside
         # the offsets header. Still engine-FREE: constants only, no reads.
         ${CMAKE_CURRENT_SOURCE_DIR}/../re/offsets
@@ -1935,12 +2043,12 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(test_unavailability PRIVATE Threads::Threads)
     target_compile_options(test_unavailability PRIVATE -O2 -Wall -Wextra)
     # ACCEPTANCE: X is a RULE (5% of the DECLARED horizon), not the
-    # constant 365. Two targets from ONE source, the/speed_read_probe
+    # constant 365. Two targets from ONE source, the speed_read_probe
     # pattern: the product lane links the shipped modules; the NEGATIVE CONTROL
-    # links the REAL earlier bytes pulled out of git history into
-    # scripts/fixtures/exclusion_rule/pre_2ngg/, and must FAIL lanes B and D.
+    # links the REAL superseded bytes pulled out of git history into
+    # scripts/fixtures/exclusion_rule/superseded/, and must FAIL the probe's lanes B and D.
     # Real bytes rather than a re-implementation, because a control that
-    # re-implements the defect proves only that the re-implementation is wrong.
+    # re-implements the hazard proves only that the re-implementation is wrong.
     # Driven by scripts/acceptance_exclusion_fraction.py.
     add_executable(acceptance_exclusion_fraction
         test/acceptance_exclusion_fraction.cpp
@@ -1954,16 +2062,16 @@ if(BUILD_BRIDGE_TESTS)
     target_link_libraries(acceptance_exclusion_fraction PRIVATE Threads::Threads)
     target_compile_options(acceptance_exclusion_fraction PRIVATE -O2 -Wall -Wextra)
 
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/exclusion_rule/pre_2ngg)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/exclusion_rule/superseded)
     set(EXCLUSION_PREFIX_DIR
-        ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/exclusion_rule/pre_2ngg)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/exclusion_rule/superseded)
     add_executable(acceptance_exclusion_fraction_negative_control
         test/acceptance_exclusion_fraction.cpp
         ${EXCLUSION_PREFIX_DIR}/unavailability.cpp
         ${EXCLUSION_PREFIX_DIR}/episode_policy.cpp
     )
-    # THE FIXTURE DIRECTORY COMES FIRST so the pre-fix .cpp files resolve their
-    # own pre-fix headers, never the shipped ones beside them.
+    # THE FIXTURE DIRECTORY COMES FIRST so the superseded .cpp files resolve their
+    # own superseded headers, never the shipped ones beside them.
     target_include_directories(acceptance_exclusion_fraction_negative_control
         BEFORE PRIVATE ${EXCLUSION_PREFIX_DIR})
     target_compile_definitions(acceptance_exclusion_fraction_negative_control
@@ -1976,7 +2084,7 @@ else()
     message(STATUS "fixture dir absent; skipping acceptance_exclusion_fraction_negative_control")
 endif()
 
-    # THE RESTING SPEED IS THE PRE-REGISTERED PIN. The flush planner's
+    # THE RESTING SPEED IS THE DECLARED PIN. The flush planner's
     # restore step is the SECOND writer of the game speed — it reaches
     # game_set_speed through the effects vtable, so a grep for the function name
     # finds one call site while two paths write, and it logs no "Action:
@@ -1994,19 +2102,19 @@ endif()
     target_link_libraries(acceptance_resting_speed PRIVATE Threads::Threads)
     target_compile_options(acceptance_resting_speed PRIVATE -O2 -Wall -Wextra)
 
-    # THE NEGATIVE CONTROL: the same probe over the PRE-FIX BYTES, pinned by
-    # blob SHA in scripts/fixtures/resting_speed/pre_on4u/. It must FAIL —
+    # THE NEGATIVE CONTROL: the same probe over the SUPERSEDED BYTES, pinned by
+    # blob SHA in scripts/fixtures/resting_speed/superseded/. It must FAIL —
     # the planner rests at a hard-coded 3 there, whatever the episode declares.
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/resting_speed/pre_on4u)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/resting_speed/superseded)
     set(RESTING_SPEED_PREFIX_DIR
-        ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/resting_speed/pre_on4u)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/fixtures/resting_speed/superseded)
     add_executable(acceptance_resting_speed_negative_control
         test/acceptance_resting_speed.cpp
         ${RESTING_SPEED_PREFIX_DIR}/flush_scheduler.cpp
         ${RESTING_SPEED_PREFIX_DIR}/episode_policy.cpp
     )
-    # THE FIXTURE DIRECTORY COMES FIRST so the pre-fix .cpp files resolve their
-    # own pre-fix headers, never the shipped ones beside them.
+    # THE FIXTURE DIRECTORY COMES FIRST so the superseded .cpp files resolve their
+    # own superseded headers, never the shipped ones beside them.
     target_include_directories(acceptance_resting_speed_negative_control
         BEFORE PRIVATE ${RESTING_SPEED_PREFIX_DIR})
     target_include_directories(acceptance_resting_speed_negative_control PRIVATE
@@ -2051,6 +2159,18 @@ endif()
     add_executable(test_claim_rule test/test_claim_rule.cpp)
     target_include_directories(test_claim_rule PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_options(test_claim_rule PRIVATE -O2 -Wall -Wextra)
+
+    # One holder read for a council seat (include/council_holder.h), called by
+    # query_council and appoint_councillor; the wiring half reads the product sources, comment-stripped.
+    add_executable(test_council_holder test/test_council_holder.cpp)
+    target_include_directories(test_council_holder PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_council_holder PRIVATE -O2 -Wall -Wextra)
+
+    # The whole id a game function compares (include/engine_id.h): the decision, a census of
+    # masked ids handed to commands (with a control that runs), and the five call sites.
+    add_executable(test_engine_id test/test_engine_id.cpp)
+    target_include_directories(test_engine_id PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_engine_id PRIVATE -O2 -Wall -Wextra)
 
     # World-reload detection + world-scoped cache invalidation.
     # Compiles world_epoch.cpp and name_tables.cpp standalone; the engine name
@@ -2165,7 +2285,7 @@ endif()
 
     # THE SECOND NEGATIVE CONTROL. Identical source, one macro: the
     # detach report counts EVERY non-attached session — what it did before this
-    # bead — so a dropped OBSERVE session publishes state/detached-since and the
+    # task — so a dropped OBSERVE session publishes state/detached-since and the
     # abort ladder aborts a healthy arm episode reason=session_lost because an
     # observer blinked. This binary MUST FAIL, and must fail on the OBSERVER
     # lane specifically: a control that fails to COMPILE is a control doing
@@ -2182,36 +2302,51 @@ endif()
     target_compile_options(acceptance_session_resume_observer_negative_control PRIVATE
         -O2 -Wall -Wextra -DCK3_DETACH_REPORT_COUNTS_OBSERVERS)
 
-    # grep gate: every world-scoped cache clear function must have a real
+    # Grep gate: every world-scoped cache clear function must have a real
     # caller. The original bug was clear_name_cache() existing with ZERO callers.
     # Runs on every build of the test targets; a regression fails the build.
     add_custom_target(bridge_cache_invalidation_gate ALL
         COMMAND ${CMAKE_COMMAND} -E env bash
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/gate_cache_invalidation.sh
                 ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "ck-hxh7 gate: world-scoped cache clears have callers"
+        COMMENT "Gate: world-scoped cache clears have callers"
         VERBATIM
     )
 
     # Engine-free tests that run standalone and exit 0; `ctest` runs them.
     enable_testing()
     foreach(_t test_json_helpers test_instance_paths
-               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_liege_walk test_realm_tally test_played_line test_line_watch test_frame_send test_engine_bool
+               test_game_date test_vassal_roster test_char_is_alive test_faction_war test_war_history test_clock_rate test_siege_attribution test_siege_view test_siege_view_pre_fix_control test_liege_walk test_realm_tally test_played_line test_line_watch test_frame_send test_engine_bool
                test_flush_scheduler test_pipeline
                test_debug_verbs test_fault_reply test_ipc_wiring test_game_thread_reads test_reader_fairness test_intent_lookup test_handoff_player
                add_claim_probe name_pending_probe tls_prologue_scan_probe
                latch_guarded_rows_probe
-               test_action_args    # Built since, never run by ctest
+               test_action_args    # Built, never run by ctest
                test_war_scope test_pause_alarm test_council_task_family
-               test_council_pin test_council_pin_dispatcher_arg_control   # COUNCILRE (the control exits 0 only on its exact rows)
+               test_council_pin test_council_pin_dispatcher_arg_control   # the council-task pin (the control exits 0 only on its exact rows)
+               test_council_task_target   # County task target province + progress
                test_script_templates
+               test_event_rules        # Event answer table
+               test_truce_read         # A truce is one character's relation slot
+               test_army_orders        # Army order switches + hold table
+               test_ai_veto            # Veto table, hook decision, attempt ring
+               test_lifestyle_points   # Unspent perk points, prerequisites
+               test_faction_demand     # Demand letters, refuse option, dynamic name
+               test_monthly_currency   # Monthly prestige/piety change
+               test_partition_heirs    # Partition shares go to the ruler's children
+               test_heir_line          # A stale heir cache; the holder's children first
+               test_family_ids         # A missing parent is no parent (the "sibling" relation)
+               test_title_history      # Title-history date and type
+               test_dejure_bar test_dejure_bar_pre_fix_control   # (the control exits 0 only on its marked rows)
+               test_armies_around      # Armies around a disband, others in named counties
                test_war_stance_record   # A stance row reads its own side's record
                test_decision_eval_plan  # No failure-key pass on a not-shown decision
                test_diag_dtor      # DIAG_OBJECT_DTOR is the engine's dtor
-               test_console_call   # WINRE: console-handler ABI, both std::string layouts
-               test_optional_id    # Location_id absent -> missing_location_id
+               test_console_call   # the console-handler ABI, both std::string layouts
+               test_optional_id    # location_id absent -> missing_location_id
                test_listener_fd    # The socket lives only in the game process
-               test_log_redact)    # 2026.12.5: no token reaches the bridge log
+               test_log_redact     # No token reaches the bridge log
+               test_speed_ceiling) # A declared speed lifts the write ceiling
         add_test(NAME ${_t} COMMAND ${_t})
     endforeach()
     # The negative control exits 0 only when exactly its named rows FAIL (see
@@ -2225,6 +2360,10 @@ endif()
              COMMAND test_action_log_row ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME test_claim_rule
              COMMAND test_claim_rule ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME test_council_holder
+             COMMAND test_council_holder ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME test_engine_id
+             COMMAND test_engine_id ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME acceptance_world_reset COMMAND acceptance_world_reset)
     # The structural half lives in scripts/, which the public export does not
     # ship: registered only where it exists (the private tree).
@@ -2243,25 +2382,25 @@ endif()
     set_tests_properties(test_script_templates_raw_control PROPERTIES WILL_FAIL TRUE)
     add_test(NAME test_console_call_prefix_control COMMAND test_console_call_prefix_control)
     set_tests_properties(test_console_call_prefix_control PROPERTIES WILL_FAIL TRUE)
-    # The pre-fix war scope read must fail the same rows.
+    # The superseded war scope read must fail the same rows.
     add_test(NAME test_war_scope_prefix_control COMMAND test_war_scope_prefix_control)
     set_tests_properties(test_war_scope_prefix_control PROPERTIES WILL_FAIL TRUE)
     add_test(NAME test_war_stance_record_prefix_control COMMAND test_war_stance_record_prefix_control)
     set_tests_properties(test_war_stance_record_prefix_control PROPERTIES WILL_FAIL TRUE)
     add_test(NAME test_decision_eval_plan_prefix_control COMMAND test_decision_eval_plan_prefix_control)
     set_tests_properties(test_decision_eval_plan_prefix_control PROPERTIES WILL_FAIL TRUE)
-    # The pre-fix location_id read must fail the absent rows.
+    # The superseded location_id read must fail the absent rows.
     add_test(NAME test_optional_id_prefix_control COMMAND test_optional_id_prefix_control)
     set_tests_properties(test_optional_id_prefix_control PROPERTIES WILL_FAIL TRUE)
-    # The pre-fix 64-bit read of a bool must fail the same checks.
+    # The superseded 64-bit read of a bool must fail the same checks.
     add_test(NAME test_engine_bool_prefix_control
              COMMAND test_engine_bool_prefix_control)
     set_tests_properties(test_engine_bool_prefix_control PROPERTIES WILL_FAIL TRUE)
-    # lane-namekey: the pre-fix reader must fail the same probe.
+    # The superseded reader must fail the same probe.
     add_test(NAME name_pending_probe_negative_control
              COMMAND name_pending_probe_negative_control)
     set_tests_properties(name_pending_probe_negative_control PROPERTIES WILL_FAIL TRUE)
-    # /B2 source censuses (python, no build products). Each has a
+    # B2 source censuses (python, no build products). Each has a
     # selftest (known-bad text MUST be flagged) and the B2 ones a control that
     # reads the tree as a debug build and MUST fail.
     # Each script is spelled out: release/export.py's bridge/test census
@@ -2297,7 +2436,7 @@ endif()
     endforeach()
 
     # Log rotation reopens O_EXCL|O_NOFOLLOW at 0600. Was
-    # run only by host acceptance_otj9.py. Exit 3 = cannot set up (skip).
+    # run only by a host acceptance script. Exit 3 = cannot set up (skip).
     # EXISTS: release/manifest.toml still excludes the probe from the public
     # tree; drop that exclusion and the public ctest runs it too.
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test/log_rotate_probe.cpp)
@@ -2324,7 +2463,7 @@ endif()
 # OPT-IN so it never affects the default libck3_bridge.so build. Enable with:
 #   cmake -DCK3_BUILD_MAPGEN=ON ..
 # It is fully self-contained (its own CMakeLists, only stb_image.h + stdlib);
-# building/running it is normally driven by `scripts/bdt.sh mapgen` instead.
+# its own README (bridge/tools/ck3mapgen) has the build and run steps.
 # -----------------------------------------------------------------------------
 option(CK3_BUILD_MAPGEN "Build the standalone ck3mapgen map-processor" OFF)
 if(CK3_BUILD_MAPGEN)

@@ -1,6 +1,6 @@
 // refusal_code.h — the ONE normalised refusal code for a management reply.
 //
-// Emit_management_ledger_record read "reason" and nothing else, while
+// emit_management_ledger_record read "reason" and nothing else, while
 // reject_player_actor (dispatch_router.cpp:238) puts the CODE under "error" and
 // a PROSE SENTENCE under "reason". So a cannot_act_as_player refusal produced a
 // ledger row carrying the sentence, and the code was discarded AT THE EMITTER —
@@ -10,8 +10,8 @@
 // EXTRACTED SO A FIXTURE CAN DRIVE IT. emit_management_ledger_record is static
 // inside ipc_server.cpp and cannot be linked by a probe; written inline there,
 // this decision is a condition a test can only GREP for, and a grep cannot tell
-// a live condition from a defeated one (reason for extracting
-// handoff_subject, and two lost lanes before it).
+// a live condition from a defeated one (the reason for extracting
+// handoff_subject, and two predicates before it).
 #pragma once
 
 #include <cstddef>
@@ -36,7 +36,7 @@ inline constexpr size_t kRefusalCodeCount =
 //: so "error" and "reason" cannot be read by two subtly different readers.
 //: WHERE the first string value for `key` lives, or false. Split out from
 //: json_first_string so a caller can perform the EXTRACTION ITSELF from the
-//: reply (evidence rule: the ledger's reason is pulled out of the
+//: reply (the evidence rule: the ledger's reason is pulled out of the
 //: handler's own JSON, never inferred or substituted). One parse, two shapes:
 //: the span for a caller that must be seen extracting, the string for one that
 //: only needs the value.
@@ -79,15 +79,15 @@ struct RefusalCode {
     bool        known = true;  //: false -> the row must say so, never launder it
 
     //: WHERE the reply's own field sits, so the emitter can extract it FROM THE
-    //: REPLY rather than be handed a copy. asserts the extraction, and
+    //: REPLY rather than be handed a copy. The acceptance asserts the extraction, and
     //: a value arriving pre-extracted cannot be told from an inferred one.
     size_t      raw_off = 0;
     size_t      raw_len = 0;
     bool        has_raw = false;
 
     //: BOTH keys present and DIFFERENT. Neither is preferred silently: the row
-    //: records both raw fields and carries a named flag. Ruled by bt-bbd on the
-    //: re-cut — a canonical mapping may choose, but a LEDGER may not
+    //: records both raw fields and carries a named flag.
+    //: The rule: a canonical mapping may choose, but a LEDGER may not
     //: discard the half it did not choose, because the disagreement is itself
     //: the finding.
     bool        disagree = false;

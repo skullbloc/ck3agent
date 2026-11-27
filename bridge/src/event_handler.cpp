@@ -17,6 +17,7 @@
 // kept below as provenance.
 
 #include "pause_alarm.h"
+#include "registered_speed.h"   // The write ceiling
 #include "game_date.h"
 #include "bridge.h"
 #include "init_order.h"   // CK3_EARLY_INIT
@@ -122,7 +123,7 @@ static std::atomic<int> g_delayed_unpause_ticks{0};
 // every pass while clock_write runs on whichever thread asked. One mutex over
 // both, so a pause issued between the repeat's check and its call cannot be
 // undone by the repeat: the pause cancels it under the same lock.
-// FAULT-SAFE (witness): both holders install their OWN recovery point
+// FAULT-SAFE: both holders install their OWN recovery point
 // around the primitives (ClockFaultGuard), so a fault inside a primitive returns
 // into the holder's frame and the lock is released there; the caller's
 // g_recovery_point / g_in_protected_region are saved and put back, so the
@@ -152,7 +153,7 @@ static void pause_primitive() {
     // address or id from a faulted read is not one. The fault stays counted
     // (never cleared here), so the handler that asked answers
     // memory_access_fault (dispatch_router.cpp case_pause_game), and the
-    // refusal changed nothing (the deferred-unpause store used to
+    // refusal changed nothing (the deferred-unpause store does not
     // come first).
     const int faults = safe_read_fault_count();
     void* idler = get_idler();
@@ -169,12 +170,12 @@ static void pause_primitive() {
     }
     // A pause cancels the PAUSE_SET(0) that a recent game_unpause queued for the
     // next tick: otherwise that tick, if it comes after this pause, unpauses the
-    // game again (P6 full1: the deferred coordinator's re-pause undone on one
-    // platform and not the other, by timing alone).
+    // game again (ADR 0001 P6: the deferred coordinator's re-pause is undone on
+    // one platform and not the other, by timing alone).
     g_delayed_unpause_ticks.store(0, std::memory_order_relaxed);
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(idler) + ck3::idler::PAUSE_FLAG) = 1;
 #ifdef _WIN32
-    // Windows (ADR 0001 P6, full4): after game_unpause's synchronous PAUSE_SET(0),
+    // Windows (ADR 0001 P6): after game_unpause's synchronous PAUSE_SET(0),
     // the byte alone did not stop the engine: the deferred coordinator's re-pause
     // logged {paused=1} and the clock ran on through the next twelve deferred
     // queries (wars started at ticks 18 and 26). PAUSE_SET(1), the engine's own
@@ -271,8 +272,8 @@ static void unpause_primitive() {
 }
 
 // Called from the game-thread drain: the deferred PAUSE_SET(0) repeat that
-// unpause_primitive queued is part of that ONE unpause write (amendment 2:
-// it counts nothing).
+// unpause_primitive queued is part of that ONE unpause write (it counts
+// nothing).
 void check_delayed_unpause() {
     std::unique_lock<std::timed_mutex> clock_lock(g_clock_mutex, std::try_to_lock);
     if (!clock_lock.owns_lock()) return;   // a clock write is in flight; next pass
@@ -318,14 +319,17 @@ static void speed_primitive(int speed) {
         if (g_logfile) fprintf(g_logfile, "[CK3-Bridge] game_set_speed: game state root is null\n");
         return;
     }
-    if (speed < 1) speed = 1;
-    // HARD CAP at 3: at speed >3 the game outruns the agent loop, so
-    // deaths/wars resolve invisibly between cycles (corpse-steering /
-    // war-resolves-in-one-tick failures — Gen-35/Gen-40). This is the single
-    // chokepoint every speed write funnels through (clock_write, whatever the
-    // origin), so the cap is unconditional and unbypassable regardless of
-    // caller. (re_dejure_meter_and_mint.md §3.)
-    if (speed > 3) speed = 3;
+    // THE CAP: 3 (at speed >3 the free-running agent loop
+    // let deaths/wars resolve invisibly between its cycles; re_dejure_meter_
+    // and_mint.md §3), unless the episode DECLARED a faster speed through
+    // CK3_EPISODE_GAME_SPEED: a stepped episode stops on the game-day alarm,
+    // so the declaration is the ceiling (re_game_speed.md). This
+    // is the single chokepoint every speed write funnels through (clock_write,
+    // whatever the origin), so the rule holds regardless of caller.
+    const int asked = speed;
+    speed = bridge::clamp_speed_write(speed, bridge::resolve_game_speed_from_env());
+    if (speed != asked && g_logfile)
+        fprintf(g_logfile, "[CK3-Bridge] game_set_speed: %d is above the ceiling; writing %d\n", asked, speed);
     const uintptr_t speed_at = reinterpret_cast<uintptr_t>(gs) + ck3::game_state::GAME_SPEED;
     const int old_speed = safe_read<int32_t>(speed_at);
     // No write after a read that faulted (the fault stays counted for the handler).
@@ -354,7 +358,7 @@ int game_get_speed() {
 // PAUSE_SET(0) an unpause queued, as part of that same write);
 // bridge/scripts/inline_safety_static.py fails a row on any other site.
 //
-// Counting (amendment 2): ONE count per logical clock operation that
+// Counting: ONE count per logical clock operation that
 // reaches this function, whether or not the game state changed (a pause of a
 // paused game counts 1) and whatever the primitive did after a faulted read
 // (the caller answers the fault). Internal repeats are not counts: the deferred
@@ -444,7 +448,7 @@ ClockWriteCounts clock_write_counts() {
 }
 
 // =============================================================================
-// Event Manager Access (Round 3 — CONFIRMED, Round 7+ corrected path)
+// Event Manager Access (CONFIRMED, path corrected)
 // =============================================================================
 //
 // The event queue does NOT live on the CEventManager singleton directly.
@@ -473,7 +477,7 @@ static uintptr_t get_event_queue() {
 }
 
 // =============================================================================
-// Pending Event Enumeration (Round 3 — CONFIRMED, Round 7+ corrected)
+// Pending Event Enumeration (CONFIRMED, corrected)
 // =============================================================================
 //
 // Corrected understanding:
@@ -498,7 +502,7 @@ static uintptr_t get_event_queue() {
 //   +0x271  narrative event flag (byte)
 //   +0x278  event state (int: 1=player, 2=pending)
 //
-// Option struct layout (confirmed Round 3):
+// Option struct layout (confirmed):
 //   +0x28   script value block (ai_chance computation input)
 //   +0x318  direct ai_chance override (int, if nonzero skip script eval)
 
@@ -655,7 +659,7 @@ bool send_event_notification(const PendingEventInfo& event) {
     }
 
     // Build JSON notification.
-    // Schema matches what ck3agent/server/agent.py and prompts.format_event() expect:
+    // Schema matches what prompts.format_event() expects:
     //   - event_type: gates IMMEDIATE_EVENTS activation; "event_popup" forces activation
     //   - requires_response: also triggers activation regardless of event_type
     //   - event_id: the event's script key
@@ -762,10 +766,10 @@ int poll_and_notify_events() {
 // is itself deleted.
 //
 // The notes below are kept as RE provenance. The placeholder body has been
-// removed; recover it from git history (event_handler.cpp pre) if the
+// removed; recover it from git history (event_handler.cpp before its deletion) if the
 // hook is ever needed again.
 //
-// CONFIRMED SIGNATURE (Round 3 decompilation):
+// CONFIRMED SIGNATURE (decompilation):
 //   result* FUN_05f4d570(result* out, void* event_obj, void* context, int option_index)
 //
 // Call path summary:
@@ -777,7 +781,7 @@ int poll_and_notify_events() {
 //      option+0x28 via FUN_07572400 (fixed-point /100000).
 //   4. Wraps the result via FUN_038fedb0 keyed "EVENT_OPTION_AI_CHANCE" — the
 //      consumer is reasoning/tooltip plumbing, not raw weight comparison, so
-//      safely biasing the output requires more layout work than this bead
+//      safely biasing the output requires more layout work than this code
 //      warrants (see re/findings/re_event_pipeline.md "Open Questions").
 
 // =============================================================================
@@ -825,7 +829,7 @@ int auto_respond_pending_events() {
     const int32_t event_pauses = gs ? safe_read<int32_t>(
         reinterpret_cast<uintptr_t>(gs) + ck3::game_state::EVENT_PAUSE_COUNT) : 0;
     // Both: the game's own event pause is pending AND the game is paused
-    // (witness: without is_paused a running game logged a counted
+    // (without is_paused a running game logged a counted
     // auto_respond unpause that changed nothing).
     if (event_pauses > 0 && is_paused()) {
         clock_write(ClockWrite::Unpause, ClockOrigin::AutoRespond);

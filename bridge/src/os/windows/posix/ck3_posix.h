@@ -242,7 +242,7 @@ int timer_delete(timer_t t);                                 // refuses
 // longjmp restores that into rbp, but a Win64 frame keeps rbp at an offset from it
 // (rbp = rsp + 0x80 in the bridge's large frames), so every rbp-relative local is
 // read 0x80 bytes off after the jump. Measured: a reply std::string read as a
-// heap pointer of 0x1B4, and the game died on the next write (P5 full1 run).
+// heap pointer of 0x1B4, and the game died on the next write (an ADR 0001 P5 run).
 }  // extern "C"
 #include <setjmp.h>
 extern "C" {

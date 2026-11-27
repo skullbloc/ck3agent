@@ -1,5 +1,5 @@
 // test_played_line.cpp — the handoff's two decisions against the ONE case table
-// (METERLINE; bridge/include/played_line.h, scripts/fixtures/played_line_vectors.tsv).
+// (bridge/include/played_line.h, scripts/fixtures/played_line_vectors.tsv).
 //
 // The Python half (scripts/played_line.py) answers to the same table in
 // scripts/test_played_line.py; between them the meter's "who is the line now"
@@ -45,7 +45,7 @@ int main() {
         auto f = split(line, '\t');
         if (f.size() < 3) { std::fprintf(stderr, "FAIL malformed row: %s\n", line.c_str()); g_fail++; continue; }
         if (f[0] == "line_realm") {
-            // INTEG item 1: R(t) of a followed character, the METER's read
+            // R(t) of a followed character, the meter's read
             // (scripts/meter_lane.py grade_line_realm, scripts/test_played_line.py).
             // No bridge decision answers it; counted, so a row never vanishes unread.
             meter_rows++;

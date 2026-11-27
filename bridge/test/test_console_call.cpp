@@ -1,5 +1,5 @@
 // test_console_call.cpp — the console-handler ABI (console_call.h) under both
-// std::string layouts the game is built with., 2026-11-15.
+// std::string layouts the game is built with.
 //
 // The readers below are the GAME's reads, transcribed from the binaries:
 //   msvc_game_reads_arg   ck3.exe 1.18.3.1 0x7B3980 (the copy CMD_EFFECT runs on
@@ -40,7 +40,7 @@ static std::string gnu_game_reads_arg(const cc::Arg& a) {
 
 static cc::Arg windows_arg(const char* d, std::size_t n) {
 #ifdef CK3_CONSOLE_CALL_PREFIX
-    return cc::arg_libstdcxx(d, n);   // the pre-fix ArgEntry {data, length, 0, 0}
+    return cc::arg_libstdcxx(d, n);   // the superseded ArgEntry {data, length, 0, 0}
 #else
     return cc::arg_msvc(d, n);
 #endif

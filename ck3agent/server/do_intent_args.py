@@ -8,7 +8,7 @@ parameters, so WHAT IT READS OFF `args` IS THE ARGUMENT LIST, by construction.
 This module extracts the table from that function's AST, and mcp_server.py
 appends `table_text()` to the registered `do` description at import time: the
 description an MCP client is sent cannot drift from the code because it is
-computed from it. (Until the block lived in a hand-kept schema
+computed from it. (The block once lived in a hand-kept schema
 in tools.py that only the retired API loop read; MCP seats never received it.)
 
 READ RATHER THAN GUESSED: a key read as `a.get("k")` is listed; nothing here
@@ -34,7 +34,15 @@ DEDICATED: dict = {
     "set_policy": (REDESIGN, ("_do_set_policy",), "a"),
     "answer_proposal": (REDESIGN, ("_do_answer_proposal",), "a"),
     "end_war": (REDESIGN, ("_do_end_war",), "a"),
+    "event_rule": (pathlib.Path(__file__).resolve().parent / "seat_events.py", ("do_event_rule",), "a"),
+    "gold_reserve": (pathlib.Path(__file__).resolve().parent / "seat_events.py", ("do_gold_reserve",), "a"),
+    "ai_veto": (pathlib.Path(__file__).resolve().parent / "seat_events.py", ("do_ai_veto",), "a"),
+    "host_activity": (pathlib.Path(__file__).resolve().parent / "activities.py", ("do_host_activity",), "a"),
 }
+# Listed only when the server booted with an army switch on (army_orders.listed)
+import army_orders as _army_orders  # noqa: E402
+if _army_orders.listed():
+    DEDICATED["army"] = (pathlib.Path(__file__).resolve().parent / "army_orders.py", ("do_army",), "a")
 
 
 def _arg_keys(node: ast.AST, var: str = "a") -> list[tuple[str, bool]]:
@@ -136,12 +144,88 @@ def extract_dedicated() -> dict[str, list[str]]:
     return table
 
 
-def render(table: dict[str, list[str]]) -> str:
+#: (a seated game, step 48: make_peace {"terms": "surrender", "check": true} ran the surrender;
+#: `check` is end_war's): every intent REFUSES an argument it does not read. The accepted names are
+#: the listed table's, plus the intents do_impl answers that the listing leaves out (read from their
+#: own functions by the same rule), plus PATH_EXTRA: a key a guard reads before the intent's own
+#: function (test_do_intent_census walks the do path's call graph and reds on a read key no intent accepts).
+ACCEPT_ONLY: dict = {
+    "cancel_pending": (REDESIGN, ("_do_cancel_pending",), "a"),
+    "army": (pathlib.Path(__file__).resolve().parent / "army_orders.py", ("do_army",), "a"),
+}
+PATH_EXTRA: dict = {"interact": ("confirm_leaves_realm",)}
+_ACCEPTED: dict = {}
+
+
+def accepted() -> dict[str, tuple]:
+    """{intent: (accepted arg names, in the listing's order)} for every intent do_impl answers."""
+    if not _ACCEPTED:
+        table = extract(REDESIGN.read_text(encoding="utf-8"))
+        table.update(extract_dedicated())
+        for intent, (path, funcs, var) in ACCEPT_ONLY.items():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            found = [n for n in ast.walk(tree)
+                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in funcs]
+            if len(found) != len(funcs):
+                raise SystemExit(f"{funcs} absent from {path.name}: the args of intent {intent!r} cannot be read")
+            keys = table.setdefault(intent, [])
+            for f in found:
+                keys += [k for k, _ in _arg_keys(f, var) if k not in keys]
+        for intent, extra in PATH_EXTRA.items():
+            table.setdefault(intent, [])
+            table[intent] += [k for k in extra if k not in table[intent]]
+        _ACCEPTED.update({i: tuple(k) for i, k in table.items()})
+    return _ACCEPTED
+
+
+def unknown_args(intent: str, args) -> tuple[list, list]:
+    """(the arg names `args` carries that `intent` does not read, sorted; the names it reads).
+    ([], []) for an intent with no table (an unknown intent is the caller's own refusal)."""
+    acc = accepted().get(intent)
+    if acc is None or not isinstance(args, dict):
+        return [], list(acc or ())
+    return sorted(str(k) for k in args if k not in acc), list(acc)
+
+
+def arg_values() -> dict[tuple[str, str], tuple]:
+    """The closed value sets of intent arguments, read from the
+    constants the code validates against (never typed here)."""
+    import activities
+    import factions
+    import proposals
+    import redesign
+    import seat_events
+    import tools
+    return {
+        ("make_peace", "terms"): tuple(redesign.PEACE_TERMS),
+        ("end_war", "terms"): tuple(redesign.END_WAR_TERMS),
+        ("faction", "action"): tuple(factions.FACTION_ACTIONS),
+        ("faction", "response"): tuple(factions.DEMAND_RESPONSES),
+        ("scheme", "action"): tuple(redesign.SCHEME_ACTIONS),
+        ("men_at_arms", "action"): tuple(tools.MAA_ACTIONS),
+        ("set_policy", "policy"): tuple(redesign.POLICIES) + ("proposals",),
+        ("set_policy", "class"): tuple(proposals.CLASS_SPECS),
+        ("set_policy", "answer"): tuple(proposals.POLICY_ANSWERS),
+        ("answer_proposal", "answer"): tuple(proposals.ANSWERS),
+        ("change_law", "scope"): ("title",),
+        ("event_rule", "op"): tuple(seat_events.EVENT_RULE_OPS),
+        ("event_rule", "answer"): tuple(seat_events.EVENT_ANSWERS),
+        ("event_rule", "currency"): tuple(seat_events.EVENT_CURRENCIES),
+        ("ai_veto", "what"): tuple(seat_events.AI_VETO_WHATS) + tuple(seat_events.AI_VETO_PRESETS),
+        ("host_activity", "activity"): tuple(activities.ACTIVITIES) + (activities.LEAVE,),
+        **({("army", "action"): _army_orders.listed_actions()} if _army_orders.listed() else {}),
+    }
+
+
+def render(table: dict[str, list[str]], values: dict | None = None) -> str:
+    values = values or {}
     lines = [MARKER_OPEN + ":"]
     for intent in sorted(table):
         keys = table[intent]
         if keys:
-            lines.append(f"  {intent}: args.{{{', '.join(keys)}}}")
+            shown = [f"{k}={'|'.join(values[(intent, k)])}" if (intent, k) in values else k
+                     for k in keys]
+            lines.append(f"  {intent}: args.{{{', '.join(shown)}}}")
     return "\n".join(lines)
 
 
@@ -150,4 +234,4 @@ def table_text() -> str:
     """The rendered table for redesign.py (and the dedicated intents) beside this module."""
     table = extract(REDESIGN.read_text(encoding="utf-8"))
     table.update(extract_dedicated())
-    return render(table)
+    return render(table, arg_values())

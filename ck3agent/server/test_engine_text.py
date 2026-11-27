@@ -2,8 +2,8 @@
 
 The faction verdicts (query_joinable_factions, faction_action) carry the reason
 the GAME gives. That text is rendered tooltip text with the engine's markup in
-it; the samples below are verbatim replies from run l10-scout1 on the test host's 867
-save (live867-runs/l10-scout1/results/l10_scout.json). The header is the one
+it; the samples below are verbatim replies from a test run on the test host's 867
+save. The header is the one
 definition of the cleaning; this compiles it and checks what a player reads.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ CASES = [
     ("\x15X\x15high strong\x15!\x15! text", "strong text"),
     # CAN_FIRE_ULTIMATUM (FUN_05f8ca90) appends each failing reason after a 1-byte
     # "\n" (the string at image 0x08f92ccd); two reasons were read joined with no
-    # separator in run l10fx6-live-1 ("... is in war You have to wait until ...").
+    # separator in a test run ("... is in war You have to wait until ...").
     ("\nCannot press demands while the faction is in war\nYou have to wait until 26 November, 869 "
      "before you can press the demands of this faction again",
      "Cannot press demands while the faction is in war; You have to wait until 26 November, 869 "
@@ -49,7 +49,7 @@ CASES = [
     ("plain words", "plain words"),
     ("", ""),
     # A compound header with nothing under it says nothing. The imprison
-    # check's engine_reason read "All of these:" alone (w-l10-factions-6, every
+    # check's engine_reason read "All of these:" alone (a faction test run, every
     # refused target); imperial_policy_faction's create read "...; All of these:".
     ("\x15indent_newline:0 \x15!\x15indent_newline:6 \x16warning_icon! \x15X All of these:\x15!", ""),
     ("\x15indent_newline:0 \x15!\x15indent_newline:6 \x16warning_icon! \x15X Rank is not greater or "
@@ -62,7 +62,7 @@ CASES = [
     ("\x15indent_newline:0 All of these:\x15indent_newline:2 \x16warning_icon! Is an adult\x15!",
      "All of these:; Is an adult"),
     # A repeated line is said once (restore_ceremonial_liege_faction's create,
-    # w-l10-factions-6: FACTION_CAN_CREATE_AS_COMMAND runs two checks of the same
+    # A faction test run: FACTION_CAN_CREATE_AS_COMMAND runs two checks of the same
     # condition into one string)
     ("\x15indent_newline:0 \x15!\x15indent_newline:6 The Aghlabid Sultanate has a \x15E; "
      "\x15TOOLTIP:GAME_CONCEPT,ceremonial_liege Ceremonial Monarch\x15!\x15indent_newline:0 \x15!"
@@ -113,7 +113,7 @@ def test_the_server_cleaner_reads_the_same_lines():
     header over nothing goes, a repeat is said once) and reads every case above
     as the bridge does. It adds two rules those texts carry (a concept icon's
     name, a trigger line's met/not met mark), pinned in test_succession_levers.py
-    and test_lane_query.py."""
+    and test_query_and_do_rows.py."""
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import redesign

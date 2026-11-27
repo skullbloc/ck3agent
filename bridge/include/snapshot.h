@@ -64,7 +64,7 @@
 //   - queue_intent (bridge-internal, but execution is game-thread)
 //   (fire_event was listed here + in is_bridge_internal_query from the initial
 //    import but NEVER had a dispatch case in any revision — dead classifier
-//    entry removed per N7, surface audit 2026-08-01.)
+//    entry, so it was removed.)
 //
 // SNAPSHOT STRATEGY:
 //

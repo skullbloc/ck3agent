@@ -1,5 +1,5 @@
 """The one C++ tokenizer, and the census that keeps it the only one
-(/X5).
+(every checker reads source through it).
 
 bridge/scripts/cpp_strip.py decides what a comment and a literal are for every
 C++ checker in the repo. Seven hand-rolled copies each got one case wrong (a
@@ -51,8 +51,8 @@ EXEMPT = {
     ("release/export.py", "strip_line_comments"):
         "REFUSES any line whose code holds a quote or a /*: a refusal, not a parse",
     ("release/gen_public_reference.py", "preprocess"):
-        "NOT clean (witness r4 m13): besides directive arguments it cuts `//` off every "
-        "line before its verb scan, string-blind; the release lane's file, left to its "
+        "NOT clean: besides directive arguments it cuts `//` off every "
+        "line before its verb scan, string-blind; a release tool, left to its "
         "owner and named here so it is not mistaken for a reader of directives only",
     ("re/scripts/windows/gen_win_offsets.py", "walk"):
         "reads re/offsets headers line by line; no string literal there holds // (checked below)",
@@ -73,7 +73,7 @@ EXEMPT = {
     ("scripts/registered_speed.py", "<module>"):
         "_INT_RHS: an integer right-hand side optionally followed by a comment, on one "
         "declaration line; it reads the declaration, not literals, and this file is a "
-        "pre-registered census input kept byte-stable",
+        "declared census input kept byte-stable",
     ("scripts/acceptance_start_date_year.py", "check_consumer"):
         "reads each line's comment half on purpose (its stale-comment row); evidence "
         "acceptance for START_DATE_YEAR's grading, left byte-stable",
@@ -276,7 +276,7 @@ def test_MUTANT_a_planted_parser_is_flagged(name, text):
 #: The shapes the function-only census missed, each in
 #: the unit that holds it.
 @pytest.mark.parametrize("name, text, unit", [
-    ("pattern in a module constant (the witness's run 2)",
+    ("pattern in a module constant (the second run)",
      'import re\nPAT = r"//[^\\n]*"\ndef s(t): return re.sub(PAT, "", t)\n', "<module>"),
     ("pattern in a class constant",
      'import re\nclass K:\n    LINE = re.compile(r"//[^\\n]*")\n', "class K"),

@@ -1,4 +1,4 @@
-"""lane-multi: several rulers in ONE session.
+"""Several rulers in ONE session.
 
 Two halves. The pre-bind: `CK3_AGENT_CHARACTER_ID` takes a comma-separated list,
 the first is claimed as the primary and every further one is an ADDED claim
@@ -58,7 +58,7 @@ def test_a_list_binds_the_first_as_primary_and_ADDS_the_rest(monkeypatch):
 def test_a_single_id_is_unchanged_and_carries_no_also(monkeypatch):
     st, sent = _bind(monkeypatch, "30853")
     assert len(sent) == 1 and "add" not in sent[0][1]
-    # lane-prebind added `bound_at` (the reply's clock stamp; the fake has none)
+    # The reply carries `bound_at` (the reply's clock stamp; the fake has none)
     # and `wait` (nothing waited: the fake ack names no session_state).
     assert st.prebind == {"character_id": 30853, "ok": True, "reason": None,
                           "bound_at": {"tick": None, "date": None},

@@ -1,5 +1,5 @@
 // action_registry.inc — SINGLE SOURCE OF TRUTH for the bridge action surface.
-// (D1-C / FIX 3.1, bridge-investigation-20260801)
+// (one table, so registration and dispatch cannot drift)
 //
 // Every registered action is ONE line here:  BRIDGE_ACTION("name", handler)
 // This file is #included twice by dispatch_router.cpp with different
@@ -39,7 +39,7 @@
 BRIDGE_ACTION("toggle_all_ai", case_toggle_all_ai)
 
 BRIDGE_ACTION("send_interaction", do_send_interaction)
-// F16: the send pipeline's own checks for one actor against targets, nothing sent.
+// The send pipeline's own checks for one actor against targets, nothing sent.
 BRIDGE_ACTION("query_interaction_check", do_query_interaction_check)
 
 // --- Intent Queue (AI evaluation hook) ---
@@ -52,7 +52,7 @@ BRIDGE_ACTION("cancel_intent", do_cancel_intent)
 BRIDGE_ACTION("clear_intents", do_clear_intents)
 
 // send_decision FIRES a single named decision (it does NOT broad-eval the
-// decision DB). FIXPLAN A7 / #64: the broad annotated decision EVAL path is
+// decision DB). The broad annotated decision EVAL path is
 // disabled because the engine masks SIGALRM during certain trigger hangs, so
 // NO signal watchdog (on any thread) can bound it — a campaign-fatal freeze
 // (re_decision_eval_hang.md). The bounded, safe substitute is list-mode:
@@ -72,7 +72,7 @@ BRIDGE_ACTION("declare_war", do_declare_war)
 BRIDGE_ACTION("pre_validate_war", do_pre_validate_war)
 
 // Path B' override: vouch (cb, titles, target) for the next
-// AI_CB_SELECTOR call on this thread; consumed once.: a DEBUG verb —
+// AI_CB_SELECTOR call on this thread; consumed once. A DEBUG verb —
 // it takes raw engine pointers from the client.
 #ifdef CK3_BRIDGE_DEBUG_VERBS
 BRIDGE_ACTION("set_cb_selector_override", do_set_cb_selector_override)
@@ -86,20 +86,20 @@ BRIDGE_ACTION("set_cb_selector_override", do_set_cb_selector_override)
 BRIDGE_ACTION("set_offgoal_veto", do_set_offgoal_veto)
 
 // Direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect
-// (whose scope-evaluator construction is not recovered —). Mirrors
+// (whose scope-evaluator construction is not recovered). Mirrors
 // WAR_DECLARE_SPECIAL_HANDLER (FUN_065db970): builds a minimal CB-params
 // struct and calls WAR_CREATE_CORE directly. Designed for the LLM-as-player
-// claim-war scenario (A.6 /). Caller validates upstream gates.
+// claim-war scenario (A.6). Caller validates upstream gates.
 BRIDGE_ACTION("call_war_create_core", do_call_war_create_core)
 
-// raise_armies and raise_raiders were deleted in
-// (2026-10-21): the raise primitive's engine function is the raise-all button's
+// raise_armies and raise_raiders are deleted, for a plain reason:
+// the raise primitive's engine function is the raise-all button's
 // availability check and raised nothing live (re/findings/re_raise_armies.md).
 
 // REMOVED: move_army / order_siege / siege_holding / set_move_army_enabled
 // dispatch cases deleted per design (agent does not drive army micro).
 
-// #111 (re_create_title_action.md): LEGITIMATE de-jure create-title. Builds a
+// LEGITIMATE de-jure create-title (re_create_title_action.md). Builds a
 // CCreateTitleCommand for the AI ruler, runs its engine CanExecute gate (de-jure
 // control + not-extant + gold cost), and on PASS dispatches it via
 // GAME_COMMAND_DISPATCH(0xe). Game-thread only (execute_create_title_intent),
@@ -127,7 +127,7 @@ BRIDGE_ACTION("enter_observe_mode", do_enter_observe_mode)
 BRIDGE_ACTION("toggle_ai_subsystem", case_toggle_ai_subsystem)
 BRIDGE_ACTION("set_character_ai", case_set_character_ai)
 
-// --- Decision-budget governor (R6) ---
+// --- Decision-budget governor ---
 BRIDGE_ACTION("report_usage", do_report_usage)
 BRIDGE_ACTION("set_budget_config", do_set_budget_config)
 BRIDGE_ACTION("get_budget_state", do_get_budget_state)
@@ -172,10 +172,10 @@ BRIDGE_ACTION("query_war_score_breakdown", do_query_war_score_breakdown)
 
 // READ-ONLY per-war AI war-stance / siege-intent (re_query_war_stance.md).
 // Pure memory reads; PAUSED-safe (no engine probe). The true-stance record
-// walk is gated (default ON since WSTANCE) behind g_war_stance_record_walk_enabled.
+// walk is gated (default ON) behind g_war_stance_record_walk_enabled.
 BRIDGE_ACTION("query_war_stance", do_query_war_stance)
 
-// Toggle the (default-ON since WSTANCE) war-stance coordinator record walk at runtime.
+// Toggle the (default-ON) war-stance coordinator record walk at runtime.
 // { "enabled": <bool> }. Pure flag store — no game-thread reentry.
 BRIDGE_ACTION("set_war_stance_record_walk", case_set_war_stance_record_walk)
 
@@ -222,7 +222,7 @@ BRIDGE_ACTION("query_cbs_for_targets", do_query_cbs_for_targets)
 
 BRIDGE_ACTION("query_alliances", do_query_alliances)
 
-// #122 alliance hygiene: surface wars the ruler was dragged into as a
+// Alliance hygiene: surface wars the ruler was dragged into as a
 // called ally (distant ally-offensive wars tying up its levies).
 BRIDGE_ACTION("query_call_to_arms", do_query_call_to_arms)
 
@@ -237,11 +237,11 @@ BRIDGE_ACTION("list_pending_interactions", do_list_pending_interactions)
 BRIDGE_ACTION("tick_diff", do_tick_diff)
 
 BRIDGE_ACTION("list_interactions", case_list_interactions)
-// #64: list_decisions always serves the LIGHT name+hash list (see
+// list_decisions always serves the LIGHT name+hash list (see
 // case_list_decisions in dispatch_router.cpp for the full rationale).
 BRIDGE_ACTION("list_decisions", case_list_decisions)
 
-// #64 LIST-MODE annotated decisions (2026-06-19, production): the full-DB engine
+// LIST-MODE annotated decisions (2026-06-19, production): the full-DB engine
 // eval is unsafe (hangs the game thread on certain decisions — the engine masks
 // SIGALRM so no watchdog can bound it; re_decision_eval_hang.md). The safe, useful
 // form is BOUNDED: the agent passes a "decisions":[names/hashes] list and we eval
@@ -255,7 +255,7 @@ BRIDGE_ACTION("list_decisions_annotated", do_list_decisions_annotated)
 // --- New observation tools ---
 BRIDGE_ACTION("get_tick_info", do_get_tick_info)
 
-// The harness declares WHICH SAVE is loaded, using
+// — the harness declares WHICH SAVE is loaded, using the
 // run_summary.json identity ("episode_id" + save.sha256). This is the ONLY
 // trigger that can restore agent steering quarantined by a world reload, and
 // the only caller of the on-disk lock carrier. Reading a character id to guess
@@ -276,6 +276,16 @@ BRIDGE_ACTION("query_title_succession_map", do_query_title_succession_map)
 BRIDGE_ACTION("query_joinable_factions", do_query_joinable_factions)
 BRIDGE_ACTION("faction_action", do_dispatch_faction_intent)
 BRIDGE_ACTION("set_faction_demand_response", do_set_faction_demand_response)
+BRIDGE_ACTION("set_event_rule", do_set_event_rule)
+BRIDGE_ACTION("query_event_rules", do_query_event_rules)
+BRIDGE_ACTION("query_ai_budget", do_query_ai_budget)
+BRIDGE_ACTION("army_disband", do_army_disband)
+BRIDGE_ACTION("army_move", do_army_move)
+BRIDGE_ACTION("army_raid", do_army_raid)
+BRIDGE_ACTION("army_hold", do_army_hold)
+BRIDGE_ACTION("set_ai_veto", do_set_ai_veto)
+BRIDGE_ACTION("query_ai_veto", do_query_ai_veto)
+BRIDGE_ACTION("unlock_perk", do_unlock_perk)
 BRIDGE_ACTION("scheme_action", do_dispatch_scheme_intent)
 BRIDGE_ACTION("move_capital", do_move_capital)
 BRIDGE_ACTION("set_obligation_level", do_set_obligation_level)
@@ -283,6 +293,7 @@ BRIDGE_ACTION("appoint_councillor", do_appoint_councillor)
 BRIDGE_ACTION("maa_recruit", do_maa_recruit)
 BRIDGE_ACTION("maa_station", do_maa_station)
 BRIDGE_ACTION("maa_unstation", do_maa_unstation)
+BRIDGE_ACTION("maa_disband", do_maa_disband)
 BRIDGE_ACTION("hire_mercenary", do_hire_mercenary)
 BRIDGE_ACTION("set_doctrine", do_set_doctrine)
 // The script action layer (script_templates.h) and its log read-back
@@ -292,11 +303,11 @@ BRIDGE_ACTION("set_character_faith", do_set_character_faith)
 BRIDGE_ACTION("set_character_culture", do_set_character_culture)
 BRIDGE_ACTION("set_title_law", do_set_title_law)
 BRIDGE_ACTION("query_hireable_mercenaries", do_query_hireable_mercenaries)
-// lane-query item 2: the enumerate behind do(action_class="men_at_arms").
+// The enumerate behind do(action_class="men_at_arms").
 BRIDGE_ACTION("query_maa_types", do_query_maa_types)
 BRIDGE_ACTION("query_valid_war_targets", do_query_valid_war_targets)
 
-// #110: de-jure-duchy-completion conquest targeting (2nd-duchy win-line).
+// De-jure-duchy-completion conquest targeting (2nd-duchy win-line).
 BRIDGE_ACTION("query_conquest_targets", do_query_conquest_targets)
 
 BRIDGE_ACTION("query_cb_options", do_query_cb_options)

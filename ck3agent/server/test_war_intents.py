@@ -149,7 +149,7 @@ def test_make_peace_sends_the_terms_interaction_to_the_enemy_leader(terms, side,
 
 @pytest.mark.parametrize("terms", ["surrender", "white_peace", "enforce_demands"])
 def test_only_a_surrender_says_it_is_your_defeat(terms):
-    """Six budget-pilot seats surrendered believing it free (Eung-ryeom e2/s4
+    """Six budget-pilot seats surrendered believing it free (Eung-ryeom, one seat,
     0869.05.30, "surrendering costs me nothing"; the reply's before/after then read
     prestige 456.3 -> 306.3). The surrender reply says it is a defeat with a cost."""
     outcome = {"surrender": "defender_victory", "white_peace": "white_peace",
@@ -202,7 +202,7 @@ def test_make_peace_invalid_interaction_is_named():
 
 
 def test_make_peace_refused_on_a_war_the_game_already_ended_says_so():
-    """m-l12-gl5-r1: the war ended in the tick the enforce was queued; the send was
+    """A test run: the war ended in the tick the enforce was queued; the send was
     refused (no casus belli left). The player is told the war had ended."""
     ended = {"success": True, "wars": [{"war_id": WAR, "outcome": "defender_victory",
                                         "end_date": "0868.09.27", "is_ended": True}]}
@@ -290,28 +290,42 @@ def test_call_ally_carries_the_war_and_is_applied_on_the_participant_list():
     assert ALLY in env["result"]["participants"]["attackers"]
 
 
-def test_call_ally_not_in_the_list_after_the_drain_is_DECLINED_at_once():
-    """call_ally's answer shows on the dispatch pass (LEVERS
-    "on_execute"): the drain ran it and the ally is not on the war after that
-    pass, so the ally said no. Rejected recipient_refuses, with no day waited
-    and nothing touching the clock."""
+def test_call_ally_not_in_the_list_after_the_drain_is_PENDING_never_declined():
+    """The drain said
+    success, the ally was not on the war after that pass, and he was among its
+    attackers one step later. The reply said rejected recipient_refuses. A sent offer
+    whose effect is not yet visible is pending (ok true, result.sent, when to look),
+    never a refusal; nothing touches the clock."""
     gw = WarGateway(replies={"query_wars": _active(_war_row()),
                              "query_intent_results": {"results": [
                                  {"intent_id": "si_100_1_1", "status": "success"}]}})
-    gw.paused = False                       # running: still no world poll for it
     env = _run(R.do_impl(gw, intent="call_ally", character_id=ME,
                          args={"war_id": WAR, "ally_id": ALLY}))
-    assert env["verdict"] == "rejected", env
-    assert env["blocked"]["gate"] == "recipient_refuses", env["blocked"]
-    assert "no reason text" in env["blocked"]["summary"], env["blocked"]
-    after_send = [a for a, _ in gw.reads][[a for a, _ in gw.reads].index("query_intent_results"):]
-    assert after_send.count("query_wars") == 1 + len(R.DRAIN_SCHEDULE_S), gw.reads
+    assert env["ok"] is True and env["verdict"] == "pending", env
+    assert not env.get("blocked"), env
+    assert env["result"]["sent"] is True, env["result"]
+    assert env["pending"]["drains_when"] == "clock_advances", env["pending"]
+    assert "inspect(subject='wars')" in env["pending"]["verify_with"], env["pending"]
     assert not {a for a, _ in gw.writes} & {"pause_game", "unpause_game", "set_speed"}
+
+
+def test_no_lever_reads_an_absent_answer_as_a_refusal():
+    """sweep: the class is a write whose effect another ruler's AI applies
+    later (offers, calls to arms, marriages, alliances) read back in the same paused
+    moment. No LEVERS row may turn an absent effect into recipient_refuses: the
+    vocabulary has no "declined", and every war intent and every offer is "days"."""
+    for k, row in R.LEVERS.items():
+        assert row.get("absent") in (None, "unconfirmed"), k
+    for k in [("call_ally", ""), ("join_war", ""), ("interact", "negotiate_alliance_interaction"),
+              ("interact", "arrange_marriage_interaction"), ("interact", "*")] + \
+            [("make_peace", t) for t in R.PEACE_TERMS]:
+        assert R.LEVERS[k]["shows"] == "days", k
+    assert "recipient_declined_on_execute" not in open(R.__file__, encoding="utf-8").read()
 
 
 @pytest.mark.parametrize("paused", [True, False])
 def test_white_peace_is_answered_over_DAYS_reread_only_while_the_clock_runs(paused):
-    """white_peace is a "days" lever (l13ff2a-p: all 31 sent offers ended
+    """white_peace is a "days" lever (a test run: all 31 sent offers ended
     white_peace 3-10 days later). Once the drain sent it, the ledger is re-read
     for game days only while a FRESH clock reading says the game runs (bounded);
     paused it is pending until the clock advances, never a refusal."""
@@ -346,14 +360,14 @@ def test_every_war_lever_names_when_its_answer_shows():
     for k in keys:
         assert k in R.LEVERS, k
         assert R.lever_of(k[0], sub=k[1])[0] == k
-    assert "PROVEN FOR ACCEPT ONLY" in R.LEVERS[("call_ally", "")]["evidence"]
+    assert "a yes can land after the pass" in R.LEVERS[("call_ally", "")]["evidence"]
 
 
 def test_call_ally_is_applied_PAUSED_when_the_ally_shows_after_the_drain():
-    """The gl5-p reply shape ("status": "queued", "pending_count": 1). The verdict
+    """A live reply's shape ("status": "queued", "pending_count": 1). The verdict
     appears on the 2nd drain read with the game paused, and here the ally shows on
     the war after it: the outcome is visible, so it is applied paused (stage 1).
-    The pre-fix server read once at once and answered pending.
+    The superseded server read once at once and answered pending.
 
     This row grades the readback, not the game: per the bridge, a send's
     "success" means the interaction was dispatched, and an AI's acceptance of a
@@ -529,7 +543,7 @@ def test_cbs_carries_family_and_groups_valid_options():
         {"cb_key": "claim_cb", "family": "claim", "valid": True, "target_mode": 6},
     ]}
     gw = WarGateway(replies={"query_cbs_for_target": raw})
-    env = _run(R.cbs_impl(gw, target_id=ENEMY, character_id=ME))
+    env = _run(R.cbs_impl(gw, target_id=ENEMY, character_id=ME, include_invalid=True))
     res = env["result"]
     assert {o["cb"]: o["family"] for o in res["options"]} == {
         "invasion_war": "invasion", "county_conquest_cb": "conquest", "claim_cb": "claim"}
@@ -587,10 +601,10 @@ def _fn_body(src, signature):
 
 
 def test_cbs_bridge_query_is_a_game_thread_read_that_services_its_own_slot():
-    """-B: query_cbs_for_target(s) and query_cb_validity_strict
+    """query_cbs_for_target(s) and query_cb_validity_strict
     read the pair before they submit, so they are game-state reads, run by the drain
     on the game thread, the one thread that services g_cb_query. The failure
-    live867 l5-r1 recorded (queued to the game thread, a cbs poll waited on the slot
+    one test run recorded (queued to the game thread, a cbs poll waited on the slot
     it could only service itself; every cbs answered cb_query_busy) stays excluded
     because every submit services the slot ITSELF on that thread before it polls,
     and the poll does not sleep there. A false fix (moving them back to the IPC
@@ -615,10 +629,10 @@ def test_cbs_bridge_query_is_a_game_thread_read_that_services_its_own_slot():
 
 def test_cb_slot_is_serviced_inline_from_the_game_thread_drain():
     """query_conquest_targets is a game-state read, run by the drain on the game
-    thread (the session thread since), the one thread that services the
+    thread (the session thread), the one thread that services the
     g_cb_query slot; before that its engine checks waited out the timeout on
-    themselves (live867 l5-r3: engine_checks_done 2, no holder checked). Since
-   -B every slot submit calls service_slots_if_game_thread: on the drain
+    themselves (a test run: engine_checks_done 2, no holder checked). Now
+    every slot submit calls service_slots_if_game_thread(): on the drain
     thread it runs the slot processing (service_query_slots, process_cb_query among
     it) under the caller's saved fault recovery point. The predicate is the drain
     thread's own identity, not a flag a caller sets around the dispatch."""
@@ -699,8 +713,8 @@ def _unresolved_county(**extra):
 def test_plan_war_an_unresolved_top_liege_is_no_target():
     """The bridge writes holder_top_liege_unresolved and no
     holder_top_liege_id when the holder's liege walk cannot finish
-    (query_handlers.cpp do_query_conquest_targets, liege_walk.h). RED on
-    55a66b0c: plan_war fell back to holder_id and probed the vassal 777 as the
+    (query_handlers.cpp do_query_conquest_targets, liege_walk.h). RED without
+    the rule: plan_war fell back to holder_id and probed the vassal 777 as the
     war's target. Now the county is excluded, unmeasured, and nobody is probed."""
     gw = _plan_gw()
     gw.replies["query_conquest_targets"] = _unresolved_county(holder_top_liege_unresolved=True)
@@ -806,7 +820,7 @@ def test_the_bridge_reads_war_ref_zero():
 
 def test_plan_war_never_offers_a_claim_war_the_strict_row_calls_undeclarable():
     """The strict row's `declarable` decides: claim_cb passes the engine's inner check
-    with no pressed claim, and the war is refused claim_not_pressed (live867 l5-r10:
+    with no pressed claim, and the war is refused claim_not_pressed (a test run:
     13495 held no pressed claim and plan_war offered two claim_cb wars)."""
     gw = _plan_gw()
     gw.replies["query_conquest_targets"] = {"duchies": []}
@@ -861,7 +875,7 @@ def test_every_name_the_signature_generator_lists_is_an_offset_header_name():
 
 def test_force_offensive_stance_is_gone_end_to_end():
     # The engine's own coordinator already held attacker_offensive when it ran
-    # (live867 l5fx6-p2-live); the game's AI prosecutes a declared war on its own.
+    #; the game's AI prosecutes a declared war on its own.
     assert "force_offensive_stance" not in R.INTENTS
     assert "force_offensive_stance" not in R._EXPERIMENTAL_FLAGS
     gw = WarGateway()
@@ -1041,7 +1055,7 @@ def test_the_steered_war_reads_its_own_intent_not_the_client_request_id():
 
 
 def test_declare_war_pending_is_dos_spelling_and_asserts_no_reason_it_was_not_given():
-    """Declare_war's pending is ok:true, verdict pending, no blocked
+    """declare_war's pending is ok:true, verdict pending, no blocked
     (do()'s spelling), and a reply that named no reason carries none (no
     "no_poll_on_game_thread" default)."""
     gw = WarGateway(replies={"query_wars": _active(),

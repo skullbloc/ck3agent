@@ -1,7 +1,7 @@
 // test_war_history.cpp — host unit tests for the ended-war ledger and, above
 // all, for the war-IDENTITY rule.
 //
-// THE DEFECT. An ended war was invisible to every client, so the paper's
+// THE HAZARD. An ended war was invisible to every client, so a study's
 // secondary outcome — the Norman Conquest's engine-recorded outcome and date —
 // could not be reported at all. The meter lane had to leave both columns empty
 // and bracket the end between two 90-day samples.
@@ -30,7 +30,7 @@
 //     the live acceptance run shows that (William takes k_england).
 //
 // NOT assert(): NDEBUG erases it under the CI build type and the suite goes
-// vacuously green. CHECK counts failures; main returns them.
+// vacuously green. CHECK counts failures; main() returns them.
 
 #include "war_history.h"
 
@@ -239,7 +239,7 @@ static void test_ledger_mechanics() {
     oldest.has_war_id = true; oldest.war_id = 1;
     CHECK(ring.query(oldest).empty(), "the oldest record was the one dropped");
 
-    // clear is the world-reset path: records go, the observation
+    // clear() is the world-reset path: records go, the observation
     // counter stays, because it is what tells an operator the hook is alive.
     ring.clear();
     CHECK(ring.size() == 0, "clear empties the ledger");
@@ -274,7 +274,7 @@ static void test_matching_is_conjunctive() {
 // ledger with defender_id pinned at 30853 and would have come back empty on a
 // war that IS in it — an absence reading as "no end".
 static void test_a_moved_defender_defeats_a_frozen_pair_filter() {
-    printf("a reassigned defender defeats a declared-pair filter (ck-yifp)\n");
+    printf("a reassigned defender defeats a declared-pair filter\n");
 
     // The row as the engine wrote it: declared against HAROLD, terminated
     // against the character who by then held the title.
@@ -288,7 +288,7 @@ static void test_a_moved_defender_defeats_a_frozen_pair_filter() {
     WarHistory ledger;
     ledger.record(moved);
 
-    // The earlier filter shape: cb_type + the DECLARED pair.
+    // The superseded filter shape: cb_type + the DECLARED pair.
     WarHistoryFilter frozen;
     frozen.has_cb_type = true;  frozen.cb_type = "norwegian_invasion_cb";
     frozen.has_attacker = true; frozen.attacker_id = HARALD_HARDRADA;
@@ -319,7 +319,7 @@ static void test_a_moved_defender_defeats_a_frozen_pair_filter() {
 // A termination the hook SAW and could not copy out must not be
 // silently identical to a war that never ended.
 static void test_uncaptured_terminations_are_counted_separately() {
-    printf("an uncapturable termination is counted, not swallowed (ck-yifp)\n");
+    printf("an uncapturable termination is counted, not swallowed\n");
     WarHistory ledger;
     CHECK(ledger.total_uncaptured() == 0, "a fresh ledger has dropped nothing");
 
@@ -341,7 +341,7 @@ static void test_uncaptured_terminations_are_counted_separately() {
 }
 
 int main() {
-    printf("== test_war_history (ck-sd4d, ck-yifp) ==\n");
+    printf("== test_war_history  ==\n");
     test_outcome_names();
     test_the_two_1066_wars_are_never_confused();
     test_ledger_mechanics();
