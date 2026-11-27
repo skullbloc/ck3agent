@@ -1,4 +1,4 @@
-""" F14: every tool call the agent is TAUGHT exists on the surface.
+"""Every tool call the agent is TAUGHT exists on the surface.
 
 The instructions an agent reads are the shipped protocol (ck3agent/protocol/*.md,
 in this tree release/overlay/ck3agent/protocol/), the server's own instructions
@@ -225,10 +225,10 @@ def instruction_files() -> list[Path]:
 
 
 #: Calls in a HUMAN-OWNED file (its header says it is edited only by operator
-#: ruling, so this lane does not rewrite it). Each pair is reported nowhere else
+#: decision, so this test does not rewrite it). Each pair is reported nowhere else
 #: and is checked to be still there: when the operator fixes the line, the pin
 #: reds and is removed, so the list cannot outlive what it covers.
-HUMAN_OWNED_CALLS: set = set()   # The operator-directives bridge line was fixed
+HUMAN_OWNED_CALLS: set = set()   # The operator-directives bridge() line is handled
 
 
 def hook_outputs() -> dict[str, str]:

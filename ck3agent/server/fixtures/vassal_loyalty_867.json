@@ -1,0 +1,386 @@
+{
+"_provenance": "A West Francia 867 pre-flight's calls file seq 62 (query domain=vassal_loyalty, 0867.01.01): the reply as sent, cut by the query tool to 21 of 30 rows",
+"result": {
+"action": "query_vassal_loyalty",
+"ruler_id": 12015,
+"vassal_count": 30,
+"count_disloyal": 25,
+"count_in_faction": 0,
+"vassals": [
+{
+"id": 14011,
+"name": "Ramnulf",
+"military_strength": 1183,
+"opinion_of_me": -69,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 13586,
+"name": "Hugo",
+"military_strength": 1002,
+"opinion_of_me": -60,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 11790,
+"name": "Eudes",
+"military_strength": 1210,
+"opinion_of_me": -59,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 13592,
+"name": "Boudewijn",
+"military_strength": 819,
+"opinion_of_me": -40,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 12137,
+"name": "Antso",
+"military_strength": 1678,
+"opinion_of_me": -25,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 11953,
+"name": "Milon",
+"military_strength": 277,
+"opinion_of_me": -24,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 14445,
+"name": "Bernat",
+"military_strength": 1533,
+"opinion_of_me": -24,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 2,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 14818,
+"name": "Bernat",
+"military_strength": 1391,
+"opinion_of_me": -24,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 21205,
+"name": "Arnault",
+"military_strength": 77,
+"opinion_of_me": -22,
+"in_faction": false,
+"contract": {
+"republic_government_obligations": 0
+}
+},
+{
+"id": 21220,
+"name": "Savary",
+"military_strength": 75,
+"opinion_of_me": -22,
+"in_faction": false,
+"contract": {
+"republic_government_obligations": 0
+}
+},
+{
+"id": 14994,
+"name": "Welf",
+"military_strength": 324,
+"opinion_of_me": -20,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 10209,
+"name": "Ekkehard",
+"military_strength": 708,
+"opinion_of_me": -19,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 21201,
+"name": "Guilhem",
+"military_strength": 79,
+"opinion_of_me": -12,
+"in_faction": false,
+"contract": {
+"republic_government_obligations": 0
+}
+},
+{
+"id": 21203,
+"name": "Aymar",
+"military_strength": 177,
+"opinion_of_me": -12,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 21207,
+"name": "Humbert",
+"military_strength": 77,
+"opinion_of_me": -12,
+"in_faction": false,
+"contract": {
+"republic_government_obligations": 0
+}
+},
+{
+"id": 9528,
+"name": "Erchenrad",
+"military_strength": 287,
+"opinion_of_me": -9,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 14909,
+"name": "Geoffroy",
+"military_strength": 277,
+"opinion_of_me": -9,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 15687,
+"name": "Raoul",
+"military_strength": 284,
+"opinion_of_me": -9,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 21202,
+"name": "Godefroy",
+"military_strength": 183,
+"opinion_of_me": -7,
+"in_faction": false,
+"contract": {
+"feudal_government_taxes": 2,
+"feudal_government_levies": 2,
+"special_contract": 0,
+"religious_rights": 0,
+"fortification_rights": 0,
+"coinage_rights": 0,
+"succession_rights": 0,
+"war_declaration_rights": 0,
+"council_rights": 0,
+"title_revocation_rights": 0,
+"jizya_special_rights": 0
+}
+},
+{
+"id": 21209,
+"name": "Hildebert",
+"military_strength": 75,
+"opinion_of_me": -7,
+"in_faction": false,
+"contract": {
+"republic_government_obligations": 0
+}
+},
+{
+"id": 21211,
+"name": "Savary",
+"military_strength": 75,
+"opinion_of_me": -7,
+"in_faction": false,
+"contract": {
+"republic_government_obligations": 0
+}
+}
+],
+"truncated": {
+"lists": [
+{
+"list": "vassals",
+"shown": 21,
+"of": 30
+}
+],
+"why": "the reply was 10060 bytes; at most 8192 are sent",
+"narrow": "max_results, filter or a title_id/character_id narrows it",
+"list": "vassals",
+"shown": 21,
+"of": 30
+}
+}
+}

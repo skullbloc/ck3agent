@@ -1,11 +1,10 @@
 """instance.py — THE naming authority for a CK3 instance's private paths.
 
-Bead **** (R12), epic. Design of record:
-`docs/design/event-pipeline-conductor.md`; runbook `docs/multi-instance.md`.
+The instance rules (what CK3_INSTANCE_ID namespaces, and what it does not).
 
 WHY THIS FILE EXISTS
 ====================
-Until this bead, one host could run exactly one episode. Four singletons made
+Without it, one host could run exactly one episode. Four singletons made
 that structural, and every one of them was a literal spelled out in a dozen
 files:
 
@@ -55,7 +54,7 @@ PRECEDENCE, in order
 
 An id that does not match `ID_RE` is REFUSED (``InvalidInstanceId``) rather than
 sanitised. A silently-rewritten id is how two "different" instances end up
-sharing a socket, which is the exact bug this bead exists to remove.
+sharing a socket, which is the exact bug this code exists to remove.
 """
 
 from __future__ import annotations
@@ -90,7 +89,7 @@ LEGACY_WAYLAND_NAME = "wayland-9"
 #: not cosmetic: ``sockaddr_un.sun_path`` is 108 bytes, and
 #: ``/tmp/ck3-inst/<id>/agent.sock`` at 48 is 74 — comfortably inside it even
 #: if ``CK3_INSTANCE_ROOT`` is moved somewhere longer. Episode ids
-#: (``ep-20260912T033051Z-e0-paper-9eae1e0e``, 37 chars) fit as-is.
+#: (``ep-20260101T000000Z-ab-paper-0badf00d``, 37 chars) fit as-is.
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
 
 #: Env keys. `ENV_ID` and `ENV_ROOT` select; the rest override one path each.
@@ -294,7 +293,7 @@ class InstancePaths:
     wayland_name: str
     #: ``XDG_DATA_HOME`` for the game process, or None to inherit the user's.
     #:
-    #: ⚠: THIS DOES NOT WORK FOR THE GAME'S USER-DATA DIRECTORY, and the
+    #: ⚠ THIS DOES NOT WORK FOR THE GAME'S USER-DATA DIRECTORY, and the
     #: comment that used to stand here was an inference from a string rather than
     #: a measurement. It said: "CK3 reads $XDG_DATA_HOME before $HOME/.local/share
     #: (the binary carries the string 'neither XDG_DATA_HOME nor HOME environment
@@ -308,11 +307,11 @@ class InstancePaths:
     #: the process held FIFTEEN open write descriptors on
     #: ``$HOME/.local/share/Paradox Interactive/Crusader Kings III/logs/`` and the
     #: instance's own ``save games`` directory was never written or read. A STRING
-    #: IN A BINARY IS NOT A CODE PATH THAT RUNS (caller-less
-    #: ``run_resolver``, ``DISPATCH_TIMEOUT_SECS``, and now this).
+    #: IN A BINARY IS NOT A CODE PATH THAT RUNS (a caller-less
+    #: ``run_resolver``, an unread ``DISPATCH_TIMEOUT_SECS``, and now this).
     #:
     #: The variable is still exported — it costs nothing and something does read
-    #: it — but the SIXTH SINGLETON in docs/multi-instance.md's table is NOT
+    #: it — but the game's own user-data tree (a singleton) is NOT
     #: namespaced, and two concurrent games would share one user-data tree.
     #: ``scripts/instance_write_witness.py`` is the check; it FAILS today.
     #:
@@ -362,7 +361,7 @@ class InstancePaths:
         child inherits an unambiguous instance rather than re-deriving one from
         a variable a wrapper might have dropped. `XDG_DATA_HOME` appears only
         for a non-default instance — exporting it on the default would move the
-        live campaign's save games, which is precisely the harm this bead is
+        live campaign's save games, which is precisely the harm this code is
         supposed to prevent.
         """
         e = {

@@ -1,10 +1,9 @@
-// budget_ledger.h — R6: the decision-budget governor's ENFORCING half.
+// budget_ledger.h — the decision-budget governor's ENFORCING half.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §5 (decisions G6,
-// G7), as amended by the progenitor's 2026-09-12 correction restoring
-// enforcement in full.
+// Part of the event pipeline (pipeline.h): the bridge counts and enforces in
+// full.
 //
-// WHAT IS COUNTED (§5.1 / D4)
+// WHAT IS COUNTED
 // ---------------------------
 // output tokens + uncached input tokens, PER SESSION, PER GAME YEAR. Cache
 // reads and cache writes are RECORDED and reported and NEVER counted against
@@ -12,18 +11,18 @@
 // at, and it is written as an explicit two-term sum so that adding a field to
 // the struct can never silently start charging for it.
 //
-// WHY THE LEDGER IS HERE AND NOT IN THE AGENT (§5.3 / G7)
+// WHY THE LEDGER IS HERE AND NOT IN THE AGENT
 // -------------------------------------------------------
 // Reporting is the supervisor's; ENFORCEMENT is the bridge's. An agent cannot
 // be trusted to stop itself, and the only thing that can actually stop one
 // acting is the thing that decides whether its calls are accepted. The
 // supervisor tails its own claude-CLI transcript (scripts/cost_tap.py's
-// per-message layer — B-path, decision G6) and reports raw token counts; the
+// per-message layer) and reports raw token counts; the
 // BRIDGE decides the game year, holds the ledger, and refuses.
 //
 // That split is what makes the year key unforgeable: a supervisor reports
 // tokens, never a date. The year comes from the engine's own calendar
-// (`ck3::game_date`) via observe_clock.
+// (`ck3::game_date`) via observe_clock().
 //
 // WHAT A SPENT SESSION CAN STILL DO
 // ---------------------------------
@@ -63,8 +62,8 @@ namespace bridge {
 struct BudgetUsage {
     int64_t output_tokens = 0;
     int64_t uncached_input_tokens = 0;
-    int64_t cache_read_tokens = 0;   // recorded, never billed (D4)
-    int64_t cache_write_tokens = 0;  // recorded, never billed (D4)
+    int64_t cache_read_tokens = 0;   // recorded, never billed
+    int64_t cache_write_tokens = 0;  // recorded, never billed
 
     // §5.1 / D4. Explicit two-term sum, never "total minus cache".
     int64_t billed() const { return output_tokens + uncached_input_tokens; }

@@ -1,6 +1,6 @@
-"""2026.12.4 (cell0 gaps 5+7): a CELL seat's wait.
+"""A CELL seat's wait (toolkit 2026.12.4).
 
-cell0 ran three seats taught `session(action="wait", seconds=60)`: a seconds
+A test series ran three seats taught `session(action="wait", seconds=60)`: a seconds
 wait is not held to CK3_CYCLE_GAME_DAYS, so the decision cadence was the clock
 rate times the seconds asked, and the horizon was `ck3agent run --until-date`,
 which overshot six days because nothing capped an in-flight wait. Under a cell
@@ -10,7 +10,7 @@ start + k x cadence, capped at the horizon end; `seconds` is recorded, never the
 target. Without HORIZON_START the published wait is unchanged.
 
 Driven through test_cycle_cadence's AlarmClock (the emitters' reply keys).
-Red on 08bb8f92: cycle_cadence has no cell_schedule and a seconds wait sleeps
+Red without the rule: cycle_cadence has no cell_schedule and a seconds wait sleeps
 its seconds.
 """
 import asyncio
@@ -24,8 +24,8 @@ import cycle_cadence as cc  # noqa: E402
 import redesign  # noqa: E402
 from test_cycle_cadence import AlarmClock, Clock, _wait  # noqa: E402
 
-START, END = "867.01.03", "867.07.02"          # cell0's horizon: 2 x 90 game-days
-#: The spelling, literal here so the base tree's behaviour is what reds (not a
+START, END = "867.01.03", "867.07.02"          # the dry cell's horizon: 2 x 90 game-days
+#: The spelling, literal here so a code without the rule reds on behaviour (not a
 #: missing constant); test_the_start_is_the_bridge_s_spelling pins the module's.
 START_ENV = "CK3_EPISODE_HORIZON_START"
 
@@ -142,7 +142,7 @@ def test_an_incomplete_cell_env_is_refused_and_nothing_is_written(monkeypatch):
 
 
 def test_without_the_start_the_published_wait_is_unchanged(monkeypatch):
-    """The control: the cadence and the horizon end alone (Study 0's seats) keep
+    """The control: the cadence and the horizon end alone (a study's seats) keep
     the published wait: a seconds wait sleeps its seconds once, a game_days ask
     over the cadence is refused, and no reply carries the cell's keys."""
     monkeypatch.delenv(START_ENV, raising=False)
@@ -157,7 +157,7 @@ def test_without_the_start_the_published_wait_is_unchanged(monkeypatch):
 
 
 def test_the_registered_horizon_has_41_boundaries_and_the_last_cycle_is_50_days():
-    """V3 §7.2 said "40 cycles (3,650 / 90) is exactly the
+    """The design said "40 cycles (3,650 / 90) is exactly the
     number of boundaries". It is 41: forty whole cycles, then the horizon end
     caps a 50-day last one. One count, the schedule's (the runner reads it)."""
     s, err = cc.cell_schedule({cc.HORIZON_START_ENV: "867.01.03", cc.HORIZON_END_ENV: "877.01.03",
@@ -202,7 +202,7 @@ def test_an_unreadable_end_date_is_an_unknown_advance_not_zero_days(cell, monkey
 
 
 def test_a_cell_seat_cannot_change_the_game_speed(cell, monkeypatch):
-    """The registered speed (v3 §7.3) is written and read back
+    """The registered speed is written and read back
     by the cell's runner; a seat's session(speed) on the shared clock would change
     it for every seat. Refused `speed_registered`, nothing written."""
     gw = AlarmClock(rate=1.0, start="867.02.01")

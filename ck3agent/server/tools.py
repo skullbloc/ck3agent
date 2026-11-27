@@ -30,7 +30,7 @@ QUERY_DOMAIN_MAP = {
     # bounded top-N. filter ∈ all|alive|dead|ruler|independent|ai_controlled;
     # sort ∈ military|gold|realm_size|tier|age|<skill>. The first real way to find
     # strong independent rulers (e.g. marriage-alliance prospects) by name+stats.
-    "characters":           ("search_characters",          lambda p: {"filter": p.get("filter") or "alive", "sort": p.get("sort") or "military", "sort_order": p.get("sort_order") or "desc", "max_results": p.get("max_results") or 50, **({"court_of": p["court_of"]} if p.get("court_of") else {}), **({"female": p["female"]} if "female" in p else {}), **({"verbose": p["verbose"]} if "verbose" in p else {})}),
+    "characters":           ("search_characters",          lambda p: {"filter": p.get("filter") or "alive", "sort": p.get("sort") or "military", "sort_order": p.get("sort_order") or "desc", "max_results": p.get("max_results") or CHARACTERS_DEFAULT_ROWS, **({"court_of": p["court_of"]} if p.get("court_of") else {}), **({"female": p["female"]} if "female" in p else {}), **({"verbose": p["verbose"]} if "verbose" in p else {})}),
     # §1a (re_heir_education_RE.md): per-child/heir education-focus read. education_focus
     # + education_focus_skill are REAL; guardian_id/_martial are always null (no read
     # locates a ward's guardian, re_heir_guardian_RE.md §1b).
@@ -39,11 +39,11 @@ QUERY_DOMAIN_MAP = {
     # of character_id, top-N by `sort` (military default), annotated age/distance.
     # The precise "who can I marry" surface (vs the generic `characters` browser).
     # Pass require_in_range=0 (via max_results/sort params path) to browse globally.
-    "marriage_candidates":  ("query_marriage_candidates",  lambda p: {"character_id": p.get("character_id", 0), "sort": p.get("sort") or "military", "max_results": p.get("max_results") or 30, **({"require_in_range": p["require_in_range"]} if "require_in_range" in p else {})}),
+    "marriage_candidates":  ("query_marriage_candidates",  lambda p: {"character_id": p.get("character_id", 0), "sort": p.get("sort") or "military", "max_results": p.get("max_results") or MARRIAGE_DEFAULT_ROWS, "skip_republics": 1, "include_courtiers": 1, "kin_only": 1, **({"require_in_range": p["require_in_range"]} if "require_in_range" in p else {})}),
     "opinion":              ("query_opinion",              lambda p: {"actor_id": p.get("character_id", 0), "target_id": p.get("target_id", 0)}),
     "realm":                ("query_realm",                lambda p: {"character_id": p.get("character_id", 0), **({"verbose": p["verbose"]} if "verbose" in p else {})}),
     "wars":                 ("query_wars",                 lambda p: {"character_id": p.get("character_id", 0), **({"verbose": p["verbose"]} if "verbose" in p else {})}),
-    # #120: a specific war_id (gen-tagged ref OR bare slot idx) returns the FULL
+    # A specific war_id (gen-tagged ref OR bare slot idx) returns the FULL
     # attacker-perspective breakdown — total_warscore (-100..100) + cache_status +
     # the components battle_score/ticking_warscore (always live) and
     # occupation_score/imprisonment_score/landless_score (engine-cached). A
@@ -88,7 +88,7 @@ QUERY_DOMAIN_MAP = {
     "county":               ("query_county_details",       lambda p: {"character_id": p.get("character_id", 0)}),
     "development":          ("query_development_growth",   lambda p: {"title_id": p.get("title_id", 0), "character_id": p.get("character_id", 0)}),
     "buildings":            ("query_building_types",       lambda p: {}),
-    # lane-query item 4: title_id=0 resolves the character (character_id, 0 =
+    # title_id=0 resolves the character (character_id, 0 =
     # the controlled ruler): its capital county, plus bordering_realms[].
     "neighbors":            ("query_county_neighbors",     lambda p: {"title_id": p.get("title_id", 0),
                                                                        "character_id": p.get("character_id", 0)}),
@@ -98,14 +98,14 @@ QUERY_DOMAIN_MAP = {
     # a sigil text block in data.text. scope=realm|target|explicit; BFS to `hops`, capped
     # by max_nodes; detail=brief drops distances + the live overlay for wide overviews.
     # Self-disables ({"error":"map_artifact_missing"}) when the artifact is absent.
+    # Query's scoping arguments (scope, hops, max_nodes, target_county(_key), counties) moved
+    # behind inspect(subject="map"), which reads the region it names (map_view.py); query reads the
+    # realm's window with the defaults.
     "map_graph":            ("query_map_graph",            lambda p: {
-        "scope": p.get("scope", "realm"),
+        "scope": "realm",
         "character_id": p.get("character_id", 0),
-        "hops": p.get("hops", 2),
-        "max_nodes": p.get("max_nodes", 60),
-        **({"target_county": p["target_county"]} if p.get("target_county") else {}),
-        **({"target_county_key": p["target_county_key"]} if p.get("target_county_key") else {}),
-        **({"counties": p["counties"]} if p.get("counties") else {}),
+        "hops": MAP_GRAPH_HOPS_DEFAULT,
+        "max_nodes": MAP_GRAPH_MAX_NODES_DEFAULT,
         **({"detail": p["detail"]} if p.get("detail") else {}),
     }),
     "titles":               ("query_title_hierarchy",      lambda p: {"title_id": p.get("title_id", 0), "character_id": p.get("character_id", 0)}),
@@ -168,6 +168,24 @@ QUERY_DOMAIN_MAP = {
 # event_log is a synthetic aggregation domain (handled specially in mcp_server.query,
 # not via QUERY_DOMAIN_MAP) — it merges the war/scheme/council since_tick feeds.
 QUERY_DOMAINS = sorted(QUERY_DOMAIN_MAP.keys()) + ["event_log", "relative_power"]
+
+#: query(domain="characters") sort and filter values: the bridge's own comparisons
+#: (query_handlers.cpp extract_sort_key and do_search_characters; test_tool_surface_listing
+#: reads both). The bridge falls back to military / alive for anything else, so
+#: query refuses another value rather than let it.
+CHARACTER_SORTS = ("military", "gold", "realm_size", "realm_counties", "tier", "age", "diplomacy",
+                   "martial", "stewardship", "intrigue", "learning", "prowess")
+CHARACTER_FILTERS = ("all", "alive", "dead", "ruler", "independent", "ai_controlled")
+#: query(domain="map_graph") defaults (the lambda below sends them when unset).
+MAP_GRAPH_HOPS_DEFAULT = 2
+MAP_GRAPH_MAX_NODES_DEFAULT = 60
+
+#: query(domain="characters") and (domain="marriage_candidates") row defaults.
+CHARACTERS_DEFAULT_ROWS = 50
+MARRIAGE_DEFAULT_ROWS = 30
+
+#: do(intent="men_at_arms") args.action: the three resolve_act branches below.
+MAA_ACTIONS = ("recruit", "station", "unstation", "disband")   # Disband (built, not proven live)
 
 # ---------------------------------------------------------------------------
 # Resolve helpers — convert consolidated tool params to bridge actions
@@ -236,7 +254,7 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
         }
         if params.get("skip_pre_validate"):
             result["skip_pre_validate"] = True
-        # Force_player_path bypasses the AI war pipeline and
+        # force_player_path bypasses the AI war pipeline and
         # routes through WAR_CREATE_CORE direct. Required when set: the
         # CB name string (casus_belli). Use discover(what='valid_cbs_strict')
         # to enumerate valid CB names for an (actor, target) pair.
@@ -261,7 +279,7 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
                 "title_id": params.get("title_id", 0),
                 "law_name": params.get("law_name", ""),
             }
-        # On refusal the bridge returns a SPECIFIC blocker (#109): data.reason is one
+        # On refusal the bridge returns a SPECIFIC blocker: data.reason is one
         # of at_war / cooldown_active / insufficient_prestige / missing_prerequisite /
         # not_eligible_yet / already_active / not_a_ruler, with data.failures[] carrying
         # the raw engine loc-keys. These pass through the envelope unchanged — read
@@ -314,6 +332,10 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
             args["culture_id"] = params.get("culture_id")
         return "set_character_culture", args
     elif act_type == "lifestyle":
+        # With a perk, the ruler spends one of his own points on it through the game's
+        # check (CAddLifestylePerkCommand, bridge unlock_perk); without, the focus as before.
+        if params.get("perk"):
+            return "unlock_perk", {"actor_id": actor_id, "perk": params.get("perk")}
         # Set the actor's lifestyle focus by name (e.g.
         # "stewardship_domain_focus"). Resolved native SET_FOCUS_APPLY call.
         return "set_lifestyle_focus", {
@@ -355,8 +377,8 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
             "task": params.get("task", ""),
             "target_title_id": params.get("target_title_id", 0),
         }
-        # lane-query item 1: forward an explicit seat so the bridge can REFUSE
-        # a seat that cannot take this task (it used to be dropped here, and
+        # Forward an explicit seat so the bridge can REFUSE
+        # a seat that cannot take this task (it is not dropped here, and
         # the task silently landed on its own seat).
         if params.get("seat"):
             out["seat"] = str(params.get("seat"))
@@ -368,6 +390,8 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
         #   unstation— clear a regiment's origin (regiment_id)
         # regiment_id/location_id from query(domain="levy_readiness").
         maa_action = params.get("action", "recruit")
+        if maa_action not in MAA_ACTIONS:
+            return None
         if maa_action == "station":
             return "maa_station", {
                 "actor_id": actor_id,
@@ -378,6 +402,16 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
             return "maa_unstation", {
                 "actor_id": actor_id,
                 "regiment_id": params.get("regiment_id", 0),
+            }
+        elif maa_action == "disband":
+            # The game's CDestroyMAARegimentCommand (bridge maa_disband); check=true asks only
+            return "maa_disband", {
+                "actor_id": actor_id,
+                "regiment_id": params.get("regiment_id", 0),
+                "check": params.get("check") is True,
+                # Or the type; the toolkit finds its regiments (redesign._do_maa_disband)
+                **({"maa_type": params["maa_type"]} if params.get("maa_type") and not params.get("regiment_id")
+                   else {}),
             }
         return "maa_recruit", {
             "actor_id": actor_id,
@@ -394,7 +428,7 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
     # REMOVED: order_siege / move_army act-type mapping deleted per design
     # (agent does not drive army micro).
     elif act_type == "create_title":
-        # #111: create a de-jure DUCHY or KINGDOM title the AI ruler already
+        # Create a de-jure DUCHY or KINGDOM title the AI ruler already
         # controls (the standard "Create Title" action — cheap gold, gated on
         # controlling the title's de-jure counties + the title not already
         # existing). Routes through the engine's CCreateTitleCommand CanExecute
@@ -417,7 +451,7 @@ def resolve_act(params: dict) -> tuple[str, dict] | None:
             out["title_key"] = tkey
         return "create_title", out
     elif act_type == "appoint":
-        # Seat a courtier in a council position (— fill the vacant Court Chaplain
+        # Seat a courtier in a council position (e.g. fill the vacant Court Chaplain
         # seat so fabrication can run). position_id from query(domain="council").
         return "appoint_councillor", {
             "actor_id": actor_id,
@@ -515,7 +549,7 @@ def _clause(key: str, label: str, ok, *, requirement: str,
             measured=None, fix: str = "", unmeasured: str = "") -> dict:
     """One decision-gate clause verdict. `ok` is True or False when the reads
     established it; a clause no read can establish is UNMEASURED: pass None and
-    `unmeasured` says why, never a pass by default (N4-1)."""
+    `unmeasured` says why, never a pass by default."""
     if unmeasured:
         c = {"clause": key, "label": label, "pass": None, "requirement": requirement,
              "unmeasured": unmeasured}
@@ -564,7 +598,7 @@ def shield_decision_why_blocked(decision: str, *, realm: dict, character: dict,
 
     clauses: list[dict] = []
 
-    # G1/G-tier: highest held title must be <= DUKE (tier 3). A king/emperor is
+    # Tier: highest held title must be <= DUKE (tier 3). A king/emperor is
     # ineligible (forming the kingdom is the TERMINAL act, not a precondition).
     # The primary title's tier (1 barony .. 5 empire): query_realm title_tier, else
     # query_character ruler_tier (the same TITLE_TYPE_TIER read, build_char_profile).
@@ -596,7 +630,7 @@ def shield_decision_why_blocked(decision: str, *, realm: dict, character: dict,
         unmeasured="" if indep_read else
         "query_character carried no id / top_liege_id (0 = the liege walk failed)"))
 
-    # G7: at peace. query_realm war_count (the realm's war array, do_query_realm).
+    # At peace. query_realm war_count (the realm's war array, do_query_realm).
     wc = _int(realm.get("war_count"))
     clauses.append(_clause(
         "at_peace", "at peace (is_at_war = no)", wc == 0,
@@ -614,7 +648,7 @@ def shield_decision_why_blocked(decision: str, *, realm: dict, character: dict,
         unmeasured="" if isinstance(imp, bool) else
         "query_character carried no is_imprisoned"))
 
-    # G4: prestige_level. No reply carries a character's prestige level (only the
+    # prestige_level. No reply carries a character's prestige level (only the
     # spendable prestige), so the clause is unmeasured; prestige is shown beside it.
     need_plvl = gate["prestige_level_min"]
     clauses.append(_clause(
@@ -628,7 +662,7 @@ def shield_decision_why_blocked(decision: str, *, realm: dict, character: dict,
         unmeasured="no bridge reply carries a character's prestige level; the "
                    "engine's refusal names it"))
 
-    # G8: tribal era (one-way timer) — only for negotiate_the_danelaw. Neither
+    # Tribal era (one-way timer) — only for negotiate_the_danelaw. Neither
     # query_character nor query_realm carries the government or the culture's era.
     if gate["needs_era_tribal"]:
         clauses.append(_clause(
@@ -639,7 +673,7 @@ def shield_decision_why_blocked(decision: str, *, realm: dict, character: dict,
             unmeasured="neither query_character nor query_realm carries the government "
                        "or the culture's era"))
 
-    # G5: 2 (or 3) completely-controlled k_england duchy TITLES.
+    # 2 (or 3) completely-controlled k_england duchy TITLES.
     need_duchies = gate["needs_duchies"]
     if duchy_control is not None and isinstance(duchy_control, dict):
         complete = duchy_control.get("complete_duchies") or []
@@ -701,16 +735,16 @@ def shield_decision_why_blocked(decision: str, *, realm: dict, character: dict,
         "all_structural_pass": all_pass,
         "is_structural_hint": True,
         "note": note,
-        "doc": "re/findings/re_shield_robustness.md; "
-               "ck3agent/knowledge/evolving-lessons.md AL-11",
     }
 
 
 #: discover(what=...) values served by mcp_server.discover itself (not resolve_discover).
 #: scheme_types / scheme_targets: redesign.scheme_types_impl / scheme_targets_impl.
-_DISCOVER_COMPOSED = ("targets", "decision_why_blocked", "scheme_types", "scheme_targets")
+#: acceptance / war_targets: redesign.acceptance_impl / war_targets_impl.
+_DISCOVER_COMPOSED = ("targets", "decision_why_blocked", "scheme_types", "scheme_targets",
+                      "acceptance", "war_targets", "notes")
 
-#: Enumerations `do(action_class=...)` owns (finding 8): the
+#: Enumerations `do(action_class=...)` owns: the
 #: discover names they had, and the do door each became. discover answers one of
 #: these names with a refusal whose `next` is that door; nothing is read.
 DISCOVER_MOVED_TO_DO = {
@@ -719,7 +753,7 @@ DISCOVER_MOVED_TO_DO = {
     "joinable_factions": "factions_to_join",
 }
 
-#: Query(domain="conquest_targets") without verbose. The pilots' replies were
+#: query(domain="conquest_targets") without verbose. The pilots' replies were
 #: 187-190K characters for Cui 13191 (94 duchies, 388 counties, most of them his own
 #: vassals') and 59-63K for Charles and Bhoja: over the CLI's tool-result cap every
 #: time, read back with jq. What the seats read out of them (every jq/python line
@@ -730,7 +764,7 @@ DISCOVER_MOVED_TO_DO = {
 #: The compact reply keeps those, drops counties inside the ruler's own realm
 #: (holder_top_liege_id == ruler_id: no war is declared on them), lists conquerable
 #: counties first and caps the rows; verbose=True is the bridge's reply unchanged.
-#: kept `engine_valid_cbs` on every row (the game's own
+#: The compact reply keeps `engine_valid_cbs` on every row (the game's own
 #: list behind `conquerable_now`, written only when the engine ran for that holder,
 #: query_handlers.cpp do_query_conquest_targets r.key("engine_valid_cbs")); it is now
 #: a count on the default row and the list under detail="full" (README says so).
@@ -745,10 +779,12 @@ DISCOVER_MOVED_TO_DO = {
 #: every kept key (engine_valid_cbs, declare, declare_options) and the note,
 #: max_results=<n> lists more, verbose=True is the bridge's reply unchanged.
 CONQUEST_TARGETS_DEFAULT_ROWS = 10
+#: A default query reply's size target, in KB (mcp_server.QUERY_REPLY_CAP)
+QUERY_REPLY_KB = 8
 #: the row keys of detail="full": every key do_query_conquest_targets writes on a
 #: remaining_counties row and on a duchy row (bridge/src/query_handlers.cpp, the
 #: r.key lines inside `r.key("duchies")`; test_conquest_targets_size reads them off
-#: the emitter).: the county list lacked is_kin,
+#: the emitter). The county list lacked is_kin,
 #: already_at_war_opposing and holder_top_liege_unresolved/_independent, which the
 #: lean row shows when set, so "full" dropped the kin flag.
 _CONQUEST_COUNTY_KEYS = ("county_id", "county_key", "county_name", "holder_id", "holder_name",
@@ -855,9 +891,9 @@ def compact_conquest_targets(reply: dict, max_results: int = 0, detail: str = ""
 #: checks each of these resolves and that the tool's enum is exactly this list plus
 #: _DISCOVER_COMPOSED.
 _DISCOVER_RESOLVED = (
-    "interactions", "decisions", "decisions_annotated", "valid_decisions", "acceptance",
+    "interactions", "decisions", "decisions_annotated", "valid_decisions",
     "valid_cbs", "valid_cbs_strict", "trigger_result", "war_validity",
-    "construction_check", "war_targets", "imprisonment", "trigger_slots",
+    "construction_check", "imprisonment", "trigger_slots",
     "interaction_validity",
 )
 
@@ -896,7 +932,7 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
         }
     elif what == "acceptance":
         return "query_interaction_acceptance", {
-            "interaction_type": params.get("interaction_type", ""),
+            "interaction_type": params.get("interaction_type") or params.get("interaction") or "",
             "target_id": params.get("target_id", 0),
             "actor_id": params.get("actor_id", 0),
         }
@@ -914,7 +950,7 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
             "actor_id": params.get("actor_id", 0),
             "target_id": params.get("target_id", 0),
             "include_ineligible": params.get("include_ineligible", True),
-            # audit B3: the strict CB worker runs on the game thread and needs
+            # The strict CB worker runs on the game thread and needs
             # ~6s for a full sweep (98 CBs); the old 2s default returned
             # cb_query_timeout. Do not call concurrently — single-flight worker
             # returns cb_query_busy on overlap.
@@ -922,7 +958,7 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
         }
     elif what == "trigger_result":
         return "query_trigger_result", {
-            "interaction_type": params.get("interaction_type", ""),
+            "interaction_type": params.get("interaction_type") or params.get("interaction") or "",
             "trigger_slot": params.get("trigger_slot", -1),
             "actor_id": params.get("actor_id", 0),
             "target_id": params.get("target_id", 0),
@@ -969,15 +1005,15 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
     elif what == "interaction_validity":
         # Evaluate the full 6-gate cascade for an interaction
         # by name. For declare_war we delegate to query_cb_validity_strict
-        # (the 6-gate CB pipeline —). For other interactions we
+        # (the 6-gate CB pipeline). For other interactions we
         # delegate to query_trigger_result (slot=-1 ⇒ all hard-gate slots).
         # The bridge response is post-processed by
         # shape_interaction_validity_response into a unified
-        # {valid, reason, ...} verdict; see ADR-0001 §.
-        # ADR-0001 row 5 + commit ab00e35 refer to this as
+        # {valid, reason, ...} verdict; see ADR-0001.
+        # ADR-0001 row 5 refers to this as
         # `query_interaction_validity`; shipped as `interaction_validity`
         # to match the existing what= naming (valid_cbs, war_validity,
-        # trigger_result). Tracked in.
+        # trigger_result).
         interaction = (
             params.get("interaction")
             or params.get("interaction_type")
@@ -990,7 +1026,7 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
                 "actor_id": actor_id,
                 "target_id": target_id,
                 "include_ineligible": params.get("include_ineligible", True),
-                "timeout_ms": int(params.get("timeout_ms", 6000) or 6000),  # audit B3
+                "timeout_ms": int(params.get("timeout_ms", 6000) or 6000),
             }
         # Other interactions: trigger-slot cascade. Bridge expects the
         # *_interaction suffix on the slot-table key.
@@ -1010,7 +1046,7 @@ def resolve_discover(params: dict) -> tuple[str, dict] | None:
 
 # Hard-gate trigger slots for query_trigger_result — these MUST pass for the
 # interaction to be sendable (per re_interaction_slot_layout_corrected.md and
-# the bridge slot table in do_query_trigger_result, ck3agent/server/agent.py).
+# the bridge slot table in do_query_trigger_result).
 # Slot 0 (is_valid), 1 (is_shown), 4 (can_send) are the hard gates the engine
 # enforces; auto_accept (5) and on_auto_accept (6) are effect-side, not
 # pre-send gates.
@@ -1184,6 +1220,10 @@ _TARGETS_ACTION_ALIASES = {
 }
 
 
+#: discover(what="targets") action values (the schema's enum).
+TARGETS_ACTIONS = tuple(_TARGETS_ACTION_ALIASES)
+
+
 def resolve_targets_plan(action: str, params: dict) -> dict:
     """Plan how discover(what='targets', action=...) enumerates valid targets.
 
@@ -1281,7 +1321,7 @@ def shape_discover_response(params: dict, response):
 #:
 #: They had drifted. The schema's enum carried NINE of these and the runtime
 #: accepted TEN: `formable_titles` was enumerable and no agent could learn it
-#: existed. That is defect with the sign reversed — the surface had a
+#: existed. That is the hazard with the sign reversed — the surface had a
 #: capability its description withheld — and it is the same fault as an agent
 #: calling a name the surface lacks: a list restated in two places.
 #:
@@ -1290,14 +1330,18 @@ def shape_discover_response(params: dict, response):
 #: the census caught an agent asking to enumerate it five times — a reasonable
 #: guess, since the intent list contains it and this list contains plural nouns
 #: like `buildings` and `mercenaries`. There was nothing to enumerate: no bridge
-#: verb listed men-at-arms types. lane-query added one (`query_maa_types`), so
+#: verb listed men-at-arms types. Now one does (`query_maa_types`), so
 #: `men_at_arms` is now BOTH an intent and a class — the one name in both lists,
 #: on purpose: the intent's refusal (maa_type_required) points at this class.
 ACTION_CLASSES = [
     "interactions", "decisions", "council_tasks", "laws",
     "fabricate_targets", "mercenaries", "factions_to_join",
     "buildings", "imprison_targets", "formable_titles",
-    # lane-query item 2: do(intent="men_at_arms") refused maa_type_required and
+    # do(intent="men_at_arms") refused maa_type_required and
     # pointed at an enumerate that did not exist. This is it.
     "men_at_arms",
+    # The levers on the realm's income, each with its do call.
+    "income_levers",
+    # The activities (feast, hunt, pilgrimage) the ruler's AI may host
+    "activities",
 ]

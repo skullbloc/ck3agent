@@ -12,7 +12,7 @@
 
 #include "action_dispatch_internal.h"
 #include "init_order.h"   // CK3_EARLY_INIT
-#include "name_tables.h"   // Recorded_or_cached_name
+#include "name_tables.h"   // recorded_or_cached_name
 
 #include <shared_mutex>
 #include <deque>
@@ -53,8 +53,8 @@ static constexpr size_t MAX_SCHEME_INITS = 64;
 static void* g_orig_create_active_scheme = nullptr;
 
 // =============================================================================
-// #132 — Scheme-start argument template cache. (SUPERSEDED as an argument source by
-// lane-scheme 2026-10-18 — see the block after this one; kept as a witness.)
+// Scheme-start argument template cache. (SUPERSEDED as an argument source by
+// 2026-10-18 — see the block after this one; kept as a witness.)
 //
 // CREATE_ACTIVE_SCHEME's 5th & 6th args (forwarded to InitializeScheme) are NOT
 // scalars: param_5 is a subtype-scope object (vtable-dereferenced; param_5[1] →
@@ -72,7 +72,7 @@ static void* g_orig_create_active_scheme = nullptr;
 // "no subtype / no special scope" sentinels — param5[1]==-1, *(param6+0x10)==-1),
 // not per-scheme allocations, so they remain valid for reuse.
 // =============================================================================
-// lane-scheme 2026-10-18 (re/findings/re_scheme_start_args.md): RE has since
+// 2026-10-18 (re/findings/re_scheme_start_args.md): RE has since
 // named the two args. The single engine caller (the start_scheme effect, call @
 // image 0x052baa73) passes p5 = the scheme's CTaskContract* and p6 = its
 // CArtifact*, each a RefDB lookup of an OPTIONAL script scope that falls back to
@@ -166,7 +166,7 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
 
     // Engine refusal: CreateActiveScheme returns the null-scheme OBJECT whose
     // pointer lives in the SCHEME_NULL slot, not the slot's address
-    // (lane-scheme 2026-10-18; see execute_scheme_intent). The old address
+    // (2026-10-18; see execute_scheme_intent). The old address
     // compare never matched, so every refused AI start was recorded here as an
     // initiation of a scheme with id 0xFFFFFF.
     uintptr_t null_slot = g_base_addr + ck3::globals::SCHEME_NULL;
@@ -184,7 +184,7 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
 
     // SIGSEGV protection around all memory reads.
     //
-    // lane-scheme 2026-10-18: SAVE AND RESTORE the caller's recovery state. This
+    // 2026-10-18: SAVE AND RESTORE the caller's recovery state. This
     // hook runs INSIDE other protected regions: execute_scheme_intent calls the
     // hooked entry under its own sigsetjmp, and an interaction the bridge sends
     // (start_murder_interaction) reaches it through the engine's effect walk under
@@ -215,7 +215,7 @@ static void* on_create_active_scheme(void* scheme_mgr, void* scheme_type,
             if (!type_name.empty()) {
                 strncpy(rec.scheme_type_name, type_name.c_str(),
                         sizeof(rec.scheme_type_name) - 1);
-                // #132: cache the (param5,param6) the engine used for this scheme
+                // Cache the (param5,param6) the engine used for this scheme
                 // type so execute_scheme_intent can reuse them when starting a
                 // scheme forward. Only record successful, non-sentinel creations
                 // (we're already past the null-sentinel guard above) so the args

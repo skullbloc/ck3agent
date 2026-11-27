@@ -4,12 +4,12 @@
 //
 // Each recipe is the Linux function's body (Ghidra decompile of the pinned Linux
 // binary, quoted) over Windows offsets, and each offset it reads was MEASURED on
-// the Windows build (two cores of the same save, lane-p3probe / lane-p5); a recipe
+// the Windows build (two cores of the same save); a recipe
 // that needs an unmeasured offset does not exist. Signatures are the Linux
 // functions' (the call sites cast game_fn()'s result to them).
 #include "bridge.h"
 #include "ck3_offsets.h"
-#include "windows/ck3_offsets_win.h"   // ck3_win::gamestate_sub (lane-p1b)
+#include "windows/ck3_offsets_win.h"   // ck3_win::gamestate_sub
 
 #include <cstdint>
 #include <cstring>
@@ -87,8 +87,8 @@ uint32_t recipe_STRING_HASH(uint32_t seed, const char* data, uint32_t len) {
 }
 
 // Character_GetAIController(CCharacter*) = [[char+0x1A8]+0x278], or the value of
-// the AI_NULL_CONTROLLER global without core data. Inlined by MSVC (lane-p1b,
-// re_anchor_transfer.md #16: the same shape at the AI-enable site); core_data::
+// the AI_NULL_CONTROLLER global without core data. Inlined by MSVC
+// (re_anchor_transfer.md #16: the same shape at the AI-enable site); core_data::
 // AI_CONTROLLER is the path P3 walked to the controller on both builds; the global
 // is mapped (win_rva).
 void* recipe_CHAR_GET_AI_CONTROLLER(void* c) {
@@ -110,7 +110,7 @@ uintptr_t recipe_SIMD_FIND_LONG(uintptr_t begin, uintptr_t end, void* value) {
 
 // FUN_06061870(game_state) = [game_state+0xA0] + 0x25378: the army manager, the
 // sub-object whose +0x50/+0x5C are the army id array and count. Windows: the
-// manager is at +0x25580 under the same +0xA0 block (lane-p1b, gamestate_sub::
+// manager is at +0x25580 under the same +0xA0 block (gamestate_sub::
 // ARMY_MANAGER, HIGH); its id array/count measured unchanged at +0x50/+0x5C (250
 // armies, 867.07.09, ids equal one for one).
 uintptr_t recipe_ARMY_ENUM_SUB(uintptr_t gs) {
@@ -158,7 +158,7 @@ bool recipe_ARMY_IN_COMBAT(uintptr_t army) {
 // (0xDFE59F, 0xDFE6D5; AI_NULL_CONTROLLER when there is no core data), as the
 // Linux enable loop calls this function (ck3_offsets_win.h struct_layout::
 // AI_CTRL_AI_ENABLED). A store, as on Linux: the caller (do_set_character_ai)
-// probes the field readable first. P6.
+// probes the field readable first.
 void recipe_AI_CHAR_TOGGLE(void* ctrl, uint8_t enabled) {
     *reinterpret_cast<volatile uint8_t*>(reinterpret_cast<uintptr_t>(ctrl) + ck3::ai_ctrl::AI_ENABLED) = enabled;
 }
@@ -224,7 +224,7 @@ void recipe_INTERACTION_CTX_SET_TARGET(uintptr_t* ctx, uint32_t target, char set
 // this follows the copy in the AI send path (ck3_offsets_win.h funcs::
 // SEND_INTERACTION_CMD_VTABLE): the two value functions return through a hidden slot
 // (ctx, out) and the conversion is (out, value, id), where Linux returns both in rax.
-// P6, lane-p6d.
+// ADR 0001 phase P6.
 void recipe_BUILD_SEND_CMD_FROM_BUF(void* out, uintptr_t ctx) {
     using fn_copy = void (*)(uintptr_t, uintptr_t);
     using fn_value = int64_t* (*)(uintptr_t, int64_t*);
@@ -243,6 +243,27 @@ void recipe_BUILD_SEND_CMD_FROM_BUF(void* out, uintptr_t ctx) {
     for_char(reinterpret_cast<int64_t*>(c + 0x358), v, actor);
     reinterpret_cast<fn_value>(g_base_addr + ck3_win::funcs::SEND_CMD_VALUE_TARGET)(ctx, &v);
     for_char(reinterpret_cast<int64_t*>(c + 0x360), v, actor);
+}
+
+// EVENT_OPTION_IS_AVAILABLE(option, ctx, flag): Linux FUN_07545ac0 (32 B, the picker's
+// own gate): `if (opt[+0x3E9] && opt[+0x3E8] != (char)flag) return 0; return
+// ScriptTriggerEvaluator(opt + 0x90, ctx);`. MSVC inlined it into AI_PICK_EVENT_OPTION
+// (0x32A64DE..0x32A650F: `cmp byte [opt+0x3E9],0; je; cmp byte [opt+0x3E8],<flag r9b>;
+// jne <unavailable>; lea rcx,[opt+0x90]; mov rdx,<ctx rdx>; call SCRIPT_TRIGGER_EVALUATOR;
+// test al,al`): the same fields, the evaluator anchored (ck3_offsets_win.h funcs::
+// SCRIPT_TRIGGER_EVALUATOR, bool in al). The event-rule and faction-demand answers call it
+// (factions.cpp).
+constexpr uintptr_t kOptionTriggerBlock = 0x90;    // the option's trigger (Linux and the inlined copy)
+constexpr uintptr_t kOptionFlagGate = 0x3E9;        // byte: the flag test applies
+constexpr uintptr_t kOptionFlagValue = 0x3E8;       // byte: the flag it must equal
+uint8_t recipe_EVENT_OPTION_IS_AVAILABLE(void* option, void* ctx, uint32_t flag) {
+    const uintptr_t o = reinterpret_cast<uintptr_t>(option);
+    if (*reinterpret_cast<volatile uint8_t*>(o + kOptionFlagGate) != 0 &&
+        *reinterpret_cast<volatile uint8_t*>(o + kOptionFlagValue) != static_cast<uint8_t>(flag))
+        return 0;
+    using fn_eval = bool (*)(uintptr_t, void*);
+    return reinterpret_cast<fn_eval>(g_base_addr + ck3_win::funcs::SCRIPT_TRIGGER_EVALUATOR)(o + kOptionTriggerBlock, ctx)
+               ? 1 : 0;
 }
 
 const uintptr_t kRecipes[] = {

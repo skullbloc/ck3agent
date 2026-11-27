@@ -7,13 +7,13 @@ THE HARM, in the agents' own words. Three kings and an earl reported a
 stalemate for YEARS on the strength of `war_score: 0` while the Normans took
 England:
 
-  d46 king-england 01:43:18Z  "For 18 months I reported a 'dead-even
+  a king of England  "For 18 months I reported a 'dead-even
     stalemate' on the strength of war_score: 0 ... [it] never credited
     William's occupation."
-  d49 earl-kent 16:36:33Z     "war_id 1 read 0-0, 'even' at every check."
+  an earl of Kent    "war_id 1 read 0-0, 'even' at every check."
 
 WHY THEY COULD NOT SEE IT. 93% of observe calls are `brief` (539 of 582 over
-d45-d50), and the war reached the brief path as ONE BOOLEAN. put the
+the recorded episodes), and the war reached the brief path as ONE BOOLEAN. The fix puts the
 war rows on that path.
 
 WHAT THIS FILE NOW GUARDS. Those rows came from
@@ -48,8 +48,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import redesign as R                                             # noqa: E402
 
-#: A real get_active_wars reply, verbatim: live867 run m-l12 gmisc r1,
-#: results/l7_hook_state.json step 3 (game date 0867.03.14), the duke at war
+#: A real get_active_wars reply, verbatim from a recorded run,
+#: step 3 (game date 0867.03.14), the duke at war
 #: (12037) defending both Sons of Lodbrok invasions.
 REAL_REPLY_DUKE = {
     "request_id": "63116679-2d5d-4d7a-9cd5-822806fad7c8", "tick": 72,
@@ -206,8 +206,8 @@ class ObserveWarRowKeys(unittest.TestCase):
 
     def test_the_fixture_has_the_emitters_keys(self):
         """war_score_stale is emitted only when the cache holds an old entry; no
-        captured reply has one. cb_type was added to the emitter (NIT-3)
-        after these replies were captured, and target_titles (m7).
+        captured reply has one. cb_type was added to the emitter
+        after these replies were captured, and target_titles later still.
         Those are the keys the fixtures lack."""
         seen = set()
         for w in REAL_REPLY_DUKE["wars"] + REAL_REPLY_ZERO["wars"] + [REAL_ROW_NO_SCORE]:
@@ -216,14 +216,14 @@ class ObserveWarRowKeys(unittest.TestCase):
                          _emitted_war_keys())
 
     def test_the_reply_names_each_wars_cb(self):
-        """NIT-3: declare_war's idempotency matches target AND CB on these rows,
+        """declare_war's idempotency matches target AND CB on these rows,
         and the CB title against target_titles."""
         self.assertIn("cb_type", _emitted_war_keys())
         self.assertIn("target_titles", _emitted_war_keys())
 
 
 class ObserveMySide(unittest.TestCase):
-    """ witness: observe's wars.active[].my_side was null on every war,
+    """witness: observe's wars.active[].my_side was null on every war,
     because get_active_wars emits is_attacker and no my_side/side key."""
 
     def test_the_reply_carries_is_attacker_and_no_side_key(self):
@@ -236,10 +236,10 @@ class ObserveMySide(unittest.TestCase):
         self.assertEqual(_block(REAL_REPLY_ZERO["wars"])["active"][0]["my_side"], "attacker")
 
     def test_every_participant_of_each_side_reaches_observe(self):
-        """fix10 (v4 pilot 2 check h: whether a duke with join_liege_wars joined
+        """Check h (whether a duke with join_liege_wars joined
         the king's war was NOT established, no participant read). The emitter
         writes `attackers` / `defenders` (war_side::ids) and observe's war row
-        carries them. Red on 5e506f28: neither key emitted nor passed through."""
+        carries them. Red without the rule: neither key emitted nor passed through."""
         self.assertTrue({"attackers", "defenders"} <= _emitted_war_keys())
         row = {**REAL_REPLY_DUKE["wars"][0], "attackers": [37067, 29247], "defenders": [31808]}
         out = _block([row])["active"][0]

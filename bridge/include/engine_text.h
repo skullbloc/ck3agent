@@ -1,4 +1,4 @@
-// engine_text.h — the game's rendered tooltip text, made readable (F16).
+// engine_text.h — the game's rendered tooltip text, made readable.
 //
 // The engine's reason strings (FACTION_CAN_CREATE and its siblings append them to a
 // std::string; re/findings/re_factions.md §1) are RENDERED text with the game's
@@ -18,7 +18,7 @@
 //     failing children through the trigger's own tooltip key (FUN_0763e6b0); a
 //     child with no key or no localisation renders nothing, so the reason string
 //     the bridge receives can be the header alone (the imprison check's
-//     "All of these:", w-l10-factions-6; imperial_policy_faction's
+//     "All of these:", in a faction test run; imperial_policy_faction's
 //     "...; All of these:"). A header with nothing under it says nothing.
 //   - a line that repeats an earlier one is dropped: FACTION_CAN_CREATE_AS_COMMAND
 //     (FUN_05fa3460) runs three checks into one string and two of them test the

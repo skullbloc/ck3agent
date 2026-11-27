@@ -24,7 +24,7 @@ differ only in the model, and what is recorded.
    unpause and set speed. No observe-only command ships. Write one against `ck3agent/server/bridge_client.py`: handshake with `mode="observe"`, then `set_pause`/`set_speed` to apply the same clock rule as the treatment arm.
 
 **Several rulers in one session.** One run can steer several rulers under one
-clock: `CK3_AGENT_CHARACTER_ID=13902,12145` pre-binds both, the goal gives
+clock: `CK3_AGENT_CHARACTER_ID=<id1>,<id2>` pre-binds both, the goal gives
 each its posture, and every read and write names its ruler with
 `character_id`. The action log stamps each write with its arguments, so the
 `set_phase` per ruler is on record; the manifest's `rulers` lists the rulers
@@ -57,27 +57,32 @@ Disclose the event handling with your results; no setting equalises it.
 
 Speed is not pinned in the public path.
 
-- The bridge caps every speed write at 3. `session` refuses 4 and 5 while at war.
+- The bridge caps every speed write at 3, in every mode, unless the game was
+  launched with `CK3_EPISODE_GAME_SPEED` set to 4 or 5: then that declared speed
+  is the cap (`bridge/include/registered_speed.h`, applied to every write in
+  `event_handler.cpp`). A declaration of 1 to 3, a malformed one or none leaves
+  the cap at 3.
+- `session` refuses 4 and 5 always and writes nothing: at war the refusal is `speed_refused_at_war`, at peace `invalid_argument`. So from the tools the speed is 1 to 3 whatever was declared.
 - The game UI can still set 4 or 5 by hand.
-- `CK3_EPISODE_GAME_SPEED` acts only in `CK3_PIPELINE_MODE=pipeline`, which waits
-  for a `declare_save_identity` call; `bridge_client.py` has it, no shipped tool calls it.
+- `CK3_EPISODE_GAME_SPEED` is also the resting speed in `CK3_PIPELINE_MODE=pipeline`,
+  which waits for a `declare_save_identity` call; `bridge_client.py` has it, no shipped tool calls it.
 
 The manifest does not record speed. Put `session(action="speed", speed=N)` in the run prompt's first cycle and cite N; the `set_speed` lines in `action_log.jsonl` are the evidence. Ignore the bridge log's "resting game speed" line: that value applies only in `pipeline` mode. A slow model at high speed misses events between cycles.
 
 ## `set_phase` presets
 
-`set_phase(phase)` writes these 10 personality axes, -100 to 100, for the
+`set_phase(phase)` writes these 9 personality axes, -100 to 100, for the
 controlled ruler; `overrides={axis: int}` replaces single axes. A test in this
 repository fails if this table drifts from the code.
 
-| Phase | honor | greed | ration. | energy | bold. | zeal | venge. | compas. | social. | domin. |
-|-------|------:|------:|--------:|-------:|------:|-----:|-------:|--------:|--------:|-------:|
-| `expansion` | 20 | -20 | 50 | 90 | 85 | 40 | 30 | -10 | 30 | 60 |
-| `rebuild` | 40 | 0 | 70 | 55 | 45 | 30 | 10 | 30 | 50 | 60 |
-| `succession_trough` | 40 | 0 | 80 | 55 | 40 | 30 | 10 | 20 | 40 | 90 |
-| `stalled_siege` | 10 | -20 | 40 | 100 | 95 | 50 | 40 | -20 | 20 | 70 |
-| `fragile_minority` | 50 | 0 | 80 | 50 | 30 | 30 | 10 | 40 | 50 | 90 |
-| `consolidate` | 40 | -10 | 70 | 60 | 35 | 40 | 20 | 30 | 50 | 70 |
+| Phase | honor | greed | ration. | energy | bold. | zeal | venge. | compas. | social. |
+|-------|------:|------:|--------:|-------:|------:|-----:|-------:|--------:|--------:|
+| `expansion` | 20 | -20 | 50 | 90 | 85 | 40 | 30 | -10 | 30 |
+| `rebuild` | 40 | 0 | 70 | 55 | 45 | 30 | 10 | 30 | 50 |
+| `succession_trough` | 40 | 0 | 80 | 55 | 40 | 30 | 10 | 20 | 40 |
+| `stalled_siege` | 10 | -20 | 40 | 100 | 95 | 50 | 40 | -20 | 20 |
+| `fragile_minority` | 50 | 0 | 80 | 50 | 30 | 30 | 10 | 40 | 50 |
+| `consolidate` | 40 | -10 | 70 | 60 | 35 | 40 | 20 | 30 | 50 |
 
 Every call also writes, for the ruler:
 
@@ -122,7 +127,7 @@ was made; the call row's `result.success` is the queueing receipt's and is
 
 Logged as `management`: `pause_game`, `unpause_game`, `set_pause`, `set_speed`,
 `set_character_ai`, `set_offgoal_veto`,
-`set_faction_demand_response`.
+`set_faction_demand_response`, `set_event_rule`, `set_ai_veto`.
 Not logged: reads, and `set_controlled_character`, `release_character`,
 `set_cb_selector_override`, `set_war_stance_record_walk`, `toggle_all_ai`, `toggle_ai_subsystem`,
 `select_observe_default`, `enter_observe_mode`, `inject_mouse_click`, `report_usage`,
@@ -186,7 +191,7 @@ reads from the environment of each program the launcher execs, to stay preloaded
 | `CK3_EPISODE_ID` | experiment | id stamped into logs and the ledger |
 | `CK3_EPISODE_ARM` | experiment | arm label, stamped into the handshake and the launch record |
 | `CK3_EPISODE_DIR` | experiment | session ledger directory |
-| `CK3_EPISODE_GAME_SPEED` | experiment | resting speed, `pipeline` mode only |
+| `CK3_EPISODE_GAME_SPEED` | experiment | 4 or 5 lifts the speed write cap from 3 (every mode); the resting speed in `pipeline` mode |
 | `CK3_EPISODE_HORIZON_START` | experiment | declared start date for the unavailability rule |
 | `CK3_EPISODE_HORIZON_END` | experiment | declared end date for the unavailability rule |
 | `CK3_EP_MAX_DETACH_S` | experiment | seconds a detached session may stay away before it is reported lost, default 900 |
@@ -200,6 +205,11 @@ reads from the environment of each program the launcher execs, to stay preloaded
 | `BRIDGE_NO_PER_CB_OUTER_TRIGGER` | experiment | `1` disables the per-CB outer trigger check |
 | `BRIDGE_DISTRUST_INNER_CB_VALIDITY` | experiment | `1` restores the old inner-validity handling |
 | `CK3_BRIDGE_TRACE` | diagnostic | `1` logs per-query traces |
+| `CK3_BRIDGE_EVENT_RULES` | diagnostic | `0` disables the seat's event answer table (`set_event_rule` refuses `event_rules_disabled`, nothing is recorded); unset, the table is available |
+| `CK3_BRIDGE_AI_VETO` | diagnostic | `0` keeps the GameCommandDispatch hook from being installed for the AI veto (`set_ai_veto` refuses `ai_veto_disabled`, nothing is recorded); unset, the hook is installed with an empty table and every command passes until a rule is set |
+| `CK3_BRIDGE_UNLOCK_PERK` | diagnostic | `0` makes `unlock_perk` refuse `unlock_perk_disabled` before any engine call; unset, the ruler can spend his own lifestyle point on a perk through the game's own check (a focus, a point in that lifestyle, the perk's prerequisites) |
+| `CK3_BRIDGE_ARMY_ORDERS` | research | `1` enables the army orders `army_disband`, `army_move` and `army_raid` (run against a live 1066 game: reads, moves and the disband check proven, a disband applied at war; a disband at peace not yet seen; `army_raid` not yet run live); unset or any other value, all three refuse `army_orders_off` before touching the game. The toolkit lists its `army` intent only when it is `1` in the server's environment too |
+| `CK3_BRIDGE_ARMY_HOLD` | research | `1` installs the hook that drops the game's AI move orders for an army the seat holds (`army_hold`; run against a live 1066 game, holds of 60 days and more proven; a held army in battle or retreat not yet seen); unset or any other value, the hook is not installed and `army_hold` refuses `army_hold_off` |
 | `CK3_BRIDGE_STRICT` | diagnostic | `1` turns caught faults into crashes |
 | `CK3_BRIDGE_BOOT_LOG` | diagnostic | `1` writes a boot log, in every build: to `<private base>/bridge_boot.log`, or `/tmp/ck3_bridge_boot.log` in the legacy layout. Unset, no boot log |
 | `CK3_AI_WATCH` | diagnostic | `1` logs changes to AI-enabled flags |
@@ -208,6 +218,15 @@ reads from the environment of each program the launcher execs, to stay preloaded
 | `DISPLAY` | diagnostic | X display for synthetic clicks |
 
 The four `BRIDGE_*` variables are ablations of the war-validity checker.
+
+On Windows (the bridge builds with clang-cl and the MSVC libraries from Linux and is not yet proven on a live
+Windows game) four of these do less, whatever their value: `army_disband`,
+`army_move` and `army_raid` refuse `unsupported_os`, and the `army_hold` hook is
+never installed. With `CK3_BRIDGE_AI_VETO` unset the veto hook is installed as on
+Linux, but `set_ai_veto` refuses the `legacy`, `faction` and `activity` kinds
+`not_on_windows` (their command classes are not mapped there), and a decision veto's
+`gold_cost` rule is not stored (the reply says `gold_cost_not_set: not_on_windows`;
+the named keys are still dropped).
 Variables read by the Python side are in
 [files and paths](reference/files-and-paths.md#environment-variables).
 

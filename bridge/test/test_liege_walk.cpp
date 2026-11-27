@@ -1,7 +1,7 @@
 // test_liege_walk.cpp — a liege walk that cannot finish is 0, never the
 // character's own id (bridge/include/liege_walk.h).
 //
-// THE DEFECT. get_top_realm_ruler_id returned the id it had reached when a
+// THE HAZARD. get_top_realm_ruler_id returned the id it had reached when a
 // liege did not look up: from the first hop that is the character's own id, so
 // a vassal read as independent (query_character top_liege_id == id passes the
 // shield's "independent" clause; query_conquest_targets' sub-vassal gate read
@@ -37,7 +37,7 @@ int main() {
 
     w.liege[40] = 99;                          // 99 does not look up
     CHECK(w.top(40) == liege_walk::kUnresolved,
-          "a vassal whose first liege does not resolve is UNRESOLVED, not independent (RED before L15 A2: 40)");
+          "a vassal whose first liege does not resolve is UNRESOLVED, not independent (RED before the fix: 40)");
     w.exists[50] = true; w.liege[50] = 40;     // 50 -> 40 -> (99 missing)
     CHECK(w.top(50) == liege_walk::kUnresolved,
           "a later unresolved hop is UNRESOLVED, not the intermediate liege (RED before: 40)");

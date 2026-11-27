@@ -1,12 +1,12 @@
-// drain_registry.cpp —. See drain_registry.h for the bug.
+// drain_registry.cpp — See drain_registry.h for the bug.
 //
-// Engine-free ON PURPOSE. The pre-fix correlation lived inline in pipeline.cpp,
+// Engine-free ON PURPOSE. The superseded correlation lived inline in pipeline.cpp,
 // which links the whole game-facing bridge, so it could only ever be exercised
 // against a live CK3 — and every live exercise happened to send a request_id.
 // Pulled out here, the hand-off/settle protocol is a host test.
 //
 // NEGATIVE CONTROL: compiling this TU with -DCK3_DRAIN_LEGACY_RID_KEY=1
-// restores the pre-fix correlation verbatim (keyed by the client's optional,
+// restores the superseded correlation verbatim (keyed by the client's optional,
 // non-unique request_id, registered only when non-empty). Every assertion the
 // fixed build passes MUST fail in that build; see
 // test_drain_registry_negative_control.
@@ -99,7 +99,7 @@ std::string DrainRegistry::build_envelope(const std::string& session_id,
     env += "\":";
     env += std::to_string(ticket);
 #else
-    (void)ticket;   // NEGATIVE CONTROL: the pre-fix envelope carried no tag.
+    (void)ticket;   // NEGATIVE CONTROL: the superseded envelope carried no tag.
 #endif
     env += ",\"actions\":[";
     env += inner_json;
@@ -139,7 +139,7 @@ bool DrainRegistry::hand_off(uint64_t ticket, std::string* envelope_out) {
         // The payload stays until the drain reports back: it is the record
         // that this ticket is mid-flight on the game thread.
 #if defined(CK3_DRAIN_LEGACY_RID_KEY)
-        // NEGATIVE CONTROL — the pre-fix line, verbatim. No else. A call whose
+        // NEGATIVE CONTROL — the superseded line, verbatim. No else. A call whose
         // client sent no request_id is registered NOWHERE and can never settle;
         // two calls sharing one request_id collide and the first is orphaned.
         if (!pc.request_id.empty()) rid_waiting_[pc.request_id] = ticket;
@@ -189,7 +189,7 @@ bool DrainRegistry::settle(uint64_t ticket) {
 uint64_t DrainRegistry::settle_from_drain(const rapidjson::Value& envelope,
                                           const char* request_id) {
 #if defined(CK3_DRAIN_LEGACY_RID_KEY)
-    // NEGATIVE CONTROL — the pre-fix settle: correlate by the client's
+    // NEGATIVE CONTROL — the superseded settle: correlate by the client's
     // request_id, and give up entirely when there is none.
     (void)envelope;
     if (!request_id || !request_id[0]) return 0;

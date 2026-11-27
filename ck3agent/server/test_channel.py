@@ -1,5 +1,5 @@
-"""The inter-seat channel (pre-registration v3 section 5.2, 7.6; Study 0 lane
-s0-channel): the topology rule, the boot refusals, the cycle rule, the ledger,
+"""The inter-seat channel: the topology rule,
+the boot refusals, the cycle rule, the ledger,
 the verdict order, and delivery through `observe` — never through anything else.
 
 THE FIXTURE CANNOT FORGE A DELIVERY. Every row below that claims a message was
@@ -51,7 +51,7 @@ def test_complete_is_any_seat_to_any_other_seat(sender, recipient, want):
 
 
 def test_star_is_not_a_topology_v4_deleted_it():
-    """v4 §3: COUNCIL's complete topology, or none; v3's star is deleted with the
+    """A complete topology, or none; v3's star is deleted with the
     arms that used it. The spelling is unknown to the table and refused at boot."""
     assert C.TOPOLOGIES == ("complete", "none")
     assert not any(C.allowed("star", s, r, SEATS) for s in SEATS for r in SEATS)
@@ -148,7 +148,7 @@ def test_declared_block_names_absence_as_a_state_never_none():
     assert blk["declared"] and blk["topology"] == "complete" and blk["seats"] == ["K", "D1", "D2"]
     assert C.ledger_required({"channel": blk})
     assert not C.ledger_required({"channel": C.declared_block({"CK3_CHANNEL_TOPOLOGY": "none"})})
-    assert not C.ledger_required({})            # predates the lane: coverage, not a requirement
+    assert not C.ledger_required({})            # predates the channel: coverage, not a requirement
 
 
 # ── the cycle rule ──────────────────────────────────────────────────────────
@@ -412,7 +412,7 @@ def test_the_quota_is_keyed_on_waits_the_seat_made(seat):
 
 
 def test_under_the_registered_cadence_the_quota_resets_at_the_game_day_boundary_not_per_wait(seat, monkeypatch):
-    """v3 §5.2 / §7.2 (signing blocker f): ONE cycle — the ≥ cadence game-day
+    """ONE cycle — the ≥ cadence game-day
     boundary the harness enforces, not "any wait that waited"."""
     monkeypatch.setenv("CK3_CYCLE_GAME_DAYS", "90")
     seat.as_seat("D1").clock_moves(30)
@@ -520,7 +520,7 @@ def test_the_boot_refusal_is_typed_on_stderr_and_exits_3(tmp_path):
     assert json.loads(r.stderr.strip().splitlines()[-1])["reason"] == C.R_TOPOLOGY_UNDECLARED
 
 
-# ── B1: the cycle comes from the episode's authority, not the process ──
+# ── The cycle comes from the episode's authority, not the process ──
 
 CELL = {"CK3_EPISODE_HORIZON_START": "867.1.1", "CK3_EPISODE_HORIZON_END": "877.1.1",
         "CK3_CYCLE_GAME_DAYS": "90"}
@@ -535,12 +535,12 @@ def _cell(monkeypatch, **over):
 
 
 def test_a_send_before_the_first_wait_of_a_resumed_session_lands_in_the_episodes_cycle(seat, monkeypatch):
-    """seat-review.md problem 3 (block): a resumed session is a NEW server
+    """seat-review.md problem 3: a resumed session is a NEW server
     process, whose counter starts at 0 and moves only at its first wait, so every
     send before that wait was stamped cycle 0 and shared cycle 0's bucket for the
-    whole episode (s3 D2/D4 at 874.xx refused quota_exceeded in "cycle 0").
+    whole episode (two recorded dukes at 874.xx refused quota_exceeded in "cycle 0").
     In a cell the stamp is the schedule's index of the bridge's date at the send.
-    Red on 8cef520a: the resumed D1's first send is refused quota_exceeded, cycle 0."""
+    Red without the rule: the resumed D1's first send is refused quota_exceeded, cycle 0."""
     _cell(monkeypatch)
     seat.as_seat("D1")                                    # 867.2.1: cycle 0 of the cell
     for _ in range(2):
@@ -554,7 +554,7 @@ def test_a_send_before_the_first_wait_of_a_resumed_session_lands_in_the_episodes
     assert env["verdict"] == "applied" and env["result"]["cycle"] == 1, env
     assert run(ms.msg_send(to="K", text="second"))["verdict"] == "applied"
     assert run(ms.msg_send(to="K", text="third"))["blocked"]["gate"] == "quota_exceeded"
-    # deep in the horizon (874.2.27, the s3 D4 refusal's date): that cycle's own bucket
+    # deep in the horizon (874.2.27, a recorded refusal's date): that cycle's own bucket
     seat.set_date("874.2.27").as_seat("D1")
     env = run(ms.msg_send(to="K", text="late"))
     assert env["verdict"] == "applied" and env["result"]["cycle"] == 29, env

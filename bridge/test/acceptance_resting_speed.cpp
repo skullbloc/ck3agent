@@ -1,4 +1,4 @@
-// acceptance_resting_speed.cpp —, the C++ half.
+// acceptance_resting_speed.cpp — the C++ half.
 //
 // ONE QUESTION, asked of whichever tree it is compiled against:
 //
@@ -15,13 +15,13 @@
 // TWO LANES, and the first one needs no fork at all:
 //
 //   LANE A — THE DEFAULT. `FlushConfig{}.resting_speed` against the declared
-//   pin. IDENTICAL SOURCE ON BOTH TREES: it reads 2 here and 3 on the pre-fix
-//   bytes in scripts/fixtures/resting_speed/pre_on4u/, which IS the defect —
-//   a pre-registered constant with a second home.
+//   pin. IDENTICAL SOURCE ON BOTH TREES: it reads 2 here and 3 on the superseded
+//   bytes in scripts/fixtures/resting_speed/superseded/, which IS the hazard —
+//   a declared constant with a second home.
 //
 //   LANE B — THE WIRING. Does the DECLARATION reach the planner? The one line
 //   below under `#ifdef` is the line `pipeline.cpp` holds in production. It is
-//   forked because on the pre-fix tree THAT LINE DID NOT EXIST AND COULD NOT:
+//   forked because on the superseded tree THAT LINE DID NOT EXIST AND COULD NOT:
 //   `EpisodePolicy` had no `game_speed` and `FlushScheduler` had no setter, so
 //   nothing on the live path could set the resting speed at all. The fork
 //   encodes an ABSENCE, not a re-implementation — every NUMBER on both sides
@@ -71,7 +71,7 @@ int planned_set_speed(FlushScheduler& s, int clock_speed) {
 
 int main() {
 #if defined(CK3_RESTING_SPEED_PREFIX_CONTROL)
-    const char* tree = "PRE-FIX (scripts/fixtures/resting_speed/pre_on4u)";
+    const char* tree = "PRE-FIX (scripts/fixtures/resting_speed/superseded)";
     const int declared_pin = 2;      // what §7.3 pinned, for the report only
 #else
     const char* tree = "SHIPPING";
@@ -80,12 +80,12 @@ int main() {
     printf("acceptance_resting_speed — tree: %s\n", tree);
 
     // ── LANE A: THE DEFAULT ────────────────────────────────────────────────
-    printf("\nA  THE DEFAULT — does the planner rest at the pre-registered pin?\n");
+    printf("\nA  THE DEFAULT — does the planner rest at the declared pin?\n");
     {
         FlushConfig cfg;
         char buf[160];
         snprintf(buf, sizeof(buf),
-                 "FlushConfig{}.resting_speed = %d, the pre-registered pin is %d",
+                 "FlushConfig{}.resting_speed = %d, the declared pin is %d",
                  cfg.resting_speed, declared_pin);
         check(cfg.resting_speed == declared_pin,
               "the planner's DEFAULT resting speed IS the declaration", buf);
@@ -94,8 +94,8 @@ int main() {
     // ── LANE B: THE WIRING ─────────────────────────────────────────────────
     printf("\nB  THE WIRING — does an episode's DECLARATION reach the planner?\n");
     {
-        // Every speed in range, so a lane that passes because the declaration
-        // happens to equal the default is impossible: 3 is what the pre-fix
+        // Every speed in range, so a check that passes because the declaration
+        // happens to equal the default is impossible: 3 is what the superseded
         // header rests at, 2 is the pin, and 1/4/5 are neither.
         const int wanted[] = {1, 2, 3, 4, 5};
         for (size_t i = 0; i < sizeof(wanted) / sizeof(wanted[0]); ++i) {
@@ -106,8 +106,8 @@ int main() {
 
             FlushConfig cfg;
 #if !defined(CK3_RESTING_SPEED_PREFIX_CONTROL)
-            // THE LINE pipeline.cpp HOLDS. On the pre-fix tree there is nothing
-            // to write here — that is the defect, stated as an absence.
+            // THE LINE pipeline.cpp HOLDS. On the superseded tree there is nothing
+            // to write here — that is the hazard, stated as an absence.
             cfg.resting_speed = episode_policy().get().game_speed;
 #endif
             FlushScheduler s(cfg);
@@ -129,7 +129,7 @@ int main() {
     }
 
     // ── LANE C: THE STEP IS NOT REMOVED ────────────────────────────────────
-    printf("\nC  THE RESTORE STEP SURVIVES — it is what makes E0 free-run at a "
+    printf("\nC  THE RESTORE STEP SURVIVES — it is what makes null mode free-run at a "
            "FIXED speed\n");
     {
         setenv("CK3_EPISODE_GAME_SPEED", "2", 1);

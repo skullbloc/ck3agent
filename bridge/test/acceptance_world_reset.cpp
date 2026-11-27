@@ -166,9 +166,9 @@ static void lane_registry() {
     printf("\n1. REGISTRY AND EPOCH\n");
     const char* LANE = "mechanism";
 
-    // hard constraint: 0 is that consumer's "no provider" sentinel, so
+    // Hard constraint: 0 is that consumer's "no provider" sentinel, so
     // a live world must NEVER read as epoch 0 or resume loses its liveness check.
-    check(LANE, world_epoch() >= 1, "world_epoch() is >= 1 before any reload (ck-6kvq.5: 0 is the 'unavailable' sentinel)");
+    check(LANE, world_epoch() >= 1, "world_epoch() is >= 1 before any reload (0 is the 'unavailable' sentinel)");
 
     int before = world_reset_count();
     register_world_reset("acceptance_probe", &probe_reset);
@@ -216,7 +216,7 @@ static void lane_name_cache() {
     check_eq_str(LANE, resolve_through_cache(29767), "Mila",    "871 world: 29767 resolves");
 
     // --- NEGATIVE CONTROL: without the reload being observed, the bug is here ---
-    // Swap the world WITHOUT telling the detector. This is the pre-fix bridge.
+    // Swap the world WITHOUT telling the detector. This is the superseded bridge.
     g_world = &kWorld1066;
     check_eq_str(LANE, resolve_through_cache(31808), "Lokpala",
                  "negative control: with NO reload observed the stale 871 name is still served "
@@ -253,12 +253,12 @@ static WarEndRecord make_war(uint32_t id, const char* cb, uint32_t atk, uint32_t
 }
 
 static void lane_war_ledger() {
-    printf("\n3. ENDED-WAR LEDGER (ck-sd4d) — real war_history.cpp\n");
+    printf("\n3. ENDED-WAR LEDGER — real war_history.cpp\n");
     const char* LANE = "real-code";
 
     register_world_reset("war_history_ledger", &model::reset_war_history);
 
-    // Settle the detector ON world A first, so the only reload this lane
+    // Settle the detector ON world A first, so the only reload this row
     // observes is the one it is asserting about.
     world_epoch_reset_for_test();
     world_epoch_observe(fp_871());
@@ -293,7 +293,7 @@ static PersonalityLock lock_with(int8_t v) {
 }
 
 static void lane_personality() {
-    printf("\n4. PERSONALITY LOCKS (ck-9fc3) — real personality_world_reset.cpp; this one WRITES\n");
+    printf("\n4. PERSONALITY LOCKS — real personality_world_reset.cpp; this one WRITES\n");
     const char* LANE = "real-code";
 
     world_epoch_reset_for_test();
@@ -321,12 +321,12 @@ static void lane_personality() {
                 "after the reload the LIVE write set is EMPTY — apply_personality_locks() writes nothing "
                 "into the new world's characters");
     check_eq_sz(LANE, personality_quarantine_count(), 2,
-                "both entries are QUARANTINED, not destroyed — resume (R7) loses nothing");
+                "both entries are QUARANTINED, not destroyed — a resume loses nothing");
     check(LANE, personality_quarantine_epoch() == world_epoch(),
           "the quarantine is stamped with the epoch of the reload that quarantined it");
     check(LANE, personality_quarantine_epoch() > 0, "the quarantine epoch is set");
 
-    // The axes survive intact, so save-identity work has something to
+    // The axes survive intact, so the save-identity work has something to
     // restore from.
     {
         std::shared_lock<std::shared_mutex> lk(g_personality_lock_mutex);
@@ -336,7 +336,7 @@ static void lane_personality() {
         check(LANE, ok, "quarantined axes are preserved byte-for-byte");
     }
 
-    // Never auto-re-applied: that decision belongs to save identity.
+    // Never auto-re-applied: that decision belongs to the save identity.
     {
         std::shared_lock<std::shared_mutex> lk(g_personality_lock_mutex);
         check(LANE, g_personality_locks.find(31808) == g_personality_locks.end(),
@@ -360,11 +360,11 @@ static void lane_personality() {
 
 // ---------------------------------------------------------------------------
 // 4b. — the first set_phase of a seat, replayed from the pilot logs.
-//     pilots-2026.11 scale0/n2 bridge-full.log: set_ai_personality for 13191 runs
+//     a recorded pilot's bridge log: set_ai_personality for 13191 runs
 //     in a tick-0 drain (line 481, "Processed 1 queued actions at tick=0"); the
 //     first tick after unpause then logs "WORLD-RELOAD fingerprint:
 //     gs=0x7faa3aa84f30 <- gs=(nil)" and "quarantined 2 personality lock(s)"
-//     (lines 6984-6985). The fix samples at the top of the drain; this lane
+//     (lines 6984-6985). The fix samples at the top of the drain; this row
 //     replays both orders on the real table and the real detector.
 // ---------------------------------------------------------------------------
 static WorldFingerprint fp_867_paused() {
@@ -375,7 +375,7 @@ static WorldFingerprint fp_867_paused() {
 }
 
 static void lane_first_write() {
-    printf("\n4b. FIRST WRITE BEFORE THE FIRST TICK (L18-A) — real table, real detector\n");
+    printf("\n4b. FIRST WRITE BEFORE THE FIRST TICK — real table, real detector\n");
     const char* LANE = "real-code";
     const uint32_t cui = 13191;
     auto reset_all = [] {
@@ -419,7 +419,7 @@ static void lane_first_write() {
           "...and the lock is quarantined, and lock_state says so instead of going silent");
     check_eq_str(LANE, personality_lock_state_name(personality_lock_state(cui)), "quarantined",
                  "lock_state's wire name is \"quarantined\"");
-    // Set_ai_personality's reply, which runs under the lock map's
+    // set_ai_personality's reply, which runs under the lock map's
     // unique lock, says the same: a write of no axes over a quarantined lock is
     // "quarantined", not "none"; a write that locks an axis is "live".
     {
@@ -434,8 +434,8 @@ static void lane_first_write() {
                      "[control] a write that locks axes answers live");
     }
 
-    // CONTROL — the 0a969f2e order (first sample = first tick). It models the
-    // mechanism, not the wiring: it passes on any tree, and shows the defect
+    // CONTROL — the superseded order (first sample = first tick). It models the
+    // mechanism, not the wiring: it passes on any tree, and shows the hazard
     // the drain-order check (scripts/acceptance_world_reset.py, structural)
     // guards. Labelled non-discriminating.
     reset_all();
@@ -516,7 +516,7 @@ static void lane_no_false_positives() {
 }
 
 int main() {
-    printf("acceptance_world_reset (ck-hxh7): a save reload drops every world-scoped bridge cache\n");
+    printf("acceptance_world_reset: a save reload drops every world-scoped bridge cache\n");
     printf("no CK3, no bridge socket — host only\n");
 
     lane_registry();

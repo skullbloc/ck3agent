@@ -1,7 +1,7 @@
-// actor_resolve.h — THE one place an unnamed actor is resolved (wave 12).
+// actor_resolve.h — THE one place an unnamed actor is resolved.
 //
 // WHY. v4 seats one king and several dukes in one game, each its own bridge
-// session. A request that names no actor used to be resolved by whatever chain
+// session. A request that names no actor is not resolved by whatever chain
 // its handler carried: get_controlled_character() (this session's primary, else
 // the GLOBAL primary mirror), or, at nine query sites and the decision eval, the
 // GLOBAL mirror first and then PLAYER_CHAR_ID. The global mirror is the primary
@@ -26,11 +26,11 @@
 //   4. Every other read — no seat declared on this session — and every call
 //      outside a dispatched action keeps its handler's historical chain BYTE FOR
 //      BYTE (LegacyChain names it). That is the single-player layout's promise.
-//   0. (wave 15; asked before 2-4) A WRITE that names no actor
+//   0. (asked before 2-4) A WRITE that names no actor
 //      under the key its handler reads, while the request names one under the
 //      OTHER actor key (`character_id` where the handler reads `actor_id`, or
 //      the reverse), is REFUSED `actor_key_not_read`, in every layout. Live
-//      (q13 qf4, C2): set_council_task got {"character_id": <ruler>}, read
+//      (a live check: set_council_task got {"character_id": <ruler>}, read
 //      `actor_id`, and wrote on the session's primary, answering success-shaped
 //      `no_change_already_set` about a ruler the caller never named. The
 //      handler says which key it reads (resolve_actor: actor_id;

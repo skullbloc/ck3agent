@@ -1,7 +1,7 @@
-// test_decision_eval_plan.cpp — row D1: which failure keys the
+// test_decision_eval_plan.cpp — which failure keys the
 // annotated decision eval extracts, and the typed skip list.
 //
-// Fixture: the S.D1 reply (probe-supp.jsonl, 0867.02.13, character
+// Fixture: a recorded reply (probe-supp.jsonl, 0867.02.13, character
 // 11329): favored_movement_consults_heaven, stress_loss_comfort_eater and
 // restore_pope_in_rome came back `shown: false` while the bridge log has one
 // SIGSEGV safety-net line each at rip_off 0x745aea0 (bridge-segv.log 44764-
@@ -9,7 +9,7 @@
 // verdict was false (the pass ran only for a failing block).
 //
 // Built twice: plain (must pass) and with -DDECISION_EVAL_PLAN_PREFIX_CONTROL,
-// the pre-fix "every failing block" rule, registered WILL_FAIL.
+// the superseded "every failing block" rule, registered WILL_FAIL.
 #include <cstdio>
 #include <cstring>
 #include "decision_eval_plan.h"
@@ -25,7 +25,7 @@ static void expect(const char* what, bool got, bool want) {
 }
 
 int main() {
-    // S.D1: three not-shown candidates with a failing is_valid.
+    // The fixture: three not-shown candidates with a failing is_valid.
     const char* d1[] = {"favored_movement_consults_heaven_decision",
                         "stress_loss_comfort_eater_decision",
                         "restore_pope_in_rome_decision"};

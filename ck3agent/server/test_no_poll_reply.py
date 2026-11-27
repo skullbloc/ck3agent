@@ -1,4 +1,4 @@
-""" (audit 3(i)): a reply names the wait that happened.
+"""A reply names the wait that happened.
 
 do_call_war_create_core and do_create_title skip their poll on the game thread
 (the drain runs the queued intent after the handler returns). They used to
@@ -8,8 +8,8 @@ a wait that never happened. On the game thread they now answer status
 words stay for call_war_create_core's off-thread path (declare_war's
 force_player_path forwards to it from the IPC thread), where the poll does run.
 create_title has no off-thread path (a game-thread action, no IPC-thread
-caller): its poll and its not_confirmed_within_12s reply are deleted
-(m-5). The server reads the new reason as a verdict not yet read
+caller): its poll and its not_confirmed_within_12s reply are deleted.
+The server reads the new reason as a verdict not yet read
 (confirmation_pending), never a refusal."""
 import asyncio
 import re
@@ -64,7 +64,7 @@ def test_the_server_reads_no_poll_as_a_verdict_not_yet_read():
 
 
 def test_CONTROL_settle_write_keeps_a_queued_no_poll_reply_pending():
-    """Not discriminating (green on 378222e6 too: status "queued" is already a
+    """Not discriminating (green without the rule too: status "queued" is already a
     pending status). A reply with no intent the drain lists (the read answers nothing) is a
     verdict never read: drains_when next_pass, not a refusal."""
     raw = {"success": False, "action": "create_title", "status": "queued",

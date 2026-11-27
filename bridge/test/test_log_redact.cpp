@@ -1,12 +1,12 @@
 // test_log_redact.cpp — the bridge log's redaction of raw frames (log_redact.h),
-// driven with every adversarial shape the TK5 round-3 witness listed
-// (finding 1).
+// driven with every adversarial shape listed below.
+//
 //
 // Each row names a SECRET that must not survive and, where it applies, text that
 // MUST survive (so a redactor that blanks whole lines does not pass). The rows
-// named r3miss_* were missed by the round-3 redactor (string values under
-// plain-byte keys only): 12 rows, all red on 5e42c229 (measured on the test host).
-// The rest were already redacted there and are kept as guards (the partly
+// named r3miss_* are what a redactor that reads string values under plain-byte
+// keys only misses: 12 rows, all red without the rule (measured on the test host).
+// That redactor already catches the rest, kept as guards (the partly
 // escaped key still spelled "esume_token" in raw bytes); the CONTROL rows
 // (nothing secret) must come back byte-identical.
 #include "log_redact.h"

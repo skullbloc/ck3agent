@@ -11,13 +11,13 @@ actor-bearing tool answers (redesign.unbound_refusal). A door whose handler neve
 falls back to the bound ruler (a catalog, a feed, a read that needs its ids named)
 is answered whatever is bound.
 
-Until the rule keyed on a PROXY: "the bridge params carry a character_id
+At first the rule keyed on a PROXY: "the bridge params carry a character_id
 key". discover(decisions) refused unbound because the server sends a character_id
 its handler never reads (case_list_decisions ignores its params), while
 discover(interactions), the same kind of catalog, answered.
 
 Read by the server (redesign.unbound_refusal) and by the live scenario that grades
-it (scripts/live867/scenarios/eval_a_surface.py). test_actor_doors.py checks the
+it. test_actor_doors.py checks the
 table against the bridge source: every door the query and discover tools reach is
 classified, a door classified as not reading the actor has no fallback in its
 handler's chain, and an actor door either has one or names the function that does.

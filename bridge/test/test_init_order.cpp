@@ -1,5 +1,5 @@
 // =============================================================================
-// test_init_order.cpp —
+// test_init_order.cpp
 //
 // THE CONTRACT, asserted against the BUILT libck3_bridge.so, not against source:
 //
@@ -12,10 +12,10 @@
 // AHEAD of every dynamic initializer in the library, so all of that ran against
 // raw .bss. Two shapes of damage, both observed:
 //
-//   *: the reader thread scanned a slot table that was still zeroed,
+//   * the reader thread scanned a slot table that was still zeroed,
 //     read fd 0 as a live client (zero is not negative), polled stdin, and
 //     SIGSEGV'd clearing a std::string that had never been constructed.
-//   *: bridge_init's own writes were RUN OVER by the constructors
+//   * bridge_init()'s own writes were RUN OVER by the constructors
 //     that came after it — g_valid_ranges (the /proc/self/maps table built
 //     during validate_offsets()) was emptied and its buffer leaked, and
 //     instance_paths' five std::strings were default-constructed over the
@@ -217,7 +217,7 @@ bool has_tu(const std::vector<std::string>& names, const char* tu) {
 
 int main(int argc, char** argv) {
     const char* path = (argc > 1) ? argv[1] : CK3_BRIDGE_SO_PATH;
-    printf("test_init_order (ck-22n3) — %s\n", path);
+    printf("test_init_order — %s\n", path);
 
     InitArray ia = read_init_array(path);
     ok(ia.loaded, std::string("1. .init_array read") +
@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
     //      bridge_init    — g_valid_ranges, written by validate_offsets() and
     //                       read by is_mapped() on every bridge thread
     //      ipc_server     — g_clients / g_msg_queue / g_queue_cv / the thread
-    //                       handles (crash)
+    //                       handles (the crash)
     //      session        — g_session_registry, reached by the reader thread on
     //                       the first handshake
     //      pipeline       — g_exhausted, reached from the conductor thread's

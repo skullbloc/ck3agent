@@ -1,4 +1,4 @@
-"""One reader per name: dynasty (FB M-2), house, culture, faith.
+"""One reader per name: dynasty, house, culture, faith.
 
 The rules (re/offsets/ck3_offsets.h): a dynasty is named by dynasty_obj::NAME
 (+0x80) only (CUSTOM_NAME +0x110 would overlap HOUSES_ARRAY, LOW); a house by
@@ -127,7 +127,7 @@ def test_query_dynasty_says_no_stand_in_word():
 
 # ── one de-jure count ────────────────────────────────────────────
 # The meter (do_query_dejure_progress) counted a county held when its holder's
-# TOP liege was the ruler; the #131 create_title gate (dejure_control_fraction)
+# TOP liege was the ruler; the create_title gate (dejure_control_fraction)
 # when the holder's liege chain reached him. A ruler who is himself a vassal read
 # 0 on the meter and a share at the gate. Both now count through dejure_share.
 

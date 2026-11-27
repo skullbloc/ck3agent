@@ -115,7 +115,9 @@ def run(c):
 
 
 def scripts_sent(gw):
-    return [p for a, p in gw.writes if a == "script_action"]
+    # declare_war reads the activity listing (a read-only template) before it sends; not a send.
+    # Nor the price read (cb_prices, read only)
+    return [p for a, p in gw.writes if a == "script_action" and p.get("template") not in ("activity", "cb_prices")]
 
 
 # ── what crosses to the bridge ───────────────────────────────────────────────
@@ -126,8 +128,7 @@ def test_gift_goes_as_the_gift_template_with_ids_only_and_applies_on_the_purses(
         st["gold"][FOE] += 30.0
     gw = Gw(ran("gift"), on_write=pay)
     env = run(R.do_impl(gw, intent="interact", character_id=ME,
-                        args={"interaction": "gift_interaction", "target_id": FOE,
-                              "script": "add_gold = 100000"}))
+                        args={"interaction": "gift_interaction", "target_id": FOE}))
     sent = scripts_sent(gw)
     assert sent == [{"actor_id": ME, "target_id": FOE, "template": "gift"}], sent
     assert env["verdict"] == "applied", env
@@ -137,11 +138,17 @@ def test_gift_goes_as_the_gift_template_with_ids_only_and_applies_on_the_purses(
 
 def test_no_key_a_seat_sends_reaches_the_bridge_as_script():
     """Whatever extra keys a seat puts in args, the bridge sees only the
-    template's typed parameters."""
+    template's typed parameters. A key the intent does not read is now
+    refused before anything is sent (unknown_argument); without them the
+    template's parameters are still the only ones sent."""
     gw = Gw(ran("sway"))
-    run(R.do_impl(gw, intent="interact", character_id=ME,
-                  args={"interaction": "sway_interaction", "target_id": FOE,
-                        "effect": "x", "arg": "y", "command": "effect", "template": "raw"}))
+    env = run(R.do_impl(gw, intent="interact", character_id=ME,
+                        args={"interaction": "sway_interaction", "target_id": FOE,
+                              "effect": "x", "arg": "y", "command": "effect", "template": "raw"}))
+    assert env["blocked"]["gate"] == "unknown_argument" and scripts_sent(gw) == [] and gw.writes == []
+    assert env["blocked"]["fix"]["rejected_fields"] == ["arg", "command", "effect", "template"]
+    gw = Gw(ran("sway"))
+    run(R.do_impl(gw, intent="interact", character_id=ME, args={"interaction": "sway_interaction", "target_id": FOE}))
     (p,) = scripts_sent(gw)
     assert set(p) == {"actor_id", "target_id", "template"} and p["template"] == "sway"
 
@@ -222,7 +229,8 @@ def test_declare_war_runs_start_war_under_can_declare_war():
                  "claimant_id": ME, "template": "declare_war"}
     assert env["verdict"] == "applied" and env["result"]["war_id"] == 77, env
     assert env["result"]["path"] == "script"
-    assert [a for a, _ in gw.writes] == ["script_action"]
+    # The activity listing (a read-only template) is read before the send
+    assert [a for a, p in gw.writes if p.get("template") not in ("activity", "cb_prices")] == ["script_action"]
 
 
 def test_a_war_the_games_check_refuses_says_so_with_the_doors():
@@ -277,10 +285,10 @@ def test_set_policy_is_refused_without_the_mod():
 
 
 def test_an_unread_mod_check_is_a_read_failure_not_mod_absent(monkeypatch):
-    """fix10 (v4 pilot 2, council-a D1's second set_policy at 1066.09.15): the
+    """The
     mod check's read did not come back (`query_script_log_failed`) and the seat
-    was told `policy_mod_not_loaded` while the mod was witnessed agreed. Red on
-    5e506f28: raw_reason policy_mod_not_loaded. Nothing is sent either way."""
+    was told `policy_mod_not_loaded` while the mod was witnessed agreed. Red without
+    the rule: raw_reason policy_mod_not_loaded. Nothing is sent either way."""
     gw = Gw(ran("set_policy"))
     real = gw.read
 
@@ -392,7 +400,7 @@ def unseen(template, channel):
 
 
 def test_the_re_pilots_case_a_closed_channel_is_pending_unreadable_never_not_applied():
-    """Re-pilot finding 1: from 1088.01.27 the game's log carried no script line;
+    """A recorded game: from 1088.01.27 the game's log carried no script line;
     five writes were told write_not_applied (one war was in fact applied). With the
     bridge reading the channel closed, the verdict is pending script_log_unreadable,
     the guard `log_unreadable`, and the date the channel closed is in the reply."""
@@ -408,7 +416,7 @@ def test_the_re_pilots_case_a_closed_channel_is_pending_unreadable_never_not_app
 
 
 def test_set_policy_with_a_closed_channel_is_pending_not_write_not_applied():
-    """The re-pilot's D2/D4 set_policy replies (1090.11): write_not_applied while
+    """A recorded game's set_policy replies of two seats (1090.11): write_not_applied while
     the log was dark."""
     gw = Gw(unseen("set_policy", CLOSED))
     env = run(R.do_impl(gw, intent="set_policy", character_id=ME,

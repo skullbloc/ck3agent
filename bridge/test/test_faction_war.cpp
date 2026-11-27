@@ -1,5 +1,5 @@
-// A faction's war as the game reads it (faction_war.h; F16,
-// witness w-l10-factions-5).
+// A faction's war as the game reads it (faction_war.h).
+//
 //
 // Build: CMake target `test_faction_war` (BUILD_BRIDGE_TESTS=ON).
 // Run:   ./test_faction_war   (exits non-zero on failure)
@@ -7,7 +7,7 @@
 // The witness read faction 95 at war (war 51, the game's own sentence "Cannot press
 // demands while the faction is in war") with at_war false: the bridge read
 // faction+0xC1, which is not the war. And faction rows gave the war's id masked to
-// 24 bits while every war read gives the war's full handle (run l10fx5-live-2: 19 on
+// 24 bits while every war read gives the war's full handle (a test run: 19 on
 // the faction row, 33554451 on the war read), so an id copied from a faction row
 // into make_peace / call_ally / join_war named no war. The rule is the engine's
 // (FUN_05f8ca90, FUN_05f8c910): the faction's WAR_REF indexes WAR_DB by its low 24

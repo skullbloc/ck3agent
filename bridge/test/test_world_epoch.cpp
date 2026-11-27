@@ -217,7 +217,7 @@ static int test_name_cache_survives_no_reload_but_not_a_reload() {
     CHECK(world_epoch_observe(b));
     CHECK(world_epoch() > epoch_before);
 
-    // THE ASSERTION. Before the fix these three returned Lokpala / Putri / Mila.
+    // THE ASSERTION. Without the rule these three return Lokpala / Putri / Mila.
     CHECK_EQ_STR(resolve_through_cache(31808), "William");
     CHECK_EQ_STR(resolve_through_cache(30853), "Harold");
     CHECK_EQ_STR(resolve_through_cache(29767), "Haraldr");
@@ -259,7 +259,7 @@ static int test_name_cache_is_registered() {
 }
 
 int main() {
-    printf("test_world_epoch (ck-hxh7)\n");
+    printf("test_world_epoch\n");
     if (test_fingerprint_logic()) return 1;
     if (test_registry()) return 1;
     if (test_name_cache_survives_no_reload_but_not_a_reload()) return 1;

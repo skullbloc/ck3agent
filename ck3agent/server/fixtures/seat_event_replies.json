@@ -1,0 +1,339 @@
+{
+ "source": "a live seated run's calls file (2026-11-20)",
+ "unknown_event_t01": {
+  "args": {
+   "intent": "event_rule",
+   "args": {
+    "op": "set",
+    "event": "no_such_event.0001",
+    "answer": "decline"
+   }
+  },
+  "reply": {
+   "tool_name": "do",
+   "ok": false,
+   "result": {
+    "ok": false,
+    "tool": "do",
+    "result": {},
+    "blocked": {
+     "gate": "name_not_found",
+     "class": "target_state",
+     "severity": "invalid",
+     "retryable": false,
+     "is_known_limitation": false,
+     "summary": "no file under the game's events/ defines no_such_event.0001",
+     "fix": {
+      "rejected_fields": [
+       "event"
+      ]
+     },
+     "raw_reason": "event_not_found",
+     "why": "the name given does not exist in the game's database",
+     "retry": "never",
+     "scope": "arguments",
+     "next": {
+      "rejected_fields": [
+       "event"
+      ]
+     }
+    },
+    "warnings": [],
+    "errors": [],
+    "bridge_health": "ok",
+    "verdict": "rejected",
+    "applied": false,
+    "actor": {
+     "id": 31506,
+     "name": "Murchad",
+     "alive": true,
+     "is_controlled": true,
+     "is_player": false
+    },
+    "game": {
+     "tick": 0,
+     "date": "1066.09.15",
+     "paused": true,
+     "speed": 3
+    }
+   },
+   "error": "not ok"
+  }
+ },
+ "reserve_t03": {
+  "args": {
+   "intent": "gold_reserve",
+   "args": {
+    "amount": 200,
+    "move": true
+   }
+  },
+  "reply": {
+   "tool_name": "do",
+   "ok": true,
+   "result": {
+    "ok": true,
+    "tool": "do",
+    "result": {
+     "path": "script",
+     "template": "gold_reserve",
+     "token": "SACT_2",
+     "guard": "ran",
+     "script_log_channel": {
+      "state": "open",
+      "level": "info",
+      "cap": 100000,
+      "info_messages": 109,
+      "debug_messages": 4145,
+      "closed_since": null
+     },
+     "game_errors": [],
+     "marker_read_late": false,
+     "raw": {
+      "request_id": "9e64987a-5791-4d52-bab6-603991d7b3a9",
+      "tick": 146,
+      "game_date": "1067.02.08",
+      "success": true,
+      "action": "script_action",
+      "template": "gold_reserve",
+      "actor_id": 31506,
+      "token": "SACT_2",
+      "script": "title:c_dublin.holder = { set_reserved_gold_maximum = 200 if = { limit = { short_term_gold > 0 } move_budget_gold = { gold = short_term_gold from = budget_short_term to = budget_reserved } } if = { limit = { long_term_gold > 0 } move_budget_gold = { gold = long_term_gold from = budget_long_term to = budget_reserved } } if = { limit = { war_chest_gold > 0 } move_budget_gold = { gold = war_chest_gold from = budget_war_chest to = budget_reserved } } info_log = \"SACT_2_RAN\" }",
+      "engine_result": "Executing effect script \"title:c_dublin.holder = { set_reserved_gold_maximum = 200 if = { limit = { short_term_gold > 0 } move_budget_gold = { gold = short_term_gold from = budget_short_term to = budget_reserved } } if = { limit = { long_term_gold > 0 } move_budget_gold = { gold = long_term_gold from = budget_long_term to = budget_reserved } } if = { limit = { war_chest_gold > 0 } move_budget_gold = { gold = war_chest_gold from = budget_war_chest to = budget_reserved } } info_log = \"SACT_2_RAN\" } \"",
+      "guard": "ran",
+      "marks": [],
+      "read_only": false,
+      "errors": [],
+      "logs_found": true,
+      "script_log_channel": {
+       "state": "open",
+       "level": "info",
+       "cap": 100000,
+       "info_messages": 109,
+       "debug_messages": 4145,
+       "closed_since": null
+      },
+      "debug_log_offset": 573964,
+      "error_log_offset": 1273235,
+      "rng_armed": true,
+      "elapsed_us": 3651
+     },
+     "readback": {
+      "reserved": 94.95,
+      "war_chest": 0.0,
+      "long_term": 0.0,
+      "short_term": 0.0,
+      "reserved_max": 200
+     },
+     "intent": "gold_reserve",
+     "budget_before": {
+      "reserved": 0.0,
+      "war_chest": 50.0,
+      "long_term": 0.0,
+      "short_term": 44.95,
+      "reserved_max": 0
+     },
+     "note": "income fills the reserve first, up to the maximum; the AI's budget-aware spending sees the other buckets. Forced charges (an event option's price, a title's price, upkeep) still take reserved gold, last"
+    },
+    "blocked": null,
+    "warnings": [],
+    "errors": [],
+    "bridge_health": "ok",
+    "verdict": "applied",
+    "applied": true,
+    "actor": {
+     "id": 31506,
+     "name": "Murchad",
+     "alive": true,
+     "is_controlled": true,
+     "is_player": false
+    },
+    "game": {
+     "tick": 146,
+     "date": "1067.02.08",
+     "paused": true,
+     "speed": 3
+    }
+   },
+   "error": null
+  }
+ },
+ "list_t14": {
+  "args": {
+   "intent": "event_rule",
+   "args": {
+    "op": "list"
+   }
+  },
+  "reply": {
+   "tool_name": "do",
+   "ok": true,
+   "result": {
+    "ok": true,
+    "tool": "do",
+    "result": {
+     "intent": "event_rule",
+     "op": "list",
+     "watched": true,
+     "rules": [
+      {
+       "event": "court_chaplain_task.0301",
+       "answer": "pay_if",
+       "option": "court_chaplain_task.0301.a",
+       "currency": "gold",
+       "amount": 96
+      }
+     ],
+     "picks": [
+      {
+       "date": "1066.11.06",
+       "event": "marriage_interaction.0010",
+       "options": [
+        "EXCELLENT"
+       ],
+       "ai_would_pick": "EXCELLENT",
+       "applied": "EXCELLENT",
+       "rule": null,
+       "gold_at_pick": 86.97,
+       "next": {
+        "tool": "do",
+        "args": {
+         "intent": "event_rule",
+         "args": {
+          "op": "set",
+          "event": "marriage_interaction.0010",
+          "answer": "option",
+          "option": "EXCELLENT"
+         }
+        }
+       }
+      },
+      {
+       "date": "1067.11.24",
+       "event": "court_chaplain_task.0301",
+       "options": [
+        "court_chaplain_task.0301.a",
+        "court_chaplain_task.0301.b"
+       ],
+       "ai_would_pick": "court_chaplain_task.0301.b",
+       "applied": "court_chaplain_task.0301.b",
+       "rule": "decline option=0",
+       "why": "same_as_ai",
+       "gold_at_pick": 119.23
+      },
+      {
+       "date": "1068.01.02",
+       "event": "coming_of_age.1002",
+       "options": [
+        "coming_of_age.1001.a"
+       ],
+       "ai_would_pick": "coming_of_age.1001.a",
+       "applied": "coming_of_age.1001.a",
+       "rule": null,
+       "gold_at_pick": 122.09,
+       "next": {
+        "tool": "do",
+        "args": {
+         "intent": "event_rule",
+         "args": {
+          "op": "set",
+          "event": "coming_of_age.1002",
+          "answer": "option",
+          "option": "coming_of_age.1001.a"
+         }
+        }
+       }
+      },
+      {
+       "date": "1068.11.30",
+       "event": "bp2_yearly.1040",
+       "options": [
+        "bp2_yearly.1040.a",
+        "bp2_yearly.1040.b"
+       ],
+       "ai_would_pick": "bp2_yearly.1040.a",
+       "applied": "bp2_yearly.1040.a",
+       "rule": null,
+       "gold_at_pick": 147.93,
+       "next": {
+        "tool": "do",
+        "args": {
+         "intent": "event_rule",
+         "args": {
+          "op": "set",
+          "event": "bp2_yearly.1040",
+          "answer": "option",
+          "option": "bp2_yearly.1040.a"
+         }
+        }
+       }
+      },
+      {
+       "date": "1069.02.17",
+       "event": "court_chaplain_task.0301",
+       "options": [
+        "court_chaplain_task.0301.a",
+        "court_chaplain_task.0301.b"
+       ],
+       "ai_would_pick": "court_chaplain_task.0301.a",
+       "applied": "court_chaplain_task.0301.a",
+       "rule": "pay_if gold>=96 option=court_chaplain_task.0301.a",
+       "why": "same_as_ai",
+       "covered": true,
+       "gold_at_pick": 155.07
+      },
+      {
+       "date": "1069.03.24",
+       "event": "health.2201",
+       "options": [
+        "health.3102.a",
+        "health.3102.b",
+        "health.3102.c_sick_physician",
+        "health.3102.d",
+        "health.3102.e_adult",
+        "health.3101.e",
+        "health.2201.a"
+       ],
+       "ai_would_pick": "health.3102.a",
+       "applied": "health.3102.a",
+       "rule": null,
+       "gold_at_pick": 73.55,
+       "next": {
+        "tool": "do",
+        "args": {
+         "intent": "event_rule",
+         "args": {
+          "op": "set",
+          "event": "health.2201",
+          "answer": "option",
+          "option": "health.3102.a"
+         }
+        }
+       }
+      }
+     ],
+     "picks_total": 6,
+     "hook_installed": true
+    },
+    "blocked": null,
+    "warnings": [],
+    "errors": [],
+    "bridge_health": "ok",
+    "actor": {
+     "id": 31506,
+     "name": "Murchad",
+     "alive": true,
+     "is_controlled": true,
+     "is_player": false
+    },
+    "game": {
+     "tick": 949,
+     "date": "1069.04.22",
+     "paused": true,
+     "speed": 3
+    }
+   },
+   "error": null
+  }
+ }
+}

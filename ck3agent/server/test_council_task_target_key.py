@@ -1,9 +1,9 @@
 """The council-task target must be sent under the key the BRIDGE reads.
 
 `do_set_council_task` gates on `json_get_int(params_json, "target_title_id") <= 0`
-and answers `target_required`. It never reads `title_id`. This surface used to
+and answers `target_required`. It never reads `title_id`. This surface does not
 send `title_id`, so the target was dropped before it left the agent process and
-NO agent-side spelling could work: in the deploy-43 confirming smoke, five seats
+NO agent-side spelling could work: in a confirming smoke, five seats
 made twenty-five attempts and not one succeeded — 23 `target_required` and 2
 `task_not_found` (the second pair being a lord's own nonsense-task control,
 which established that the task name resolves and the failure comes after it).
@@ -12,14 +12,14 @@ WHY THIS IS A CONTRACT TEST AND NOT A ROUND TRIP. The wire key is only correct
 relative to a consumer in another language, in another process, that this suite
 cannot call. So the rows below assert the builder's output against the key read
 out of `bridge/src/action_handlers.cpp` itself. Asserting the builder agrees
-with a literal I also wrote here would have passed just as happily before the
-fix (one definition, two readers: the bridge is the definition).
+with a literal written here would pass just as happily against the
+superseded builder (one definition, two readers: the bridge is the definition).
 
 THE FIX THAT WOULD HAVE LOOKED RIGHT AND DONE NOTHING: the board's first
 diagnosis was "the enumerator prints the wrong key", `target_id` where
 `target_title_id` was wanted. Its own author retracted it. Changing the printed
 key would have changed nothing, because the builder mapped BOTH spellings into
-`title_id` — so a lane keyed on the printed string would have gone green over a
+`title_id` — so a check keyed on the printed string would have gone green over a
 lever that was still dead. Hence the last row here, which asserts the printed
 call's key is one the builder actually reads.
 """
@@ -39,10 +39,10 @@ HANDLERS = os.path.join(os.path.dirname(__file__), "..", "..",
 
 def _build(args, actor_id=35395):
     p = redesign._intent_to_act_params("council_task", args, actor_id)
-    # Name the defect rather than raising KeyError out of every row below: an
-    # absent key is exactly the pre-fix state, and it should read as a sentence.
+    # Name the hazard rather than raising KeyError out of every row below: an
+    # absent key is exactly the superseded state, and it should read as a sentence.
     assert "target_title_id" in p, (
-        "the wire carries no target_title_id at all — this is the ck-z3kh defect: "
+        "the wire carries no target_title_id at all — this is the defect: "
         f"the builder sent {sorted(p)} and do_set_council_task gates on "
         "target_title_id <= 0")
     return p
@@ -110,7 +110,7 @@ def _enumerated_do_calls():
 
     env = asyncio.run(redesign.do_impl(Gw(), action_class="council_tasks", character_id=35395))
     rows = (env.get("result") or {}).get("available") or []
-    calls = [r["do_call"] for r in rows if isinstance(r, dict) and r.get("do_call")]
+    calls = [r["do_call"]["args"] for r in rows if isinstance(r, dict) and r.get("do_call")]
     assert calls, env
     return calls
 

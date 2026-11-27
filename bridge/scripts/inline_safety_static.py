@@ -1,5 +1,5 @@
-"""The static half of the inline-safety audit (rewritten in cleanup
-2026.11, D22; Tier 1 added in the final fix): every handler the IPC reader
+"""The static half of the inline-safety audit (Tier 1 included): every
+handler the IPC reader
 thread serves inline reads game memory only through safe_read, and
 ipc_server.cpp guards every inline dispatch with sigsetjmp.
 
@@ -53,7 +53,7 @@ memory_access_fault, or says degraded) -- or declares a `FaultScope` (bridge/
 include/action_dispatch_internal.h), whose constructor is the
 safe_read_clear() and whose destructor is the safe_read_had_fault() check;
 section F checks that the class still makes both calls. Two more rows read
-where they stand (R5):
+where they stand:
   - placement: the bracket opens (the first `safe_read_clear()` or the
     `FaultScope` declaration) before the first safe-reading call in the body --
     a safe_read itself, or a call to a bridge function whose own path (to
@@ -64,7 +64,7 @@ where they stand (R5):
     (the check picks the branch a write sits in). A check followed by a write
     with no branch decides nothing. Any other spelling (the flag in a variable,
     negated, inside a larger condition) is a FAIL by name: this parser cannot
-    decide it, and an undecided row is red. Stated limits (R5, W1, W2, W10): an
+    decide it, and an undecided row is red. Stated limits: an
     `else` arm that itself writes after a fault is not looked into; a return the
     check reaches through a lambda it calls, a read hidden in a macro before the
     bracket opens, and an `emit_degraded` on a builder that is not the reply each
@@ -73,7 +73,7 @@ where they stand (R5):
     bodies that bracket by name or by `FaultScope`; an unbracketed game-thread
     body is outside it.
 
-Tier 3, the game-thread actions: the names in is_game_thread_action.
+Tier 3, the game-thread actions: the names in is_game_thread_action().
 The reader queues them to g_msg_queue and the drain (bridge_init.cpp
 drain_game_thread_work_at) runs each queued message on the game thread, holding
 the session's command mutex, inside ONE sigsetjmp of its own. THE RULE -- when
@@ -115,7 +115,7 @@ is the drain's guard enough, and when must the handler guard itself:
       does.
   The other rows are the Tier-1/2 rows (fault bracket, placement, decide, the
   early return on a character that did not resolve -- after the resolve, with
-  no engine contact between the two:), no sleep or wait in the
+  no engine contact between the two), no sleep or wait in the
   closure (the drain holds the session mutex; as A2), and no clock write: no
   clock_write_sites() and no call of clock_write in the closure (only the
   session moves the clock).
@@ -158,7 +158,7 @@ Sections:
      reply is one string (bridge.h MEMORY_ACCESS_FAULT_REPLY), answered in
      ipc_server.cpp at a stable few sites; FaultScope makes both calls
 
-Used by bridge/scripts/test_inline_safety.py (the CLI, which adds the
+Used by the research tree's dump-driven CLI (which adds the
 core-dump sections) and ck3agent/server/test_inline_safety_static.py (the
 `mise run test` gate). Ships in the public export: no host path here.
 """
@@ -510,32 +510,15 @@ class Report:
 TIERS = ("is_bridge_internal_query", "is_game_state_query")
 GAME_THREAD_ACTIONS = "is_game_thread_action"
 #: FAIL-OPEN FLOORS: each classifier's population when the floor was last
-#: pinned. A parse that matched less would audit less and pass, so fewer names
-#: than this reds. Re-pin, with the reason, when handlers move: 47 / 90 is the
-#: tree after-B moved 15 handlers out of is_bridge_internal_query
-#: (B1/B3: the deferred-slot submitters, get_active_wars, get_ai_personality,
-#: pre_validate_war, query_council_tasks, query_debug_flags to Tier 2;
-#: set_ai_personality to the game-thread actions) and moved two more
-#: (R4: query_war_score_breakdown to Tier 2; R5: respond_event to the
-#: game-thread actions).
-#: Is_game_thread_action's 22 (the 20 of census D.3, set_ai_personality
-#: from-B and respond_event from); 23 since then added
-#: query_create_title_cost, a game-thread READ (snapshot.cpp is_game_thread_read:
-#: the engine's IsValid runs scripted triggers). 47 / 90 did not move: S3 added
-#: no bridge-internal or Tier-2 handler.
-#: 46 / 88 / 22. The event handlers nothing called went with
-#: their registry lines: set_auto_respond_events (bridge-internal),
-#: query_event_probabilities and its alias event_probabilities (Tier 2) and
-#: respond_event (game-thread action). Then 87 Tier-2: query_pending_events,
-#: kept only by the polarity table and parity_plan, went the same way.
-#: 43 / 87 / 22. The shared board went
-#: (2026-11-02): board_post, board_read and board_admin were the three
-#: bridge-internal names in snapshot.cpp's safe[] list; no Tier-2 read and no
-#: game-thread action was the board's.
-#: 44 / 87 / 23. query_script_log (bridge-internal: the game's log
-#: files, no game object) and script_action (game-thread action).
-CLASSIFIER_FLOOR = {"is_bridge_internal_query": 44, "is_game_state_query": 87,
-                    "is_game_thread_action": 23}
+#: pinned (bridge-internal / game-state / game-thread action). A parse that
+#: matched less would audit less and pass, so fewer names than this reds.
+#: Re-pin, with the reason, when handlers move between the classifiers or
+#: leave the registry. Today's populations: 46 bridge-internal names (the
+#: veto table and ring among them), 88 game-state reads (the army hold table
+#: among them; it reads the army) and 28 game-thread actions (the army
+#: orders, the raid toggle, the perk pick and the regiment disband among them).
+CLASSIFIER_FLOOR = {"is_bridge_internal_query": 46, "is_game_state_query": 88,
+                    "is_game_thread_action": 28}
 
 
 #: What "touches game memory" means for row A0: resolving a character,
@@ -562,7 +545,7 @@ def ipc_exceptions(b: Bridge) -> dict[str, str]:
 
 
 def section_a0(b: Bridge, rep: Report) -> None:
-    rep.section("(A0) D1 — no undeclared game-object handler on the IPC thread")
+    rep.section("(A0) no undeclared game-object handler on the IPC thread")
     reg = b.registry()
     names = b.classifier_names("is_bridge_internal_query")
     if not rep.check("is_bridge_internal_query() parsed for A0",
@@ -636,7 +619,7 @@ def drain_sleeps(body: str) -> list[str]:
 
 
 def section_a2(b: Bridge, rep: Report) -> None:
-    rep.section("(A2) no game-thread read sleeps (W3)")
+    rep.section("(A2) no game-thread read sleeps")
     reg = b.registry()
     names = b.classifier_names("is_game_state_query")
     if not rep.check("is_game_state_query() parsed for A2",
@@ -666,7 +649,7 @@ _BUDGET_RE = re.compile(r"\bgame_thread_budget_spent\s*\(|\bkGameThreadEvalBudge
 
 
 def section_a3(b: Bridge, rep: Report) -> None:
-    rep.section("(A3) every long game-thread evaluation checks the time budget (R6)")
+    rep.section("(A3) every long game-thread evaluation checks the time budget")
     for fn, what in BUDGETED_EVALUATORS.items():
         defs = b.functions.get(fn) or []
         body = defs[0][1] if defs else ""
@@ -706,7 +689,7 @@ _TEMPLATE_ARGS_RE = re.compile(r"<[^<>]*>")
 
 def outer_type(t: str) -> str:
     """A cast's type with its template arguments removed (innermost first), so
-    the data-type test reads the type itself and not its arguments:,
+    the data-type test reads the type itself and not its arguments: for example,
     `bridge::EngineBoolFn<void*, std::string*>` is a function-pointer alias whose
     `void*` ARGUMENT had dropped five engine calls from the census."""
     prev = None
@@ -747,8 +730,8 @@ _DISARM_RE = re.compile(r"\bwatchdog_disarm\s*\(|\bg_in_protected_region\s*=\s*f
 
 def guarded_spans(body: str) -> list[tuple[int, int]]:
     """The [start, end) spans of one body where its OWN guard is armed
-    (M-8): from a sigsetjmp whose last arm/disarm event before it is a
-    watchdog_arm (FB2 N-5: a disarm after the arm leaves a later sigsetjmp
+    is the span from a sigsetjmp whose last arm/disarm event before it is a
+    watchdog_arm (a disarm after the arm leaves a later sigsetjmp
     unarmed), to the first watchdog_disarm() / `g_in_protected_region = false`
     after it that is not inside that sigsetjmp's crash block (the end of the
     body when there is none). A disarm inside a nested block that returns is an
@@ -801,7 +784,7 @@ def _is_lambda_body(body: str, brace: int) -> bool:
 
 def _early_exit(body: str, pos: int) -> bool:
     """A disarm at body[pos] that is an early exit (its block returns) and not
-    inside a lambda body (FB2 N-5: a lambda's disarm counts as top-level)."""
+    inside a lambda body (a lambda's disarm counts as top-level)."""
     return _exits_its_block(body, pos) and not _is_lambda_body(body, _open_brace(body, pos))
 
 
@@ -833,7 +816,7 @@ def _exits_its_block(body: str, pos: int) -> bool:
 
 def in_guarded_span(body: str, pos: int) -> bool:
     """pos lies in a guarded span and no disarm stands before it in any block
-    that encloses it inside that span (FB2 N-5: `if (x) { watchdog_disarm;
+    that encloses it inside that span (`if (x) { watchdog_disarm();
     call(); return; }` is an early exit for the code after the block, and the
     call after the disarm in it runs unarmed)."""
     for a, e in guarded_spans(body):
@@ -946,10 +929,32 @@ def wide_engine_truth_tests(body: str, aliases: dict[str, str]) -> tuple[list[st
 #: deleted the Linux bridge_session_pass wrapper and with it its
 #: reinterpret_cast<session_loop_fn> in bridge_init.cpp (the shared cell's one
 #: LoopFn cast, src/os/session_pass.cpp, was already counted at os/windows/).
-#: 216 since then R3 deleted select_event_option (event_handler.cpp) with
+#: 216 once select_event_option was deleted (event_handler.cpp) with
 #: respond_event, and with it its GameCommand__Dispatch cast.
-#: 217 since do_script_action (its CMD_EFFECT handler cast).
-FNPTR_CAST_FLOOR = 217
+#: 217 with do_script_action (its CMD_EFFECT handler cast).
+#: 218 with event_option_available (factions.cpp: the availability check the
+#: event table calls, beside the faction-demand answer's own).
+#: 230 with army_orders.cpp: disband's ctor/CanExecute/Execute/base dtor (4),
+#: move's in-combat/mode/ctor/CanExecute/Execute/dtor (6), the hold hook's original and the
+#: dropped command's deleting dtor (2).
+#: 232 with ai_veto.cpp: the dropped command's deleting dtor and the law price
+#: evaluator (its treasury test goes through EngineBoolFn, an alias the census does not count).
+#: 235 with do_unlock_perk: the perk command's ctor, Execute and the base dtor
+#: (its CanExecute goes through EngineBoolFn, which the census does not count).
+#: 233 with truce read: probe_alliance_truce (query_handlers.cpp) no longer casts
+#: GET_TRUCE_LIST and SIMD_FIND_LONG (a truce is a slot of the pair's relation, read with safe_read).
+#: 235 with interaction cost read (ai_eval_hook.cpp): INTERACTION_COST_COMPUTE (the price) and
+#: INTERACTION_TRY_SEND_COST with a text (the cost gate's own words on a refusal; its result is not tested).
+#: 239 with do_army_raid: the raid toggle's ctor, CanExecute, Execute and the base dtor.
+#: 244 with do_maa_disband's ctor, CanExecute, Execute and base dtor, and query_armies'
+#: others_in_counties (army_orders.cpp emit_others_in_counties: the army enumeration, ARMY_ENUM_SUB).
+#: 252 with the casts of its _WIN32 branches (the census reads both platforms' text):
+#: change_realm_law's MSVC command path, win_cmd_* (maa_recruit, hire_mercenary), and the AI veto's
+#: and the hold's MSVC scalar-deleting-destructor calls.
+#: 257 counting ai_eval_hook.cpp: validity_failed_stage's VALIDATE_HARDCODED,
+#: VALIDATE_BASIC_ALIVE and ScriptTriggerEvaluator, and the refused send's ACCEPTANCE_DECISION
+#: and GET_AI_ACCEPT_NEGOT_SCORE (the recipient's answer on target_would_reject).
+FNPTR_CAST_FLOOR = 257
 
 
 def unbounded_on_path(path: list[tuple[str, str, str]]) -> list[str]:
@@ -1015,11 +1020,11 @@ _DECIDE_RE = re.compile(r"\bif\s*\(\s*safe_read_had_fault\s*\(\s*\)\s*\)\s*retur
 def commit_gap(b: Bridge, file: str, body: str, commit: tuple[int, str] | None) -> str | None:
     """None when a body decides on its reads before its first engine contact
     (G-commit): an `if (safe_read_had_fault()) return` precedes the commit in a
-    block that contains the commit (FB2 N-5b: a decision nested in an
+    block that contains the commit (a decision nested in an
     unrelated `if` does not dominate it), and no read is reachable between the
     LAST such decision and the commit (do_change_realm_law decided,
     then read the war count, and a fault there skipped the at-war refusal). A
-    body with no engine contact found is a red by name (FB2 N-5c: the
+    body with no engine contact found is a red by name (the
     caller grades only game-thread writes that read through safe_read, and a
     write that touches nothing this parser can see is a parse that grades less,
     never a pass). Else what is missing."""
@@ -1101,25 +1106,34 @@ def game_thread_ok(b: Bridge) -> tuple[dict[tuple[str, str], str], list[str]]:
     return decl, bad
 
 
-#: (audit 3(ii)): the fake random scope and a body's own guard.
+#: The fake random scope and a body's own guard.
 _ARM_RE = re.compile(r"\barm_fake_random_scope\s*\(")
 _RESTORE_RE = re.compile(r"\brestore_fake_random_scope\s*\(")
 _SETJMP_RE = re.compile(r"\bsigsetjmp\s*\(")
 #: Fail-open floor: the bodies that arm the scope under a guard of their own
-#: (22 on a0a2fff3; 23 after round 2 merged S3's
-#: do_query_create_title_cost, 378222e6). Fewer found = a parse that grades
-#: less and passes.
-#: 24 since do_script_action.
-SCOPE_ARM_FLOOR = 24
+#: (24: do_query_create_title_cost and do_script_action among them).
+#: Fewer found = a parse that grades less and passes.
+#: 26 with do_army_disband and do_army_move.
+#: 27 with price_record (ai_veto.cpp: a title's or a law's price, daily drain).
+#: 28 with do_unlock_perk (the perk command, game thread).
+#: 29 with do_army_raid (the raid toggle command, game thread).
+#: 30 with do_maa_disband (the regiment disband command, game thread).
+SCOPE_ARM_FLOOR = 30
 #: Fail-open floor for G-nest: the BRIDGE_ACTION lines in
-#: action_registry.inc (160 at a1fb8c6b; 156 since then R3 deleted the four
+#: action_registry.inc (160; 156 without the four
 #: event lines: query_event_probabilities, event_probabilities, respond_event,
 #: set_auto_respond_events; 155 with query_pending_events, which had no caller
-#: either; 152 since then deleted the shared board's three
+#: either; 152 without the shared board's three
 #: lines: board_post, board_read, board_admin). A parse that found fewer would
 #: walk fewer closures and pass.
-#: 154 since then added script_action and query_script_log.
-REGISTRY_FLOOR = 154
+#: 154 with script_action and query_script_log.
+#: 157 with set_event_rule, query_event_rules and query_ai_budget.
+#: 160 with army_disband, army_move and army_hold.
+#: 162 with set_ai_veto and query_ai_veto.
+#: 163 with unlock_perk.
+#: 164 with army_raid.
+#: 165 with maa_disband.
+REGISTRY_FLOOR = 165
 
 
 def _crash_span(body: str, jmp: int) -> tuple[int, int] | None:
@@ -1225,7 +1239,7 @@ def counter_wipes(body: str) -> list[str]:
     return out
 
 
-#: G-session (FB2 N-12): the one raw read the session-pass wrapper may
+#: G-session: the one raw read the session-pass wrapper may
 #: make, on every session pass and outside any sigsetjmp. It is the execute byte
 #: the engine's own pass has just used, on the session object in the image's
 #: .data, at an offset install probed first (os/session_pass.cpp); a second raw
@@ -1334,7 +1348,7 @@ def section_g(b: Bridge, rep: Report) -> None:
         rep.check("no wide-return engine call is tested for truth without & 0xFF (G-al)", not wide,
                   "; ".join(wide))
 
-    # G-scope (audit 3(ii)): every body in bridge/src that arms the fake
+    # G-scope: every body in bridge/src that arms the fake
     # random scope and sets a sigsetjmp of its own, enumerated from the code.
     armed = sorted((n, f, body) for n, defs in b.functions.items() for f, body, _ in defs
                    if _ARM_RE.search(body) and _SETJMP_RE.search(body))
@@ -1345,7 +1359,7 @@ def section_g(b: Bridge, rep: Report) -> None:
             rep.check(f"{n} ({f}): arms the scope before its own sigsetjmp, and its crash branch "
                       "restores it (G-scope)", not bad, "; ".join(bad))
 
-    # G-nest (audit 3(iii)): a callee that clears the fault flag wipes the
+    # G-nest: a callee that clears the fault flag wipes the
     # record its handler made before the call. Every registered handler, its
     # whole closure.
     reg_all = b.registry()
@@ -1358,7 +1372,7 @@ def section_g(b: Bridge, rep: Report) -> None:
                   "clears: " + ", ".join(clears) if parsed else f"no body found for {fn}")
 
 
-    # G-session (FB2 N-12): the session-pass wrapper runs on every pass,
+    # G-session: the session-pass wrapper runs on every pass,
     # outside any guard; its raw reads are pinned to the one execute byte.
     bad = session_pass_raw_reads(b)
     rep.check(f"{SESSION_PASS_FN} ({SESSION_PASS_FILE}): its one raw read is the execute byte the "
@@ -1670,7 +1684,7 @@ def _clock_sources(b: Bridge) -> dict[str, str]:
 
 
 def section_c(b: Bridge, rep: Report) -> None:
-    rep.section("(C) CLOCK — every pause/speed write is clock_write's (L13 D4)")
+    rep.section("(C) CLOCK — every pause/speed write is clock_write's")
     sources = _clock_sources(b)
     unreadable = [f for f, t in sources.items() if t is None]
     rep.check("every bridge source file parsed (fails open)", not unreadable,
@@ -1730,7 +1744,7 @@ _CLOCK_ADVICE_RE = re.compile(
 
 
 def section_f2(b: Bridge, rep: Report) -> None:
-    rep.section("(F2) no reply advises running the clock (W9)")
+    rep.section("(F2) no reply advises running the clock")
     hits = []
     for p in sorted((b.dir / "src").glob("**/*.cpp")) + sorted((b.dir / "src").glob("**/*.inc")):
         text = strip_code(p.read_text(errors="replace"), keep_strings=True)

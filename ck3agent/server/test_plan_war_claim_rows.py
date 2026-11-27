@@ -1,7 +1,7 @@
-""" defect 1 (and the plan_war halves of defect 4): a plan_war row is
+"""Defect 1 (and the plan_war halves of defect 4): a plan_war row is
 declarable by the same gate declare_war applies.
 
-THE DEFECT, from the pilot transcripts (ck3agent 2026.11.0, budget0 e1/s2 and
+THE HAZARD, from the pilot transcripts (ck3agent 2026.11.0, budget0 e1/s2 and
 e2/s2, Charles 12015, 0867.01.01). plan_war answered
 
   {"declare_args":{"target_id":13356,"cb":"claim_cb","cb_title_id":7448,
@@ -161,17 +161,17 @@ def test_C3_CONTROL_a_conquest_cb_row_keeps_the_county():
     (row,) = env["result"]["targets"]
     assert row["declare_args"] == {"target_id": LOTHAR, "cb": "county_conquest_cb",
                                    "cb_title_id": C_VENAISSIN, "claimant_id": None}, row
-    # lane peace: a conquest row reads no claims, so its claim_pressed is null
-    # (v4 pilot 2 K1 1083: false on William's rows beside a pressed claim on
-    # d_normandy). Red on 29c8e303: False.
+    # A conquest row reads no claims, so its claim_pressed is null
+    # (1083: false on William's rows beside a pressed claim on
+    # d_normandy). Red without the rule: False.
     assert row["claim_pressed"] is None
 
 
 def test_a_de_jure_row_reads_no_claims_so_its_claim_pressed_is_null():
-    """lane peace (v4 pilot 2, K1 1083 plan_war toward d_normandy): William's de
+    """William's de
     jure rows said claim_pressed:false while the bridge read a PRESSED claim on
     d_normandy (discover war_targets, the same turn), and the king declared that
-    claim war. A row that reads no claims says null. Red on 29c8e303: False."""
+    claim war. A row that reads no claims says null. Red without the rule: False."""
     conquest = _venaissin_conquest()
     rc = conquest["duchies"][0]["remaining_counties"][0]
     rc.update(conquerable_now=True, block_reason="",
@@ -207,7 +207,7 @@ def test_C4_the_enumerators_rows_reach_the_strict_probe():
 
 
 def _cui_conquest():
-    # scale0 n2/s1 line 117 (jq .result.duchies[0]): d_yongxing, every county a vassal's
+    # a recorded reply (jq .result.duchies[0]): d_yongxing, every county a vassal's
     return {"duchies": [{"duchy_id": 14324, "duchy_key": "d_yongxing", "partially_held": True,
                          "remaining_counties": [
         {"county_id": cid, "county_key": key, "holder_id": hid, "holder_top_liege_id": CUI,
@@ -236,7 +236,7 @@ def test_C5_a_county_inside_the_actors_own_realm_is_no_target():
 def test_C6_a_claim_row_with_no_cbs_options_and_no_pressed_claim_is_excluded():
     """query_cbs_for_target answered no rows (emit_cbs_target_body with an empty
     `cbs`), so `chosen` is None and the claim rewrite never runs. The strict probe
-    passed claim_cb; the conquest row carries no `pressed`. Before the fix the row
+    passed claim_cb; the conquest row carries no `pressed`. Without the rule the row
     went out with claim_pressed false and declare_war refused it claim_not_pressed."""
     gw = _gw(query_cbs_for_target=_cbs([]))
     res = _run(R.plan_war_impl(gw, character_id=CHARLES, goal_scoped=False, ally_free_only=False))["result"]
@@ -263,7 +263,7 @@ def test_C7_CONTROL_a_pressed_claim_row_with_no_cbs_options_is_offered():
 
 def _own_unpressed_vt():
     # do_query_valid_war_targets row (r.key("pressed"), r.key("declarable")): the
-    # actor's own claim, unpressed, which the bridge now reads declarable
+    # actor's own claim, unpressed, which the bridge reads declarable
     # (bridge/include/claim_rule.h)
     return {"action": "query_valid_war_targets", "actor_id": CHARLES, "targets": [
         {"target_char_id": LOTHAR, "target_name": "Lothar", "title_id": K_ITALY,
@@ -274,7 +274,7 @@ def _own_unpressed_vt():
 
 
 def test_C9_the_actors_own_unpressed_claim_is_offered():
-    """Live run i11s3 (the peace lane's row 4): script_action declare_war claim_cb by
+    """A live game's row: script_action declare_war claim_cb by
     35156 on his OWN UNPRESSED claim (c_berestye) - the game's can_declare_war RAN and
     the war started; plan_war culled the row claim_not_pressed."""
     gw = _gw(query_valid_war_targets=_own_unpressed_vt(), query_conquest_targets={"duchies": []},

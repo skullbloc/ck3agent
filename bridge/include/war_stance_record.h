@@ -11,7 +11,7 @@
 // own bit rec+0x68 & 4, the bit FUN_04e60920 branches on to return that side's
 // primary character), so the record walked last overwrote the other and the row
 // took both its side and its stance from whichever side the array listed last.
-// Census of ck3_20260421_195552.core (1097, same BuildID): 174 active records,
+// Census of the 1097 dump (same BuildID): 174 active records,
 // 87 wars, exactly one attacker and one defender record each; in 39 of the 87
 // the defender's record comes last.
 //
@@ -35,7 +35,7 @@ struct SideRec {
 struct WarRecs {
     SideRec attacker, defender;
 #ifdef WAR_STANCE_RECORD_PREFIX_CONTROL
-    SideRec last; bool last_atk = true;   // the pre-fix map: the last record wins
+    SideRec last; bool last_atk = true;   // the superseded map: the last record wins
 #endif
 };
 
@@ -59,7 +59,7 @@ inline const SideRec& for_side(const WarRecs& w, bool side_is_attacker) {
 #endif
 }
 
-// The side a row reports. Pre-fix it was the last record's bit.
+// The side a row reports (not the last record's bit).
 inline bool row_is_attacker(const WarRecs& w, bool side_is_attacker) {
 #ifdef WAR_STANCE_RECORD_PREFIX_CONTROL
     (void)side_is_attacker;

@@ -50,7 +50,7 @@ RELEASES_URL = "https://github.com/skullbloc/ck3agent/blob/main/docs/supported-v
 CK3_EXAMPLE = '"$HOME/.local/share/Steam/steamapps/common/Crusader Kings III/binaries/ck3"'
 CONTINUE_WAIT = 120
 #: The default wait when the game directory's shader cache is empty: CK3 compiles
-#: it on its first start there (about 590 MB; the 2026.12.1 node smoke's first
+#: it on its first start there (about 590 MB; a 2026.12.1 test launch's first
 #: load ran past 120 s while still compiling).
 FIRST_LOAD_WAIT = 600
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
@@ -326,7 +326,7 @@ def _check_mcp_entry(k: _Checks, path: Path) -> None:
 
 
 #: What Claude Code prints, on every `claude -p` in a play directory whose
-#: workspace was never trusted (smoke17, each run's stderr.log):
+#: workspace was never trusted (each run's stderr.log):
 #: "Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace
 #: has not been trusted. Run Claude Code interactively here once and accept the
 #: trust dialog, or set projects["<dir>"].hasTrustDialogAccepted: true in ~/.claude.json."
@@ -533,8 +533,8 @@ def prepare_game_dir(owner: Path, dst: Path) -> Path:
 #: with no check that it is there: the reader (ck3+0x75b3dc0) looks up `title`,
 #: `desc` and `date` and takes each value's string at +0x20, so a missing key
 #: is a read of address 0x20 (ck3+0x80a6090) and the game dies before its main
-#: menu. A pointer of `title` alone crashed 2026.12.1's every launch (node
-#: smoke18; re/findings/re_userdir.md "The smoke18 crash").
+#: menu. A pointer of `title` alone crashed 2026.12.1's every launch (a
+#: test launch; re/findings/re_userdir.md has the crash).
 CONTINUE_POINTER_KEYS = ("title", "desc", "date")
 
 
@@ -634,7 +634,7 @@ def shader_cache_empty(game_dir: Path) -> bool:
 def launch_wait(no_wait: bool, wait: int | None, first_load: bool) -> int:
     """Seconds `launch` waits for the game: --wait, else FIRST_LOAD_WAIT for a
     launch whose shader cache is still to be built, else CONTINUE_WAIT. A plain
-    launch (no save to load) waits for the main menu as long (L22, smoke19: it
+    launch (no save to load) waits for the main menu as long (in a test launch it
     returned at once and a game that never reached the menu said nothing)."""
     if no_wait:
         return 0
@@ -855,7 +855,7 @@ def wait_for_menu(proc, deadline: float, launched: float, first_load: bool, wait
                   out: Path) -> int:
     """A plain launch: wait until the game's log says it reached the main menu.
     The bridge socket is up long before the menu, so the socket alone says
-    nothing about whether the game will get there (smoke19: a headless host
+    nothing about whether the game will get there (in a test launch a headless host
     sat after "End loading of history" for 600 s)."""
     log = cfg.game_debug_log()
     while True:
@@ -950,9 +950,9 @@ def build_claude_argv(claude: str, prompt: str, mcp_config: Path, a: argparse.Na
     return argv + list(a.claude_args)
 
 
-#: One definition of a cycle, for the manifest and every reader of it (L18-C: the
+#: One definition of a cycle, for the manifest and every reader of it (the
 #: pilots' hand analyzers counted groups of waits, called an 18-cycle seat whose
-#: last cycle ended in `pause` "ended_early_success", and smoke16 read a
+#: last cycle ended in `pause` "ended_early_success", and a test launch read a
 #: `cycles_completed` the manifest never had).
 CYCLE_DEFINITION = ("a cycle is a stretch of the transcript between two `session(action=\"wait\")` "
                     "groups (consecutive waits count once; the run's start and end bound the first "
@@ -961,7 +961,7 @@ CYCLE_DEFINITION = ("a cycle is a stretch of the transcript between two `session
 
 class CycleCounter:
     """CYCLE_DEFINITION, fed one stream-json line at a time by the transcript
-    drain. ONE counter for the run's cycle stop and the manifest (L18 round 3):
+    drain. ONE counter for the run's cycle stop and the manifest:
     `_Watch` halts the run when `closed` reaches the cycles asked for and then
     freezes this counter, and the manifest's `cycles_completed` is `result()` of
     this same object. A line claude writes after the halt (a call that was in
@@ -1034,8 +1034,8 @@ HORIZON_START_ENV = "CK3_EPISODE_HORIZON_START"
 HORIZON_END_ENV = "CK3_EPISODE_HORIZON_END"
 SESSION_ID_ENV = "CK3_SESSION_ID"
 
-#: 2026.12.4 (owner ruling: free running; the run brings a seat back). Under an
-#: experiment cell (HORIZON_START_ENV set) a seat whose claude ends before the
+#: 2026.12.4 (free running: the run brings a seat back). Under an
+#: scheduled run (HORIZON_START_ENV set) a seat whose claude ends before the
 #: run stops it (an `end_turn` after a cycle summary, the max-turns limit, any
 #: exit that is not the run's own stop) is resumed: `claude --resume
 #: <session_id>` with the same MCP config and flags and this one text, at most
@@ -1048,11 +1048,11 @@ EXIT_CONTINUATIONS_EXHAUSTED = 3
 STOP_CONTINUATIONS_EXHAUSTED = "continuations_exhausted"
 #: The other exit-3 stop: claude ended and its transcript names no session to resume.
 STOP_CONTINUATION_WITHOUT_SESSION = "continuation_without_session"
-#: fix10: claude came up twice in a row without the ck3 server's tools.
+#: claude came up twice in a row without the ck3 server's tools.
 STOP_SURFACE_FAILED = "seat_surface_failed"
-#: fix10: a failed start is restarted this many times before the run stops.
+#: a failed start is restarted this many times before the run stops.
 SURFACE_RESTARTS = 1
-#: fix10: Claude Code's MCP server start timeout (ms) for a run's claude, unless
+#: Claude Code's MCP server start timeout (ms) for a run's claude, unless
 #: the caller set one: under six seats a server's handshake and pre-bind could
 #: outlast the default, and the server came up `failed` with no tools.
 MCP_START_TIMEOUT_MS = "60000"
@@ -1108,7 +1108,7 @@ def carried_rulers(release: dict | None, resumed: dict | None, sink: str | None)
 
 
 def in_cell(environ=None) -> bool:
-    """An experiment cell's seat: the harness set the horizon start."""
+    """A scheduled run's seat (a cell's): the harness set the horizon start."""
     env = os.environ if environ is None else environ
     return bool(str(env.get(HORIZON_START_ENV) or "").strip())
 
@@ -1136,8 +1136,8 @@ def last_claude_session(path: Path) -> tuple[str | None, str | None, str | None]
 
 
 def resume_argv(argv: list[str], prompt: str, session_id: str, text: str = CONTINUATION_TEXT) -> list[str]:
-    """The run's own claude argv with the continuation text (and, since lane
-    v4sees, any messages delivered at the turn's start: `turn_prompt`) for its
+    """The run's own claude argv with the continuation text (and any
+    messages delivered at the turn's start: `turn_prompt`) for its
     prompt and `--resume <session_id>`: the same MCP config, model, turn limit
     and flags."""
     out = list(argv)
@@ -1146,14 +1146,14 @@ def resume_argv(argv: list[str], prompt: str, session_id: str, text: str = CONTI
     return out[:i + 1] + ["--resume", session_id] + out[i + 1:]
 
 
-#: Lane v4sees (seat review problem 11: "the per-cycle resume text is not
-#: recorded"). Every turn's prompt is a row of `<stamp>.turns.jsonl` beside the
+#: The per-cycle resume text is recorded: every
+#: turn's prompt is a row of `<stamp>.turns.jsonl` beside the
 #: transcript: turn 0 the run's prompt, turn k the k-th continuation, each with
 #: the game date, the cycle (cycle_cadence.schedule_position, the cell's cycle
 #: authority), the text verbatim and its sha256, and the messages delivered in
 #: it. The live-state hook writes what it injected at each prompt to
 #: `<stamp>.hook.jsonl` (HOOK_STATE_OUT_ENV, read by ck3agent/hooks/inject_state.py;
-#: the mirror is checked). The cell bundles both (scripts/dry_cell.py `collect`).
+#: the mirror is checked). A cell's bundle holds both.
 TURNS_SUFFIX = ".turns.jsonl"
 HOOK_SUFFIX = ".hook.jsonl"
 HOOK_STATE_OUT_ENV = "CK3_HOOK_STATE_OUT"
@@ -1220,7 +1220,7 @@ def turn_row(turn: int, kind: str, text: str, game_date: str | None, environ, **
 
 
 class SurfaceSeen:
-    """fix10 (v4 pilot 2, COUNCIL: 31 duke starts came up `ck3:failed` with
+    """A start can come up without its game tools (in one pilot 31 duke starts came up `ck3:failed` with
     ZERO game tools and each then ran a whole turn blind). Read off the
     transcript as the drain copies it: every `system/init` of this run's claude
     is checked for the ck3 MCP server `connected` and at least one of its tools.
@@ -1272,7 +1272,7 @@ class SurfaceSeen:
 
 
 class HorizonSeen:
-    """2026.12.4 (PLAN §P decision 4): the server's own word that the episode's
+    """The server's own word that the episode's
     horizon is reached, read off the transcript as the drain copies it. A
     `session` reply of this run's ck3 server whose result says
     `horizon_reached: true` (a cell wait that ended at the horizon) or whose
@@ -1345,17 +1345,17 @@ def count_cycles(lines) -> dict:
 
 #: THE RULE the manifest's `total_cost_usd` is computed under, stamped beside it
 #: (`total_cost_usd_rule`) so a reader can tell a value summed under the old rule
-#: from one computed under this one. Established from the v3reg2 bundles' own
-#: result events (seat-review.md problem 15): a resumed claude session (`--resume
+#: from one computed under this one. Established from recorded bundles' own
+#: result events: a resumed claude session (`--resume
 #: <id>`, one result event per process) reports `total_cost_usd` CUMULATIVE over
-#: the session (s3 D1: 40 events, one session id, 0.21, 0.24, 0.26 ... 1.575),
+#: the session (one seat: 40 events, one session id, 0.21, 0.24, 0.26 ... 1.575),
 #: while `num_turns` is the process's own (8, 3, 3 ... 5; K: 71 then 46). So the
 #: run's cost is the LAST value of each session, summed over its sessions; the
-#: turns stay a sum over processes. The old rule summed every event's cost (s3 D1
+#: turns stay a sum over processes. The old rule summed every event's cost (that seat:
 #: 32.16 for a session that cost 1.575). A session whose values go DOWN is not
 #: cumulative and its cost is not established: the field then says so (a string,
-#: never a number a reader would add up). The ck3bench collect mirrors this name
-#: (scripts/dry_cell.py COST_RULE, checked by scripts/test_dry_cell.py).
+#: never a number a reader would add up). The research tree's cell collector mirrors this name
+#: (in the research tree's cell collector, where a test checks the mirror).
 COST_RULE = "last_cumulative_per_claude_session/v1"
 
 
@@ -1465,8 +1465,8 @@ class _Watch(threading.Thread):
     run swaps in a resumed claude (`proc`, under `lock`) and this one watch
     stops whichever is running.
 
-    The cycle count is the harness's, not the prompt's (L18 round 2, owner
-    ruling): `counter` is the CycleCounter the transcript drain feeds, and the
+    The cycle count is the harness's, not the prompt's (a
+    fixed rule): `counter` is the CycleCounter the transcript drain feeds, and the
     run stops when it has closed `cycles` cycles. One control session for the
     whole run, not one per poll: `link`, shared with `ck3agent run`, which
     closes it.
@@ -1518,7 +1518,7 @@ class _Watch(threading.Thread):
 
     def _halt(self, reason: str) -> None:   # not _stop: Thread.join() calls Thread._stop on 3.11/3.12
         # The count the stop acted on is the count the manifest records: freeze
-        # it before claude can write another call (L18 round 3).
+        # it before claude can write another call.
         with self.lock:
             self.reason = reason
             proc = self.proc
@@ -1632,8 +1632,8 @@ def _copy_range(src: Path, start: int, dst: Path) -> dict:
 
 
 def own_action_rows(data: bytes, sessions) -> tuple[bytes, dict]:
-    """fix10 (v4 pilot 2: each seat's bundled actions.jsonl held ~20 sessions'
-    rows, every seat's): the rows of the shared action log whose `session_id`
+    """A pilot's bundled actions.jsonl held ~20 sessions'
+    rows, every seat's, for each seat: the rows of the shared action log whose `session_id`
     is one of this seat's sessions (the server's session record, `sessions`),
     and the count of what was left out. A row that does not parse, or names no
     session, is never this seat's: counted as `unattributed`, not copied."""
@@ -1735,14 +1735,14 @@ RESUMABLE = ("detached", "lost")
 
 
 def _handover(paths: dict, sock: str, link: br.Link) -> tuple[dict | None, dict | None]:
-    """2026.12.5: (the old server's release record, the hand-over of its session).
+    """(The old server's release record, the hand-over of its session).
 
     A continuation HANDS the seat's bridge session to the resumed claude's new
     server instead of releasing it. Releasing could not work in a cell: the
     bridge pins a dropped seat's claims and refuses a control session's last
     claim (`last_claim_of_control_session`), so the old session kept the ruler
-    and the new server's fresh session was refused `owned_by_other` (v3 pilot
-    smoke, K unbound from 867.10.01). The session record (CK3_SESSION_OUT) is
+    and the new server's fresh session was refused `owned_by_other` (seen in a
+    pilot, K unbound from 867.10.01). The session record (CK3_SESSION_OUT) is
     left in place: the new server reads its token before its first handshake
     and resumes that session, claims intact. This waits until the bridge shows
     the old session not attached, since an attached session is not resumable.
@@ -1787,7 +1787,7 @@ def hold_run_lock(base: Path) -> int | None:
 
 
 def adopt_stale_session(runs: Path, own: Path, link: br.Link) -> dict | None:
-    """2026.12.5: the bridge session an EARLIER run of this play directory left
+    """The bridge session an EARLIER run of this play directory left
     holding the seat, moved to this run's session record (`own`) so this run's
     server resumes it; None when there is none.
 
@@ -1847,7 +1847,7 @@ def _clean(rec: dict | None) -> bool:
     return bool(rec) and not rec.get("error") and not rec.get("refused")
 
 
-#: The bridge's refusal to empty a control session (dispatch_router.cpp, ck-cwal).
+#: The bridge's refusal to empty a control session (dispatch_router.cpp).
 #: Not a failed release: in free play the session's close frees that ruler, and
 #: the teardown's ruler check below is what verifies it.
 LAST_CLAIM = "last_claim_of_control_session"
@@ -1929,8 +1929,8 @@ def _bound_when(rl: dict) -> str:
     return out
 
 
-#: 2026.12.5 (draft smoke): a `ck3agent run` SIGKILLed left its claude playing
-#: on to the horizon (~108 s in smoke5) with nobody to stop it. On Linux the
+#: A `ck3agent run` SIGKILLed left its claude playing
+#: on to the horizon (~108 s in a test) with nobody to stop it. On Linux the
 #: claude the run spawns asks the kernel for SIGTERM when the run dies
 #: (prctl PR_SET_PDEATHSIG, which survives execve), through this shim run as
 #: the child before it execs claude: the pid, the exe and the argv after the
@@ -1951,7 +1951,7 @@ _PDEATHSIG_SHIM = (
     "    sys.exit(143)\n"
     "os.execvp(sys.argv[3], sys.argv[3:])\n")
 #: The shim's line on claude's stderr (the run's <stamp>.stderr.log) when the
-#: kernel would not take the request (r3 witness item 3: the return used to be
+#: kernel would not take the request (the return used to be
 #: ignored, so the fallback to the old behaviour was silent). It names the
 #: step and the errno or exception class, nothing else.
 PDEATHSIG_FAILED = ("claude will NOT stop when the run dies: prctl(PR_SET_PDEATHSIG) failed; "
@@ -2020,7 +2020,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         ("release", ".release.json"), ("session", ".session.json"),
         ("turns", TURNS_SUFFIX), ("hook", HOOK_SUFFIX))}
     paths["prompt"].write_text(prompt, encoding="utf-8")
-    # 2026.12.4 (cell0 gap 11): the seat's session id, which the server writes
+    # The seat's session id, which the server writes
     # into every lineage row (seat_session_id). A harness's declared id wins;
     # otherwise the run's own record names it: "run-<stamp>", the stamp every
     # file of this run carries. The manifest records which.
@@ -2040,7 +2040,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     # variable into the play directory's settings for interactive sessions.
     # CK3_SESSION_OUT is also this seat's identity for the live-state hook, which
     # claude runs as its child: the hook reads its ruler from THIS session's record
-    # and never from the bridge's global primary, another seat's (L18-C).
+    # and never from the bridge's global primary, another seat's.
     env = dict(os.environ, CK3_TOOL_SURFACE_OUT=str(paths["tools"]),
                CK3_SESSION_OUT=str(paths["session"]),
                CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS="0")
@@ -2056,7 +2056,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     # end date and the teardown. Closed between the start and the end unless the
     # watcher holds it: an idle session collects the bridge's pings for hours.
     link = br.Link(sock, mode="control")
-    # 2026.12.5: a dead earlier run's session that still holds this seat is
+    # A dead earlier run's session that still holds this seat is
     # resumed by this run's server, with the rulers it holds.
     adopted = adopt_stale_session(runs, paths["session"], link) if run_lock is not None else None
     if adopted and _id_list(adopted.get("claims")):
@@ -2073,7 +2073,7 @@ def cmd_run(a: argparse.Namespace) -> int:
         "start_game_date": br.game_date(sock, link),
         "turns_file": str(paths["turns"]), "hook_file": str(paths["hook"]),
         "adopted_session": adopted,
-        # 2026.12.5: whether claude is spawned to die with the run (the shim),
+        # Whether claude is spawned to die with the run (the shim),
         # and why not; a failed prctl inside the shim is a line on stderr.log
         "claude_dies_with_run": dict(zip(("shim", "reason"), pdeathsig_shim_available())),
     }
@@ -2099,7 +2099,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     err = paths["stderr"].open("w", encoding="utf-8")
     old_signals = _set_signals(gate, with_int=signal.getsignal(signal.SIGINT) is signal.default_int_handler)
     record_turn(paths["turns"], turn_row(0, TURN_INITIAL, prompt, manifest["start_game_date"], env))
-    last_argv, last_text = argv, prompt     # fix10: what a failed start is restarted with
+    last_argv, last_text = argv, prompt     # what a failed start is restarted with
     try:
         gate.held = True
         try:
@@ -2109,7 +2109,7 @@ def cmd_run(a: argparse.Namespace) -> int:
             gate.held = False
         gate.release()
         if cell:
-            surface.proc = proc             # fix10: only a cell's run stops a blind start
+            surface.proc = proc             # only a cell's run stops a blind start
         drain = _Drain(proc.stdout, fh, echo=not a.quiet, counter=counter, horizon=horizon, surface=surface)
         drain.start()
         if a.until_date or a.wall_seconds or a.cycles or os.environ.get(HORIZON_END_ENV) or cell:
@@ -2124,12 +2124,12 @@ def cmd_run(a: argparse.Namespace) -> int:
             sid, sub, why = last_claude_session(paths["stream"])
             with watch.lock:
                 # Re-read after the drain: a claude that exited before the drain
-                # fed the server's horizon reply is finished, not resumed (r2 item 2).
+                # fed the server's horizon reply is finished, not resumed.
                 if watch.reason is not None or horizon.reached:
                     break
                 bad, surface.pending = surface.pending, None
                 if bad is not None:
-                    # fix10: claude came up without the ck3 tools and was stopped
+                    # claude came up without the ck3 tools and was stopped
                     # before it ran a turn blind: the same start once more, then
                     # the run stops loudly. Not a continuation (the cap counts
                     # claude ending on its own), but a turn row, so the turn
@@ -2161,14 +2161,14 @@ def cmd_run(a: argparse.Namespace) -> int:
                         stop = STOP_CONTINUATIONS_EXHAUSTED if sid else STOP_CONTINUATION_WITHOUT_SESSION
                         break
                     # Only now, with a resume certain, the old server's records are
-                    # consumed: on any break above the teardown reads them (L23
-                    # witness r3 item 1). 2026.12.5: the old server's bridge session
+                    # consumed: on any break above the teardown reads them.
+                    # The old server's bridge session
                     # is HANDED OVER, not released (_handover): its session record
                     # stays for the new server, which resumes that session with
                     # the seat's claims. The rulers this seat held when its claude
                     # ended are still carried to the new server, which otherwise
                     # pre-binds the DECLARED id: after a death and a rebind that is
-                    # the dead original (r2 item 1). The old server's release record
+                    # the dead original. The old server's release record
                     # (what its session held at exit), else what the bridge lists
                     # for the handed-over session, else the seat's lineage sink.
                     release, handover = _handover(paths, sock, link)
@@ -2245,7 +2245,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 prebind, prebind_wait = srec.get("prebind"), srec.get("prebind_wait")
             except (ValueError, OSError):
                 srec, prebind, prebind_wait = {}, None, None
-            # fix10: the sessions this seat's servers held (the record carries them all)
+            # the sessions this seat's servers held (the record carries them all)
             seat_sessions = [x for x in ((srec if isinstance(srec, dict) else {}).get("sessions") or [])
                              if isinstance(x, str)]
             if isinstance(srec, dict) and isinstance(srec.get("session_id"), str) \
@@ -2253,7 +2253,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 seat_sessions.append(srec["session_id"])
             release, resumed = _release_after(paths, sock, link)
             good = _clean(resumed) if resumed is not None else _clean(release)
-            # L20-B: this run's sessions only (the server's, from its session
+            # this run's sessions only (the server's, from its session
             # record); another run's rulers are named and left alone.
             own_sessions = [s for s in ((srec if isinstance(srec, dict) else {}).get("session_id"),
                                         (resumed or {}).get("session_id")) if s]
@@ -2267,7 +2267,7 @@ def cmd_run(a: argparse.Namespace) -> int:
                 manifest["cycles_recounted"] = count_cycles(f)["cycles_completed"]
             # Asked for, and met: one comparison, here, so no reader re-derives it.
             # --cycles 0 asks for no count, so there is nothing to meet (null,
-            # never a vacuous true: L23 witness item 2).
+            # never a vacuous true).
             manifest["cycles_met"] = manifest["cycles_completed"] >= a.cycles if a.cycles else None
             manifest["horizon_reached"] = horizon.reached
             with contextlib.suppress(OSError):
@@ -2504,7 +2504,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--until-date", type=parse_date, metavar="Y.M.D", help="stop at this game date")
     s.add_argument("--wall-seconds", type=int, metavar="N", help="stop after N seconds of wall time")
     s.add_argument("--continuations", type=int, default=DEFAULT_CONTINUATIONS, metavar="N",
-                   help=f"in an experiment cell (CK3_EPISODE_HORIZON_START set), resume a session that "
+                   help=f"in a scheduled run (CK3_EPISODE_HORIZON_START set), resume a session that "
                         f"ends before the run stops it at most N times (default {DEFAULT_CONTINUATIONS})")
     s.add_argument("--dangerously-skip-permissions", dest="skip_permissions", action="store_true",
                    help="no allow-list: Claude may run any tool")

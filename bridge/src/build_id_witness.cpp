@@ -1,6 +1,6 @@
 // build_id_witness.cpp — storage for what the bridge OBSERVED, and under what
-// rule it was observing. See build_id_witness.h for why this exists
-// (leg (e)).
+// rule it was observing. See build_id_witness.h for why this exists.
+//
 //
 // Its own translation unit, and not a corner of runtime_resolver.cpp, for one
 // reason: ipc_server.cpp has to READ it to build the handshake ack, and
@@ -29,7 +29,7 @@ namespace {
 // the strictness away microseconds after they were recorded. That is
 // init_order.h's failure shape 1 exactly, and it would present as a handshake
 // reporting `unchecked` and an empty strictness env forever — a provenance
-// witness silently erased, which is this bead's own defect arriving through the
+// witness silently erased, which is this code's own defect arriving through the
 // back door. bridge/test/test_init_order.cpp asserts the invariant against the
 // BUILT .so and named this file when it was missing.
 BuildIdWitness g_witness CK3_EARLY_INIT;
@@ -78,7 +78,7 @@ void resolve_build_id_strictness(BuildIdWitness& w) {
     }
 
     // UNCHANGED BEHAVIOUR, STATED: the environment overrides the compile-time
-    // default in BOTH directions. This bead records that fact; it does not
+    // default in BOTH directions. This code records that fact; it does not
     // re-rule it.
     //
     // AND THE FLAG CURRENTLY GATES NOTHING IN THE BRIDGE. Its only consumer is

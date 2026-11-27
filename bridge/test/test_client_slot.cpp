@@ -12,7 +12,7 @@
 // merely as an assertion about a pointer.
 //
 // NEGATIVE CONTROL.  The same source compiled with -DCK3_SLOT_LEGACY_FD_GUARD
-// restores the pre-fix guard and MUST fail:
+// restores the superseded guard and MUST fail:
 //   * T1 dies with SIGSEGV in the exact statement the production core faulted
 //     in (clearing a std::string whose _M_p is still null),
 //   * T5 reports a session orphaned on a released slot.
@@ -38,9 +38,9 @@
 #include <unistd.h>
 
 // Stub globals referenced by bridge.h / session.cpp when compiled standalone
-// (same set test_session_registry.cpp provides). Added the last
-// three: session.cpp now links world_identity.cpp / world_epoch.cpp, because
-// the RESUME decision is taken with judge_same_save rather than a
+// (same set test_session_registry.cpp provides).  The last
+// three are there because session.cpp now links world_identity.cpp / world_epoch.cpp, because
+// the RESUME decision is taken with the judge_same_save() rather than a
 // second copy of the rule, and world_epoch.cpp does guarded reads.
 namespace bridge {
 FILE* g_logfile = nullptr;
@@ -111,7 +111,7 @@ static int t1_child() {
 }
 
 static void t1_never_constructed_slot() {
-    std::printf("T1 release of a NEVER-CONSTRUCTED slot (the ck-xqol core)\n");
+    std::printf("T1 release of a NEVER-CONSTRUCTED slot (the core)\n");
     std::fflush(stdout);
     pid_t pid = fork();
     if (pid == 0) {
@@ -253,7 +253,7 @@ static void t4_release_races_accept() {
 // it to whoever now owns the slot.
 //
 // Failure here is a LEAK, not a crash, which is why it is worth its own test:
-// the pre-fix build passes T2/T3/T4 and fails only this.
+// the superseded build passes T2/T3/T4 and fails only this.
 // ───────────────────────────────────────────────────────────────────────────
 static void t5_release_races_handshake() {
     std::printf("T5 release RACING a handshake attach\n");
@@ -393,7 +393,7 @@ static void t6_startup_connect_then_disconnect() {
     struct pollfd pfd { s.fd, POLLIN, 0 };
     check(poll(&pfd, 1, 500) > 0, "poll reports the dropped peer");
     char buf[64];
-    check(::read(s.fd, buf, sizeof(buf)) == 0, "read returns EOF, as on the node");
+    check(::read(s.fd, buf, sizeof(buf)) == 0, "read returns EOF, as a live socket does");
 
     g_closed_count.store(0);
     g_last_closed_fd.store(-12345);
@@ -412,7 +412,7 @@ static void t6_startup_connect_then_disconnect() {
 }
 
 int main() {
-    std::printf("ck-xqol: IPC client-slot lifecycle\n");
+    std::printf("IPC client-slot lifecycle\n");
 #ifdef CK3_SLOT_LEGACY_FD_GUARD
     std::printf("*** NEGATIVE CONTROL BUILD — the pre-fix guard is restored; "
                 "this binary is EXPECTED to fail ***\n");

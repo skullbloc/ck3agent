@@ -23,7 +23,7 @@ import bridge_client as bc  # noqa: E402
 from test_handshake_v2 import FakeBridgeSocket  # noqa: E402
 
 #: the summary fields as probe-idle.out shows them (lines 4, 44, 51, 58)
-SMOKE17 = {"bridge_version": "2026.12.0", "build_id_status": "match",
+RECORDED_ACK = {"bridge_version": "2026.12.0", "build_id_status": "match",
            "build_git_sha": "7f3bf3f29104", "session_id": "sess_000000004b6c821b_0000001c"}
 
 
@@ -35,14 +35,14 @@ class AckBridge(FakeBridgeSocket):
         super()._handle(msg)
         if msg.get("type") == "handshake" and self._out:
             ack = json.loads(self._out.decode().splitlines()[-1])
-            ack.update(SMOKE17)
+            ack.update(RECORDED_ACK)
             ack.update({f"capability_{i}": True for i in range(40)})
             self._out = (json.dumps(ack) + "\n").encode()
 
 
 def _client(monkeypatch, tmp_path):
     monkeypatch.setenv("CK3_TELE", str(tmp_path / "tele"))
-    fake = AckBridge(session_id=SMOKE17["session_id"])
+    fake = AckBridge(session_id=RECORDED_ACK["session_id"])
     client = bc.BridgeClient("/nonexistent/ck3-agent.sock")
     client.sock = fake  # type: ignore[assignment]
     return client
@@ -58,7 +58,7 @@ def test_the_start_line_is_one_line_naming_the_four_fields(monkeypatch, tmp_path
     assert len(lines) == 1, lines
     line = lines[0]
     assert "\n" not in line, line
-    for k, v in SMOKE17.items():
+    for k, v in RECORDED_ACK.items():
         assert f"{k}={v}" in line, (k, line)
     assert len(line) < 300, len(line)
 
@@ -77,7 +77,7 @@ def test_an_unwritable_dir_is_said_and_the_ack_is_still_at_debug(monkeypatch, tm
     blocker = tmp_path / "file"
     blocker.write_text("x")
     monkeypatch.setenv("CK3_TELE", str(blocker / "tele"))   # a dir under a file: unwritable
-    fake = AckBridge(session_id=SMOKE17["session_id"])
+    fake = AckBridge(session_id=RECORDED_ACK["session_id"])
     client = bc.BridgeClient("/nonexistent/ck3-agent.sock")
     client.sock = fake  # type: ignore[assignment]
     with caplog.at_level(logging.DEBUG, logger="bridge_client"):
@@ -104,7 +104,7 @@ def test_the_kept_ack_has_no_resume_token_and_the_debug_line_neither(monkeypatch
     assert ack.get("resume_token"), "the fake must mint a token for this row to mean anything"
     kept = json.loads((tmp_path / "tele" / bc.HANDSHAKE_ACK_FILE).read_text())
     assert "resume_token" not in kept, kept.keys()
-    assert kept["session_id"] == SMOKE17["session_id"]
+    assert kept["session_id"] == RECORDED_ACK["session_id"]
     for r in caplog.records:
         assert ack["resume_token"] not in r.getMessage(), r.getMessage()
 
@@ -135,7 +135,7 @@ def test_a_symlinked_tmp_is_not_followed(monkeypatch, tmp_path):
 
 def test_the_overview_resource_withholds_the_resume_token():
     """ck3://state/overview carries the ack less HANDSHAKE_ACK_WITHHELD: a resource
-    body ends up in the client's transcript. Red before follow-up b: the
+    body ends up in the client's transcript. Red without the rule: the
     raw handshake_info (token included) was returned."""
     import types
     import mcp_server  # noqa: E402

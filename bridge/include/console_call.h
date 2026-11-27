@@ -1,7 +1,7 @@
 #pragma once
 // console_call.h — the engine's console-handler ABI, one definition for every call
 // the bridge makes into a console handler (do_script_action -> CMD_EFFECT,
-// do_set_doctrine -> CMD_ADD_DOCTRINE)., 2026-11-15.
+// do_set_doctrine -> CMD_ADD_DOCTRINE).
 //
 //   SResult* handler(SResult* out, const SCommandData* data)
 //     data+0x00  the argument array: one game std::string per argument (stride 0x20)
@@ -96,7 +96,7 @@ struct Result {
 };
 static_assert(offsetof(Result, msg) == 8, "the message at +8");
 #else
-// Linux keeps the shape it was proven live with: a libstdc++
+// Linux keeps the shape a live game proved: a libstdc++
 // std::string the game fills and the bridge's destructor frees (one libstdc++
 // and one allocator in the process).
 struct Result {

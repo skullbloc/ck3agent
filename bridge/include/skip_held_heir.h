@@ -1,14 +1,14 @@
 // Count every skip-held-heir firing, and say zero out loud.
 //
-// THE RULE (progenitor, "i approve with recommended option"; relayed by bt-bbd):
+// THE RULE:
 // on a succession collision — the game's heir for a controlled character is
 // ALREADY held by another participant session, so claim_character() fails and
-// that session loses its seat (arma6's six->five) — the losing session instead
+// that session loses its seat (a council of six seats goes on with five) — the losing session instead
 // CONTINUES under the next eligible heir in the GAME'S OWN succession order who
 // is not held by anyone. Seat count stays six, so the instrument does not change
 // across arms and there is no post-treatment variable to split on.
 //
-// WHY THIS COUNTER IS REQUIRED AND NOT OPTIONAL (correction of an
+// WHY THIS COUNTER IS REQUIRED AND NOT OPTIONAL (the correction of an
 // overclaim): the rule is applied IDENTICALLY to every arm, but it FIRES at each
 // arm's own collision rate, which is UNMEASURED — one instance so far. So the
 // residual asymmetry is bounded and declared, and it must be COUNTED rather than
@@ -44,12 +44,12 @@ inline std::atomic<uint64_t> g_skip_held_heir_exhausted{0};
 // reader can recover either. A census reads this instead of parsing the message.
 inline std::atomic<uint64_t> g_skip_held_heir_exhausted_cap_full{0};
 
-// Records ONE firing with everything bt-bbd asked for: which session, the
+// Records ONE firing with everything a reader needs: which session, the
 // character it WOULD have inherited, the one it RECEIVED, and where that one sat
 // in the game's own succession order.
 //
 // `received` is also what the caller must write into session->heir_character_id.
-// drove their predicate on both options: recording the REDIRECTED heir
+// Their predicate, driven on both options: recording the REDIRECTED heir
 // grades as succession; recording the PRIMARY heir while claiming the redirect
 // grades as `change` and INVALIDATES the episode. The invariant their witness
 // reads is `heir_character_id == the character actually claimed`, so the
@@ -63,14 +63,14 @@ inline void record_skip_held_heir(const char* session_id, uint32_t dead,
             "[CK3-Bridge] SKIP_HELD_HEIR: session %s, %u died; heir %u was "
             "already held by another participant, so this session received %u "
             "(position %d in the game's succession order). Seat retained "
-            "(ck-7rk6)\n",
+            "\n",
             session_id ? session_id : "?", dead, would_have, received, order_index);
         fflush(g_logfile);
     }
 }
 
 // Records the REFUSAL: no unheld heir existed. The seat ends. No character is
-// invented — bt-bbd's explicit instruction, and the alternative (handing the
+// invented — by design, and the alternative (handing the
 // session someone outside the game's succession order) would make the bridge the
 // author of a succession the game did not perform.
 // THE REASON IS A PARAMETER, because the old message asserted a
@@ -93,7 +93,7 @@ inline void record_skip_held_heir_exhausted(const char* session_id, uint32_t dea
             "[CK3-Bridge] SKIP_HELD_HEIR EXHAUSTED: session %s, %u died; heir %u "
             "could not be taken (%s) and no candidate in the game's succession "
             "order could either (%d examined). THE SEAT ENDS — no character "
-            "invented; this episode must be flagged (ck-7rk6)\n",
+            "invented; this episode must be flagged\n",
             session_id ? session_id : "?", dead, would_have, why, order_len);
         fflush(g_logfile);
     }
@@ -103,8 +103,8 @@ inline void record_skip_held_heir_exhausted(const char* session_id, uint32_t dea
 //
 // Extracted so the synthetic fixture can DRIVE it. Written inline in the tick
 // loop this was a condition a test could only grep for, and a grep cannot tell
-// a live condition from a defeated one — the lesson that cost two lanes on
-// Arma6 does NOT exercise the release-before-death path (its release
+// a live condition from a defeated one — the lesson of
+// A recorded run does NOT exercise the release-before-death path (its release
 // follows the death by 624 failed handoff attempts), so a synthetic fixture is
 // the ONLY thing that can cover it.
 //
@@ -122,7 +122,7 @@ inline void record_skip_held_heir_exhausted(const char* session_id, uint32_t dea
 //: RELEASE — "the agent chose to stop steering a LIVING character. NOT a
 //: succession" versus "the agent released its own CORPSE and blinded the handoff.
 //: Recover it" — and the test performed was `last_steered_is_dead` evaluated AT
-//: HANDOFF TIME. Those agree only while nothing dies in between. In set28 ep-03
+//: HANDOFF TIME. Those agree only while nothing dies in between. In a recorded episode
 //: the agent released 36552 alive at tick ~3200; it died later; and at tick ~6300
 //: the recovery branch fired and seized it, 3100 ticks after a deliberate drop.
 //: The comment was a literal description of what the code was supposed to do.
@@ -133,7 +133,7 @@ inline void record_skip_held_heir_exhausted(const char* session_id, uint32_t dea
 //: caller that does not know must be able to SAY it does not know, and Unknown
 //: must mean NO RECOVERY: inventing an heir for a character whose release we
 //: cannot characterise would seize one the agent may have dropped on purpose, and
-//: that is the failure this bead exists to stop. Absence is a state, never a
+//: that is the failure this code exists to stop. Absence is a state, never a
 //: default that happens to look like an answer.
 enum class ReleaseSubjectState : uint8_t {
     Unknown = 0,   //: nobody recorded it — do NOT recover
@@ -144,7 +144,7 @@ enum class ReleaseSubjectState : uint8_t {
     //:
     //: do_set_controlled_character claims a character, then checks the roster; if the
     //: roster diverged it calls release_character to undo the claim. The seat NEVER
-    //: STEERED that character. census found this path reaching the handoff
+    //: STEERED that character. The census found this path reaching the handoff
     //: with Unknown — but the worse half is that it also overwrote
     //: last_steered_character_id with the undone id, and that field is set only on the
     //: way out of primary and never cleared, so a genuine earlier value was destroyed
@@ -154,7 +154,7 @@ enum class ReleaseSubjectState : uint8_t {
     //: state are written as a pair inside one session->mutex and one
     //: `primary_character_id == char_id` guard, so they cannot be torn. A blinded
     //: handoff returns 0; it can never recover the WRONG character. That ceiling is
-    //: what are negotiating over.
+    //: what a claim rollback and a seat release negotiate over.
     //:
     //: So this state means: update the primary, because the claim really is gone, but
     //: record NOTHING about a release that did not happen.
@@ -218,7 +218,7 @@ inline uint32_t handoff_subject(uint32_t primary_character_id,
 // releasing a character frees a candidate. A permanent skip would wedge a
 // handoff that becomes resolvable, which is a worse defect than the noise.
 //
-// Extracted for the reason extracted handoff_subject: written inline in
+// Extracted for the reason handoff_subject was extracted: written inline in
 // the tick loop this is a condition a test can only grep for, and a grep cannot
 // tell a live condition from a defeated one.
 struct HandoffBackoff {
@@ -238,12 +238,12 @@ inline constexpr uint32_t kHandoffBackoffMax = 1024u;
 //: succession is never delayed by a stale entry.
 //: DOES THE HEIR'S NATIVE AI GET DISABLED AT A HANDOFF?
 //:
-//: Extracted for the reason extracted handoff_subject: written inline in
+//: Extracted for the reason handoff_subject was extracted: written inline in
 //: the tick loop this is a condition a test can only GREP for, and a grep cannot
 //: tell a live condition from a defeated one.
 //:
 //: agent_mode IS A PARAMETER IT DELIBERATELY IGNORES. That is not an oversight —
-//: it is what lets a fixture REFUTE the defect. The old code disabled the heir's
+//: it is what lets a fixture REFUTE the hazard. The superseded code disabled the heir's
 //: AI whenever g_agent_mode was true, and g_agent_mode is rebuilt as
 //: `primary != 0`, so it is true in every arm episode with any control session
 //: whatever that session asked for. A signature that could not express the wrong

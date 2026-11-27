@@ -1,12 +1,12 @@
 """A frame the listener does not handle must leave a TRACE.
 
- trace of ep-02: `_bridge_listener`'s type dispatch had branches for
+The trace of a recorded episode: `_bridge_listener`'s type dispatch had branches for
 tick_start, observation, action_result, handshake_ack, notification, ping and
 error — and no `result` branch and no terminal else. The ledger record is
 `"type":"result"`, so one that matched no pending request_id fell through every
 branch and was discarded with NO log line and NO counter.
 
-WHY THAT IS P1 RATHER THAN UNTIDY. ep-02 holds zero ledger frames. Two very
+WHY THAT IS P1 RATHER THAN UNTIDY. That episode holds zero ledger frames. Two very
 different worlds produce that zero — none was ever emitted (the deployed .so
 lacked the emitter), or they arrived and went nowhere — and this client could
 not tell them apart even in principle. An instrument that cannot distinguish
@@ -66,7 +66,7 @@ LEDGER = {"type": "result", "request_id": "not-ours",
 class AnUnmatchedFrameIsWitnessed(unittest.TestCase):
 
     def test_an_unmatched_LEDGER_record_is_counted(self):
-        """THE BEAD. Before the terminal else this frame left nothing behind."""
+        """THE HAZARD. Before the terminal else this frame left nothing behind."""
         st = _run([LEDGER])
         self.assertEqual(st.unhandled_frames.get("result"), 1)
 
@@ -93,7 +93,7 @@ class AnUnmatchedFrameIsWitnessed(unittest.TestCase):
     def test_ABSENT_is_not_ZERO(self):
         """The dict starts EMPTY and is never pre-seeded. `unhandled_frames`
         with no `result` key means none arrived; a 0 would claim a reading
-        nobody took, and this whole bead exists because an absence was read as
+        nobody took, and this whole task exists because an absence was read as
         a measurement."""
         st = _run([{"type": "ping"}])
         self.assertEqual(st.unhandled_frames, {})
@@ -135,7 +135,7 @@ class AnUnmatchedFrameIsWitnessed(unittest.TestCase):
 
 
 
-#: management-ledger record exactly as management_ledger_frame.h builds
+#: The management-ledger record exactly as management_ledger_frame.h builds
 #: it: the caller's id under caller_request_id, no request_id. The
 #: bridge broadcasts one on every set_controlled_character / release_character
 #: for the ARM relay; a live launch carried 53 and logged each as UNMATCHED.

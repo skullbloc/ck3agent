@@ -6,7 +6,7 @@
 // engine-coupled (character lookup, offset headers, /proc/self/mem writes) and
 // cannot be compiled without a CK3 binary. They do not need any of that: they
 // are stdio over two std::unordered_maps. Moving them here makes the whole
-// mechanism — including the negative control, "a DIFFERENT save must
+// Mechanism — including the negative control, "a DIFFERENT save must
 // not restore" — provable on a host with no game running. A guard whose failure
 // case nobody has watched is a guard nobody has tested.
 //
@@ -18,9 +18,9 @@
 // written from the identity declared for the world the locks were set in. The
 // reader takes the SAME judge_same_save() decision the in-process quarantine
 // takes (see world_identity.cpp), and a file with no header — every file
-// written before this change — names no save, so it can never match.
+// written without it — names no save, so it can never match.
 //
-// This is what makes load_personality_locks WIRABLE. filed it as a
+// This is what makes load_personality_locks WIRABLE. It was filed as a
 // hazard precisely because it was an identity-free payload with zero callers:
 // wire it anywhere and the previous run's steering lands on whatever world is
 // loaded next, permanently. It now has exactly one caller,
@@ -241,7 +241,7 @@ bool peek_personality_locks_identity(WorldIdentity* out) {
     if (buf.empty()) return false;
     if (!parse_header(buf.data(), out)) {
         PLOG("personality locks: %s carries no world header — it names no save and "
-             "will never be restored (ck-9fc3)\n", cur_path());
+             "will never be restored\n", cur_path());
         return false;
     }
     return true;

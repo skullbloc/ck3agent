@@ -1,4 +1,4 @@
-"""BridgeClient.connect runs the socket-owner and peer-uid checks.
+"""BridgeClient.connect() runs the socket-owner and peer-uid checks.
 
 A foreign uid needs root to produce, so the uid is forged: os.lstat reports a
 socket owned by another uid, or SO_PEERCRED reports a foreign peer. Each row

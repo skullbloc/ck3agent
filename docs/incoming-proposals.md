@@ -74,7 +74,7 @@ AI answers, as without the mod). Another class is refused `class_not_supported`.
 An offer still open at the first `observe` of the turn after the one that showed
 it is answered with its `default_at_lapse`: `native` for marriage, alliance and
 vassalage, `accept` for a call to war, `decline` for peace. An offer is held at
-most 400 game days in any case. Outside an experiment cell there are no turns,
+most 400 game days in any case. Outside a scheduled run there are no turns,
 and only the 400-day lapse applies.
 
 ## Install it by hand

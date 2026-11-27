@@ -1,4 +1,4 @@
-"""Query(domain="conquest_targets") at its default is
+"""query(domain="conquest_targets") at its default is
 under 15,000 characters as the seat reads it.
 
 THE SMOKE. probe-paused.jsonl line 21 (B4.conq, Cui 13191, 0867.02.20):
@@ -74,7 +74,7 @@ def _bridge_reply() -> dict:
     return res
 
 
-#: 2026.12.0's detail="full" county keys (git show 85be8d78:ck3agent/server/tools.py)
+#: 2026.12.0's detail="full" county keys (the released tools.py)
 OLD_FULL_COUNTY_KEYS = ("county_id", "county_key", "county_name", "holder_id", "holder_name",
                         "holder_top_liege_id", "is_independent", "is_allied", "is_truced",
                         "adjacent", "conquerable_now", "conquerable_now_source",
@@ -91,7 +91,7 @@ def test_CONTROL_the_rebuilt_reply_through_the_old_shape_is_the_smokes_size(brid
     2026.12.0 shape, and it lands within 10% of the 38,481 the smoke measured."""
     env = _query(bridge, detail="full", max_results=25)
     # detail="full" now carries every emitted key; the
-    # 2026.12.0 row is the projection on its own key list (tools.py at 85be8d78)
+    # 2026.12.0 row is the projection on its own key list (tools.py as released then)
     for d in env["result"]["duchies"]:
         d["remaining_counties"] = [{k: rc[k] for k in OLD_FULL_COUNTY_KEYS if k in rc}
                                    for rc in d["remaining_counties"]]
@@ -154,9 +154,25 @@ def test_an_unknown_detail_is_refused_and_nothing_is_read(bridge):
     assert "query_conquest_targets" not in bridge.actions()
 
 
-def test_verbose_is_the_bridge_reply_unchanged(bridge):
+def test_verbose_is_the_bridge_reply_unchanged_while_it_fits(bridge):
+    """Verbose is the bridge's reply as it is up to the asked cap; this recorded one is
+    334 KB (one duchy's remaining_counties is 261 KB), more than a seat's client passes (a
+    125,588-character reply was lost), so the list that holds the bulk is cut and `truncated` counts
+    what was left out; every other row is the bridge's."""
+    small = _bridge_reply()
+    small["duchies"] = small["duchies"][1:4]
+    bridge.replies["query_conquest_targets"] = small
+    env = asyncio.run(ms.query(domain="conquest_targets", character_id=CUI, verbose=True))
+    assert env["result"] == small
     env = _query(bridge, verbose=True)
-    assert env["result"] == _bridge_reply()
+    full = _bridge_reply()
+    t = env["result"].pop("truncated")
+    cuts = {c["list"]: c for c in t["lists"]}
+    cut = cuts["duchies.0.remaining_counties"]
+    assert cut["of"] == len(full["duchies"][0]["remaining_counties"]) and cut["shown"] < cut["of"]
+    assert all(".remaining_counties" in k for k in cuts)
+    assert [d["duchy_id"] for d in env["result"]["duchies"]] == [d["duchy_id"] for d in full["duchies"]]
+    assert len(json.dumps(dict(env["result"], truncated=t))) <= ms.QUERY_REPLY_CAP_ASKED
 
 
 # ── Detail="full" is a superset of the default row ───

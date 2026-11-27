@@ -1,5 +1,5 @@
 // line_watch.h — the PLAYED LINE, followed by the bridge itself, per tick
-// (METERLINE, on follow-up 2).
+// (the played-line meter).
 //
 // THE GAP THIS CLOSES. The growth meter samples every 30 game-days; the heir
 // handoff (`bridge_init.cpp` `check_controlled_handoff`) re-reads a control
@@ -10,7 +10,7 @@
 // with once (an additive `played_line: 1` parameter on the existing
 // `query_character` read — no new action, no new tool) and the bridge follows
 // that line per tick with the SAME decision the handoff uses, seat-independent
-// and session-independent (an E0 episode has neither). Every read with the
+// and session-independent (a null-mode episode has neither). Every read with the
 // parameter returns the watch's state (`emit` in query_handlers.cpp).
 //
 // ONE DECISION. `successor` below is what `check_controlled_handoff` calls too:

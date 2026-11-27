@@ -1,6 +1,6 @@
-"""lane-scheme 2026-10-18: the default-off write gate, read from the code.
+"""The default-off write gate, read from the code.
 
-The persona test (release/REVIEW-2026.10.0-persona-gamer.md, finding 10) found
+A persona test found
 `do(intent="scheme")` refused `experimental_write_disabled` by an allow-list
 that no public doc named, with a summary pointing at a field the reply did not
 carry. Three places now state the gate, and these tests make them agree:
@@ -279,6 +279,8 @@ def test_the_explicit_actor_intents_are_exactly_the_handlers_without_a_fallback(
     bridge handler refuses actor_id <= 0 instead of resolving the controlled
     primary. Read from the handler bodies."""
     handlers = {"scheme": ("action_handlers.cpp", r"bool\s+do_dispatch_scheme_intent\s*\([^)]*\)\s*\{"),
+                # appoint_councillor refuses actor 0 too
+                "appoint": ("action_handlers.cpp", r"bool\s+do_appoint_councillor\s*\([^)]*\)\s*\{"),
                 "faction": ("factions.cpp", r"bool\s+do_dispatch_faction_intent\s*\([^)]*\)\s*\{")}
     for intent, (fname, sig) in handlers.items():
         src = _strip_c_comments((BRIDGE_SRC / fname).read_text(encoding="utf-8"))
@@ -287,8 +289,12 @@ def test_the_explicit_actor_intents_are_exactly_the_handlers_without_a_fallback(
                          body), intent
         assert "resolve_actor(" not in body, intent
     # faction has its own path (factions.do_faction), which always sends the
-    # resolved actor; only the generic dispatch path consults the set.
-    assert set(redesign._EXPLICIT_ACTOR_INTENTS) == {"scheme"}
+    # resolved actor. The generic dispatch path no longer keeps a set of
+    # the handlers known to refuse actor 0 (it missed create_title, move_capital and
+    # set_obligation_level); it sends the resolved actor for every intent
+    # (dispatch_actor_of; test_do_write_actor.py drives each intent and censuses the handlers).
+    assert not hasattr(redesign, "_EXPLICIT_ACTOR_INTENTS")
+    assert redesign.dispatch_actor_of(0, {"id": 12491}) == 12491
     assert redesign._FACTION_INTENT not in redesign.INTENT_TO_ACT
 
 
@@ -310,9 +316,28 @@ def test_faction_action_is_on_by_default_since_its_live_validation():
 
 
 def test_scheme_action_is_on_by_default_since_its_live_validation():
-    """2026-10-18, lane-scheme: murders created and owned for four rulers across
+    """2026-10-18, murders created and owned for four rulers across
     four timed runs, no fault, engine refusals typed. The gate list, the server
     mirror and the operator docs all stopped naming it on the same commit."""
     assert "scheme_action" not in redesign.EXPERIMENTAL_WRITES
     assert "scheme_action" not in _gate_list_from_bridge()
     assert "scheme_action" not in _gate_list_from_doc()
+
+
+# ── strictness control: the Default-off writes table ─────────────────────────
+# The doc test must red on a mutated copy of research.md: a row the bridge does
+# not gate, or the "none are gated" sentence gone from an empty table.
+
+@pytest.mark.parametrize("mutate", [
+    lambda d: d.replace("## Default-off writes\n", "## Default-off writes\n\n| `not_a_gated_write` | x |\n", 1),
+    lambda d: d.replace("No bridge write is off by default", "Some writes are off", 1),
+], ids=["row added", "empty table without its sentence"])
+def test_CONTROL_the_doc_guard_reds_on_a_mutated_copy(mutate, tmp_path, monkeypatch):
+    doc = _doc()
+    bad = mutate(doc)
+    assert bad != doc, "the mutation did not apply (the control would be vacuous)"
+    copy = tmp_path / "research.md"
+    copy.write_text(bad, encoding="utf-8")
+    monkeypatch.setitem(globals(), "_doc", lambda: copy.read_text(encoding="utf-8"))
+    with pytest.raises(AssertionError):
+        test_the_operator_docs_list_exactly_the_gated_writes()

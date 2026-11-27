@@ -1,6 +1,6 @@
 ﻿namespace = ck3agent_policy
 
-# ck3agent standing policies (lane v4act). A seat sets a policy once, through
+# ck3agent standing policies. A seat sets a policy once, through
 # do(intent="set_policy") -> the bridge's set_policy script template, which sets
 # one character variable and fires this event once. The event then re-arms
 # itself every 3 days for as long as the character carries any policy variable,
@@ -16,11 +16,11 @@
 #
 # Each ACTION writes a CK3AGENT_POLICY_* line to debug.log at INFO level, with its
 # scopes: the bridge's query_script_log counts them for the seat and the bundle.
-# The 3-day re-arm itself writes nothing (lane DBGLOG): the game drops every line
-# of a level once 100,000 of that level are logged in a session, and the re-pilot's
+# The 3-day re-arm itself writes nothing: the game drops every line
+# of a level once 100,000 of that level are logged in a session, and a recorded game's
 # per-tick TICK/DATE/scopes lines were 43% of the debug-level lines that filled it
 # at 1088.01.27. info_log, never debug_log (bridge/include/script_templates.h
-# kLogEffect; scripts/policy_mod.py LOG_EFFECT).
+# kLogEffect).
 # Variable names: bridge/include/script_templates.h kPolicies (test_policy_mod.py
 # checks the two agree).
 

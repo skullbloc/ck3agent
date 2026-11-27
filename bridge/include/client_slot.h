@@ -82,7 +82,7 @@ struct ClientSlot {
     // ERASED out from under a live slot (a declared save identity that refutes
     // the world its claims were taken in).  Matching a slot by id is then the
     // only way to find it WITHOUT dereferencing a pointer that may already be
-    // freed — the same lesson drew from `session_id` living inside the
+    // freed — the same lesson the slot release drew from `session_id` living inside the
     // object destroy() erases, applied one step earlier.
     std::string session_id;
     // NB: NDJSON line accumulation + keepalive counters are reader-thread-local
@@ -106,7 +106,7 @@ inline bool slot_is_open(const ClientSlot& s) {
 // MATCHES BY ID, NEVER BY POINTER. A session can be erased out from under a
 // live slot, so the by-value session_id copy is the only key that
 // does not dereference storage that may already be freed — the same lesson
-// drew about session_id living inside the object destroy erases.
+// drawn from session_id living inside the object destroy() erases.
 //
 // Returns -1 for "no live slot holds this session", which the caller MUST treat
 // as "fall back to broadcast" rather than "drop the reply": an unsolicited

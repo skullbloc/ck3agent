@@ -234,7 +234,7 @@ static std::vector<uint32_t> resolve_seeds(const char* params_json, std::string*
     }
 
     if (scope == "region") {
-        if (note) *note = "scope=region needs the baked region table (not in the P1 artifact)";
+        if (note) *note = "scope=region needs a region table, and this baked map carries none";
         return seeds;
     }
 
@@ -365,7 +365,7 @@ void map_graph_init() {
 // ───────────────────────────── The handler ───────────────────────────────────
 bool do_query_map_graph(const char* params_json, std::string* out) {
     FaultScope fault_scope("query_map_graph", out);
-    // cycle-3 crash-fix (was: attempt-25 game-thread fault, crash ck3_20260630_115545):
+    // Game-thread only (a read from another thread faulted in a recorded game):
     // do_query_map_graph drains on the GAME THREAD (query_map_graph is in is_game_state_query
     // → served inline when PAUSED on the IPC reader thread; falls through to the on_tick
     // g_msg_queue drain when UNPAUSED, same proven path as query_dejure_progress). On the game

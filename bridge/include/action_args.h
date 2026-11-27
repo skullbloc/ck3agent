@@ -15,11 +15,11 @@
 // client calls it, and — if it was not written to tell "absent" from "empty" —
 // answers success with an empty payload.
 //
-// That is exactly how shipped: `check` returned
+// That is exactly how the `check` verb once shipped: `check` returned
 // {"success":true,"results":[]} for every ticket in every state, making the
 // async API's whole retrieval path non-functional while looking healthy. It is
-// the same shape that bit `target_ids` (query_handlers.cpp, "N4 fix",
-// surface-audit 2026-08-01), which was fixed in place and so taught nobody.
+// the same shape that bit `target_ids` (query_handlers.cpp),
+// which was fixed in place and so taught nobody.
 //
 // This header is the shared fix site, deliberately engine-free so it can be
 // unit-tested on a host against real client framing.

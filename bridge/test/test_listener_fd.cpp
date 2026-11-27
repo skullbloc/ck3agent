@@ -1,15 +1,15 @@
-// test_listener_fd.cpp — (node): the bridge socket lives only in the game.
+// test_listener_fd.cpp — the bridge socket lives only in the game.
 //
 // 1. exe_is_game: the game's binary, not its CrashReporter or a near name.
 // 2. A listener made by listen_socket_cloexec is NOT inherited across exec:
-//    a child shell asks /proc for the descriptor. The earlier socket was
+//    a child shell asks /proc for the descriptor. The superseded socket() was
 //    inherited, and CrashReporter (fork + exec from CK3's crash handler) kept
 //    the socket accepting with no bridge behind it.
 // 3. close_listeners_bound_to(P) closes this process's listener on P (and so
 //    a connect to P is refused) and leaves a listener on another path open.
 // 4. accept_cloexec gives the accepted descriptor FD_CLOEXEC.
 // The negative control (test_listener_fd_legacy_control, -DCK3_LISTENER_LEGACY:
-// the earlier calls) must fail EXACTLY the rows in kLegacyFails and pass every
+// the superseded calls) must fail EXACTLY the rows in kLegacyFails and pass every
 // other row; it exits 0 only then. A crash, an early exit (mkdtemp) or any
 // other set of FAIL rows is a nonzero exit, so ctest runs it as a plain test
 // (not WILL_FAIL, which the mkdtemp early return, rc 2, also satisfied).
@@ -34,7 +34,7 @@ static std::set<std::string> g_failed;
 #define CHECK(c, what) do { ++g_rows; if (c) printf("ok   %s\n", what); \
     else { printf("FAIL %s\n", what); ++g_fail; g_failed.insert(what); } } while (0)
 
-// The rows the earlier calls fail, by name (the legacy control's contract).
+// The rows the superseded calls fail, by name (the legacy control's contract).
 static const char* const kLegacyFails[] = {
     "an exec'd child (CrashReporter) does not inherit the listener",
     "listener is FD_CLOEXEC",
@@ -119,7 +119,7 @@ int main() {
     }
     close(lfd);
 
-    // An inherited listener (made the earlier way) on the bridge path, and one elsewhere.
+    // An inherited listener (made the superseded way) on the bridge path, and one elsewhere.
     int inherited = listen_at(bridge_sock, false);
     int other = listen_at(other_sock, false);
     CHECK(inherited >= 0 && other >= 0 && connects(bridge_sock), "inherited listener answers");

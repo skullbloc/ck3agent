@@ -19,7 +19,7 @@
 // rather than assumed. A reader trusts the cause only when its id matches the
 // primary it actually observed, and reports `unknown` otherwise. A cause that
 // does not identify what it is the cause OF is not evidence — and a stale stamp
-// left by an earlier change is exactly what would otherwise be read as current.
+// left from an earlier episode is exactly what would otherwise be read as current.
 //
 // THIS HEADER IS DELIBERATELY DEPENDENCY-FREE. It lives apart from
 // ai_enabled_watch.h so that dispatch_router.cpp — which only needs to RECORD a
@@ -54,8 +54,8 @@ inline AiPrimaryCause primary_change_cause_for(uint32_t observed_id) {
 }
 
 //: WHOLE LITERALS, one per branch. A word assembled at runtime has no .rodata
-//: string, so the pre-deploy `strings` witness cannot see it — the run-1 lesson
-//: that cost a build witness.
+//: string, so the pre-deploy `strings` witness cannot see it, and a build witness
+//: that cannot see a word cannot vouch for it.
 inline const char* ai_primary_cause_name(AiPrimaryCause c) {
     switch (c) {
         case kPrimaryCauseControl: return "control";

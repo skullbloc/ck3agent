@@ -1,11 +1,10 @@
 """The Windows POSIX shim must not shadow CRT header names.
 
-It used to: posix/string.h, time.h, signal.h, setjmp.h, sys/stat.h and sys/types.h
-each did `#include_next <the CRT header>` and then added the POSIX names. clang-cl
-(the cross build) accepts #include_next; cl.exe does not (C1021 on the public CI's
-first real-MSVC run). The additions now reach every translation unit by
-force-include (/FI ck3_posix.h, bridge/CMakeLists.txt). No MSVC runs here, so these
-checks stand in for it: they red on the tree that broke cl.exe."""
+A shim header named like a CRT header (posix/string.h, time.h, signal.h, setjmp.h,
+sys/stat.h, sys/types.h) would need `#include_next <the CRT header>`, which clang-cl
+(the cross build) accepts and cl.exe refuses (C1021). The additions reach every
+translation unit by force-include instead (/FI ck3_posix.h, bridge/CMakeLists.txt).
+No MSVC runs here, so these checks stand in for it."""
 from __future__ import annotations
 
 import re

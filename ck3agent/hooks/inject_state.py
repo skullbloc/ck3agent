@@ -22,7 +22,7 @@ Design constraints:
 Query plan:
   Tier-1 (the cheap reads, first):
     get_tick_info   -> date / game_year / game_speed / paused / controlled id
-    get_bridge_state -> every ruler the session holds (lane-multi); with more
+    get_bridge_state -> every ruler the session holds; with more
                         than one, get_active_wars and query_character
                         per extra ruler
     get_active_wars  -> the controlled ruler's wars, by name
@@ -33,7 +33,7 @@ Query plan:
   (dispatch_router.cpp get_controlled_character -> g_controlled_primary), which
   is the session that claimed first (session.cpp sessions_json order). With
   several seats on one game every seat's hook printed the first seat's ruler
-  (pilots 2026.11: Nasr n8/s7 shown Cui 13191; Boris s16 shown AEthelred).
+  (seen in recorded multi-seat games: a seat was shown another seat's ruler).
   resolve_seat() names this seat's ruler from the seat's own session record
   (CK3_SESSION_OUT, which `ck3agent run` gives this process), else its declared
   ruler (CK3_AGENT_CHARACTER_ID), else the bridge's primary when this is the
@@ -43,7 +43,7 @@ Query plan:
   record (CK3_SESSION_OUT set) names no session the bridge lists (not written
   yet, a failed connect, a stale record) is shown no ruler either, however many
   sessions are attached: the one attached session may be another seat's
-  (round 3). Not detectable: an interactive seat (setup writes
+  one. Not detectable: an interactive seat (setup writes
   no record) whose own server has not attached yet while one other seat is;
   it looks like the only seat and is shown that seat's ruler (CHANGELOG
   2026.12.0 says so; CK3_AGENT_CHARACTER_ID closes it).
@@ -97,7 +97,7 @@ TOTAL_BUDGET = 2.5      # total wall-clock across the whole plan
 
 # ─── Pipeline-mode frame correlation ───────────────────────────────
 #
-# THE BUG THIS FIXES. The skip list used to be exactly {tick_start, observation,
+# THE HAZARD. The skip list is not exactly {tick_start, observation,
 # notification}, and the query loop then did `if resp_rid is None: return resp`.
 # In pipeline mode the bridge answers a buffered call TWICE — an acceptance ack
 # now, the real result after the flush — and the ack is keyed `for_request_id`,
@@ -146,7 +146,7 @@ def frame_matches(msg, request_id):
     """Classify one frame against the query we are waiting on.
 
     "match" -> our answer; "skip" -> keep reading. Module-level and swappable so
-    the negative control can restore the pre-fix predicate; see
+    the negative control can restore the superseded predicate; see
     scripts/test_pipeline_client_correlation.py.
     """
     return _frame_matches(msg, request_id)
@@ -215,10 +215,10 @@ def display_name(v):
     drain, a frame later with the game paused or running
     (bridge/src/name_tables.cpp). Until then the bridge has only the
     localization KEY stored on
-    CCharacter (`E_thelred` for Æthelred, `Bj_rn` for Björn). Since lane-namekey
+    CCharacter (`E_thelred` for Æthelred, `Bj_rn` for Björn). Now
     it says so: no `name`, plus `name_key` and `name_pending: true`, and
     `name_pending(d)` below is what the ruler lines read. Before that fix it
-    returned the key AS the name, which is how lane-multi run 3 printed
+    returned the key AS the name, which is how one test run printed
     `E_thelred` where whoami, a few turns later, said `Æthelred`. This guard
     stays for an older bridge: a key is not a name, an underscore never occurs
     in a display name, so a string carrying one is omitted rather than printed.
@@ -327,7 +327,7 @@ class BridgePuller:
         """Send one query and return its response dict, or None on failure.
 
         Skips ping lines and every unsolicited push type (PUSHED_TYPES —
-        which since includes the pipeline acceptance ack and the
+        which includes the pipeline acceptance ack and the
         checkpoint gate broadcasts). Accepts the first line whose request_id
         == rid; if the bridge does not echo request_id, accepts the first line
         that is not a named push. Detects a {"error":"bridge_busy"} degrade.
@@ -348,7 +348,7 @@ class BridgePuller:
         # hook's hard total budget, so a chatty push stream — or a flush ETA
         # measured in seconds — can never wedge a turn. If the result does not
         # fit in the budget the hook publishes NOTHING for this field, which is
-        # the correct outcome: before that it published the ACK and the
+        # the correct outcome: at first it published the ACK and the
         # overlay showed an empty panel as if that were the game state.
         def _send(obj):
             # The shared settler speaks the {"actions":[...]} envelope; this
@@ -492,7 +492,7 @@ def seat_record_unmatched(bstate, env=None):
     names no session the bridge lists: the record is not written yet (the server's
     handshake has not landed, or its connect failed) or it is stale. One definition
     for resolve_seat (which then answers "unknown") and build_report (which then
-    prints SEAT_RECORD_UNMATCHED):."""
+    prints SEAT_RECORD_UNMATCHED)."""
     env = os.environ if env is None else env
     if not env.get(SESSION_OUT_ENV):
         return False
@@ -610,8 +610,8 @@ def rulers_block(puller, bstate, controlled, ch, active_wars, extras=None, seat=
                 seg += " · **DEAD**"
             out.append(seg)
     if others:
-        out.append("- Held by another session: ids %s (two sessions in one game is "
-                   "unsupported: they share the clock)" % ", ".join(_fmt_num(c) for c in others))
+        out.append("- Held by another session: ids %s (two sessions on one game process "
+                   "are unsupported: they share the clock)" % ", ".join(_fmt_num(c) for c in others))
     return out
 
 
@@ -759,7 +759,7 @@ def build_report(puller):
     paused = g(tick, "paused")
     controlled = g(tick, "controlled_character_id", "controlled_id")
     # Liveness of the controlled ruler from tick info, so a death shows even
-    # when the profile read below fails (live-run).
+    # when the profile read below fails.
     controlled_alive = g(tick, "controlled_alive")
 
     lines = ["## Live game state (fresh this turn)",
@@ -801,7 +801,7 @@ def build_report(puller):
     # The war brief (bridge-internal, the cheap read): the war signal when the
     # rich query_wars below fails.
     active_wars = puller.query("get_active_wars", who)
-    # lane-multi: the other rulers' reads come before the long tier-2 plan.
+    # The other rulers' reads come before the long tier-2 plan.
     extras = prefetch_rulers(puller, bstate, controlled, (how, mine, others))
 
     # --- Tier 2: only what changes a decision -------------------------------
@@ -820,7 +820,7 @@ def build_report(puller):
         if val is None:
             gaps.append("%s read failed or timed out" % label)
 
-    # query_character's keys (build_char_profile); dropped the aliases it never writes.
+    # query_character's keys (build_char_profile); the aliases it never writes are not read.
     title = g(ch, "primary_title_name", "primary_title_key")
     tier = g(ch, "ruler_tier")
 
@@ -868,7 +868,7 @@ def build_report(puller):
 
     if ch:
         # The monthly gold income is income_breakdown.total_monthly (core_data+0x2B0).
-        # Query_character's old `monthly_income` was the MERIT stock
+        # query_character's old `monthly_income` was the MERIT stock
         # (core_data+0x170) and is now emitted as `merit`; it is not money.
         _bd = ch.get("income_breakdown")
         gold, income = g(ch, "gold"), g(_bd, "total_monthly")
@@ -915,8 +915,8 @@ def _gap_lines(puller, gaps, lines):
         lines.append("- _Not seeing: %s._" % "; ".join(gaps))
 
 
-#: (seat review problem 11: the status header injected at each
-#: resume was not recorded). When `ck3agent run` sets this (its run's
+#: (Without it the status header injected at each resume is not
+#: recorded.) When `ck3agent run` sets this (its run's
 #: `<stamp>.hook.jsonl`; release/overlay/ck3agent/cli.py HOOK_STATE_OUT_ENV, the
 #: mirror checked), every block this hook prints is also appended there as one
 #: JSON row {utc, text, text_sha256}. Unset: print only, as before. A sink that

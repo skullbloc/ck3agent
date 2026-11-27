@@ -1,7 +1,7 @@
 // lobby_view_hook.cpp — captures the live CJominiMultiplayerLobbyView singleton
 // by inline-hooking its constructor.
 //
-// Background (→):
+// Background:
 //   The "Observe" button the bridge's uinput fallback clicks at (540, 1060)
 //   is the JominiLobbyViewButton inside multiplayer_lobby.gui:1081-1165, owned
 //   by `CJominiMultiplayerLobbyView`. Driving it programmatically requires the

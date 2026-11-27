@@ -1,6 +1,6 @@
-// ticket_table.h — R1b: the async ticket layer.
+// ticket_table.h — the async ticket layer.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §2.4, §2.8.
+// Part of the event pipeline (pipeline.h).
 //
 // WHAT THIS IS. A generalisation of a mechanism the bridge already runs: the
 // intent queue's store_completed / completed_snapshot / find_completed_by_
@@ -60,7 +60,7 @@ struct Ticket {
 
     // ---- the attribution spine (§2.8) -------------------------------------
     // Minted by the bridge, NEVER reported by the agent. This is the
-    // unforgeable spine of R4, R9 and every mediator in the paper.
+    // unforgeable spine of every mediator rule of the multi-seat design.
     uint64_t    flush_id = 0;
     uint32_t    character_id = 0;        // the session's primary at execution time
     uint64_t    tick_executed = 0;

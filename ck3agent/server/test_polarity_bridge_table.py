@@ -1,7 +1,6 @@
 """The bridge's thread classes, computed from the bridge's own code.
 
-After the only routing question is "game thread or IPC thread" (contract
-D1): every handler that reads or mutates game objects runs on the game thread,
+The only routing question is "game thread or IPC thread": every handler that reads or mutates game objects runs on the game thread,
 the IPC thread serves bridge state. The classifiers that answer it keep their
 names. This test does NOT re-type them: it lifts the real functions out of the
 bridge sources (the snapshot.cpp classifiers and deferred_drain.cpp's
@@ -10,10 +9,10 @@ program and reads one row per registered action. A classifier edited in the
 bridge changes these rows with no edit here.
 
 What it pins:
-  * the PIPELINE mode's polarity table (pre-registered vocabulary):
+  * the PIPELINE mode's polarity table (declared vocabulary):
     pipeline.cpp's classify_polarity, action_routes_to_drain and
     flush_scheduler.cpp's polarity_name, lifted with every classifier they call,
-    answer exactly pipeline_polarity_expected.txt (the 439ab5a6 answers), one
+    answer exactly pipeline_polarity_expected.txt (the registered answers), one
     row per registered action; a changed answer fails by name;
   * no read of any kind stores a write verdict in the completed ring, and every
     game-thread write stores exactly one (drain_write_verdict.h's seam);
@@ -246,7 +245,7 @@ def test_the_gateway_commands_are_bridge_internal(bridge_rows):
         assert bridge_rows[n]["bridge_internal"], n
 
 
-# ── the pipeline mode's polarity table (pre-registered) ───────────
+# ── the pipeline mode's polarity table (declared) ───────────
 
 #: (file, head) of everything classify_polarity / action_routes_to_drain /
 #: polarity_name call, lifted as they stand. Polarity comes from the real
@@ -340,7 +339,7 @@ def debug_pipeline_rows() -> dict[str, tuple[str, int]]:
 def test_the_debug_verbs_polarity_rows_are_pinned(debug_pipeline_rows):
     """The -DCK3_BRIDGE_DEBUG_VERBS build (the host's
     build) answers the release rows unchanged, and each debug verb answers its
-    `debug` row in pipeline_polarity_expected.txt (439ab5a6's answers). The
+    `debug` row in pipeline_polarity_expected.txt. The
     debug set is the registry's #ifdef block, so a verb added there without a
     row fails here by name."""
     release = _expected_polarity()
@@ -370,7 +369,7 @@ def test_the_pipeline_polarity_table_is_the_pre_registered_one(pipeline_rows):
 
 def test_the_pipeline_table_covers_the_registry_and_every_polarity(pipeline_rows):
     """One row per release-registered action, and the table is not degenerate:
-    the four pinned rows read what they published before."""
+    the four pinned rows read what they published before the session-thread drain."""
     assert list(pipeline_rows) == _registry_names()
     assert {p for p, _ in pipeline_rows.values()} == {"any", "paused", "tick_read", "tick_write"}
     assert pipeline_rows["query_conquest_targets"] == ("tick_read", 1)

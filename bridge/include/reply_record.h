@@ -1,6 +1,6 @@
 // One spelling of "what happened to a reply", shared by every send site.
 //
-// WHY THIS EXISTS. arma7 timed out on get_tick_info with the request RECEIVED,
+// WHY THIS EXISTS. An arm run timed out on get_tick_info with the request RECEIVED,
 // 77 further actions served immediately after, and the game thread healthy
 // throughout. The bridge log said nothing about the reply — and the
 // reason is that the reply-path records were gated on `bridge::g_trace`, set
@@ -9,7 +9,7 @@
 //
 // So the absence of a reply record was not evidence about the reply. It was a
 // disabled instrument, indistinguishable from an instrument that ran and found
-// nothing — the same failure the fault-site and in-flight beads were written to
+// nothing — the same failure the fault-site and in-flight tasks were written to
 // end, arriving this time as a RUNTIME gate rather than a missing code path.
 //
 // THE LABEL COLLISION THAT HID IT. ADLOG (action_dispatch_internal.h) is gated
@@ -82,7 +82,7 @@ struct SendOutcome {
     size_t    bytes_written = 0;
     size_t    bytes_total   = 0;
     int       err           = 0;
-    // kBackpressure only: TIOCOUTQ depth at the drop. arma7's single logged
+    // kBackpressure only: TIOCOUTQ depth at the drop. That run's single logged
     // drop was over the threshold by 1024 bytes — about 3%, grazed rather than
     // blown through — which is the difference between a flood and a limit that
     // a modest reply-size increase would cross routinely. The margin is the
@@ -105,7 +105,7 @@ inline std::atomic<uint64_t> g_reply_failed{0};
 inline std::atomic<uint64_t> g_reply_empty{0};
 
 // EVERY backpressure drop is counted here, including the ones the
-// verbose line throttles away. arma7 logged exactly one drop — "1 total
+// verbose line throttles away. That run logged exactly one drop — "1 total
 // dropped", slot 0, 33792 bytes against a 32768 threshold — and the throttle in
 // send_to_slot logs only the 1st and every 100th. That counter is a single
 // function-level static, so it is shared across EVERY slot, EVERY session and
@@ -137,7 +137,7 @@ inline void record_ping(int slot, bool ok, const SendOutcome& out) {
         fprintf(g_logfile,
             "[CK3-Bridge] KEEPALIVE NOT DELIVERED: slot=%d stage=%s wrote=%zu/%zu "
             "— this slot is unwritable, so the client's silence says nothing "
-            "about what the bridge sent it (ck-0zfc)\n",
+            "about what the bridge sent it\n",
             slot, send_stage_name(out.stage), out.bytes_written, out.bytes_total);
         fflush(g_logfile);
     }
@@ -191,7 +191,7 @@ inline void record_reply(const char* action, const char* rid, bool sent_ok,
             fprintf(g_logfile,
                 "%s[CK3-Bridge] REPLY NOT DELIVERED: action=%s rid=%s bytes=%zu "
                 "%s target=slot %d gen %u stage=%s wrote=%zu/%zu errno=%d "
-                "stream=%s (ck-jh76/ck-55dx)\n",
+                "stream=%s\n",
                 monotonic_stamp(ts, sizeof ts),
                 action ? action : "?", rid ? rid : "?", bytes,
                 format_elapsed(el, sizeof el, elapsed_ms), target_slot,
@@ -210,7 +210,7 @@ inline void record_reply(const char* action, const char* rid, bool sent_ok,
                 "threshold=%d over by %d bytes (%.1f%%); process-wide drops so "
                 "far=%llu — the verbose drop line is throttled to the 1st and "
                 "every 100th ACROSS ALL SLOTS, so it is not a count "
-                "(ck-0zfc/ck-rcrr)\n",
+                "\n",
                 rid ? rid : "?", out->pending_bytes, out->threshold_bytes,
                 out->pending_bytes - out->threshold_bytes,
                 out->threshold_bytes > 0
@@ -225,7 +225,7 @@ inline void record_reply(const char* action, const char* rid, bool sent_ok,
                 "[CK3-Bridge] REPLY NOT DELIVERED: action=%s rid=%s bytes=%zu "
                 "target=BROADCAST (no client accepted it; note a broadcast "
                 "sent_ok only ever meant SOME client, never the requester) "
-                "(ck-jh76)\n",
+                "\n",
                 action ? action : "?", rid ? rid : "?", bytes);
         }
         fflush(g_logfile);
@@ -250,13 +250,13 @@ inline void record_empty_reply(const char* action, const char* rid) {
     if (g_logfile) {
         fprintf(g_logfile,
             "[CK3-Bridge] REPLY EMPTY (nothing sent; the client will wait out "
-            "its deadline): action=%s rid=%s (ck-jh76)\n",
+            "its deadline): action=%s rid=%s\n",
             action ? action : "?", rid ? rid : "?");
         fflush(g_logfile);
     }
 }
 
-// The GAME-THREAD drain reply (two-stage delivery): try the recorded
+// The GAME-THREAD drain reply (the two-stage delivery): try the recorded
 // session id, else fall back to a broadcast. There is no target SLOT here, so
 // this does not borrow the slot spelling — printing slot=-1 for a path that
 // never had a slot would be a measured-looking value for something that was
@@ -271,7 +271,7 @@ inline void record_reply_drain(const char* action, const char* rid, bool sent_ok
         fprintf(g_logfile,
             "[CK3-Bridge] REPLY NOT DELIVERED (game-thread drain): action=%s "
             "rid=%s bytes=%zu session_id=%s — both the session-id leg and the "
-            "broadcast fallback failed (ck-jh76)\n",
+            "broadcast fallback failed\n",
             action ? action : "?", rid ? rid : "?", bytes,
             had_session_id ? "present" : "ABSENT");
         fflush(g_logfile);

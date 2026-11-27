@@ -1,7 +1,7 @@
 // intent_queue.cpp — IntentQueue's members (split out of
 // intent_dispatch.cpp). Engine-free: the queue is a mutex-protected vector and
 // a completed ring, so bridge/test/test_intent_lookup.cpp links this TU and
-// drives the real lookup across a claim, a finish and a store.: no
+// drives the real lookup across a claim, a finish and a store. No
 // pointer into intents_ leaves this file (claim/finish copy under the lock).
 
 #include "bridge.h"

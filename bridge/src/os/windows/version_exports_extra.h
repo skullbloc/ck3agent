@@ -1,7 +1,7 @@
 /* Exports of Windows' own System32 version.dll that the generated list
  * (version_exports.h, read from Proton's builtin version.dll) does not have.
  * Hand-kept, because no real System32 version.dll was available to generate
- * from (lane-p4, 2026-10-19: every version.dll in the Proton prefix and the
+ * from (2026-10-19: every version.dll in the Proton prefix and the
  * Proton tree is a Wine builtin; the xwin SDK carries only the import library
  * version.lib, which lists 12 public API names, a subset of the 16). Replace
  * this file by regenerating version_exports.h from a real System32 copy

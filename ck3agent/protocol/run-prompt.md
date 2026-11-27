@@ -16,8 +16,8 @@ once per cycle for all of them.
 
 END: play cycles of observe, decide, act, wait until the run stops you. The run
 ends the session itself and pauses the game: at its cycle count when it was
-given one, at a game date or a wall-time limit, or in an experiment cell when
-the server says the episode's horizon is reached. In a cell, a session that
+given one, at a game date or a wall-time limit, or in a scheduled run when
+the server says the episode's horizon is reached. In a scheduled run, a session that
 ends before the run stops it is brought back to play on. Do not release your rulers: the bridge refuses to
 empty a control session, and the run frees it on exit. Your narration of each
 cycle is the record: say what changed, the decisions that mattered and what

@@ -2,7 +2,7 @@
 //
 // do_set_controlled_character CLAIMS a character, then checks the roster; if the
 // roster diverged it calls release_character to undo the claim. The seat never steered
-// that character. census of all ten release_character call sites found this
+// that character. The census of all ten release_character call sites found this
 // path reaching the succession handoff with ReleaseSubjectState::Unknown — but the
 // worse half is that it also overwrote last_steered_character_id with the UNDONE id.
 //
@@ -12,18 +12,18 @@
 // agent never steered, whose state is Unknown, and recovers nothing.
 //
 // SEVERITY IS BOUNDED AT "SEAT STAYS EMPTY" — measured, and worth stating
-// because it is what negotiate over. The id and the state are
+// because it is what the release refusal and the rollback negotiate over. The id and the state are
 // written as a PAIR inside one session->mutex and one `primary == char_id` guard, so
 // they cannot be torn: there is no composite where a never-steered id is paired with
 // an older Corpse state, which would be a WRONG SEIZURE and strictly worse than the
-// bug fixed. A blinded handoff returns 0. It never recovers the wrong subject.
+// bug the release-state record fixed. A blinded handoff returns 0. It never recovers the wrong subject.
 //
-// AND'S LEGACY FLAG CANNOT SEPARATE THIS, which is the trap: commit_take does
+// AND THE HANDLER-ORDERING TEST'S LEGACY FLAG CANNOT SEPARATE THIS, which is the trap: commit_take does
 // move between the two builds, so reaching for that flag is the natural instinct. But
 // claim_character sets primary_character_id unconditionally on both its branches and
 // runs BEFORE the roster check in BOTH builds, so the recording guard fires either
 // way. A run of the flag comes back showing identical behaviour, which reads as "the
-// flag is broken" or "the defect is not real" rather than "this defect is upstream of
+// flag is broken" or "the hazard is not real" rather than "this defect is upstream of
 // what the flag moves."
 
 #include "bridge.h"
@@ -130,7 +130,7 @@ int main() {
     }
     row("a_later_succession_can_still_recover_the_REAL_subject",
         handoff_subject(0, last_steered(s), last_state(s)) == kReal,
-        "the blinding this bead exists to stop: with the undone id and Unknown in "
+        "the blinding this change exists to stop: with the undone id and Unknown in "
         "place, this returned 0 and the seat stayed empty");
 
     // ── AND UndoneClaim ITSELF NEVER RECOVERS, if one ever reaches the handoff ─

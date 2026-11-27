@@ -1,0 +1,121 @@
+{
+ "_provenance": "The bridge's query_factions reply for the liege 12618 (Muhammad, 867 save) recorded live by a scenario run, steps[4138].reply (0873.05.28), copied whole",
+ "reply": {
+  "request_id": "c2cde877-41cd-4c62-951c-617a1cb0ee59",
+  "tick": 2337,
+  "game_date": "0873.05.28",
+  "character_id": 12618,
+  "discontent_threshold_pct": 100.0,
+  "factions": [
+   {
+    "faction_id": 69,
+    "type": "nation_fracturing_faction",
+    "target_character_id": 12618,
+    "leader_character_id": 12964,
+    "leader_name": "Isli",
+    "discontent_pct": 0.0,
+    "base_discontent_pct": 0.0,
+    "power_ratio": 29.21,
+    "ultimatum": "none",
+    "at_war": false,
+    "members": [
+     12964
+    ],
+    "member_count": 1,
+    "member_rows": [
+     {
+      "id": 12964,
+      "name": "Isli",
+      "military_strength": 755,
+      "is_leader": true
+     }
+    ]
+   },
+   {
+    "faction_id": 88,
+    "type": "claimant_faction",
+    "target_character_id": 12618,
+    "leader_character_id": 12864,
+    "leader_name": "Ibrahim",
+    "discontent_pct": 0.0,
+    "base_discontent_pct": 0.0,
+    "power_ratio": 67.49,
+    "ultimatum": "none",
+    "at_war": false,
+    "members": [
+     12864,
+     14505,
+     12521
+    ],
+    "member_count": 3,
+    "member_rows": [
+     {
+      "id": 12864,
+      "name": "Ibrahim",
+      "military_strength": 877,
+      "is_leader": true
+     },
+     {
+      "id": 14505,
+      "name": "Thabit",
+      "military_strength": 536,
+      "is_leader": false
+     },
+     {
+      "id": 12521,
+      "name": "Mezwar",
+      "military_strength": 246,
+      "is_leader": false
+     }
+    ]
+   },
+   {
+    "faction_id": 186,
+    "type": "peasant_faction",
+    "is_county_faction": true,
+    "target_character_id": 12618,
+    "discontent_pct": 63.0,
+    "base_discontent_pct": 63.0,
+    "power_ratio": 119.36,
+    "ultimatum": "none",
+    "at_war": false,
+    "members": [],
+    "member_count": 0,
+    "county_members": [
+     8163,
+     8182,
+     8132,
+     8149
+    ],
+    "county_member_count": 4
+   },
+   {
+    "faction_id": 165,
+    "type": "independence_faction",
+    "target_character_id": 12618,
+    "leader_character_id": 10845,
+    "leader_name": "Khafaja",
+    "discontent_pct": 0.0,
+    "base_discontent_pct": 0.0,
+    "power_ratio": 21.55,
+    "ultimatum": "none",
+    "at_war": false,
+    "members": [
+     10845
+    ],
+    "member_count": 1,
+    "member_rows": [
+     {
+      "id": 10845,
+      "name": "Khafaja",
+      "military_strength": 535,
+      "is_leader": true
+     }
+    ]
+   }
+  ],
+  "faction_count": 4,
+  "demand_response": "ai",
+  "demands_answered": []
+ }
+}

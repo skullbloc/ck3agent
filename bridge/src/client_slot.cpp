@@ -15,7 +15,7 @@ SlotReleaseResult client_slot_release(ClientSlot& s, SlotCloseFn closer) {
 
 #ifdef CK3_SLOT_LEGACY_FD_GUARD
     // ─── NEGATIVE CONTROL ────────────────────────────────────────
-    // The pre-fix code, reproduced exactly: the liveness test is the -1
+    // The superseded code, reproduced exactly: the liveness test is the -1
     // sentinel on `fd`, and it is made INSIDE the send_mtx scope, i.e. after
     // the slot has already been touched.  Build with
     // -DCK3_SLOT_LEGACY_FD_GUARD to restore the bug and watch the regression
@@ -101,7 +101,7 @@ bool client_slot_attach_session(ClientSlot& s, uint32_t expected_gen,
     // claims are never released) or handed to the next client to land here.
     if (!slot_is_open(s) || s.gen != expected_gen) return false;
 #else
-    (void)expected_gen;  // negative control: the pre-fix unconditional bind
+    (void)expected_gen;  // negative control: the superseded unconditional bind
 #endif
     s.session      = session;
     s.resume_token = resume_token ? resume_token : "";

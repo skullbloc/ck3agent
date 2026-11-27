@@ -110,7 +110,7 @@ void EpisodePolicyHolder::init_from_env() {
     // ONE DECLARATION, THREE READERS. This is the bridge's read; the other two
     // are scripts/registered_launch-side establishment and
     // scripts/episode_validity.py's comparison. A refusal keeps the raw text
-    // and lets the pre-registered default stand, because a knob that is
+    // and lets the declared default stand, because a knob that is
     // silently ignored has told the operator nothing.
     {
         const GameSpeedDeclaration g = resolve_game_speed_from_env();

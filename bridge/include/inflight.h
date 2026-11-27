@@ -1,10 +1,10 @@
 #pragma once
 // WHICH REQUEST WAS OUTSTANDING WHEN THE CLIENT GAVE UP.
 //
-// All three arm-A attempts died the same way — BridgeTimeout on get_tick_info
-// after 15s — and attempt 3 did it with CK3 alive, the bridge still logging, and
+// A recorded failure shape: BridgeTimeout on get_tick_info
+// after 15s, with CK3 alive, the bridge still logging, and
 // the game thread's tick cadence uniform to the end. So the invariant failure is
-// a TIMEOUT, not a crash, and fault instrument is correctly silent on
+// a TIMEOUT, not a crash, and the fault instrument is correctly silent on
 // it. Nothing in the bridge currently says what the serving thread was doing.
 //
 // THE DESIGN CONSTRAINT THAT SHAPES ALL OF THIS: THE OBSERVER MUST NOT BE THE
@@ -22,7 +22,7 @@
 // read by the watcher while the writer may be mid-update, so it uses a seqlock:
 // odd sequence means a write is in progress and the reader retries or reports
 // the state as in-flux. A torn action name presented as fact is the same defect
-// class as plausible 0x0 — it would name the wrong request with
+// class as the plausible 0x0 — it would name the wrong request with
 // perfect confidence.
 #include <atomic>
 #include <cstdio>
@@ -138,7 +138,7 @@ inline InflightView inflight_read(uint64_t now_ms) {
 
 // ONE SPELLING, shared by the watcher and by the probe that grades it. An
 // unstable read says so rather than presenting a possibly-torn name, for the
-// same reason unresolved offset does not print 0x0: a well-formed
+// same reason the unresolved offset does not print 0x0: a well-formed
 // wrong answer is worse than a refusal, and this one would name a request.
 inline const char* format_inflight(char* buf, size_t n, const InflightView& v,
                                    const DrainLockState& d, uint64_t now_ms) {

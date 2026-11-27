@@ -1,4 +1,4 @@
-// test_release_handler.cpp —.
+// test_release_handler.cpp.
 //
 // THE GAP THIS CLOSES
 // -------------------
@@ -10,11 +10,11 @@
 // return skipped the whole cleanup half — personality lock, council lock, and
 // re-enabling the engine's own per-character AI (ai_ctrl+0x28).
 //
-// The offline suite could not see it, for exactly the reason:
+// The offline suite could not see it, for exactly the init-order reason:
 // test_session_registry drives SessionRegistry DIRECTLY, and the registry half
 // is correct — release_character() returns true and erases the entry. Only the
 // COMPOSITION was broken: the M1 ownership release had been inserted ABOVE
-// roster guard, a guard whose own contract is "validate roster
+// The roster guard, a guard whose own contract is "validate roster
 // membership BEFORE mutating anything". The guard was inspecting a state its
 // own predecessor created.
 //
@@ -34,7 +34,7 @@
 //
 // NEGATIVE CONTROL: test_release_handler_negative_control is this same source
 // linked against dispatch_router.cpp built with -DCK3_RELEASE_LEGACY_ORDER,
-// which restores the pre-fix ordering. It MUST fail, and it must fail by
+// which restores the superseded ordering. It MUST fail, and it must fail by
 // reproducing the live symptom verbatim.
 
 #include "action_dispatch_internal.h"
@@ -80,7 +80,7 @@ std::atomic<uint64_t>    g_cb_query_busy_count{0};
 std::atomic<bool>        g_war_stance_record_walk_enabled{false};
 
 // g_personality_lock_mutex / g_personality_locks are NOT defined here: since
-// they live in personality_world_reset.cpp, which SESSION_HOST_SOURCES
+// They live in personality_world_reset.cpp, which SESSION_HOST_SOURCES
 // links. The real definitions are the ones the handler must clear.
 
 IntentQueue              g_intent_queue;
@@ -95,11 +95,11 @@ bool pipeline_owns_clock()       { return false; }
 bool is_clock_verb(const char*)  { return false; }
 // pipeline.cpp is engine-bound; the handlers under test never read a flush id.
 uint64_t pipeline_current_flush_id() { return 0; }
-// Dispatch_router.cpp's observe-mode gate now asks the mode policy
+// dispatch_router.cpp's observe-mode gate now asks the mode policy
 // whether a null-mode observer may issue a clock verb, and the ACCESSOR lives in
 // engine-bound pipeline.cpp (the pure POLICY is pipeline_mode.cpp, which this
-// target does link). Legacy is G11's default and the right stub: it is the mode
-// in which the gate behaves exactly as it did before that bead, so the release
+// target does link). Legacy is the default and the right stub: it is the mode
+// in which the gate behaves exactly as it did before that task, so the release
 // handlers under test see the pre-existing world and this stub cannot quietly
 // grant them a carve-out.
 PipelineMode pipeline_mode() { return PipelineMode::Legacy; }
@@ -266,8 +266,8 @@ void check(bool cond, const std::string& what) {
     }
 }
 
-// claim pin. The gate moved from pipeline.cpp's
-// pipeline_gate_pins_claims to episode_policy's experiment mode,
+// The claim pin. The gate moved from pipeline.cpp's
+// pipeline_gate_pins_claims() to episode_policy()'s experiment mode,
 // so ARM THE REAL ONE — a stub for a symbol the bridge no longer calls would
 // leave §2.7 untested while reading as tested.
 void arm_claim_pin(bool on) {
@@ -319,12 +319,12 @@ static void test_owned_character_releases(std::unordered_map<uint32_t, FakeChar>
 
     // A SECOND CLAIM, so the release under test is not the seat's LAST.
     //
-    // This test is about the CLEANUP half of a release, and under the progenitor's
-    // ruling a control session's last-character release is REFUSED — so with one
+    // This test is about the CLEANUP half of a release, and under the
+    // rule a control session's last-character release is REFUSED — so with one
     // claim the handler never reaches the cleanup and the test could no longer
     // observe what it was written for. The second claim restores its subject. The
     // refusal itself is tested immediately below, on the same seat, which is also
-    // the bead's "with two -> allowed, with one -> refused" pair.
+    // the task's "with two -> allowed, with one -> refused" pair.
     const uint32_t kKeep = 30745;
     std::string take;
     bool took = do_set_controlled_character(params(kId, ",\"disable_native_ai\":true").c_str(), &take);
@@ -374,7 +374,7 @@ static void test_owned_character_releases(std::unordered_map<uint32_t, FakeChar>
     }
 
     // ── AND NOW IT IS THE LAST, SO IT IS REFUSED ────────────────────
-    // Same seat, one claim left. The bead's required pair, on one world, so the
+    // Same seat, one claim left. The task's required pair, on one world, so the
     // two answers cannot come from two different setups.
     const size_t councils_before = g_council_lock_removals.size();
     std::string rel2;
@@ -462,7 +462,7 @@ static void test_unowned_character_refused_without_mutating(
     }
 
     // ...and b can still release it, which is the practical cost of the bug:
-    // after a "failed" release the claim used to be gone for good.
+    // after a "failed" release the claim is not gone for good.
     {
         Scoped sb(b);
         std::string j;
@@ -472,7 +472,7 @@ static void test_unowned_character_refused_without_mutating(
     check(ai_enabled(theirs) == 1, "native AI re-enabled on the real release");
 }
 
-// A character nobody has ever claimed: original case. Must still be a
+// A character nobody has ever claimed: the original case. Must still be a
 // typed refusal, and must not touch the one character that IS claimed.
 static void test_never_claimed_character_refused(std::unordered_map<uint32_t, FakeChar>& chars) {
     std::cout << "[3] a never-claimed character is refused; the claimed one is untouched\n";
@@ -529,7 +529,7 @@ static void test_rosterless_primary_still_releasable(std::unordered_map<uint32_t
 // §2.7 is DELIBERATE and must survive the reordering: under an armed
 // checkpoint gate the claim is dropped but ai_ctrl+0x28 stays disabled.
 static void test_armed_gate_keeps_ai_disabled(std::unordered_map<uint32_t, FakeChar>& chars) {
-    std::cout << "[5] ck-6kvq.10: an ARMED checkpoint gate keeps native AI off\n";
+    std::cout << "[5] an ARMED checkpoint gate keeps native AI off\n";
     reset_world();
     const uint32_t kId = 601;
     FakeChar& fc = chars[kId];
@@ -554,7 +554,7 @@ static void test_armed_gate_keeps_ai_disabled(std::unordered_map<uint32_t, FakeC
     check(r && ok(rel), "release succeeds under an armed gate: " + rel);
     check(g_session_registry.owner_of(kId) == nullptr, "the claim was dropped");
     check(g_personality_locks.count(kId) == 0, "personality lock still cleared");
-    check(ai_enabled(fc) == 0, "ai_ctrl+0x28 deliberately left DISABLED (R3, §2.7)");
+    check(ai_enabled(fc) == 0, "ai_ctrl+0x28 deliberately left DISABLED");
 }
 
 // The sibling handler. A take that is going to be REFUSED must not have already
@@ -590,7 +590,7 @@ static void test_set_controlled_refusal_does_not_touch_ai(
     // (b) THE DISCRIMINATING CASE: a take that gets past the claim and is then
     //     refused by the roster check.  The legacy (no-session) path refuses
     //     with watchlist_full once g_controlled_chars is at MAX_CONTROLLED_WATCHLIST.
-    //     Pre-fix, the global primary had already been rewritten and the
+    //     Superseded ordering: the global primary had already been rewritten and the
     //     engine's AI for the character already switched OFF by the time that
     //     refusal was written — a take that "failed" left an inert character
     //     behind.  Post-fix both happen only after the roster check passes.
@@ -618,7 +618,7 @@ static void test_set_controlled_refusal_does_not_touch_ai(
 
 // AN OBSERVE SESSION IS UNCHANGED BY THE LAST-CLAIM REFUSAL.
 //
-// The bead names this case, and it is not redundant with the observe gate already
+// The task names this case, and it is not redundant with the observe gate already
 // at INSPECT 1: the point is that the new refusal did not become the answer for
 // observe sessions. An observe seat must still be told `observe_mode`, because
 // "you cannot release, you are observing" and "you cannot release your last
@@ -627,7 +627,7 @@ static void test_set_controlled_refusal_does_not_touch_ai(
 // it first.
 static void test_observe_session_unchanged(
         std::unordered_map<uint32_t, FakeChar>& chars) {
-    std::cout << "[7] ck-cwal: an observe session still gets observe_mode, not the "
+    std::cout << "[7] an observe session still gets observe_mode, not the "
                  "last-claim refusal\n";
     reset_world();
     (void)chars;
@@ -644,16 +644,16 @@ static void test_observe_session_unchanged(
 
 int main() {
 #ifdef CK3_RELEASE_LEGACY_ORDER
-    std::cout << "=== ck-sozz NEGATIVE CONTROL "
+    std::cout << "=== NEGATIVE CONTROL "
                  "(dispatch_router.cpp built with -DCK3_RELEASE_LEGACY_ORDER) ===\n"
-                 "Expect [1] to fail exactly as the live bridge did on 2026-09-10:\n"
+                 "Expect [1] to fail exactly as the live bridge did in that order:\n"
                  "the ownership release runs first, the roster guard then reports the\n"
                  "state its predecessor created, and the cleanup half never runs.\n\n";
 #else
-    std::cout << "=== ck-sozz release_character handler ordering ===\n\n";
+    std::cout << "=== release_character handler ordering ===\n\n";
 #endif
 
-    // added 30745, 303 and 602: a control seat's LAST-character release is
+    // 30745, 303 and 602 are extra characters: a control seat's LAST-character release is
     // now refused, so three tests that verify the CLEANUP half of a release need a
     // second claim to keep the release they are about from being the last one. The
     // fake world is built from this list, so a character not named here is

@@ -6,8 +6,9 @@
 #include "ck3_offsets.h"
 #include "name_tables.h"
 #include "action_dispatch_internal.h"  // resolve_title_realm()
-#include "scheme_engine.h"            // l3-schemes: scheme_success_chance
+#include "scheme_engine.h"            // scheme_success_chance
 #include "war_side.h"                 // which side of a war a character is on
+#include "monthly_currency.h"           // The monthly prestige/piety change
 
 #include <cinttypes>
 #include <cstdio>
@@ -158,7 +159,7 @@ static uint32_t char_id(void* character) {
 }
 
 // =============================================================================
-// Name Resolution (Round 5)
+// Name Resolution
 // =============================================================================
 
 // Read std::__cxx11::basic_string from game memory. Routed through the canonical
@@ -225,7 +226,7 @@ static std::string resolve_character_name(uintptr_t char_ptr) {
 // The ruler's house name: char_house_name (dispatch_router.cpp), the one
 // house-name reader (NAME +0x248). The read here was house_obj +
 // db_object::NAME_KEY (+0x10), the house's masked id, so house_name was never
-// sent (M-1).
+// sent.
 static std::string resolve_house_name(uintptr_t char_ptr) {
     return char_house_name(char_ptr);
 }
@@ -254,7 +255,7 @@ static std::string resolve_dynasty_name(uintptr_t char_ptr) {
 // Culture and faith through the shared readers (dispatch_router.cpp): the
 // culture's localized NAME (+0x260; +0x10 is its id), the faith through
 // faith_lookup (FAITH_DB keyed at +0x08; db_lookup's +0x10 key never matches a
-// faith)., M-1.
+// faith).
 static NamePair resolve_culture_names(uintptr_t char_ptr) {
     return culture_names(read<uint32_t>(char_ptr + ck3::character::CULTURE_ID_DIRECT));
 }
@@ -431,7 +432,7 @@ static float fp_to_float(int64_t fp_val) {
 static void build_basic_stats(JsonBuilder& json, void* ruler) {
     uintptr_t r = reinterpret_cast<uintptr_t>(ruler);
 
-    // Gold, prestige, piety are via realm_data sub-pointer (CONFIRMED Round 2)
+    // Gold, prestige, piety are via realm_data sub-pointer (CONFIRMED)
     // Access: *(*(char+0x1a8) + offset), int64 fixed-point / 100000
     uintptr_t realm_ptr = read<uintptr_t>(r + ck3::character::REALM_DATA);
     if (realm_ptr) {
@@ -439,12 +440,11 @@ static void build_basic_stats(JsonBuilder& json, void* ruler) {
         json.key("piety");    json.value_float(fp_to_float(read<int64_t>(realm_ptr + ck3::character::REALM_PIETY)));
         json.key("prestige"); json.value_float(fp_to_float(read<int64_t>(realm_ptr + ck3::character::REALM_PRESTIGE)));
 
-        // Round 7: Stress (core_data + 0x2F8, uint32)
+        // Stress (core_data + 0x2F8, uint32)
         int32_t stress = read<int32_t>(realm_ptr + ck3::character_vitals::STRESS);
         json.key("stress"); json.value_int(stress);
-        // Merit (core_data+0x170, CORE_MERIT).: emitted as `monthly_income` until
-        // it was identified as the merit stock; the monthly gold income is
-        // income_breakdown.total_monthly below.
+        // Merit (core_data+0x170, CORE_MERIT): the merit stock, not income; the
+        // monthly gold income is income_breakdown.total_monthly below.
         json.key("merit"); json.value_float(fp_to_float(read<int64_t>(realm_ptr + ck3::core_data::CORE_MERIT)));
 
         // Income breakdown (core_data+0x2B0..0x2D0, all int64 fixed-point / 100000)
@@ -456,6 +456,21 @@ static void build_basic_stats(JsonBuilder& json, void* ruler) {
         json.key("total_expenses");    json.value_float(fp_to_float(read<int64_t>(realm_ptr + ck3::core_data::TOTAL_EXPENSES)));
         json.key("net_gold");          json.value_float(fp_to_float(read<int64_t>(realm_ptr + ck3::core_data::NET_GOLD_INCOME)));
         json.end_object();
+
+        // What the next monthly pass adds to prestige and piety, from the
+        // game's own per-character cache (monthly_currency.h, re_monthly_prestige.md). Not run live.
+        {
+            const bridge::monthly_currency::Change mch = bridge::monthly_currency::change({
+                read<int64_t>(realm_ptr + ck3::core_data::MONTHLY_PRESTIGE_HEAD),
+                read<int64_t>(realm_ptr + ck3::core_data::MONTHLY_PRESTIGE_TAIL),
+                read<int64_t>(realm_ptr + ck3::core_data::MONTHLY_PIETY_HEAD),
+                read<int64_t>(realm_ptr + ck3::core_data::MONTHLY_PIETY_TAIL)});
+            json.key("monthly_change");
+            json.begin_object();
+            json.key("prestige"); json.value_float(fp_to_float(mch.prestige));
+            json.key("piety");    json.value_float(fp_to_float(mch.piety));
+            json.end_object();
+        }
     } else {
         json.key("gold");     json.value_float(0.0f);
         json.key("piety");    json.value_float(0.0f);
@@ -463,7 +478,7 @@ static void build_basic_stats(JsonBuilder& json, void* ruler) {
         json.key("stress");   json.value_int(0);
     }
 
-    // Round 7: Dread (title_realm + 0x350, int64 fixed-point, rulers only)
+    // Dread (title_realm + 0x350, int64 fixed-point, rulers only)
     uintptr_t title_realm_ptr = resolve_title_realm(r);
     if (title_realm_ptr) {
         int64_t dread_raw = read<int64_t>(title_realm_ptr + ck3::character_vitals::DREAD);
@@ -510,7 +525,7 @@ static void build_skills(JsonBuilder& json, void* ruler) {
     uintptr_t r = reinterpret_cast<uintptr_t>(ruler);
     json.key("skills");
     json.begin_object();
-    // CONFIRMED Round 2: skills are int32 at 0xBC, stride 4 (NOT int16 at 0xC0)
+    // CONFIRMED: skills are int32 at 0xBC, stride 4 (NOT int16 at 0xC0)
     json.key("diplomacy");    json.value_int(read<int32_t>(r + ck3::character::SKILL_DIPLOMACY));
     json.key("martial");      json.value_int(read<int32_t>(r + ck3::character::SKILL_MARTIAL));
     json.key("stewardship");  json.value_int(read<int32_t>(r + ck3::character::SKILL_STEWARDSHIP));
@@ -521,13 +536,13 @@ static void build_skills(JsonBuilder& json, void* ruler) {
 }
 
 // =============================================================================
-// Traits (Round 3: sorted trait ID array on CCharacter, resolved via trait DB)
+// Traits (sorted trait ID array on CCharacter, resolved via trait DB)
 // =============================================================================
 
 // trait_category_name() defined in dispatch_router.cpp, declared in action_dispatch_internal.h
 
 static void build_traits(JsonBuilder& json, void* ruler) {
-    // CONFIRMED Round 3: traits stored as sorted uint32[] at char+0xF0, count at char+0xFC
+    // CONFIRMED: traits stored as sorted uint32[] at char+0xF0, count at char+0xFC
     // Trait DB singleton at TRAIT_DB resolves trait_id -> CTrait*
     uintptr_t r = reinterpret_cast<uintptr_t>(ruler);
     uintptr_t trait_array_ptr = read<uintptr_t>(r + ck3::character::TRAIT_ARRAY);
@@ -618,7 +633,7 @@ static void build_traits(JsonBuilder& json, void* ruler) {
 }
 
 // =============================================================================
-// Family (Round 3: parents, dynasty, spouse, children, heirs)
+// Family (parents, dynasty, spouse, children, heirs)
 // =============================================================================
 
 static void build_family(JsonBuilder& json, void* ruler) {
@@ -627,7 +642,7 @@ static void build_family(JsonBuilder& json, void* ruler) {
     json.key("family");
     json.begin_object();
 
-    // Family sub-struct at char+0x1a0 (CONFIRMED R3, HIGH confidence)
+    // Family sub-struct at char+0x1a0 (CONFIRMED, HIGH confidence)
     uintptr_t family_ptr = read<uintptr_t>(r + ck3::character::FAMILY_DATA);
     if (family_ptr) {
         uint32_t father = read<uint32_t>(family_ptr + ck3::family::FATHER_ID);
@@ -743,14 +758,14 @@ static uintptr_t title_db_lookup(uint32_t title_id);
 static int32_t title_get_tier(uintptr_t title_ptr);
 
 // =============================================================================
-// Claims (R25 FIX: CPdxArray<CClaim, int> at core_data+0x1E8, NOT char+0x170)
+// Claims (CPdxArray<CClaim, int> at core_data+0x1E8, NOT char+0x170)
 // Each CClaim = 0x10 bytes: +0x00=vtable(8B), +0x08=title_id(u32), +0x0C=pressed(byte), +0x0D=implicit(byte)
 // =============================================================================
 
 static void build_claims(JsonBuilder& json, void* ruler) {
     uintptr_t r = reinterpret_cast<uintptr_t>(ruler);
 
-    // R25 FIX: Claims are at core_data+0x1E8, not char+0x170
+    // Claims are at core_data+0x1E8, not char+0x170
     uintptr_t core_data = read<uintptr_t>(r + ck3::character::REALM_DATA);  // char+0x1A8
     uintptr_t claim_array = 0;
     int32_t claim_count = 0;
@@ -770,7 +785,7 @@ static void build_claims(JsonBuilder& json, void* ruler) {
         for (int32_t i = 0; i < claim_count; i++) {
             uintptr_t entry = claim_array + i * ck3::claim_entry::ENTRY_SIZE;  // 0x10 stride
 
-            // R25 FIX: +0x00 is vtable, title_id is at +0x08 (uint32)
+            // +0x00 is vtable, title_id is at +0x08 (uint32)
             uint32_t title_id = read<uint32_t>(entry + ck3::claim_entry::TITLE_ID);
             uint8_t pressed = read<uint8_t>(entry + ck3::claim_entry::PRESSED);
             uint8_t implicit_flag = read<uint8_t>(entry + ck3::claim_entry::IMPLICIT);
@@ -885,7 +900,7 @@ static void build_realm_data(JsonBuilder& json, void* ruler) {
 
     // Domain size: count held titles with tier <= 2 (counties/baronies).
     // Held title IDs at title_realm+0x1E0, count at +0x1EC.
-    // NOTE: labeled VASSAL_LIST/VASSAL_COUNT but per Round 4 these are held title IDs.
+    // NOTE: labeled VASSAL_LIST/VASSAL_COUNT but they are held title IDs.
     int32_t domain_size = 0;
     int32_t county_count = 0;
     // Realm size: use title_realm+0x1EC (TITLE_ARRAY_COUNT) which is the held title count.
@@ -967,7 +982,7 @@ static void build_realm_data(JsonBuilder& json, void* ruler) {
         json.key("vassal_limit"); json.value_int(0);
     }
 
-    // CONFIRMED Round 2+3: military via title_realm sub-pointer at char+0x1b8
+    // CONFIRMED: military via title_realm sub-pointer at char+0x1b8
     if (tr) {
         json.key("military_current");      json.value_int(read<int32_t>(tr + ck3::title_realm::MIL_CURRENT));
         json.key("military_max");          json.value_int(read<int32_t>(tr + ck3::title_realm::MIL_MAX));
@@ -990,7 +1005,7 @@ static void build_realm_data(JsonBuilder& json, void* ruler) {
     }
     json.key("is_at_war"); json.value_bool(war_count > 0);
 
-    // Round 3: realm tier at title_realm+0x1D4 (CONFIRMED, 3 accessors)
+    // realm tier at title_realm+0x1D4 (CONFIRMED, 3 accessors)
     if (tr) {
         json.key("realm_tier"); json.value_int(read<int32_t>(tr + ck3::title_realm::REALM_TIER));
     } else {
@@ -1060,7 +1075,7 @@ static void build_domain(JsonBuilder& json, void* ruler) {
         json.key("title_id"); json.value_uint(tid);
         json.key("tier"); json.value_int(tier);
 
-        // R19: Navigate county_title → first barony → province → county_data
+        // Navigate county_title → first barony → province → county_data
         uintptr_t county_ptr = 0;
         {
             int32_t sub_count = read<int32_t>(tptr + ck3::title_obj::SUB_TITLE_COUNT);
@@ -1132,7 +1147,7 @@ static void build_gold_budget(JsonBuilder& json, void* ruler) {
 
     if (realm) {
         uintptr_t rd = reinterpret_cast<uintptr_t>(realm);
-        // core_data+0x2B0 (MONTHLY_INCOME, MEDIUM).: `income_accumulated`
+        // core_data+0x2B0 (MONTHLY_INCOME, MEDIUM). `income_accumulated`
         // (core_data+0x2E8) is gone: that field is BASE_HEALTH, not money.
         json.key("monthly_income");
         json.value_float(fp_to_float(read<int64_t>(rd + ck3::core_data::MONTHLY_INCOME)));
@@ -1153,7 +1168,7 @@ static void build_wars(JsonBuilder& json, void* ruler) {
     json.key("wars");
     json.begin_array();
 
-    // R8V-4 fix: war list via title_realm sub-struct + 0x318 (WAR_REF_ARRAY)
+    // war list via title_realm sub-struct + 0x318 (WAR_REF_ARRAY)
     uintptr_t title_realm = resolve_title_realm(r);
     if (title_realm) {
         uintptr_t war_arr = safe_read<uintptr_t>(title_realm + ck3::title_realm::WAR_REF_ARRAY);
@@ -1212,7 +1227,7 @@ static void build_wars(JsonBuilder& json, void* ruler) {
                     }
                 }
 
-                // Primary attacker/defender via direct refs (R8V4 confirmed)
+                // Primary attacker/defender via direct refs (confirmed)
                 uint32_t primary_atk = safe_read<uint32_t>(war_ptr + ck3::war_obj::PRIMARY_ATK_REF) & 0xFFFFFF;
                 uint32_t primary_def = safe_read<uint32_t>(war_ptr + ck3::war_obj::PRIMARY_DEF_REF) & 0xFFFFFF;
                 json.key("attacker_id"); json.value_int(primary_atk);
@@ -1239,7 +1254,7 @@ static void build_wars(JsonBuilder& json, void* ruler) {
                 json.key("battle_score"); json.value_int(static_cast<int>(bs));
                 json.key("battle_count"); json.value_int(bc);
 
-                // Ticking war score from raw memory reads (R24). NOTE: this is the
+                // Ticking war score from raw memory reads. NOTE: this is the
                 // RAW UNCAPPED accumulator — it is NOT the score that gates
                 // enforce_demands and can climb past 100. Treat it as momentum only.
                 int ts = compute_ticking_score(war_ptr);
@@ -1271,7 +1286,7 @@ static void build_wars(JsonBuilder& json, void* ruler) {
                     json.end_object();
                 } else {
                     // Cache miss, or a STALE entry (hook pre-validation has been
-                    // rejecting refreshes —; the fossil is typically
+                    // rejecting refreshes; the fossil is typically
                     // the all-zero day-one breakdown). Either way, clamp the
                     // live battle+ticking estimate instead of a misleading 0.
                     WarScoreBreakdown stale_probe{};
@@ -1315,7 +1330,7 @@ static void build_truces(JsonBuilder& json, void* ruler) {
     json.key("truces");
     json.begin_array();
 
-    // Round 10: truce list via diplomatic_data sub-struct at char+0x1c0
+    // truce list via diplomatic_data sub-struct at char+0x1c0
     // Each entry is a CTruceContainer* with two slots (one per participant).
     // We find which slot belongs to our character and read the OTHER party's ID.
     uintptr_t diplo = read<uintptr_t>(r + ck3::character::DIPLOMATIC_DATA);
@@ -1645,7 +1660,7 @@ static void build_schemes(JsonBuilder& json, void* ruler) {
         uint32_t stored_id = read<uint32_t>(scheme_ptr + ck3::active_scheme::SCHEME_ID);
         if ((stored_id & 0xFFFFFF) != idx) continue;
 
-        // Check validity via STATUS field (R10-8: 0=active, 1=invalidated)
+        // Check validity via STATUS field (0=active, 1=invalidated)
         int32_t status = read<int32_t>(scheme_ptr + ck3::active_scheme::STATUS);
         if (status == 1) continue;  // skip invalidated schemes
 
@@ -1654,7 +1669,7 @@ static void build_schemes(JsonBuilder& json, void* ruler) {
         // Scheme ID
         json.key("scheme_id"); json.value_uint(ref & 0xFFFFFF);
 
-        // Scheme type: dereference CSchemeType* at +0x18, read name via db_object::NAME_KEY (R10-8)
+        // Scheme type: dereference CSchemeType* at +0x18, read name via db_object::NAME_KEY
         uintptr_t type_ptr = read<uintptr_t>(scheme_ptr + ck3::active_scheme::SCHEME_TYPE_PTR);
         bool type_name_found = false;
         if (type_ptr) {
@@ -1674,7 +1689,7 @@ static void build_schemes(JsonBuilder& json, void* ruler) {
         uint32_t owner_id = read<uint32_t>(scheme_ptr + ck3::active_scheme::OWNER_ID);
         json.key("owner_id"); json.value_uint(owner_id & 0xFFFFFF);
 
-        // Target: read target_type and target_ref (R10-8)
+        // Target: read target_type and target_ref
         int32_t target_type = read<int32_t>(scheme_ptr + ck3::active_scheme::TARGET_TYPE);
         uint32_t target_ref_raw = read<uint32_t>(scheme_ptr + ck3::active_scheme::TARGET_REF);
 
@@ -1709,15 +1724,15 @@ static void build_schemes(JsonBuilder& json, void* ruler) {
         else json.value_null();
         json.key("secrecy"); json.value_int(read<int32_t>(scheme_ptr + ck3::active_scheme::SECRECY));
 
-        // Progress (int32, R10-8: at +0x70)
+        // Progress (int32, at +0x70)
         int32_t progress = read<int32_t>(scheme_ptr + ck3::active_scheme::PROGRESS);
         json.key("progress"); json.value_int(progress);
 
-        // Max progress (int32, R10-8: at +0x1E8)
+        // Max progress (int32, at +0x1E8)
         int32_t max_progress = read<int32_t>(scheme_ptr + ck3::active_scheme::MAX_PROGRESS);
         json.key("max_progress"); json.value_int(max_progress);
 
-        // Frozen flag (R10-8: at +0x108)
+        // Frozen flag (at +0x108)
         uint8_t is_frozen = read<uint8_t>(scheme_ptr + ck3::active_scheme::IS_FROZEN);
         json.key("is_frozen"); json.value_bool(is_frozen != 0);
 

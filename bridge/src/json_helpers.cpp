@@ -97,7 +97,7 @@ bool json_get_bool(const char* json, const char* key, bool default_val) {
     return default_val;
 }
 
-// Strict variant (N3, surface-audit 2026-08-01): succeeds ONLY for a genuine
+// Strict variant: succeeds ONLY for a genuine
 // JSON boolean (top-level or under "params"). See header comment — pair with
 // json_has_key to typed-reject present-but-non-boolean values instead of
 // silently falling back to a default like json_get_bool does.

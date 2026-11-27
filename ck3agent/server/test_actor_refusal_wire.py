@@ -1,6 +1,6 @@
 """The bridge's typed no_actor refusal reaches the seat as the gate it means.
 
-Since (bridge/include/actor_resolve.h) a seat (episode_seat) that holds
+With bridge/include/actor_resolve.h, a seat (episode_seat) that holds
 no ruler and asks query_character with character_id=0 is no longer answered about
 the global primary (the first claimer's ruler); the dispatch refuses it and the
 reply is the exact string below (bridge/test/test_actor_resolve.cpp row b11 pins
@@ -25,8 +25,8 @@ def test_the_typed_refusal_is_no_ruler_bound():
 
 
 def test_the_pre_fix_answer_was_another_rulers_profile():
-    """Control that RUNS: the pre-fix reply (a profile of the global primary)
-    is accepted as this seat's ruler, which is the defect the bridge now refuses."""
+    """Control that RUNS: the superseded reply (a profile of the global primary)
+    is accepted as this seat's ruler, which is the hazard the bridge refuses."""
     assert R.unbound_actor_block({"id": 7001, "alive": True}) is None
 
 

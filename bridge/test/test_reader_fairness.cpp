@@ -1,16 +1,16 @@
-// test_reader_fairness.cpp — wave 13: the REAL reader thread does not
+// test_reader_fairness.cpp — the REAL reader thread does not
 // hold one client's get_tick_info behind another client's burst of game-thread
 // reads.
 //
-// THE DEFECT. The bridge has
-// ONE reader thread for every client. It used to serve every complete line of a
+// THE HAZARD. The bridge has
+// ONE reader thread for every client. It does not serve every complete line of a
 // slot's read() chunk before it looked at any other slot, and a Tier-2 read
 // blocks that thread until the game-thread drain has run it. A seated episode's
 // observe ends with one query_realm per direct vassal, issued together (the
 // pushed-warnings read, mcp_server._attach_pushed): 32 of them for the king of
 // France. The meter's get_tick_info, a Tier-1 read that needs no game thread,
 // waited behind the whole batch and timed out at the meter's 15 s on 47 of 51
-// observes in pilot 2's one-seat K1 episode.
+// observes in a one-seat pilot episode.
 //
 // THE RULE NOW: one line per slot per round, round robin; a slot's queued lines
 // keep their order; a slot with queued lines is not read again until they are
@@ -24,12 +24,12 @@
 //      AFTER the seat: the higher slot), five polls in a row;
 //   2  the same with the meter dialled FIRST (the lower slot);
 //   3  the seat's 20 replies all arrive, in the order it sent them;
-//   4  CONTROL (does not discriminate the fix: green on the old reader too): a
+//   4  CONTROL (does not discriminate the fix: green on the superseded reader too): a
 //      client that writes 5 reads and closes while they are being served
 //      still has all 5 run (the new reader serves a closing slot's queue
 //      before it releases the slot).
 //
-// Red on the pre-fix reader: rows 1 and 2 (the meter waits ~N x the read time).
+// Red on the superseded reader: rows 1 and 2 (the meter waits ~N x the read time).
 // Exit 0 pass, 1 fail, 3 not evaluable.
 #include "bridge.h"
 #include "instance_paths.h"
@@ -56,7 +56,7 @@
 #include <vector>
 
 //: One game-thread read's service time here, and the burst size. 20 x 200 ms is
-//: the 4 s the old reader held a Tier-1 read for; the bound below is 5 reads.
+//: the 4 s the superseded reader held a Tier-1 read for; the bound below is 5 reads.
 static constexpr int kReadMs = 200;
 static constexpr int kBurst = 20;
 static constexpr int kMeterBoundMs = 5 * kReadMs;
@@ -277,7 +277,7 @@ int main() {
     close(seat);
     close(meter);
 
-    // Row 4 (CONTROL, green on the old reader too): write 5 reads and close.
+    // Row 4 (CONTROL, green on the superseded reader too): write 5 reads and close.
     int quitter = dial(sock);
     if (quitter < 0) { std::printf("NOT EVALUABLE: dial\n"); return 3; }
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -285,7 +285,7 @@ int main() {
     for (int i = 0; i < 5; ++i) five += line("query_realm", "q_r" + std::to_string(i));
     send_all(quitter, five);
     // Closed once the reader has taken the lines off the socket (it has: the
-    // first read is being served) and before the old reader had run them all.
+    // first read is being served) and before the superseded reader had run them all.
     // A peer that closes BEFORE the reader read its bytes loses them on both
     // readers (poll reports POLLHUP and the slot is released unread), so that
     // case is not a row: this one is the invariant, "a line taken off the socket runs".

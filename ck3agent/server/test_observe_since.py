@@ -2,22 +2,22 @@
 
 HOST ONLY. Pure shape over a gateway reply; no bridge, no game.
 
-MEASURED over d49+d50: `delta` was 75.5 per cent of observe's BYTES. Of its
+MEASURED over two recorded episodes: `delta` was 75.5 per cent of observe's BYTES. Of its
 5,640 entries, 14 (0.25%) mention the actor and 100% have empty names. Every
 one is a Python-repr dict — "war: {'tick': 61, 'attacker_id': 30966, ...}" —
 because the old string delta fell back to `str(rec)` when a record carried no
 `summary` or `name`, which the bridge's war and scheme records never do.
 
 TWO FIXES, AND THE SECOND IS THE ONE THAT MATTERS. Read RECORDS so the thing
-can be filtered at all; then SAY WHAT WAS DROPPED. put the second one
-best: a filter that reports "4,312 withheld" states a fact, while one that
+can be filtered at all; then SAY WHAT WAS DROPPED. The second one matters
+because a filter that reports "4,312 withheld" states a fact, while one that
 silently returns 14 asserts that 14 was all there was.
 
   S1  a record naming the seat's character id is MINE
   S2  a record naming other ids is withheld, and `withheld.count` says so
-  S3  THE CONTROL THAT CARRIES THE BEAD: the withheld count is non-zero when
+  S3  THE CONTROL THAT CARRIES THE FIX: the withheld count is non-zero when
       entries were dropped. A filter that returns only `mine` with no count
-      would pass a naive test and is the defect.
+      would pass a naive test and is the hazard.
   S4  `by_kind` breaks the withheld down, so "quiet period" and "filtered"
       are distinguishable
   S5  THE CONTROL ON HONESTY: a record this reader CANNOT classify is counted
@@ -49,8 +49,8 @@ import redesign as R                                             # noqa: E402
 
 SEAT = 30853
 
-#: Real d49 delta records, as the bridge emits them (before the f-string ate
-#: their structure). The first names the seat; the rest do not.
+#: Real recorded delta records, as the bridge emits them (with their
+#: structure, which a string delta loses). The first names the seat; the rest do not.
 MINE = {"kind": "war", "tick": 61, "war_id": 14,
         "attacker_id": 31808, "defender_id": SEAT,
         "cb_type": "invasion_cb"}
@@ -152,10 +152,10 @@ class ObserveSince(unittest.TestCase):
         self.assertEqual(delta, s["mine"])
         self.assertEqual(len(delta), 1)
 
-    # ── / (C)1: the widened reach ───────────────────────────────────
+    # ── the widened reach ───────────────────────────────────
     # The six rows above all PASSED UNCHANGED after the filter was widened
     # from the character to the realm, because the harness fed no vassal and
-    # no liege. A lane that cannot fail on the change is not evidence about it.
+    # no liege. A check that cannot fail on the change is not evidence about it.
 
     VASSAL = 36559
     LIEGE = 255

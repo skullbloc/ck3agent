@@ -1,4 +1,4 @@
-// flush_apply.cpp — R1b: applying a FlushPlan. See flush_apply.h.
+// flush_apply.cpp — applying a FlushPlan. See flush_apply.h.
 //
 // Pure: no engine, no game memory, no bridge.h. Every effect goes through the
 // FlushEffects interface, which is what lets test_pipeline.cpp drive the whole
@@ -38,7 +38,7 @@ void serve_one(const BufferedCall& call, FlushEffects& fx, TicketTable& tickets,
     } else {
         // Carry the stamp's typed reason onto the ticket. Without
         // this the inline path would record a 0 with no explanation, which is
-        // the unresolved-value-that-looks-measured shape this bead exists to
+        // the unresolved-value-that-looks-measured shape this code exists to
         // remove — a reader could not tell a claimless session from a bug.
         tickets.complete(call.ticket, result, flush_id, st.character_id,
                          st.tick_executed, st.game_date, fx.now_ms(),

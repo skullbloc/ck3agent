@@ -1,4 +1,4 @@
-"""A refused write carries the game's own sentence (finding 1).
+"""A refused write carries the game's own sentence.
 
 The evaluator granted a county to Ludwig's heir and read `blocked: {gate:
 "interaction_invalid", summary: "send_conditions_not_met"}`; the game's words
@@ -52,7 +52,7 @@ class Bridge:
         # refuses it, which is the path these rows drive.
         self.replies = {"query_wars": {"scope": "all_active", "wars": [_WAR]},
                         # declare_war's pre-read, in the emitter's keys
-                        # (do_get_active_wars): no war yet.: a read
+                        # (do_get_active_wars): no war yet. A read
                         # without the list now refuses before the send.
                         "get_active_wars": {"success": True, "action": "get_active_wars",
                                             "character_id": ME, "wars": [], "war_count": 0},
@@ -126,7 +126,7 @@ _UNADDRESSABLE = {"success": False, "action": "script_action",
 
 #: Each write path that sends a write the GAME can refuse, driven to that refusal.
 DRIVERS = {
-    "do_impl": lambda gw: R.do_impl(gw, intent="interact", character_id=ME,
+    "_do_impl": lambda gw: R.do_impl(gw, intent="interact", character_id=ME,
                                     args={"interaction": "grant_titles_interaction",
                                           "target_id": FOE, "title_id": 1141}),
     "_do_scheme": lambda gw: R.do_impl(gw, intent="scheme", character_id=ME,
@@ -134,10 +134,10 @@ DRIVERS = {
                                              "target_id": FOE}),
     "_do_war_intent": lambda gw: R.do_impl(gw, intent="make_peace", character_id=ME,
                                            args={"war_id": WAR, "terms": "enforce_demands"}),
-    # Declare_war goes through the script layer first; this row drives
+    # declare_war goes through the script layer first; this row drives
     # its native fallback (the bridge says the defender holds no title to address
     # him by), which is the path whose refusal rides the intent ring.
-    "declare_war_impl": lambda gw: (gw.write_replies.update(script_action=_UNADDRESSABLE),
+    "_declare_war_impl": lambda gw: (gw.write_replies.update(script_action=_UNADDRESSABLE),
                                     R.declare_war_impl(gw, ME, target_id=FOE, cb="claim_cb",
                                                        confirm_straddle=True))[1],
     "_confirm_intent_write": lambda gw: R.do_impl(gw, intent="mint_title", character_id=ME,
@@ -147,12 +147,12 @@ DRIVERS = {
 #: Write paths whose refusal is never the game's sentence, and why. They still
 #: build `blocked` through write_blocked (the structural test below).
 NOT_THE_GAMES = {
-    "_do_scripted": ("the script layer (lane v4act): the game's words come from error.log in the "
+    "_do_scripted": ("the script layer: the game's words come from error.log in the "
                      "script_action reply, not the intent ring; test_script_actions.py drives them "
                      "into blocked.detail"),
-    "_do_set_policy": ("the script layer's set_policy (lane v4act); its words come from error.log, "
+    "_do_set_policy": ("the script layer's set_policy; its words come from error.log, "
                        "driven in test_script_actions.py"),
-    "_do_end_war": ("the script layer's end_war (lane peace); its guard says no without words (the "
+    "_do_end_war": ("the script layer's end_war; its guard says no without words (the "
                     "reading rides in blocked.measured), and any error.log words ride through "
                     "script_verdict; driven in test_end_war.py"),
     "_do_cancel_pending": "the bridge's own queue answers a cancel (not_found), not the game",
@@ -160,11 +160,20 @@ NOT_THE_GAMES = {
     "set_phase_impl": "writes personality weights and a bridge flag; the bridge refuses with its own codes",
     "_session_impl_branches": "bridge session verbs; their refusals are the bridge's own codes",
     "_session_clock_write": "session pause/unpause; the bridge's own clock switch refuses with its codes",
-    "_session_wait_once": "session wait's unpause/pause pair (v3 §7.2: looped per game-day cycle); the bridge's own clock switch refuses with its codes",
+    "_session_wait_once": "session wait's unpause/pause pair (looped per game-day cycle); the bridge's own clock switch refuses with its codes",
     "_session_speed_write": "session speed; the bridge's own clock switch refuses with its codes",
-    "_session_wait_alarm": "session wait's pause-alarm unpause and closing pause (L20-A); the bridge's own clock switch refuses with its codes",
+    "_session_wait_alarm": "session wait's pause-alarm unpause and closing pause; the bridge's own clock switch refuses with its codes",
     "_session_wait_cell": "a cell seat's wait: the pause-alarm unpause at the cycle boundary (2026.12.4); the bridge's own clock switch refuses with its codes",
+    "claim_price_facts": ("a read-only script template (claim_price_facts) that writes nothing to the "
+                          "game; its marks are the reading, an unanswered read keeps the price's range"),
+    "_do_maa_disband": ("the bridge's synchronous maa_disband; the game's CanExecute text rides in its own "
+                        "reply (game_reason) into blocked.detail through write_blocked raw, never the intent ring; "
+                        "driven in test_guest_leave_and_mined_reads.py"),
     "steer_impl": "set_ai_personality is the bridge's own synchronous write; it refuses with its codes",
+    "end_war_open_terms": ("end_war's read-only listing (no terms): nothing is ended; its marks are the "
+                           "game's reading of the war, which the news' wars_at_we_win row stands on"),
+    "cb_game_prices": ("a read-only script template (cb_prices) that writes nothing the script does not "
+                       "remove; its marks are the reading, an unanswered read keeps the bridge's estimate"),
 }
 
 #: The machinery every path above goes through (not a path of its own).
@@ -326,7 +335,7 @@ def test_the_detail_is_the_ring_rows_not_the_dispatch_results():
                             {"intent_id": RID, "status": "rejected", "detail": "Old words"},
                             {"intent_id": RID, "status": "rejected", "detail": "Is not adult"}]}
     gw = Bridge(replies={"query_intent_results": ring})
-    env = run(DRIVERS["do_impl"](gw))
+    env = run(DRIVERS["_do_impl"](gw))
     assert env["blocked"]["detail"] == "Is not adult"
     assert env["blocked"]["summary"] == "send_conditions_not_met"   # the typed gate stays
 

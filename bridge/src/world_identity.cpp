@@ -2,7 +2,7 @@
 // See include/world_identity.h for the rule and the reasoning.
 //
 // ENGINE-FREE BY CONSTRUCTION, like personality_world_reset.cpp next to it: two
-// std::strings, a mutex, a bounded ledger and world fingerprint. No
+// std::strings, a mutex, a bounded ledger and the world fingerprint. No
 // offsets, no character lookups, no engine calls. bridge/test/
 // acceptance_save_identity links this file verbatim and drives the REAL
 // decision with no CK3 binary anywhere — which is the only way the negative
@@ -70,7 +70,7 @@ std::string jdate(int32_t raw) {
     return jstr(buf);
 }
 
-// Current world date, read through last fingerprint (a read of game
+// Current world date, read through the last fingerprint (a read of game
 // memory taken on the game thread, not an inference from anything).
 int32_t current_raw_date() {
     WorldFingerprint fp = world_last_fingerprint();
@@ -125,7 +125,7 @@ const char* same_save_name(SameSave v) {
         case SameSave::DIFFERENT_SAVE:       return "different_save";
         case SameSave::DIFFERENT_EPISODE:    return "different_episode";
         // Concatenated onto "refused_" to form the published decision, so the
-        // name is the documented vocabulary verbatim (E0 runbook §2.8).
+        // name is the documented vocabulary verbatim (the episode runbook).
         case SameSave::WORLD_CONTRADICTS:    return "world_contradicts_declaration";
     }
     return "unknown";
@@ -152,7 +152,7 @@ SameSave judge_same_save(const WorldIdentity& recorded,
     }
 
     // 2. Nobody vouched for the world the steering came from. Includes a
-    //    lock file written before (no header) and an episode that
+    //    lock file written before the header existed and an episode that
     //    steered without ever declaring.
     if (recorded.empty()) {
         return say(SameSave::NO_RECORDED_IDENTITY,
@@ -161,7 +161,7 @@ SameSave judge_same_save(const WorldIdentity& recorded,
     }
 
     // 3. The world itself gets to REFUTE, never to affirm. START_DATE_YEAR is
-    //    read out of the loaded world (fingerprint). 0 = unreadable,
+    //    read out of the loaded world (the fingerprint). 0 = unreadable,
     //    and the clause abstains rather than guessing.
     if (world_start_date_year && presented.start_date_year &&
         world_start_date_year != presented.start_date_year) {
@@ -285,7 +285,7 @@ RestoreRecord world_identity_declare(const WorldIdentity& presented) {
     WorldIdentity on_disk;
     if (!peek_personality_locks_identity(&on_disk)) {
         // No file, or a file with no header. A headerless file is the
-        // earlier format and names no save: it can never match, so it is
+        // superseded format and names no save: it can never match, so it is
         // reported rather than silently ignored.
         rec.decision = "nothing_to_restore";
         rec.why      = "no quarantined steering and no identified lock file at ";
@@ -404,7 +404,7 @@ void world_identity_on_world_reset() {
 
     // The world the steering was set in becomes the RECORDED identity, and the
     // world now loaded is unvouched-for until somebody declares. Note the
-    // asymmetry with merge-on-repeat-reload quarantine: the identity
+    // asymmetry with the merge-on-repeat-reload quarantine: the identity
     // of the FIRST world is what the quarantined locks belong to, so a second
     // reload before any declaration must not overwrite it with an empty one.
     if (!g_declared.empty()) g_quarantine_identity = g_declared;
@@ -414,7 +414,7 @@ void world_identity_on_world_reset() {
     // has vouched for the world the locks would be written from.
     set_personality_locks_identity(WorldIdentity{});
 
-    // records the new sample BEFORE firing the resets, so this is the
+    // The epoch records the new sample BEFORE firing the resets, so this is the
     // date the NEW world came up — the point the resume-to-steer gap is
     // measured from.
     WorldFingerprint fp = world_last_fingerprint();

@@ -2,7 +2,7 @@
 """check_actor_resolution.py — census: no code resolves an unnamed
 actor outside the one resolver (bridge/include/actor_resolve.h).
 
-v4 seats several rulers in one game, one bridge session each. Before this lane,
+v4 seats several rulers in one game, one bridge session each. Before this census,
 nine query sites, the decision eval, query_marriage_candidates and queue_intent
 read the GLOBAL primary mirror (the FIRST claimer's ruler) or PLAYER_CHAR_ID
 for a request that named no actor, and get_controlled_character fell back to

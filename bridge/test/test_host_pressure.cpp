@@ -2,7 +2,7 @@
 // (bridge/include/host_pressure.h), against a fake /proc.
 //
 // Rows:
-//   1  the l13f-gl10l-r figures (memory full 39.92, io full 74.58) read back;
+//   1  a live proof's figures (memory full 39.92, io full 74.58) read back;
 //   2  an older kernel's cpu file with no "full" line: the figure reads "na";
 //   3  no pressure files at all: "host_psi=unreadable", never zeros (an idle
 //      host is a claim the bridge did not measure);

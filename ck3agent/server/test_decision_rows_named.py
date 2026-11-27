@@ -17,11 +17,11 @@ THE CAUSES, both read off enumerate_decisions_annotated (query_handlers.cpp):
   2. the server asked list_valid_decisions, which drops every evaluated decision
      that is not available (`if (valid_only && !available) continue`), so even a
      clean "no" could never reach `unavailable`.
-The bridge now names every row from the decision's own key (read before the
+The bridge names every row from the decision's own key (read before the
 eval) and lists the requested names it matched nothing for (`unmatched`); the
 server reads the annotated list and turns each case into a row or a refusal.
 
-MERGED WITH. The fault itself was the requirement-name read: for every block
+The fault itself was the requirement-name read: for every block
 that evaluated false the bridge destroyed EVAL_WITH_FAILURES' diag record through a
 slipped DIAG_OBJECT_DTOR (0x04a5b060, mid-function); D's 0x0595b060 is the engine's
 own callee, witnessed at runtime (bridge/include/diag_dtor.h). So on the merged tree:
@@ -68,8 +68,8 @@ def _reply(rows, *, unmatched=None, partial=False, valid_only=False, considered=
 
 
 #: what the 2026.12.0 bridge sent for B3: the wedged row, no name, no witness
-SMOKE17_B3 = _reply([{"hash": 3105402711, "eval_error": True, "eval_wedged": True}], valid_only=True)
-#: the same fault through this lane's bridge: named, and nothing unmatched
+WEDGED_ROW = _reply([{"hash": 3105402711, "eval_error": True, "eval_wedged": True}], valid_only=True)
+#: the same fault through this tree's bridge: named, and nothing unmatched
 WEDGED_NAMED = _reply([{"name": ASK[0], "hash": 3105402711, "eval_error": True, "eval_wedged": True}],
                       unmatched=[])
 NOT_TAKEABLE = _reply([{"name": ASK[0], "hash": 3105402711, "shown": True, "valid": False,
@@ -156,7 +156,7 @@ def test_unmatched_after_a_budget_stop_is_not_reached_never_unknown():
 def test_the_smoke17_reply_from_a_bridge_without_the_witness_says_the_rows_are_unexplained():
     """The 2026.12.0 bridge's B3 reply: an unnamed row, no `unmatched`. Nothing is
     claimed unknown (nobody witnessed it); the missing row is said, not silent."""
-    _, env = _do(SMOKE17_B3)
+    _, env = _do(WEDGED_ROW)
     assert env["ok"] is True
     w = [x for x in env["warnings"] if x["code"] == "decision_rows_unexplained"]
     assert w and w[0]["names"] == ASK, env["warnings"]
@@ -172,7 +172,7 @@ def test_control_an_available_decision_is_an_available_row():
 
 
 def test_an_unwitnessed_dtor_is_its_own_typed_state_not_a_reasonless_row():
-    """ x: resolve_diag_dtor returned 0, so the failed requirement's
+    """resolve_diag_dtor() returned 0, so the failed requirement's
     name was not read. The verdict (not takeable) stands; the row says why it has
     no reason, and it is neither the fault nor the bridge-gave-no-reason gate."""
     _, env = _do(UNWITNESSED)
@@ -188,7 +188,7 @@ def test_an_unwitnessed_dtor_is_its_own_typed_state_not_a_reasonless_row():
 
 
 def test_a_decision_the_engine_does_not_show_is_typed_not_a_missing_reason():
-    """Shown:false (the engine's is_shown verdict,
+    """shown:false (the engine's is_shown verdict,
     query_handlers.cpp rb.key("shown")) with no failures was labelled
     gate_introspection_unavailable, "the engine gave no reason"."""
     hidden = _reply([{"name": ASK[0], "hash": 3105402711, "shown": False, "valid": True,

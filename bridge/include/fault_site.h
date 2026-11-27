@@ -1,7 +1,7 @@
 #pragma once
 // The ONE spelling of a faulting instruction, shared by the SIGSEGV
 // handler (bridge_init.cpp, three log sites) and by the probe that grades it
-// (bridge/test/fault_location_probe.cpp).
+// (a host probe the research tree keeps).
 //
 // It lives here rather than as a lambda in the handler for one reason: a
 // formatter whose REFUSAL branch never executes is a branch nobody has ever
@@ -25,7 +25,7 @@ inline constexpr uintptr_t kGhidraImageBias = 0x100000;
 //
 // When the offset cannot be computed it does NOT print 0x0. A well-formed zero
 // is indistinguishable from a real fault at base+0, which is precisely the
-// failure the arm-A investigation kept hitting: a number that cannot say
+// failure a crash investigation keeps hitting: a number that cannot say
 // whether it was measured. The unresolved case is spelled UNRESOLVED and names
 // WHICH input was missing.
 inline const char* format_fault_site(char* buf, size_t n,
@@ -45,7 +45,7 @@ inline const char* format_fault_site(char* buf, size_t n,
 }
 
 // ── THE REGISTERS AT THE FAULT ──────────────────────────────────────────────
-// rip says WHICH instruction. For the shape both arm-A crashes had — a fault at
+// rip says WHICH instruction. For the shape of the recorded crashes — a fault at
 // a small constant (0x1a) or at 0 — the instruction is a field load off a
 // pointer, and the pointer itself is sitting in a register. That register names
 // WHICH OBJECT was null, which is the question "0x1a" could not answer and the
@@ -74,18 +74,15 @@ inline const char* format_fault_regs(char* buf, size_t n, const void* ctx) {
 
 // ── THE WORD AT [rsp], EMITTED UNINTERPRETED ─────────────────────
 //
-// first live capture resolved to GetPrestige with the ip at its FIRST
+// The first live capture resolved to GetPrestige with the ip at its FIRST
 // instruction. It named the instruction and could not name the CALLER, because
 // GetPrestige has 16 callers and the caller's identity is in the return address.
 // At a function's first instruction the return address is exactly at [rsp] —
 // nothing has been pushed yet.
 //
-// MY FIRST CUT GATED THE READ ON ip_is_at_entry AND THE ONLY SHIPPED CALLER
-// PASSES FALSE, because a signal handler cannot know function bounds. So it
-// would have printed NOT_AT_ENTRY on every real capture and named nobody: the
-// capability present, the only caller that could use it passing false.
-// asymmetry, inside the fix for own instrument, caught
-// counting call sites — and I had already told them it would name the caller.
+// THE READ IS NOT GATED ON ip_is_at_entry, because the only shipped caller
+// passes false (a signal handler cannot know function bounds): gated, it would
+// print NOT_AT_ENTRY on every real capture and name nobody.
 //
 // SO THE VALUE IS ALWAYS EMITTED AND NEVER MISLABELLED. The word is reported as
 // what it literally is — the machine word at [rsp] — with its image offset when
@@ -146,7 +143,7 @@ inline const char* format_frame_word(char* buf, size_t n, uintptr_t rsp,
                  (unsigned long)(word - base + kGhidraImageBias),
                  assumed ? " (extent assumed)" : "");
     } else {
-        // rule, BOTH ends: a value below the base or beyond the image
+        // The rule, BOTH ends: a value below the base or beyond the image
         // end is not an offset into it, so the subtraction is refused rather
         // than rendered.
         snprintf(buf, n,
@@ -168,7 +165,7 @@ inline const char* format_frame_word(char* buf, size_t n, uintptr_t rsp,
 // instrument buys a second sample of the same word. So the ladder: the eight
 // machine words at [rsp], [rsp+8], … [rsp+0x38], each probed INDEPENDENTLY
 // through the same fault-tolerant reader as the first and each labelled as what
-// it literally is. Rules, all inherited from the one-word line and from:
+// it literally is. Rules, all inherited from the one-word line:
 //   * every word goes through `probe`; never a dereference — the handler is
 //     already recovering from one fault and a second inside it is the
 //     chained-FATAL path;
@@ -176,7 +173,7 @@ inline const char* format_frame_word(char* buf, size_t n, uintptr_t rsp,
 //     snprintf with the remaining length tracked;
 //   * each slot reports its own readability — an UNREADABLE slot is printed
 //     beside the ones that resolved, never a silent stop at the first bad word,
-//     because a truncated chain that looks complete is the defect this exists
+//     because a truncated chain that looks complete is the hazard this exists
 //     to end;
 //   * an in-image word carries its offset and Ghidra VA; anything else prints
 //     as a raw value with off=UNRESOLVED, so a plausible-looking number never

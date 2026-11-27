@@ -1,11 +1,11 @@
-"""v3 §7.5: the seat is a LINEAGE — the MCP-side step.
+"""The seat is a LINEAGE — the MCP-side step.
 
 `decide` is pure over four reads; every branch is driven here without a
 bridge. `step` is driven through a fake gateway that answers the same verbs
 the real one does (get_bridge_state, query_character, query_title_hierarchy,
 set_controlled_character), and `observe` is shown INERT without the env.
 
-Red on 0a969f2e: the module does not exist; `observe` has no lineage step.
+Red without the rule: the module does not exist; `observe` has no lineage step.
 """
 import asyncio
 import json
@@ -191,8 +191,8 @@ def test_step_ends_the_seat_lost_when_the_title_has_no_holder(tmp_path):
 
 
 def test_step_never_raises_and_a_failed_step_is_no_verdict(tmp_path):
-    """2026.12.6: a step whose reads raise is retried
-    at the next observe, never counted as an unbind. Red on c4884cc4: it wrote
+    """A step whose reads raise is retried
+    at the next observe, never counted as an unbind. Red without the rule: it wrote
     `seat_unbound step_failed:RuntimeError`."""
     class Boom(_GW):
         async def read(self, action, params=None):
@@ -246,7 +246,7 @@ def test_observe_calls_the_step_only_when_armed(monkeypatch):
 
 
 def test_a_living_seat_writes_one_bound_row_at_its_first_step_and_nothing_while_held(tmp_path):
-    """cell0 gap 2 (2026.12.4): `step` wrote no row while the ruler was held, so a
+    """`step` wrote no row while the ruler was held, so a
     seat whose ruler never died had no sink and read `unwitnessed` (n_at_end 0).
     The first step that holds a ruler writes ONE `bound` row; later held steps
     write nothing more."""
@@ -264,7 +264,7 @@ def test_a_living_seat_writes_one_bound_row_at_its_first_step_and_nothing_while_
 
 
 def test_a_step_that_finds_no_ruler_writes_no_bound_row(tmp_path):
-    """No `bound` row without a ruler. Since 2026.12.6 (TK6)
+    """No `bound` row without a ruler. Since 2026.12.6
     the step is a counted, non-terminal `not_bound_yet` note."""
     sink = tmp_path / "seat.jsonl"
     gw = _GW(_row(primary_character_id=0), alive=True, holder=None)
@@ -279,7 +279,7 @@ def test_a_resumed_seats_server_seeds_its_lineage_from_the_sink(monkeypatch, tmp
     """A cell's resumed claude starts a NEW server whose
     in-memory Prior was None, so it re-learned the seat from scratch (a second
     `bound` row, or the dead original). Its first observe now seeds the Prior
-    from the sink: the rebind's ruler and title. Red on b6998ec5: prior None."""
+    from the sink: the rebind's ruler and title. Red without the rule: prior None."""
     import mcp_server
     seen = []
 
@@ -367,14 +367,14 @@ def test_a_resumed_seat_holding_its_heir_writes_exactly_one_bound_row(monkeypatc
     assert gw.writes == []
 
 
-# ── 2026.12.6: a read that carried no session list is no verdict ─────────────
+# ── a read that carried no session list is no verdict ─────────────
 #
-# v3 pilot flat_hom-3 (lane/v3pilot4 a1c8beff, evidence/v3pilot4/README.md):
-# D4 and D5 got `seat_unbound session_row_absent` at 867.10.22/23, about 20 s
+# A pilot run:
+# two duke seats got `seat_unbound session_row_absent` at 867.10.22/23, about 20 s
 # after hand-overs, while both held their rulers on the same bridge session to
 # the horizon. The gateway answers `{}` for a read that timed out or lost its
 # connection (mcp_server.BridgeGateway._dispatch); `own_session_row({}, sid)`
-# is None and `decide` made that the terminal unbound. Red on c4884cc4: rows 1
+# is None and `decide` made that the terminal unbound. Red without the rule: rows 1
 # and 2 (an unbound row is written and the seat ends). Row 3 is the signed rule
 # and the CONTROL: green before and after.
 
@@ -415,7 +415,7 @@ def test_no_own_session_id_is_no_verdict_either(tmp_path):
 
 
 def test_a_read_list_without_the_seats_row_is_still_the_signed_unbound(tmp_path):
-    """The signed rule (v3 §7.5, session_row_absent): the list was read and this
+    """The signed rule (session_row_absent): the list was read and this
     seat's row is not in it. CONTROL, green before and after."""
     sink = tmp_path / "seat.jsonl"
     gw = _Flaky([{"sessions": [{"session_id": "someone-else", "primary_character_id": 7}]}])
@@ -457,7 +457,7 @@ def test_the_server_and_the_cli_read_a_session_list_alike(reply):
 # One predicate (sl.read_failed) for the three reads. A FAILED read (nothing
 # came back, the gateway's {} or bridge_disconnected, the bridge's
 # game_thread_timeout / memory_access_fault) is no verdict; a read the bridge
-# MADE and refused keeps the signed reason. Red on c4884cc4: every
+# MADE and refused keeps the signed reason. Red without the rule: every
 # failed-read row (an unbound row is written). The refusal rows are the
 # signed rule, CONTROLS green before and after.
 
@@ -465,12 +465,12 @@ FAILED = [None, {}, "x", {"reason": "bridge_disconnected"},
           {"error": "game_thread_timeout", "action": "query_character", "waited_ms": 2000,
            "hint": "The game-thread drain did not run this read in time. Nothing was read."},
           {"error": "memory_access_fault"},
-          # TK6 P1a/P1b: the listener fails a read IN FLIGHT when the
+          # The listener fails a read IN FLIGHT when the
           # connection drops with {"error": "bridge_disconnected"} (mcp_server
-          # _bridge_listener). Red on 10e9cea5 for the character and title reads.
+          # _bridge_listener). Red without the rule for the character and title reads.
           {"error": "bridge_disconnected"},
           # P1c/P1d: a lookup that faulted (mark_reply_degraded): not the bridge's
-          # answer about the subject. Red on 10e9cea5 (refused / lost).
+          # answer about the subject. Red without the rule (refused / lost).
           {"success": False, "action": "query_character", "degraded": True, "fault_count": 1},
           {"error": "title_not_found", "title_id": 9, "degraded": True, "fault_count": 2}]
 
@@ -569,13 +569,13 @@ def test_read_failed_names_the_failed_shapes_and_only_those(reply, why):
 
 
 
-# ── 2026.12.6, the owner's bound (2026-11-10, verbatim: "If there are something
-# like multiple timeouts in a row, that might be fair to call an issue.") ────
+# ── 2026.12.6, the bound: several failed reads in a row are an issue, one is not
+# (a timeout is not a verdict on the seat) ──────────────────────────────────
 #
 # MAX_CONSECUTIVE_FAILED_READS (3) failed steps in a row end the seat
 # `seat_unbound reads_failed_repeatedly`, DATED at the first of them. A step
 # that reads again resets the count. The count survives a continuation through
-# the sink (prior_from_sink). Red on c4884cc4: every failed step wrote a
+# the sink (prior_from_sink). Red without the rule: every failed step wrote a
 # terminal seat_unbound at once (session_row_absent or step_failed).
 
 class _Clock(_GW):
@@ -627,7 +627,7 @@ def test_three_failed_steps_in_a_row_end_the_seat_dated_at_the_first(tmp_path):
 
 
 def test_a_refusal_still_ends_at_once_with_its_signed_reason(tmp_path):
-    """CONTROL (green on c4884cc4): no count, no wait."""
+    """CONTROL (green without the rule too): no count, no wait."""
     sink = tmp_path / "seat.jsonl"
     gw = _Scripted({"query_character": {"success": False, "action": "query_character"}},
                    row=_row(), alive=True, holder=None)
@@ -665,10 +665,10 @@ def test_a_recovered_row_resets_the_count_for_the_next_server(tmp_path):
 
 
 
-# ── TK6 ──────────────────────────────────────────────────────────
+# ── the gateway's failure ──────────────────────────────────────────────────────────
 
 def test_the_gateway_spells_its_failure_with_the_predicates_code():
-    """One definition (item 1): the gateway's no-connection answer is built from
+    """One definition: the gateway's no-connection answer is built from
     seat_lineage.BRIDGE_DISCONNECTED, and the predicate reads it as failed."""
     import mcp_server
     gw = mcp_server.BridgeGateway(mcp_server.BridgeState())      # not connected: hung
@@ -700,7 +700,7 @@ class _NoRulerYet(_GW):
 
 @pytest.mark.parametrize("fails", [0, 1])
 def test_a_seat_with_no_ruler_yet_still_gets_its_first_sighting_bound(tmp_path, fails):
-    """r1 item 2 / r2 item 3: the first ruler is a `bound`, never `rebind 0->5
+    """The first ruler is a `bound`, never `rebind 0->5
     primary_moved_without_heir_witness` (an unwitnessed rebind excludes the
     episode). The first observe found the row with no ruler (a prebind landing
     late): a counted `not_bound_yet` note, not character_read_refused old_id 0."""
@@ -734,7 +734,7 @@ class _Pattern(_GW):
 
 
 def test_after_a_recovery_the_bound_is_dated_at_the_first_miss_of_the_new_run(tmp_path):
-    """Item 4 (kills M6c): in ONE process, two misses, a recovery, three misses:
+    """In ONE process, two misses, a recovery, three misses:
     the unbound row is dated at the first miss AFTER the recovery (867.10.14),
     not at the first miss of the earlier run (867.10.11)."""
     sink = tmp_path / "seat.jsonl"
@@ -751,7 +751,7 @@ def test_after_a_recovery_the_bound_is_dated_at_the_first_miss_of_the_new_run(tm
 
 
 
-# ── TK6 ──────────────────────────────────────────────────────────
+# ── scripted steps ──────────────────────────────────────────────────────────
 
 class _Script(_GW):
     """Each step answers the next dict of `steps` ({action: reply}; missing
@@ -780,7 +780,7 @@ DEG = {"degraded": True, "fault_count": 1}
 
 def test_N2_a_full_degraded_profile_is_the_bridges_answer(tmp_path):
     """query_handlers.cpp:972: a full profile with one faulted field stands.
-    alive:true + degraded, three observes: held, no row. Red on 6027021a."""
+    alive:true + degraded, three observes: held, no row. Red without the rule."""
     sink = tmp_path / "seat.jsonl"
     prof = {"id": 5, "alive": True, "primary_title_id": 9, **DEG}
     gw = _Script([{"query_character": prof}] * 3)
@@ -792,7 +792,7 @@ def test_N2_a_full_degraded_profile_is_the_bridges_answer(tmp_path):
 
 def test_N3_a_degraded_session_list_is_read(tmp_path):
     """dispatch_router.cpp:1650 FaultScope on get_bridge_state: the list is the
-    registry's, read under its lock; degraded or not, it decides. Red on 6027021a."""
+    registry's, read under its lock; degraded or not, it decides. Red without the rule."""
     sink = tmp_path / "seat.jsonl"
     bs = {"sessions": [_row()], "player_character_id": 0, **DEG}
     gw = _Script([{"get_bridge_state": bs}] * 3)
@@ -804,7 +804,7 @@ def test_N3_a_degraded_session_list_is_read(tmp_path):
 
 def test_N4_a_degraded_dead_profile_takes_the_signed_death_path(tmp_path):
     """alive:false present (degraded): the ruler is dead; the seat rebinds
-    through the title to its holder. Red on 6027021a (read_failed instead)."""
+    through the title to its holder. Red without the rule (read_failed instead)."""
     sink = tmp_path / "seat.jsonl"
     gw = _Script([{"query_character": {"id": 5, "alive": False, "primary_title_id": 9, **DEG}}],
                  alive=False, holder=12)
@@ -815,7 +815,7 @@ def test_N4_a_degraded_dead_profile_takes_the_signed_death_path(tmp_path):
 
 def test_N4b_a_degraded_title_with_its_holder_is_read(tmp_path):
     """query_handlers.cpp:3006 FaultScope: the title read carries holder_id
-    (degraded): the seat rebinds to that holder. Red on 6027021a."""
+    (degraded): the seat rebinds to that holder. Red without the rule."""
     sink = tmp_path / "seat.jsonl"
     title = {"title": {"title_id": 9, "holder_id": 12}, **DEG}   # emit_title_info keys
     gw = _Script([{"query_title_hierarchy": title}], alive=False, holder=12)
@@ -841,10 +841,10 @@ def test_degraded_without_the_load_bearing_field_is_a_failed_read(tmp_path, read
 
 
 def test_N1_a_seat_that_never_reads_ends_at_the_third_failure_dated_at_the_first(tmp_path):
-    """r2 item 2: a seat that never gets a good read (12 misses from its first
+    """A seat that never gets a good read (12 misses from its first
     observe) is `seat_unbound reads_failed_repeatedly` at the 3rd, dated at the
     1st: the bundle says "we looked and could not see", never `unwitnessed`.
-    Red on 6027021a (no row at all)."""
+    Red without the rule (no row at all)."""
     sink = tmp_path / "seat.jsonl"
     gw = _Script([{"get_bridge_state": {}}] * 12)
     prior = None
@@ -857,7 +857,7 @@ def test_N1_a_seat_that_never_reads_ends_at_the_third_failure_dated_at_the_first
 
 
 def test_R3_R7_raise_raise_good_is_a_bound_never_a_swap(tmp_path):
-    """r2 item 3: raises before any ruler are counted (R7's route) AND the
+    """Raises before any ruler are counted (R7's route) AND the
     first-sighting rule ignores the notes (R3's): raise, raise, good is `bound`.
     Each mutant alone and both together red this row."""
     sink = tmp_path / "seat.jsonl"
@@ -872,7 +872,7 @@ def test_R3_R7_raise_raise_good_is_a_bound_never_a_swap(tmp_path):
 
 
 def test_R9_the_listener_fails_a_read_in_flight_with_the_predicates_code():
-    """r2 item 3 (R9): the listener's answer to a read in flight when the
+    """The listener's answer to a read in flight when the
     connection drops is spelled from seat_lineage.BRIDGE_DISCONNECTED, and the
     predicate reads it as failed on every read."""
     import mcp_server
@@ -897,11 +897,11 @@ def test_R9_the_listener_fails_a_read_in_flight_with_the_predicates_code():
 
 @pytest.mark.parametrize("never", [False, True])
 def test_N5_a_late_prebind_is_not_character_read_refused(tmp_path, never):
-    """r2 item 3 (older than TK6): good reads of the seat's row with no ruler
+    """Good reads of the seat's row with no ruler
     before it ever had one (a prebind landing late) gave `seat_unbound
     character_read_refused old_id 0` at the 2nd observe. Now each is a counted
-    `not_bound_yet` note: two then the ruler -> bound (N5); three -> `seat_unbound
-    never_bound` dated at the first (N5b). Red on 6027021a."""
+    `not_bound_yet` note: two then the ruler -> bound; three -> `seat_unbound
+    never_bound` dated at the first (N5b). Red without the rule."""
     sink = tmp_path / "seat.jsonl"
     unbound = {"get_bridge_state": {"sessions": [_row(primary_character_id=0)],
                                     "player_character_id": 0}}
@@ -933,7 +933,7 @@ def test_a_run_mixing_not_bound_yet_and_a_failed_read_is_reads_failed_repeatedly
     assert rows[-1]["kind"] == "seat_unbound" and rows[-1]["reason"] == sl.R_READS_FAILED_REPEATEDLY
 
 
-# ── TK6 ──────────────────────────────────────────────────────────
+# ── no ruler bound ──────────────────────────────────────────────────────────
 
 NO_RULER = {"get_bridge_state": {"sessions": [_row(primary_character_id=0)], "player_character_id": 0}}
 
@@ -958,7 +958,7 @@ def test_M8_the_run_kind_survives_a_continuation(tmp_path):
 @pytest.mark.parametrize("listless", [{"request_id": "x", "tick": 9, "game_date": "867.10.22"},
                                       {"request_id": "x", "tick": 9, "sessions": None}])
 def test_M13_a_bound_seat_reading_no_session_list_is_not_session_row_absent(tmp_path, listless):
-    """The flat_hom-3 case: a bound seat whose get_bridge_state came back with no
+    """The pilot-run case: a bound seat whose get_bridge_state came back with no
     session list is a failed read (a note), never the terminal
     session_row_absent. Kills M13 (the no_session_list guard removed)."""
     sink = tmp_path / "seat.jsonl"
@@ -987,7 +987,7 @@ def test_M14_an_unbound_reason_before_any_ruler_is_the_bridges_word_not_not_boun
 def test_a_degraded_profile_whose_id_faulted_to_zero_is_a_failed_read(tmp_path):
     """build_char_profile always writes `alive`, so a profile whose id read
     faulted to 0 still carries it; without an id it is no answer about the
-    ruler. Red on a443930c (character_read_refused, terminal)."""
+    ruler. Red without the rule (character_read_refused, terminal)."""
     sink = tmp_path / "seat.jsonl"
     prof = {"id": 0, "alive": True, "primary_title_id": 9, "degraded": True, "fault_count": 1}
     prior = _step(_Script([{"query_character": prof}]), sl.Prior(5, 9), sink)
@@ -996,12 +996,12 @@ def test_a_degraded_profile_whose_id_faulted_to_zero_is_a_failed_read(tmp_path):
     assert not prior.ended
 
 
-# ── INTEG item 2: K's seat follows the PLAYED LINE ──
+# ── K's seat follows the PLAYED LINE ──
 # K's seat reads the bridge's line watch (query_handlers.cpp emit_played_line:
 # start_character_id, line_character_id, previous_character_id,
 # carrying_title_id, primary_title_id, successions, why, status,
 # pending_reason when pending, armed_date, since_date, armed_this_read), the
-# decision the growth meter reads. Red on 749a3ff9: K's seat followed the
+# decision the growth meter reads. Red without the rule: K's seat followed the
 # registered title (holder 0 -> `lost`; holder X -> rebind to X).
 
 K_FRANCE, E_HRE = 7052, 105
@@ -1047,9 +1047,9 @@ def test_K_no_heir_yet_is_pending_never_lost_mid_run():
 
 
 def test_K_the_bridge_says_the_line_ENDED_the_seat_is_lost():
-    """Owner ruling 2026-11-12: `pending` only while the bridge has not named an
-    heir; once its line watch says `line_ended`, the seat is LOST. Red on
-    8cef520a (the watch reader refused the status: seat_unbound
+    """The rule: `pending` only while the bridge has not named an
+    heir; once its line watch says `line_ended`, the seat is LOST. Red without
+    the rule (the watch reader refused the status: seat_unbound
     line_watch_unreadable:watch_malformed)."""
     ended = _watch(5, "line_ended")
     ended["played_line"]["ended_date"] = "870.1.4"
@@ -1191,7 +1191,7 @@ def test_K_step_a_failed_watch_read_is_no_verdict(tmp_path):
     assert prior.ruler == 5 and not prior.ended
 
 
-# ──
+# ── the realm guard ──
 # a succession never moves a seat outside its registered realm; the bridge
 # refuses and the seat records it `lost heir_outside_realm`. Keys from the
 # emitters: session.cpp sessions_json (unbound_reason, unbound_heir_id,
@@ -1202,7 +1202,7 @@ CARLOMAN = 15319
 
 
 def test_the_bridge_refused_an_outside_realm_heir_the_seat_is_lost_and_recorded():
-    """Red on 8cef520a: an unbound_reason other than heir_is_player fell through
+    """Red without the rule: an unbound_reason other than heir_is_player fell through
     to `seat_unbound released_without_death` (an instrument verdict)."""
     row = _row(primary_character_id=0, claimed_character_ids=[], unbound_reason="heir_outside_realm",
                unbound_heir_id=CARLOMAN, realm_root_id=12015)

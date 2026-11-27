@@ -11,8 +11,9 @@
 // This is a pure observer — it does not modify any game state.
 
 #include "action_dispatch_internal.h"
+#include "council_task_target.h"   // Target province -> county; task progress
 #include "init_order.h"   // CK3_EARLY_INIT
-#include "name_tables.h"   // Recorded_or_cached_name
+#include "name_tables.h"   // recorded_or_cached_name
 
 #include <shared_mutex>
 #include <deque>
@@ -327,13 +328,18 @@ static void emit_live_council_seats(ResponseBuilder& r, void* character) {
                 void* hc = (holder && holder != 0xFFFFFF) ? lookup_character(holder) : nullptr;
                 bool filled = hc && !is_sentinel(hc);
 
-                // Task target scope (tag==8 => title target at +0x48)
+                // Task target scope. (re_fabricate_claim.md §2): tag 8 is a PROVINCE
+                // target; the county is title(province+0x318).DE_JURE_PARENT. At first
+                // this read the province id as a title id (Athlone's province 34 read as
+                // e_blue_horde); target_title_id is now the county, target_province_id the id.
                 std::string target_title, target_title_key;
-                uint32_t target_title_id = 0;
-                uint32_t target_tag = safe_read<uint32_t>(pos_obj + ck3::globals::COUNCIL_POS_TASK_TARGET_TAG);
+                uint32_t target_title_id = 0, target_province_id = 0;
+                uint32_t target_tag = safe_read<uint16_t>(pos_obj + ck3::globals::COUNCIL_POS_TASK_TARGET_TAG);
                 if (target_tag == 8) {
-                    uint32_t tid = safe_read<uint32_t>(pos_obj + ck3::globals::COUNCIL_POS_TASK_TARGET_ID) & 0xFFFFFF;
-                    if (tid && tid != 0xFFFFFF) {
+                    target_province_id = safe_read<uint32_t>(pos_obj + ck3::globals::COUNCIL_POS_TASK_TARGET_ID) & 0xFFFFFF;
+                    uint32_t tid = (target_province_id && target_province_id != 0xFFFFFF)
+                                   ? council_province_county(target_province_id) : 0;
+                    if (tid) {
                         uintptr_t tobj = lookup_title_obj(tid);
                         if (tobj && is_mapped(tobj)) {
                             target_title_id = tid;
@@ -356,11 +362,26 @@ static void emit_live_council_seats(ResponseBuilder& r, void* character) {
                 } else {
                     r.key("vacant"); r.value_bool(true);
                 }
+                if (target_province_id && target_province_id != 0xFFFFFF) {
+                    r.key("target_province_id"); r.value_uint(target_province_id);
+                }
                 if (target_title_id) {
                     r.key("target_title_id"); r.value_uint(target_title_id);
                     r.key("target_title"); r.value_string(target_title.c_str(), target_title.size());
                     if (!target_title_key.empty()) {
                         r.key("target_title_key"); r.value_string(target_title_key.c_str(), target_title_key.size());
+                    }
+                }
+                // A percentage task's progress, in
+                // percent (CActiveCouncilTask+0x20, x100000; the type's progress kind 1).
+                // Absent for other task kinds; a word outside [0, 10,000,000] is not emitted.
+                if (cur_task && is_mapped(cur_task)) {
+                    const int32_t kind = safe_read<int32_t>(cur_task + ck3::council_task_type::PROGRESS_KIND);
+                    const int64_t raw = safe_read<int64_t>(pos_obj + ck3::active_council_task::PROGRESS);
+                    double pct = 0;
+                    if (bridge::council_task_target::progress_percent(kind, raw, &pct)) {
+                        r.key("progress"); r.value_double(pct);
+                        r.key("frozen"); r.value_bool(safe_read<uint8_t>(pos_obj + ck3::active_council_task::FROZEN) != 0);
                     }
                 }
                 r.end_object();
@@ -389,7 +410,7 @@ bool do_query_council_tasks(const char* params_json, std::string* out) {
     r.key("current_tick"); r.value_uint(g_tick_id.load(std::memory_order_relaxed));
     r.key("hook_installed"); r.value_bool(g_orig_set_council_task != nullptr);
 
-    // PRIMARY (B4): live per-seat read when a character is supplied. This is the
+    // PRIMARY: live per-seat read when a character is supplied. This is the
     // authoritative source — the deque below is kept only as legacy telemetry.
     void* character = resolve_character(params_json);
     bool have_char = character && !is_sentinel(character);

@@ -21,7 +21,7 @@ namespace bridge {
 // are DEFINED in personality_world_reset.cpp (engine-free TU) so the world-reset
 // path is host-linkable. Declared in personality_locks.h.
 
-// THE DISK CARRIER MOVED. save_personality_locks_locked and the
+// THE DISK CARRIER MOVED. save_personality_locks_locked() and the
 // loader now live in personality_persist.cpp — an ENGINE-FREE translation unit,
 // so the identity gate that keeps the file inside one world is provable on a
 // host with no CK3 running. The old load_personality_locks() is gone with them:
@@ -71,7 +71,7 @@ void install_steering_purge_hook() {
 // declare_save_identity — the entry point
 // =============================================================================
 // The harness tells the bridge WHICH SAVE is loaded, using the identity that
-// already exists in run_summary.json ("episode_id" + save.sha256).
+// already exists in the run_summary.json ("episode_id" + save.sha256).
 // The bridge decides, once, whether quarantined agent steering may be restored,
 // and publishes the decision and its evidence (world_identity.cpp). Everything
 // hard is in that engine-free TU; this is the wire adapter.
@@ -90,7 +90,7 @@ bool do_declare_save_identity(const char* params_json, std::string* out) {
     ADLOG("declare_save_identity: %s — %s\n", rec.decision.c_str(), rec.why.c_str());
 
     // THIS IS THE EPISODE-OPEN SIGNAL THE ARM PATH ALREADY SENDS.
-    // holds the world paused until the episode begins and was keyed on
+    // The clock hold keeps the world paused until the episode begins and was keyed on
     // the episode OBSERVER's declaration — which the arm driver never makes, so
     // a test pilot ran 17 minutes at 0.0000 game-days/sec. The driver DOES
     // declare which episode this is, right here, carrying the episode_id; the
@@ -99,7 +99,7 @@ bool do_declare_save_identity(const char* params_json, std::string* out) {
     // confers nothing.
     pipeline_note_episode_open(id.episode_id.c_str());
 
-    // The CLAIMS half of the same decision. Decides what
+    // The CLAIMS half of the same decision.  Decides what
     // happens to quarantined STEERING; a declaration that refutes the world a
     // session's claims were taken in must also erase that session, or a resume
     // that abstained (no identity had been declared yet) leaves a control
@@ -241,8 +241,8 @@ int8_t personality_axis_value(uintptr_t personality_ptr, const PersonalityLock* 
 bool do_set_ai_personality(const char* params_json, std::string* out) {
     safe_read_clear();
     void* char_ptr = resolve_character(params_json);
-    // N3 (surface-audit 2026-08-01): lookup_character returns the DB SENTINEL
-    // (non-null!) on an id miss — the old null-only check let a bogus
+    // lookup_character returns the DB SENTINEL
+    // (non-null!) on an id miss — a null-only check would let a bogus
     // character_id fall through and write personality axes ONTO THE SENTINEL
     // OBJECT with success:true (silent-accept). Check both null and sentinel
     // BEFORE anything else touches the pointer.
@@ -282,8 +282,8 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
     }
 
 
-    // N3 (surface-audit 2026-08-01): typed rejection for out-of-range axis
-    // values. The old path silently CLAMPED (e.g. boldness:9999 → 100) and
+    // Typed rejection for out-of-range axis
+    // values. The superseded path silently CLAMPED (e.g. boldness:9999 → 100) and
     // returned success:true. Validate every provided axis BEFORE any engine
     // write or lock mutation so the call is atomic and loud. (Known limit:
     // json_get_int cannot distinguish a non-numeric value from -1, so
@@ -463,7 +463,7 @@ bool do_set_ai_personality(const char* params_json, std::string* out) {
 //
 // The fault is not hypothetical — it is the reason the guard exists.
 // own comment at the call sites says is_mapped() is a time-of-check test and
-// the store is the time-of-use, so a page unmapped in between faults. That bead
+// the store is the time-of-use, so a page unmapped in between faults. That task
 // converted a crash into a permanent deadlock, which is worse: a crash is
 // visible and a wedged game thread looks like a slow one.
 //
@@ -509,7 +509,7 @@ void apply_personality_locks() {
             fprintf(g_logfile,
                 "[CK3-Bridge] apply_personality_locks: %zu locked characters "
                 "exceeds the %zu-entry snapshot buffer — only %zu applied this "
-                "tick; the rest are NOT being steered (ck-1v1t)\n",
+                "tick; the rest are NOT being steered\n",
                 total, kMaxEntries, n);
             fflush(g_logfile);
         }
@@ -630,12 +630,12 @@ void install_personality_hooks() {
     // load_personality_locks() here: at hook-install time, with no idea which
     // save was loaded, straight into the live write set that
     // apply_personality_locks() pokes into characters 3x per tick. That is the
-    // hazard in its worst form, because it crosses PROCESSES: one run's
+    // Hazard in its worst form, because it crosses PROCESSES: one run's
     // steering landing on the next run's world, keyed by reused character ids.
     //
     // It never actually fired — install_personality_hooks() has itself had zero
     // callers (bridge.h declares it; nothing in bridge/src invokes it), so the
-    // bead's "load_personality_locks() has zero callers" was right in effect and
+    // task's "load_personality_locks() has zero callers" was right in effect and
     // slightly off in detail: the caller existed and was unreachable.
     //
     // The lock file is now loaded ONLY through world_identity_declare(), only

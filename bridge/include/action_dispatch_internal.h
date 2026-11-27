@@ -11,6 +11,7 @@
 #include "name_tables.h"
 #include "personality_locks.h"
 #include "actor_resolve.h"   // The one resolver of an unnamed actor
+#include "lifestyle_points.h"  // Unspent perk points, prerequisites
 
 #include <cstdio>
 #include <cstring>
@@ -42,9 +43,9 @@ extern thread_local bool g_in_protected_region;
 // A war's target titles: the casus belli's title array, uint32 title refs
 // (war_obj::CB_TITLE_ARRAY, count CB_TITLE_COUNT). Writes up to `cap` ids
 // (24-bit) to `out`, returns how many. Every reader of a war's targets goes
-// through this. Until (F10) four readers stepped the
+// through this. Before this file four readers stepped the
 // array by 8 bytes: the first id was right and every later one was the bytes
-// past it (Saffarid-Tahirid War in dump ck3_20260625_152901_ivar867 holds
+// past it (Saffarid-Tahirid War in the 867 start dump holds
 // 0x186b, 0x181d, and the second came back as whatever followed), so
 // target_titles differed between launches.
 inline int read_war_target_titles(uintptr_t war_ptr, uint32_t* out, int cap) {
@@ -132,7 +133,7 @@ public:
     }
     // A RATE needs more than two decimals. 0.076 game-days per
     // wall-second rounds to 0.08 at %.2f — a 5% error in the very conversion
-    // factor the pre-registered thresholds are restated against, introduced by
+    // factor the declared thresholds are restated against, introduced by
     // the printer.
     void value_double_prec(double v, int prec) {
         char tmp[48]; snprintf(tmp, sizeof(tmp), "%.*g", prec, v);
@@ -141,7 +142,7 @@ public:
     void value_bool(bool v) { buf_ += v ? "true," : "false,"; }
     void value_null() { buf_ += "null,"; }
 
-    // FIX I11: value_raw splices PRE-FORMED, KNOWN-VALID JSON verbatim. No escaping/validation —
+    // value_raw splices PRE-FORMED, KNOWN-VALID JSON verbatim. No escaping/validation —
     // caller guarantees well-formedness. Do NOT use for untrusted/possibly-empty payloads.
     void value_raw(const char* v) { buf_ += v; buf_ += ','; }
     void value_raw(const std::string& v) { buf_ += v; buf_ += ','; }
@@ -190,7 +191,7 @@ inline void mark_reply_degraded(std::string& reply, int fault_count) {
 }
 
 // The fault bracket of a handler whose reply stands without a read that
-// faulted (ff3 N1): constructed first thing in the handler, it calls
+// faulted: constructed first thing in the handler, it calls
 // safe_read_clear(); on the way out, by any return, it asks
 // safe_read_had_fault() and, when a read faulted, the reply the handler left in
 // *out says so (mark_reply_degraded) and the bridge log names the address
@@ -232,7 +233,7 @@ private:
 const char* json_get_string(const char* json, const char* key);
 int json_get_int(const char* json, const char* key);
 bool json_get_bool(const char* json, const char* key, bool default_val = false);
-// Strict boolean accessor (N3, surface-audit 2026-08-01): returns true and sets
+// Strict boolean accessor: returns true and sets
 // *out ONLY when the key is present (top-level or under "params") AND is a JSON
 // boolean. Returns false when absent or present-with-any-other-type. Callers
 // pair it with json_has_key to distinguish "absent" (legacy default semantics)
@@ -297,6 +298,14 @@ std::vector<ContractObligation> contract_obligations(uintptr_t contract);
 void emit_construction_progress(ResponseBuilder& r, uintptr_t slot_container);
 uintptr_t lookup_title_obj(uint32_t title_id);
 int get_title_tier(uintptr_t title_ptr);
+// A county council task's target is a PROVINCE.
+// council_county_province: the province id the game's target scope takes for a county
+// title (its capital barony's province, else its first barony's), returned only when
+// council_task_target::county_province_verified() agrees; 0 with `why` set otherwise
+// ("not_a_county", "no_province"). council_province_county: the county title id of a
+// province id (title(province+0x318).DE_JURE_PARENT), 0 when a link does not read.
+uint32_t council_county_province(uint32_t county_title_id, const char** why);
+uint32_t council_province_county(uint32_t province_id);
 
 // Resolve a landed-title script key (e.g. "e_britannia", "d_northumbria") to its
 // title id by iterating LANDED_TITLE_DB + matching the title-type NAME_KEY.
@@ -305,7 +314,7 @@ uint32_t resolve_title_id_by_key(const char* key);
 
 // Recursively collect tier-2 (county) de-jure descendant title ids of `title_id`
 // into `out` (`seen` is the caller-supplied cycle-guard scratch, `depth` starts 0).
-// Pure safe_read; reused by the #131 create_title de-jure gate and the read-only
+// Pure safe_read; reused by the create_title de-jure gate and the read-only
 // de-jure meter. Defined in intent_dispatch.cpp.
 void collect_dejure_counties(uint32_t title_id, std::vector<uint32_t>& out,
                              std::vector<uint32_t>& seen, int depth);
@@ -330,6 +339,12 @@ DejureShare dejure_share(uint32_t title_id, uint32_t ruler, std::vector<DejureCo
 // =============================================================================
 
 std::string ad_read_std_string(uintptr_t str_addr);
+// The character's government type key (title_realm GOVERNMENT_TYPE_PTR ->
+// name, HIGH), "" when any link of the chain is not read. maa_currency.h decides the recruit currency from it.
+std::string read_government_key(void* character);
+// The actor's one-way truce on target_id, from the actor's slot in
+// their CDiplomaticRelation (bridge/include/truce_read.h): the has_truce rule.
+bool truce_slot_active(void* actor_char, uint32_t target_id);
 
 // The war's CB script name ("county_conquest_cb"): the CCasusBelli sub-object's
 // type ref (war_obj::CB_TYPE_REF, HIGH) names a CB db object whose NAME_KEY is
@@ -358,7 +373,7 @@ std::vector<std::string> interaction_send_option_names(void* interaction);
 // matrilineal flag. Pure reads.
 bool marriage_is_matrilineal(uintptr_t char_a, uintptr_t char_b);
 
-// A character's name as the bridge can state it right now (lane-namekey).
+// A character's name as the bridge can state it right now.
 //
 // The game stores a LOCALIZATION KEY on CCharacter (+0x20, `E_thelred` for
 // Æthelred); the display name comes from the engine's resolver, which only
@@ -382,7 +397,7 @@ std::string ad_read_char_name(uintptr_t c);
 // carries a top-level `name` goes through this.
 void emit_char_name(ResponseBuilder& r, uintptr_t c);
 void emit_char_names(ResponseBuilder& r, uintptr_t c);
-std::string dynasty_name(uintptr_t dyn_obj);    // THE dynasty-name reader: NAME (+0x80); "" when absent (FB M-2)
+std::string dynasty_name(uintptr_t dyn_obj);    // THE dynasty-name reader: NAME (+0x80); "" when absent
 std::string char_dynasty_name(uintptr_t c);     // a character's dynasty, through dynasty_name; "" when it does not resolve
 std::string house_name(uintptr_t house_obj);    // THE house-name reader: NAME (+0x248, House_GetName); "" when absent
 std::string char_house_name(uintptr_t c);       // a character's house, through house_name; "" when it does not resolve
@@ -491,8 +506,8 @@ bool do_query_war_score_breakdown(const char* params_json, std::string* out);
 // so the agent bails (white-peace) a defensive/occupation-0 war before the bleed.
 bool do_query_war_stance(const char* params_json, std::string* out);
 // Runtime flag: arm the AI-mgr coordinator record walk inside do_query_war_stance.
-// DEFAULT ON since WSTANCE — the record↔war-id match key (rec+0x18) matched live
-// (smokes 17/19/21; re_query_war_stance.md §10). When OFF the handler returns
+// DEFAULT ON — the record↔war-id match key (rec+0x18) matched live
+// (in three test runs; re_query_war_stance.md §10). When OFF the handler returns
 // stance "unavailable" and an occupation-derived verdict.
 extern std::atomic<bool> g_war_stance_record_walk_enabled;
 bool do_query_council(const char* params_json, std::string* out);
@@ -501,7 +516,7 @@ bool do_query_vassal_loyalty(const char* params_json, std::string* out);
 bool do_query_faction_threat(const char* params_json, std::string* out);
 bool do_query_schemes(const char* params_json, std::string* out);
 bool do_query_incoming_schemes(const char* params_json, std::string* out);
-// l3-schemes (scheme_engine.cpp): the engine's scheme type database.
+// The scheme reads (scheme_engine.cpp): the engine's scheme type database.
 bool do_query_scheme_types(const char* params_json, std::string* out);
 bool do_query_armies(const char* params_json, std::string* out);
 bool do_query_lifestyle(const char* params_json, std::string* out);
@@ -530,7 +545,7 @@ bool do_get_tick_info(const char* params_json, std::string* out);
 bool do_declare_save_identity(const char* params_json, std::string* out);
 
 // Install the SessionRegistry steering-purge hook.  Called once from
-// bridge_init, never from a static initialiser (dll_init
+// bridge_init(), never from a static initialiser (dll_init
 // runs before most .init_array entries, so anything a constructor installs may
 // not exist yet when the reader thread first touches it).
 void install_steering_purge_hook();
@@ -542,7 +557,7 @@ bool do_query_title_claimants(const char* params_json, std::string* out);
 bool do_query_title_history(const char* params_json, std::string* out);
 bool do_query_title_succession(const char* params_json, std::string* out);
 bool do_query_valid_war_targets(const char* params_json, std::string* out);
-// #110: de-jure-duchy-completion conquest targeting. Surfaces conquerable
+// De-jure-duchy-completion conquest targeting. Surfaces conquerable
 // counties (held by independent, non-kin, non-allied neighbors) to build toward
 // a 2nd duchy, with a per-duchy completion rollup. Optional engine
 // county_conquest_cb validity check sets conquerable_now authoritatively.
@@ -607,7 +622,7 @@ bool do_query_intents(const char* params_json, std::string* response_out);
 bool do_query_intent_results(const char* params_json, std::string* response_out);
 // Probe a single dispatch by id. Returns success / rejected /
 // crashed / pending / not_found. Disambiguates the cases query_intent_results
-// silently rolled together — "not in the last N completed" used to overlap
+// silently rolled together — "not in the last N completed" does not overlap
 // with "still pending" and "evicted from the completed ring".
 bool do_query_dispatch_result(const char* params_json, std::string* response_out);
 bool do_cancel_intent(const char* params_json, std::string* response_out);
@@ -647,7 +662,7 @@ void init_war_decl_handler_hook();
 // Marriage Observation Observer (marriage_observation_hook.cpp)
 bool do_query_marriage_observations(const char* params_json, std::string* out);
 
-// Phase-3 Wave-2 probes (phase3_probes.cpp)
+// Phase-3 probes (phase3_probes.cpp)
 bool do_probe_interaction_cascade(const char* params_json, std::string* response_out);
 bool do_probe_gate_4_slots(const char* params_json, std::string* response_out);
 bool do_list_pending_interactions(const char* params_json, std::string* response_out);
@@ -661,8 +676,8 @@ bool cascade_query_pending();
 // Council Task Assignment Observer (council_task_hook.cpp)
 bool do_query_council_tasks(const char* params_json, std::string* out);
 
-// Per-seat council-task pin (council_suppress_hook.cpp, council_pin.h; lane
-// COUNCILRE). Installs an inline hook on AI_COUNCIL_TASK_SELECT_FOR_POSITION
+// Per-seat council-task pin (council_suppress_hook.cpp, council_pin.h).
+// Installs an inline hook on AI_COUNCIL_TASK_SELECT_FOR_POSITION
 // (FUN_04dc9fc0). The native per-seat task selection is skipped only for a
 // (ruler, position) a seat's council-task write pinned, while that ruler is a
 // controlled character. Default: no pins, native behaviour. Fails OPEN.
@@ -689,7 +704,7 @@ bool do_set_offgoal_veto(const char* params_json, std::string* out);
 // another origin (the pipeline's flush effects). Both go through clock_write.
 bool do_pause_game(const char* params_json);
 bool do_unpause_game(const char* params_json);
-// Unpause_game {"pause_at":"Y.M.D"} — arm the game-day pause alarm
+// unpause_game {"pause_at":"Y.M.D"} — arm the game-day pause alarm
 // (pause_alarm.h), then unpause. Refuses, unpausing nothing, a target that does
 // not parse or is not after the game date. Writes its own reply.
 bool do_unpause_game_with_alarm(const char* params_json, std::string* out);
@@ -730,6 +745,55 @@ void process_faction_query();
 bool faction_query_pending();
 bool do_set_faction_demand_response(const char* params_json, std::string* out);
 void emit_demand_response_state(ResponseBuilder& r, uint32_t liege_id);
+// The seat's event answer table (route E2) and its AI budget read (route P3).
+// seat_levers.cpp holds the table, the per-pick rule, the verbs and the budget read;
+// factions.cpp's AI_PICK_EVENT_OPTION hook calls event_rules_on_pick and lends it these.
+int event_rules_seat_count();
+void event_rules_read_kill_switch();
+// *had_rule: a rule of the seat's decided the pick; *demand_decided: the standing faction-demand
+// answer did (the demand record says who answered).
+uint64_t event_rules_on_pick(uintptr_t ev, void* ctx, uint32_t flag, uint32_t root, uint64_t picked,
+                             bool demand_on, bool* handled, bool* had_rule, bool* demand_decided);
+std::string event_option_key(uintptr_t option);
+std::string event_key_of(uintptr_t ev);
+uint64_t faction_demand_pick(uintptr_t ev, void* ctx, uint32_t flag, uint32_t root, uint64_t picked, bool* decided);
+bool event_option_available(uintptr_t option, void* ctx, uint32_t flag);
+bool event_pick_hook_installed();
+int32_t event_rules_game_date_raw();
+void event_rules_emit_date(ResponseBuilder& r, const char* key, int32_t raw);
+bool do_set_event_rule(const char* params_json, std::string* out);
+bool do_query_event_rules(const char* params_json, std::string* out);
+bool do_query_ai_budget(const char* params_json, std::string* out);
+// A seat's orders to its own armies. Default
+// OFF: CK3_BRIDGE_ARMY_ORDERS=1 enables disband/move, CK3_BRIDGE_ARMY_HOLD=1 installs the hold
+// hook (GameCommandDispatch). init_army_orders (bridge.h) reads both at the first drain.
+bool do_army_disband(const char* params_json, std::string* out);
+bool do_army_raid(const char* params_json, std::string* out);
+bool do_army_move(const char* params_json, std::string* out);
+bool do_army_hold(const char* params_json, std::string* out);
+// The seat's veto of the AI's create_title / law / mercenary /
+// construction posts at GameCommandDispatch, and its recorded attempts.
+bool do_set_ai_veto(const char* params_json, std::string* out);
+bool do_query_ai_veto(const char* params_json, std::string* out);
+// The lifestyle perk lever.
+struct LifestyleState {
+    struct Xp { uintptr_t lifestyle = 0; int64_t xp_fp = 0; int32_t per_point = 0; };
+    std::vector<Xp> xp;                 // core+0x208 entries: unspent XP per lifestyle
+    uintptr_t focus_type = 0;           // SFocusType* of the active focus (0 = none)
+    uintptr_t focus_lifestyle = 0;      // its SLifestyle*
+    std::vector<uint64_t> held;         // CLifestylePerk* held (core+0x220)
+    bool ok = false;
+};
+bool read_lifestyle_state(uintptr_t character, LifestyleState* st);
+int lifestyle_points_of(const LifestyleState& st, uintptr_t lifestyle);
+bridge::lifestyle_points::Pick perk_pick_of(const LifestyleState& st, uintptr_t perk);
+std::vector<uintptr_t> lifestyle_perk_entries();
+bool do_unlock_perk(const char* params_json, std::string* out);
+void emit_army_position(ResponseBuilder& r, uintptr_t army);
+// Other rulers' units in the county of `province` and the
+// counties next to it (the set the game's disband check walks), and other rulers' armies in named counties.
+void emit_armies_around(ResponseBuilder& r, uintptr_t province, uint32_t me);
+bool emit_others_in_counties(ResponseBuilder& r, const char* county_ids, uint32_t me);
 // A faction's war, the ONE reading every faction reply gives (factions.cpp demand
 // rows, query_factions, query_faction_threat): faction_war.h's rule, the game's own
 // "faction is in war" check. emit_faction_war writes `at_war` and, while at war,
@@ -762,9 +826,9 @@ FactionDemandState classify_faction_demand(uintptr_t faction);
 // Writes `ultimatum` ("ai_may_press" | "none"), `ai_press_chance_pct` (only with
 // ai_may_press) and `demand_cooldown_until` (only while a cooldown runs).
 void emit_faction_demand(ResponseBuilder& r, const FactionDemandState& s);
-// #111 (re_create_title_action.md): LEGITIMATE de-jure create-title. Builds a
+// LEGITIMATE de-jure create-title (re_create_title_action.md). Builds a
 // CCreateTitleCommand for the AI ruler, asks its IsValid, checks the price
-// (create_title_price) and the #131 de-jure majority, and on a pass runs its Execute
+// (create_title_price) and the de-jure majority, and on a pass runs its Execute
 // synchronously. Game-thread only (drained from on_tick). Queued by do_create_title.
 bool execute_create_title_intent(Intent* intent);
 bool do_create_title(const char* params_json, std::string* out);
@@ -789,7 +853,7 @@ void fill_create_title_cmd(uint8_t* cmd, uint32_t ruler_handle, uint32_t title_i
 // and its price. A game-thread read (snapshot.cpp is_game_thread_read).
 bool do_query_create_title_cost(const char* params_json, std::string* out);
 bool do_dispatch_faction_intent(const char* params_json, std::string* out);
-// #132 (docs/notes/hostile-intrigue-research.md): LEGITIMATE start-a-scheme
+// LEGITIMATE start-a-scheme
 // (murder / fabricate_hook / claim_throne) via CreateActiveScheme forward, which
 // runs the engine's own scheme-start gates internally (self-gating). Game-thread
 // only (drained from on_tick). Queued by do_dispatch_scheme_intent. The 5th/6th
@@ -809,6 +873,7 @@ bool do_appoint_councillor(const char* params_json, std::string* out);
 bool do_maa_recruit(const char* params_json, std::string* out);
 bool do_maa_station(const char* params_json, std::string* out);
 bool do_maa_unstation(const char* params_json, std::string* out);
+bool do_maa_disband(const char* params_json, std::string* out);
 bool do_hire_mercenary(const char* params_json, std::string* out);
 bool do_set_doctrine(const char* params_json, std::string* out);
 bool do_script_action(const char* params_json, std::string* out);
@@ -909,11 +974,11 @@ struct CBQuery {
     int disabled_count;
     std::vector<std::string> disabled_cb_names;
 
-    // D8 guard (probe P4, 2026-08-01): number of CB_VALIDITY_CHECK calls in the
+    // The buffer-full tripwire: number of CB_VALIDITY_CHECK calls in the
     // last serviced query whose option enumeration FILLED the shared output
     // buffer to capacity — i.e. one entry away from the engine's CDynArray
-    // growth path through the invalid CB_OPTION_ALLOCATOR_VTABLE (the 07-31 /
-    // 08-01 SIGSEGV class). Reset per service by process_cb_query; copied into
+    // growth path through the invalid CB_OPTION_ALLOCATOR_VTABLE (a SIGSEGV of
+    // the game). Reset per service by process_cb_query; copied into
     // CBStrictSummary::option_capacity_hits.
     int option_capacity_hits;
 
@@ -933,9 +998,9 @@ struct CBQuery {
 
 extern CBQuery g_cb_query;
 
-// H3 (re_warplanner_lifecycle.md §1.4): count of cb_query_busy returns since
-// bridge load. Instrumentation only — surfaced in bridge() health so we can tell
-// whether H1 actually reduced slot collisions in the live run. Zero behavioural
+// The count (re_warplanner_lifecycle.md §1.4) of cb_query_busy returns since
+// bridge load. Instrumentation only — surfaced in bridge() health so a reader can tell
+// whether the bounded drain keeps slot collisions down in a live run. Zero behavioural
 // change. Incremented at each cb_query_busy return in the sync entry points.
 extern std::atomic<uint64_t> g_cb_query_busy_count;
 
@@ -1013,7 +1078,7 @@ struct CBStrictSummary {
     int enabled_count;
     int disabled_count;
     std::vector<std::string> disabled_cb_names;
-    // D8 guard: see CBQuery::option_capacity_hits. >0 ⇒ option data for at
+    // The buffer-full tripwire: see CBQuery::option_capacity_hits. >0 ⇒ option data for at
     // least one CB was truncated at the bridge buffer capacity (and the fatal
     // engine growth path was one entry away) — surfaced by
     // do_query_cb_validity_strict as `option_capacity_hits` +
@@ -1089,14 +1154,14 @@ extern TriggerQuery g_trigger_query;
 
 void process_trigger_query();
 
-// Deferred decision-eval query (#64). The annotated decision eval runs the
+// Deferred decision-eval query. The annotated decision eval runs the
 // engine's trigger evaluator, which must run on the GAME thread (the watchdog
 // is bound there; the IPC thread blocks SIGALRM). IPC handler submits + polls;
 // process_decision_eval_query() services it from drain_and_execute_intents.
 struct DecisionEvalQuery {
     uint32_t char_id;          // 0 → controlled/player resolved in the eval
     bool     valid_only;       // true = only available decisions
-    // #64 list-mode: annotate ONLY these decisions (by name and/or name-hash). Bounded
+    // List-mode: annotate ONLY these decisions (by name and/or name-hash). Bounded
     // → fast + freeze-safe. Empty → caller serves the light name+hash list instead.
     std::vector<uint32_t>    req_hashes;
     std::vector<std::string> req_names;
@@ -1129,7 +1194,7 @@ bool do_query_trigger_slots(const char* params_json, std::string* out);
 bool do_query_debug_flags(const char* params_json, std::string* out);
 
 // =============================================================================
-// An actor that cannot act (ff3 N7): ONE reason per cause
+// An actor that cannot act: ONE reason per cause
 // =============================================================================
 // "actor_not_found": the id did not resolve to a character (null: an
 // out-of-range id, or no controlled character when actor_id is omitted; or the

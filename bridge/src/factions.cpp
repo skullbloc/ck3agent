@@ -1,4 +1,4 @@
-// factions.cpp — faction management from both seats (F16).
+// factions.cpp — faction management from both seats.
 //
 // Everything the bridge does with political factions lives here:
 //
@@ -21,7 +21,7 @@
 //                             a controlled liege that set one, and records every answer
 //                             it gave in a ring that query_factions reports.
 //
-// RE: re/findings/re_factions.md (this lane) and re_faction_join_create.md.
+// RE: re/findings/re_factions.md and re_faction_join_create.md.
 // Every engine call below runs under the fake-RNG scope (trigger evaluation and
 // leader election draw from it), the watchdog and the sigsetjmp crash-net.
 
@@ -34,6 +34,10 @@
 #include "game_date.h"
 #include "engine_text.h"
 #include "faction_war.h"
+#include "faction_demand.h"
+#ifdef _WIN32
+#include "windows/ck3_offsets_win.h"   // CEvent's key (struct_layout::CEVENT_NAME_KEY)
+#endif
 
 // faction_war.h is engine-free, so it carries its own copies of the two WAR_DB
 // constants; they must stay the offset header's.
@@ -41,6 +45,13 @@ static_assert(bridge::kFactionWarNone == ck3::war_db::WAR_ID_INVALID,
               "faction_war.h kFactionWarNone must equal war_db::WAR_ID_INVALID");
 static_assert(bridge::kFactionWarSlotMask == ck3::war_db::WAR_ID_IDX_MASK,
               "faction_war.h kFactionWarSlotMask must equal war_db::WAR_ID_IDX_MASK");
+// faction_demand.h is engine-free too: its name-walk offsets must stay the offset header's.
+static_assert(bridge::faction_demand::kEntryKey == ck3::event_sys::OPTION_ENTRY_KEY,
+              "faction_demand.h kEntryKey must equal event_sys::OPTION_ENTRY_KEY");
+static_assert(bridge::faction_demand::kChildren == ck3::event_sys::OPTION_NAME_CHILDREN,
+              "faction_demand.h kChildren must equal event_sys::OPTION_NAME_CHILDREN");
+static_assert(bridge::faction_demand::kChildCount == ck3::event_sys::OPTION_NAME_CHILD_COUNT,
+              "faction_demand.h kChildCount must equal event_sys::OPTION_NAME_CHILD_COUNT");
 
 #include <atomic>
 #include <chrono>
@@ -74,7 +85,7 @@ using fn_get_or_create= void* (*)(void* mgr, void* type, void* actor, void* lieg
 using fn_join         = void  (*)(void* faction, uint32_t char_ref, int title, void* claimant_data, char skip_validate);
 // Returns a bool in AL; the upper bytes are left over from the array end pointer
 // (decompile of FUN_05f8c4d0), so reading the whole register as a pointer made
-// every character a member (run l10-dev4).
+// every character a member (a faction test run).
 using fn_is_member    = uint8_t (*)(void* faction, void* character);
 using fn_remove       = void  (*)(void* mgr, void* faction, uint32_t char_ref, uint64_t reason_value, uint8_t* destroyed);
 using fn_press_demand = void  (*)(void* faction);
@@ -214,8 +225,8 @@ void emit_char_ref(ResponseBuilder& r, const char* id_key, const char* name_key,
 // ----------------------------------------------------------------------------
 // The player's create check (CCreateFactionCommand's CanExecute): the faction
 // type's can_create trigger AND whether the actor may be in a faction of that type
-// against the liege at all (FACTION_CAN_CREATE alone answers only the first: run
-// l10-dev1 created faction 41 for a vassal already in another faction, and the
+// against the liege at all (FACTION_CAN_CREATE alone answers only the first: one
+// faction test run created faction 41 for a vassal already in another faction, and the
 // join inside it left him out).
 int can_create(uintptr_t type, void* actor, void* liege, std::string* reason) {
     auto fn = reinterpret_cast<fn_can_create>(game_fn(ck3::faction_write::FACTION_CAN_CREATE_AS_COMMAND));
@@ -272,7 +283,7 @@ void emit_verdict(ResponseBuilder& r, const char* key, int v, const std::string&
 // *(int*)(f+0xB0) == *(int*)SENTINEL_DATE). Reading 8 bytes took the cache into
 // the value: SENTINEL_DATE read as int64 is 0x00010000029C77F8, never equal to a
 // field holding 0x029C77F8 (43808760, 0001.01.01), so every faction read as
-// counting down to 0001.01.01 (core dump ivar867: all 36 factions hold 43808760
+// counting down to 0001.01.01 (the 867 dump: all 36 factions hold 43808760
 // at +0xB0 and +0x74, each followed by 0x00010000 or 0xFFFFFFFF).
 int32_t faction_date(uintptr_t faction, size_t field) {
     int32_t v = safe_read<int32_t>(faction + field);
@@ -458,8 +469,8 @@ static std::string build_faction_options(uint32_t actor_id) {
             int pv = can_press(f, &pwhy);
             emit_demand_state(r, f, t);
             // The liege's standing answer and the answers given for him, from the
-            // vassal's side too: a read that does not need the liege alive (run
-            // l10-dev4: the liege answered, then died before his own read).
+            // vassal's side too: a read that does not need the liege alive (a
+            // faction test run: the liege answered, then died before his own read).
             emit_demand_response_state(r, liege_id);
             emit_verdict(r, "can_press_now", pv, pwhy);
             r.key("who_presses"); r.value_string(leads
@@ -720,7 +731,7 @@ bool execute_faction_intent(Intent* intent) {
     if (op == "create") { r.key("faction_id"); r.value_uint(faction_id); }   // join named it above
     if (f) {
         // The character the faction is aimed at: the liege whose faction list a
-        // second read must find it in (run l10-dev3: the actor's liege is not
+        // second read must find it in (a faction test run: the actor's liege is not
         // always the target).
         uint32_t tgt = safe_read<uint32_t>(f + ck3::faction_v2::TARGET_CHAR_REF);
         if (tgt && tgt != 0xFFFFFFFF) { r.key("target_id"); r.value_uint(tgt & 0xFFFFFF); }
@@ -826,33 +837,67 @@ bool do_dispatch_faction_intent(const char* params_json, std::string* response_o
 // ============================================================================
 // The liege's answer to a demand — AI_PICK_EVENT_OPTION hook
 // ============================================================================
+// Every faction type's demand letter is
+// recognised by its option keys (faction_demand.h classify: one FACTION_DEMAND_*REFUSE option,
+// one or more FACTION_DEMAND_*ACCEPT*), the populist letter's dynamic refuse name included
+// (name_key reads a composite name's fallback). The standing answer picks the refuse option or
+// an accept option of whichever letter arrives. Every demand letter answered for a controlled
+// character is recorded, whoever decided it (his event_rule, his standing answer, or the game's
+// AI), so the seat reads a demand it set nothing for.
 namespace {
-
-enum DemandResponse : int { kRespAI = 0, kRespAccept = 1, kRespRefuse = 2 };
+namespace fd = faction_demand;
 
 std::mutex g_demand_mutex;
-std::unordered_map<uint32_t, int> g_demand_policy CK3_EARLY_INIT;   // liege id → response
+std::unordered_map<uint32_t, int> g_demand_policy CK3_EARLY_INIT;   // liege id → fd::Want
 std::atomic<int> g_demand_policy_count{0};
 
+// Controlled characters, copied once per daily tick on the game thread (faction_demand_daily)
+// so the hook reads them without a lock.
+constexpr int kWatchCap = 16;
+std::atomic<uint32_t> g_demand_watch[kWatchCap];
+std::atomic<int> g_demand_watch_count{0};
+
 struct DemandAnswer {
-    int32_t date_raw;
-    uint32_t liege_id;
+    uint64_t seq = 0;
+    int32_t date_raw = 0;
+    uint32_t liege_id = 0;
     std::string event;
-    std::string ai_choice;
-    std::string answered;
-    bool overridden;
+    std::vector<std::string> options;   // keys in file order ("" unread)
+    int64_t ai_pick = -1;
+    int64_t applied = -1;
+    int refuse = -1;                    // the letter's refuse option
+    const char* by = "ai";             // event_rule | respond_demand | ai
+    bool overridden = false;
 };
 std::deque<DemandAnswer> g_demand_answers CK3_EARLY_INIT;
+uint64_t g_demand_seq = 0;            // under g_demand_mutex
 constexpr size_t kDemandAnswerCap = 32;
-
-const char* kAcceptKey = "FACTION_DEMAND_ACCEPT";
-const char* kRefuseKey = "FACTION_DEMAND_REFUSE";
 
 void* g_orig_ai_pick = nullptr;
 using fn_ai_pick = uint64_t (*)(void* event, void* ctx, int32_t rng, uint32_t flag);
 using fn_option_available = uint8_t (*)(void* option, void* ctx, uint32_t flag);
 
-// The option's `name = KEY` (ck3_offsets.h event_sys::OPTION_* chain), or empty.
+// The game's memory for faction_demand::name_key: guarded volatile reads.
+struct LiveMem {
+    bool u64(uint64_t a, uint64_t* o) const {
+        if (!is_mapped_range(static_cast<uintptr_t>(a), 8)) return false;
+        *o = *reinterpret_cast<volatile uint64_t*>(static_cast<uintptr_t>(a));
+        return true;
+    }
+    bool i32(uint64_t a, int32_t* o) const {
+        if (!is_mapped_range(static_cast<uintptr_t>(a), 4)) return false;
+        *o = *reinterpret_cast<volatile int32_t*>(static_cast<uintptr_t>(a));
+        return true;
+    }
+    bool str(uint64_t a, size_t n, std::string* o) const {
+        if (!is_mapped_range(static_cast<uintptr_t>(a), n)) return false;
+        o->assign(reinterpret_cast<const char*>(static_cast<uintptr_t>(a)), n);
+        return true;
+    }
+};
+
+// The option's `name` key (ck3_offsets.h event_sys::OPTION_* chain, faction_demand.h
+// name_key for a dynamic name), or empty.
 std::string option_key(uintptr_t option) {
     if (!is_mapped_range(option + ck3::event_sys::OPTION_DESC_HOLDER, 8)) return std::string();
     uintptr_t holder = *reinterpret_cast<volatile uintptr_t*>(option + ck3::event_sys::OPTION_DESC_HOLDER);
@@ -860,91 +905,171 @@ std::string option_key(uintptr_t option) {
     uintptr_t desc = *reinterpret_cast<volatile uintptr_t*>(holder);
     if (desc < 0x10000 || !is_mapped_range(desc + ck3::event_sys::OPTION_DESC_FIRST_ENTRY, 8)) return std::string();
     uintptr_t entry = *reinterpret_cast<volatile uintptr_t*>(desc + ck3::event_sys::OPTION_DESC_FIRST_ENTRY);
-    if (entry < 0x10000 || !is_mapped_range(entry + ck3::event_sys::OPTION_ENTRY_KEY, 16)) return std::string();
-    uintptr_t data = *reinterpret_cast<volatile uintptr_t*>(entry + ck3::event_sys::OPTION_ENTRY_KEY);
-    uint64_t len = *reinterpret_cast<volatile uint64_t*>(entry + ck3::event_sys::OPTION_ENTRY_KEY + 8);
-    if (len == 0 || len > 64 || data < 0x10000 || !is_mapped_range(data, len)) return std::string();
-    return std::string(reinterpret_cast<const char*>(data), len);
+    return fd::name_key(LiveMem{}, entry);
 }
 
 std::string event_name(uintptr_t ev) {
+#ifdef _WIN32
+    // CEvent's key is an MSVC std::string at +0x10 (not the database objects'
+    // +0x18 that db_object::NAME_KEY carries on Windows): ck3_offsets_win.h, 3000 of 3000
+    // events of a 1.18.3.1 core. Read with the option keys' layout reader.
+    uint64_t data = 0, len = 0;
+    if (!fd::string_at(LiveMem{}, ev + ck3_win::struct_layout::CEVENT_NAME_KEY, fd::StrAbi::kMsvc, &data, &len) ||
+        len == 0 || len > 96 || data < 0x10000 || !is_mapped_range(static_cast<uintptr_t>(data), len))
+        return std::string();
+    return std::string(reinterpret_cast<const char*>(static_cast<uintptr_t>(data)), len);
+#else
     if (!is_mapped_range(ev + ck3::db_object::NAME_KEY, 16)) return std::string();
     uintptr_t data = *reinterpret_cast<volatile uintptr_t*>(ev + ck3::db_object::NAME_KEY);
     uint64_t len = *reinterpret_cast<volatile uint64_t*>(ev + ck3::db_object::NAME_LENGTH);
     if (len == 0 || len > 96 || data < 0x10000 || !is_mapped_range(data, len)) return std::string();
     return std::string(reinterpret_cast<const char*>(data), len);
+#endif
+}
+
+// The event's options: their keys and the array (0 when unread).
+uintptr_t read_options(uintptr_t ev, std::vector<std::string>* keys) {
+    if (!is_mapped_range(ev + ck3::event_sys::CEVENT_OPTION_COUNT, 4)) return 0;
+    int32_t n = *reinterpret_cast<volatile int32_t*>(ev + ck3::event_sys::CEVENT_OPTION_COUNT);
+    if (n <= 0 || n > 32 || !is_mapped_range(ev + ck3::event_sys::CEVENT_OPTIONS_ARRAY, 8)) return 0;
+    uintptr_t arr = *reinterpret_cast<volatile uintptr_t*>(ev + ck3::event_sys::CEVENT_OPTIONS_ARRAY);
+    if (arr < 0x10000 || !is_mapped_range(arr, static_cast<size_t>(n) * 8)) return 0;
+    for (int32_t i = 0; i < n; i++) {
+        uintptr_t opt = *reinterpret_cast<volatile uintptr_t*>(arr + static_cast<uintptr_t>(i) * 8);
+        keys->push_back(opt >= 0x10000 ? option_key(opt) : std::string());
+    }
+    return arr;
+}
+
+bool watched(uint32_t root) {
+    const int n = g_demand_watch_count.load(std::memory_order_acquire);
+    for (int i = 0; i < n && i < kWatchCap; ++i)
+        if (g_demand_watch[i].load(std::memory_order_relaxed) == root) return true;
+    return false;
+}
+
+int policy_of(uint32_t root) {
+    std::lock_guard<std::mutex> lk(g_demand_mutex);
+    auto it = g_demand_policy.find(root);
+    return it == g_demand_policy.end() ? static_cast<int>(fd::Want::kAI) : it->second;
+}
+
+// The standing answer (respond_demand) for a liege who set one: the refuse or accept option
+// of a demand letter; every other event, and any doubt, returns `picked`. *decided is set when
+// this answered the pick.
+uint64_t demand_answer(uintptr_t ev, void* ctx, uint32_t flag, uint32_t root, uint64_t picked, bool* decided) {
+    const auto want = static_cast<fd::Want>(policy_of(root));
+    if (want == fd::Want::kAI) return picked;
+    std::vector<std::string> keys;
+    uintptr_t arr = read_options(ev, &keys);
+    if (!arr) return picked;
+    const int64_t ai = (picked & 0xFFFFFFFFull) == 0xFFFFFFFFull ? -1 : static_cast<int64_t>(picked & 0xFFFFFFFFull);
+    const int choose = fd::choose(want, fd::classify(keys), keys, ai);
+    if (choose < 0 || ai < 0) return picked;   // not a demand letter, or the AI picked none
+    uintptr_t opt = *reinterpret_cast<volatile uintptr_t*>(arr + static_cast<uintptr_t>(choose) * 8);
+    auto available = reinterpret_cast<fn_option_available>(game_fn(ck3::event_sys::EVENT_OPTION_IS_AVAILABLE));
+    const bool usable = opt >= 0x10000 && available(reinterpret_cast<void*>(opt), ctx, flag) != 0;
+    FACLOG("demand answer: liege=%u choose=%d usable=%d ai=%lld\n", root, choose, usable ? 1 : 0,
+           static_cast<long long>(ai));
+    if (!usable) return picked;
+    if (decided) *decided = true;
+    return static_cast<uint64_t>(choose);
+}
+
+// Record a demand letter answered for a controlled character (or a liege with a standing
+// answer): every other event is ignored.
+void record_demand(uintptr_t ev, uint32_t root, uint64_t picked, uint64_t result, const char* by, bool policies) {
+    if (!watched(root) && !(policies && policy_of(root) != static_cast<int>(fd::Want::kAI))) return;
+    DemandAnswer a;
+    if (!read_options(ev, &a.options)) return;
+    const auto cls = fd::classify(a.options);
+    if (!cls.is_demand()) return;
+    a.event = event_name(ev);
+    a.liege_id = root;
+    a.date_raw = game_date_raw();
+    a.ai_pick = (picked & 0xFFFFFFFFull) == 0xFFFFFFFFull ? -1 : static_cast<int64_t>(picked & 0xFFFFFFFFull);
+    a.applied = (result & 0xFFFFFFFFull) == 0xFFFFFFFFull ? -1 : static_cast<int64_t>(result & 0xFFFFFFFFull);
+    a.refuse = cls.refuse;
+    a.by = by;
+    a.overridden = a.applied != a.ai_pick;
+    std::lock_guard<std::mutex> lk(g_demand_mutex);
+    a.seq = ++g_demand_seq;
+    FACLOG("demand letter: liege=%u event=%s ai=%lld applied=%lld by=%s\n", root, a.event.c_str(),
+           static_cast<long long>(a.ai_pick), static_cast<long long>(a.applied), by);
+    g_demand_answers.push_back(std::move(a));
+    while (g_demand_answers.size() > kDemandAnswerCap) g_demand_answers.pop_front();
 }
 
 // FAIL-OPEN everywhere: any doubt returns the AI's own pick.
 uint64_t on_ai_pick_event_option(void* event, void* ctx, int32_t rng, uint32_t flag) {
     auto orig = reinterpret_cast<fn_ai_pick>(g_orig_ai_pick);
     uint64_t picked = orig ? orig(event, ctx, rng, flag) : 0xFFFFFFFFull;
-    if (g_demand_policy_count.load(std::memory_order_relaxed) == 0) return picked;
+    const int n_demand = g_demand_policy_count.load(std::memory_order_relaxed);
+    const int n_seats = event_rules_seat_count();   // One atomic load
+    const int n_watch = g_demand_watch_count.load(std::memory_order_relaxed);
+    if (n_demand == 0 && n_seats == 0 && n_watch == 0) return picked;
 
     uintptr_t c = reinterpret_cast<uintptr_t>(ctx);
     if (!is_mapped_range(c, ck3::event_sys::SCOPE_CTX_REF + 4)) return picked;
     if (*reinterpret_cast<volatile int16_t*>(c + ck3::event_sys::SCOPE_CTX_TYPE) !=
         ck3::event_sys::SCOPE_CTX_CHARACTER) return picked;
     uint32_t root = *reinterpret_cast<volatile uint32_t*>(c + ck3::event_sys::SCOPE_CTX_REF) & 0xFFFFFF;
-    int want = kRespAI;
-    {
-        std::lock_guard<std::mutex> lk(g_demand_mutex);
-        auto it = g_demand_policy.find(root);
-        if (it != g_demand_policy.end()) want = it->second;
-    }
-    if (want == kRespAI) return picked;
-
     uintptr_t ev = reinterpret_cast<uintptr_t>(event);
-    if (!is_mapped_range(ev + ck3::event_sys::CEVENT_OPTION_COUNT, 4)) return picked;
-    int32_t n = *reinterpret_cast<volatile int32_t*>(ev + ck3::event_sys::CEVENT_OPTION_COUNT);
-    if (n <= 0 || n > 32 || !is_mapped_range(ev + ck3::event_sys::CEVENT_OPTIONS_ARRAY, 8)) return picked;
-    uintptr_t arr = *reinterpret_cast<volatile uintptr_t*>(ev + ck3::event_sys::CEVENT_OPTIONS_ARRAY);
-    if (arr < 0x10000 || !is_mapped_range(arr, static_cast<size_t>(n) * 8)) return picked;
-
-    int accept_i = -1, refuse_i = -1;
-    std::string ai_key;
-    for (int32_t i = 0; i < n; i++) {
-        uintptr_t opt = *reinterpret_cast<volatile uintptr_t*>(arr + static_cast<uintptr_t>(i) * 8);
-        std::string k = option_key(opt);
-        if (k == kAcceptKey) accept_i = i;
-        else if (k == kRefuseKey) refuse_i = i;
-        if (static_cast<uint64_t>(i) == (picked & 0xFFFFFFFFull)) ai_key = k;
+    // A seated ruler in the event table: the table answers (and records); it falls to
+    // the standing demand answer itself when it holds no rule for this event.
+    bool handled = false, had_rule = false, decided = false;
+    uint64_t result = picked;
+    if (n_seats > 0) {
+        uint64_t r = event_rules_on_pick(ev, ctx, flag, root, picked, n_demand > 0, &handled, &had_rule, &decided);
+        if (handled) result = r;
     }
-    if (accept_i < 0 || refuse_i < 0) return picked;   // not a faction demand
-
-    int choose = (want == kRespAccept) ? accept_i : refuse_i;
-    uintptr_t opt = *reinterpret_cast<volatile uintptr_t*>(arr + static_cast<uintptr_t>(choose) * 8);
-    auto available = reinterpret_cast<fn_option_available>(
-        game_fn(ck3::event_sys::EVENT_OPTION_IS_AVAILABLE));
-    bool usable = available(reinterpret_cast<void*>(opt), ctx, flag) != 0;
-
-    DemandAnswer a;
-    a.date_raw = game_date_raw();
-    a.liege_id = root;
-    a.event = event_name(ev);
-    a.ai_choice = ai_key;
-    a.answered = usable ? (want == kRespAccept ? kAcceptKey : kRefuseKey) : ai_key;
-    a.overridden = usable && static_cast<uint64_t>(choose) != (picked & 0xFFFFFFFFull);
-    {
-        std::lock_guard<std::mutex> lk(g_demand_mutex);
-        g_demand_answers.push_back(std::move(a));
-        while (g_demand_answers.size() > kDemandAnswerCap) g_demand_answers.pop_front();
-    }
-    FACLOG("demand answer: liege=%u choose=%d usable=%d ai=%llu\n", root, choose, usable ? 1 : 0,
-           static_cast<unsigned long long>(picked));
-    return usable ? static_cast<uint64_t>(choose) : picked;
+    if (!handled && n_demand > 0) result = demand_answer(ev, ctx, flag, root, picked, &decided);
+    // had_rule is set only when the rule's option (or its else option) was applied;
+    // a rule whose option the game did not offer leaves the AI's pick, recorded as the AI's
+    record_demand(ev, root, picked, result, had_rule ? "event_rule" : decided ? "respond_demand" : "ai", n_demand > 0);
+    return result;
 }
-
 }  // namespace
 
 void init_faction_demand_hook() {
+    event_rules_read_kill_switch();   // (seat_levers.cpp)
     uintptr_t target = game_fn(ck3::event_sys::AI_PICK_EVENT_OPTION);
     g_orig_ai_pick = install_hook(target, reinterpret_cast<void*>(on_ai_pick_event_option));
     if (g_orig_ai_pick)
-        ADLOG("faction_demand_hook: installed at 0x%lx (inert until a liege sets a response)\n", target);
+        ADLOG("faction_demand_hook: installed at 0x%lx (records the demand letters of controlled characters)\n", target);
     else
         ADLOG("faction_demand_hook: FAILED to install at 0x%lx (set_faction_demand_response refuses)\n", target);
 }
+
+// Once per daily tick on the game thread: the controlled characters the hook records for.
+void faction_demand_daily() {
+    if (!g_orig_ai_pick) return;
+    uint32_t ids[kWatchCap];
+    int n = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_controlled_mutex);
+        for (uint32_t c : g_controlled_chars) if (n < kWatchCap) ids[n++] = c & 0xFFFFFF;
+    }
+    // shrink the count first, write the slots, then publish the count: a concurrent reader
+    // sees either the old ids or a prefix of the new ones, never a torn slot
+    g_demand_watch_count.store(0, std::memory_order_release);
+    for (int i = 0; i < n; ++i) g_demand_watch[i].store(ids[i], std::memory_order_relaxed);
+    g_demand_watch_count.store(n, std::memory_order_release);
+}
+
+// What the event table needs of this file's hook.
+std::string event_option_key(uintptr_t option) { return option_key(option); }
+std::string event_key_of(uintptr_t ev) { return event_name(ev); }
+uint64_t faction_demand_pick(uintptr_t ev, void* ctx, uint32_t flag, uint32_t root, uint64_t picked, bool* decided) {
+    return demand_answer(ev, ctx, flag, root, picked, decided);
+}
+bool event_option_available(uintptr_t option, void* ctx, uint32_t flag) {
+    auto fn = reinterpret_cast<fn_option_available>(game_fn(ck3::event_sys::EVENT_OPTION_IS_AVAILABLE));
+    return option >= 0x10000 && fn(reinterpret_cast<void*>(option), ctx, flag) != 0;
+}
+bool event_pick_hook_installed() { return g_orig_ai_pick != nullptr; }
+int32_t event_rules_game_date_raw() { return game_date_raw(); }
+void event_rules_emit_date(ResponseBuilder& r, const char* key, int32_t raw) { emit_date(r, key, raw); }
 
 // set_faction_demand_response {character_id, response: accept|refuse|ai}
 bool do_set_faction_demand_response(const char* params_json, std::string* out) {
@@ -961,10 +1086,10 @@ bool do_set_faction_demand_response(const char* params_json, std::string* out) {
         return false;
     };
     if (cid <= 0) return fail("character_id_required");
-    int want;
-    if (resp && strcmp(resp, "accept") == 0) want = kRespAccept;
-    else if (resp && strcmp(resp, "refuse") == 0) want = kRespRefuse;
-    else if (resp && strcmp(resp, "ai") == 0) want = kRespAI;
+    fd::Want want;
+    if (resp && strcmp(resp, "accept") == 0) want = fd::Want::kAccept;
+    else if (resp && strcmp(resp, "refuse") == 0) want = fd::Want::kRefuse;
+    else if (resp && strcmp(resp, "ai") == 0) want = fd::Want::kAI;
     else return fail("response_must_be_accept_refuse_or_ai");
     if (!g_orig_ai_pick) return fail("demand_hook_not_installed");
     uint32_t id = static_cast<uint32_t>(cid) & 0xFFFFFF;
@@ -976,7 +1101,7 @@ bool do_set_faction_demand_response(const char* params_json, std::string* out) {
     }
     {
         std::lock_guard<std::mutex> lk(g_demand_mutex);
-        if (want == kRespAI) g_demand_policy.erase(id); else g_demand_policy[id] = want;
+        if (want == fd::Want::kAI) g_demand_policy.erase(id); else g_demand_policy[id] = static_cast<int>(want);
         g_demand_policy_count.store(static_cast<int>(g_demand_policy.size()), std::memory_order_relaxed);
     }
     ADLOG("set_faction_demand_response: %u -> %s\n", id, resp);
@@ -992,20 +1117,38 @@ bool do_set_faction_demand_response(const char* params_json, std::string* out) {
     return true;
 }
 
-// For query_factions: the liege's standing answer and the answers given for him.
+namespace {
+void emit_option(ResponseBuilder& r, const char* key, int64_t idx, const std::vector<std::string>& opts) {
+    r.key(key);
+    if (idx < 0 || static_cast<size_t>(idx) >= opts.size()) { r.value_null(); return; }
+    const std::string& k = opts[static_cast<size_t>(idx)];
+    if (k.empty()) r.value_int(idx); else r.value_string(k.c_str(), k.size());
+}
+}  // namespace
+
+// For query_factions and query_faction_threat: the liege's standing answer and every demand
+// letter answered for him (by his event_rule, his standing answer, or the game's AI).
 void emit_demand_response_state(ResponseBuilder& r, uint32_t liege_id) {
     std::lock_guard<std::mutex> lk(g_demand_mutex);
     auto it = g_demand_policy.find(liege_id);
-    int want = (it == g_demand_policy.end()) ? kRespAI : it->second;
-    r.key("demand_response"); r.value_string(want == kRespAccept ? "accept" : want == kRespRefuse ? "refuse" : "ai");
+    const auto want = it == g_demand_policy.end() ? fd::Want::kAI : static_cast<fd::Want>(it->second);
+    r.key("demand_response");
+    r.value_string(want == fd::Want::kAccept ? "accept" : want == fd::Want::kRefuse ? "refuse" : "ai");
     r.key("demands_answered"); r.begin_array();
     for (const auto& a : g_demand_answers) {
         if (a.liege_id != liege_id) continue;
         r.begin_object();
+        r.key("seq"); r.value_uint(static_cast<uint32_t>(a.seq));
         emit_date(r, "date", a.date_raw);
         r.key("event"); r.value_string(a.event.c_str(), a.event.size());
-        r.key("answered"); r.value_string(a.answered.c_str(), a.answered.size());
-        r.key("ai_would_have"); r.value_string(a.ai_choice.c_str(), a.ai_choice.size());
+        r.key("options"); r.begin_array();
+        for (const auto& k : a.options) r.value_string(k.c_str(), k.size());
+        r.end_array();
+        emit_option(r, "answered", a.applied, a.options);
+        emit_option(r, "ai_would_have", a.ai_pick, a.options);
+        emit_option(r, "refuse_option", a.refuse, a.options);
+        r.key("refused"); r.value_bool(a.applied >= 0 && a.applied == a.refuse);
+        r.key("by"); r.value_string(a.by);
         r.key("overridden"); r.value_bool(a.overridden);
         r.end_object();
     }

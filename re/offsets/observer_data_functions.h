@@ -1,7 +1,7 @@
 // observer_data_functions.h — gui data-function callback pointers registered for
-// Observer-related actions, extracted prerequisite §"Concrete next steps".
+// Observer-related actions, extracted for the observer-mode work.
 //
-// Produced by: (polecat furiosa, 2026-04-23)
+// Produced: 2026-04-23
 // Method: scan .text for `LEA reg, [rip+disp32]` referencing each Observer-related
 //         string rodata address, then within 250 bytes scan for
 //         `LEA RAX, [rip+disp32]; MOV [RSP+??], RAX` — that RAX disp32 target is
@@ -83,7 +83,7 @@ constexpr uintptr_t REG_LEA_TOGGLE_OBSERVE      = 0x2416bad;  // _INIT_2880
 }  // namespace ck3::observer_data_functions
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Frontend-idler vtables (for Path B1 infrastructure — §Deliverable 2)
+// Frontend-idler vtables (for Path B1 infrastructure)
 // Extracted via .rela.dyn scan: find RELATIVE relocs writing each class's
 // typeinfo-name pointer (§classname strings), walk back to the __si_class_type_info
 // struct address, find the vtable whose typeinfo-slot writes that struct address.
@@ -97,7 +97,7 @@ namespace ck3::frontend_idler {
 constexpr uintptr_t FRONT_IF_IDLER_VTABLE       = 0xb70b570;  // HIGH
 constexpr uintptr_t FRONT_IF_IDLER_TYPEINFO     = 0xb70b628;  // HIGH (__si_class_type_info, base = CJominiIdler @ 0xbe1eb30)
 //   vfn[0]: 0x3f90020  — destructor (D2, confirmed by decomp: writes UNK_0b80b580 vptr, cleanup)
-//   vfn[1]: 0x3f90040  — destructor+delete (D0)
+//   vfn[1]: 0x3f90040  — destructor+delete
 //   vfn[2]: 0x7747b00  — empty (ret)
 //   vfn[3]: 0x75fd560  — forwarder: if this+0x10 != 0, call (*(this+0x10))->vtable[8]()
 //   vfn[4]: 0x7747b10  — small guarded forwarder (FUN_07829420 gate then FUN_07829380)
@@ -177,7 +177,7 @@ constexpr uintptr_t CJOMINI_IDLER_TYPEINFO = 0xbe1eb30;  // __si_class_type_info
 //      (Path B1) to invoke OnStartInternal(this_view, OBSERVER, TUTORIAL_OFF, nullptr)
 //      from a safe engine-thread moment.
 //
-// UPDATE (session3, polecat:rictus, 2026-04-24): this premise is
+// UPDATE (2026-04-24): this premise is
 // likely wrong. See re/findings/re_observer_autoselect_session3.md.
 // `frontend_bookmarks.gui` contains no "Observe" button; the post-load
 // prompt our uinput fallback accepts is owned by `CFrontEndLoadView`
@@ -187,7 +187,7 @@ constexpr uintptr_t CJOMINI_IDLER_TYPEINFO = 0xbe1eb30;  // __si_class_type_info
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CFrontEndLoadView gui-datafunction callbacks (session3, 2026-04-24)
+// CFrontEndLoadView gui-datafunction callbacks
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Source: `/mnt/gsg/ck3/titus/source/interface/frontendloadview.cpp` (path
@@ -238,18 +238,18 @@ constexpr uintptr_t REG_LEA_GET_CONTINUE_SAVE     = 0x1b40c81;
 // "17CFrontEndLoadView" appears in rodata at three offsets. The canonical
 // name used by the typeinfo struct was not identified this session — walking
 // one of these xrefs to the typeinfo struct would reveal the runtime vtable
-// once Ghidra chases the relocation (same path attempted for
+// once Ghidra chases the relocation (the same path an earlier probe took for
 // CFrontEndGameSetupView).
 
 }  // namespace ck3::frontend_load
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CFrontEndLoadView struct layout + load-state-machine entry points
-//   (session 4, polecat:furiosa, 2026-05-22)
+//   (2026-05-22)
 //
 // Decompiled by disassembling each callback via Ghidra MCP and tracing the
 // post-fade orchestrator + load-orchestrator + state-machine primitive.
-// See re/sessions//SESSION-REPORT.md for the full walkthrough.
+//
 //
 // All offsets verified by reading the disassembly directly — HIGH confidence.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -314,7 +314,7 @@ constexpr uintptr_t FUN_SAVE_RELOADER_CTOR     = 0x464c1f0;  // raw — HIGH
 }  // namespace ck3::frontend_load::layout
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PREMISE CORRECTION (session 4)
+// PREMISE CORRECTION
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // The actual "Observe" button the uinput fallback clicks at (540, 1060) is
@@ -433,8 +433,8 @@ constexpr uintptr_t REG_LEA_CLOSE_GAME_VIEW   = 0x167e8a1;  // HIGH
 // Signature observed at entry: (?=rdi, ?=rsi, args=rdx, ?=rcx) — RDX holds
 // an arg-pack struct. The body dereferences `[rdx]` and indexes via the
 // arg-count `[rdx+8]`, then reads a flag byte at runtime VA 0xbecefa8.
-//   See first 80 bytes at re/sessions//SESSION-REPORT.md for the
-//   verbatim disassembly.
+//   The first 80 bytes were read from a decompile session; see the
+//   section above for the disassembly's shape.
 constexpr uintptr_t CALLBACK_BODY             = 0x388cc90;  // HIGH
 
 // Adjacent LEA (likely the std::function manager pointer for the binding,
@@ -451,7 +451,7 @@ constexpr uintptr_t CALLBACK_MANAGER          = 0x388cbe0;  // HIGH
 //     singleton when the lobby UI is first opened. See
 //     bridge/src/lobby_view_hook.cpp.
 //
-// What's still UNKNOWN and required for full pipe (file a follow-up bead):
+// What's still UNKNOWN and required for full pipe (file a follow-up task):
 //   • CloseGameView arg-pack construction recipe — the bridge needs to
 //     synthesise an args object containing the string 'find_title' before
 //     calling CALLBACK_BODY directly. Decompiling the body fully will reveal

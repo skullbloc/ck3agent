@@ -1,0 +1,666 @@
+{
+  "format": 1,
+  "about": "Game facts and tool-use lessons from earlier seated games. One entry per note; notes.py validates the file and serves it through discover(what='notes').",
+  "topics": {
+    "claims": "read first: turn-one vetoes, claims, armies, minting",
+    "war": "declaring and ending wars: prices, allies, refusals",
+    "economy": "gold: income, what drains it, windfalls",
+    "prestige": "prestige: the start drain, what it blocks",
+    "succession": "deaths, partition, grants",
+    "titles": "creating titles; de jure wars",
+    "tools": "reading replies, refusals and idle turns"
+  },
+  "notes": [
+    {
+      "id": "ai-spends-for-you",
+      "topic": "claims",
+      "kind": "observed",
+      "scope": "CK3 1.18; any start",
+      "text": "Before step 1: do ai_veto what=spending, or the AI buys: laws, legacies (renown), hires, regiments, builds, vassalage, activities, gold/income decisions, titles other than your goal and those it needs, culture (culture_conversion_ahead).",
+      "provenance": "seated games of the Ireland starts: the AI bought d_meath, k_ireland, a mercenary company, a mangonel; crown authority 143 (1066) and 792 (867, 89 counties) prestige: 00_law_values.txt; ai_veto dropped such posts live",
+      "added": "2026-11-22"
+    },
+    {
+      "id": "claim-dies-with-ruler",
+      "topic": "claims",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "A fabricated claim dies with your ruler unless pressed: a war on it presses it, white peace too. Declare on each claim once it arrives, but not in debt: below 0 gold no war is allowed.",
+      "provenance": "game localization game_concept_unpressed_claim_desc and game_concept_pressed_claim_desc; seated games of the 1066 Ireland start (claims lost at the founder's death in three); declare_war_interaction is_in_debt = no (00_war.txt)",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "raised-armies-block-declares",
+      "topic": "claims",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "Raised armies make the game refuse a war declaration, for as long as they stand; its AI raises them, at peace too. Disband first (cbs names the call); refused near another ruler's army, wherever: move away, hold, disband.",
+      "provenance": "game file common/character_interactions/00_war.txt; a seated game of the 1066 Ireland start (1,680 men raised at peace); live army runs on the 1066 save; the disband check counts hostile units in the army's and the next counties",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "ai-may-create-title",
+      "topic": "claims",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; 1066 start, Ireland",
+      "text": "Mint a duchy yourself once you control half its counties (formable_titles prices it): +300 prestige, +25 legitimacy; then a claim war on a count costs a duke x1.25, at low legitimacy x2 (a count x1.5). De jure wars pay neither.",
+      "provenance": "game files 00_defines.txt CREATE_TITLE_PRESTIGE_GAIN and _LEGITIMACY_GAIN; game_concept_duchy_desc (at least half its counties); 99_casus_belli_values.txt (x1.25); 00_claim.txt; 00_dejure_war.txt",
+      "added": "2026-11-22"
+    },
+    {
+      "id": "claim-paid-on-arrival",
+      "topic": "claims",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "A county claim costs (40 - chaplain learning) x 3 gold (x2 in some struggles), at least a random 40-60, paid when you take the letter (0301 or 0302: rule both), even below 0 gold; declining is free.",
+      "provenance": "game files common/script_values/99_court_chaplain_values.txt (county_cost) and events/councillor_task_events/court_chaplain_task_events.txt (0301, 0302); measured 65-107 gold on 15 claims; a 0302 letter paid into debt",
+      "added": "2026-11-22"
+    },
+    {
+      "id": "claim-war-prestige-price",
+      "topic": "war",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "A war on your own claim costs prestige at the declare: per title 100 a county, 200 a duchy, 400 a kingdom, 800 an empire, a quarter less pressed, times multipliers (x1.25 vs another faith). cbs prices claim_cb.",
+      "provenance": "game file common/script_values/99_casus_belli_values.txt; a live reading at 1067.11.27 (-125.00); two seated games of the 1066 Ireland start",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "defender-allies-join",
+      "topic": "war",
+      "kind": "observed",
+      "scope": "CK3 1.18; 1066 start, Ireland",
+      "text": "The defender's allies join his war: a foreign king who joins can decide a claim war. Read cbs defender_allies and compare strength before declaring.",
+      "provenance": "a seated game of the 1066 Ireland start (1070 and 1088); a neighbouring duke joined in another (1086)",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "yield-costs-gold",
+      "topic": "war",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "Yielding a claim or de jure war you started costs 3 years of your income in gold (x2 against some cultures) as well as prestige; winning one as attacker pays no gold. Read end_war's check before yielding.",
+      "provenance": "the casus belli's on_defeat effect (game files); measured -243, -176 and -67 gold in seated games of the 1066 Ireland start; end_war check priced -113.4 live",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "vassalization-size",
+      "topic": "war",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "A king can force you into vassalage only while your realm holds at most 4 + 3 per war innovation of his culture counties; more counties or a kingdom title closes it. inspect threats reads each one's limit now.",
+      "provenance": "game files casus_belli_types vassalization_cb and the vassalization size limit value; a seated game of the 1066 Ireland start: a king vassalized a 3-county count (1084-85)",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "claims-eat-income",
+      "topic": "economy",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; 1066 start, Dublin",
+      "text": "A chaplain fabricating non-stop costs about what a small realm earns: over decades the claims can take nearly all its net gold. A duchy and the kingdom are paid from gold saved while he idles or from windfalls (prices: formable_titles).",
+      "provenance": "a seated game of the 1066 Ireland start (purse by cause); title prices read on day one",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "piety-into-gold",
+      "topic": "economy",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "The head of faith's gold pays 18 months of income (at least 100) for 250 piety, once in 3 years. He refuses while you attack a ruler of your faith (-50 on a base of -40). discover acceptance lists his terms.",
+      "provenance": "game files common/character_interactions/00_religious_interactions.txt, common/script_values/01_dynamic_values.txt; a seated game of the 1066 Ireland start",
+      "added": "2026-11-22"
+    },
+    {
+      "id": "ai-picks-cost-gold",
+      "topic": "economy",
+      "kind": "observed",
+      "scope": "CK3 1.18; any start",
+      "text": "The game's AI answers your events and may spend gold (a stress pick: 50 or more). Set event_rule on a stress event news names to a non-gold option.",
+      "provenance": "a seated game of the 1066 Munster start: stress_threshold.1731 answered profligate by the AI (about -95 gold, 1093) and bishop.2002 (about -23, 1095), both in the purse as unexplained",
+      "added": "2026-11-22"
+    },
+    {
+      "id": "prestige-start-drain",
+      "topic": "prestige",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; 1066 start, Dublin",
+      "text": "With no seat act, the AI can raise crown authority at once ((100 + 10 a realm county) x his learning's factor; ai_veto law stops it), and prestige can fall from causes no read names: keep a margin over a war's price.",
+      "provenance": "identical in every seated game of the 1066 Ireland start and in a live reading with no seat action; the realm laws read before and after",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "prestige-flow",
+      "topic": "prestige",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; 1066 start, Dublin",
+      "text": "Prestige rises slowly at peace (observe's prestige_monthly is the rate); a war won as attacker gives fame, not prestige; a claim war's yield costs 10 x the war's prestige factor. Below a war's price the declare is refused.",
+      "provenance": "three seated games of the 1066 Ireland start",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "guest-activity-blocks-declares",
+      "topic": "war",
+      "kind": "observed",
+      "scope": "CK3 1.18; any start",
+      "text": "Your AI accepts guest invitations (a coronation can last months) and no declaration passes until it ends: do host_activity activity=leave.",
+      "provenance": "game file common/character_interactions/00_war.txt (involved_activity); seated games of the 1066 Munster start: a coronation as guest blocked declarations nine turns, and a kingdom claim war until the ruler died",
+      "added": "2026-11-22"
+    },
+    {
+      "id": "ally-call-costs-prestige",
+      "topic": "prestige",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "An ally who joins a war you attack in costs you prestige: 75 a count, 150 a duke, 350 a king. A call to a war you defend is free. ai_veto ally_call stops the AI's calls, not yours.",
+      "provenance": "game file common/scripted_effects/00_interaction_effects.txt (call_ally_interaction_event_effect); seated games of the 1066 Ireland start: -73 when a count joined; a king called in 1070 (prestige 413 to -48, no claim war until 1075)",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "succession-swaps-purse",
+      "topic": "succession",
+      "kind": "observed",
+      "scope": "CK3 1.18; any start",
+      "text": "At a succession the heir's own prestige and piety replace the old ruler's (either can move by several hundred, up or down), and the old ruler's unpressed claims are gone.",
+      "provenance": "two seated games of the 1066 Ireland start (1080, 1091)",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "partition",
+      "topic": "succession",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "Under partition your land is split among your living eligible children (sons first under male preference); a duke's younger sons take duchies he holds or the law creates, and leave. A count's son given a county leaves too.",
+      "provenance": "game localization partition_base_desc and game_concept eligible children; seated games of the 1066 Ireland start: a son took 2 of 5 counties and left the realm (1082); a grandchild and a brother read as heirs took nothing",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "vows-or-disinherit",
+      "topic": "succession",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "A son who takes vows (350 piety for your child; he may refuse) or is disinherited (a share's heir: 300 prestige, 150 renown x the era factor; you must head the dynasty) takes no share. succession_plan prices both; act early.",
+      "provenance": "game files take_vows_interaction, ask_to_take_vows_piety_cost, disinherit_interaction and the dynasty renown values (early medieval x2); a live game: disinherit took 150 prestige at the send, a son refused vows; a seated game's death at 56",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "kingdom-counts-vassals",
+      "topic": "titles",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "A kingdom's de jure share counts counties held by your vassals; a duke's or king's grant to a vassal keeps the county counted.",
+      "provenance": "the game's title-creation rule; a seated game of the 1066 Ireland start (Oriel granted to a vassal stayed counted)",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "duchy-opens-dejure-wars",
+      "topic": "titles",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "Holding a duchy title opens a de jure war on each of its counties held by others: no claim, no fabrication gold, 100 prestige times multipliers (needs the casus belli innovation).",
+      "provenance": "game files (individual_county_de_jure_cb, common/casus_belli_types)",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "no-fabrication-on-kin",
+      "topic": "titles",
+      "kind": "observed",
+      "scope": "CK3 1.18; the 1066 start",
+      "text": "No fabrication on a living parent's county: the game counts it as your claim. A sibling's or child's county is fine.",
+      "provenance": "live 1066: the game's own check refused 10 of 10 counties a parent holds and accepted 28 of 30 a sibling or child holds (the 2 others: explicit claims); c_leinster set by script was reset within 15 days",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "perk-path-ducal-conquest",
+      "topic": "titles",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; a feudal count",
+      "text": "Set diplomacy_foreign_affairs_focus and ai_veto perk (or the AI spends them); thoughtful_perk then ducal_conquest_perk: no-claim wars on adjacent counties of uncreated duchies you hold a county in, 50 prestige as a count, 100 above.",
+      "provenance": "game files common/lifestyles/00_lifestyles.txt (base_xp_gain 25, xp_per_level 1000), lifestyle_perks/00_diplomacy_1_foreign_affairs_tree_perks.txt, casus_belli_types/00_conquest.txt (50 a count); live: the AI's pick dropped under the veto",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "read-idle-before-ending",
+      "topic": "tools",
+      "kind": "tool_use",
+      "scope": "any",
+      "text": "observe's idle block names what is not running (no fabrication, claims with no war). Read it before ending a turn with no call: a claim with no war, or a chaplain with no task, waits for one.",
+      "provenance": "two seated games of the 1066 Ireland start (75 bare turns of 150; 101 of 150)",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "no-detail-refusals",
+      "topic": "tools",
+      "kind": "tool_use",
+      "scope": "any",
+      "text": "'The game gives no detail' means the game's own check said no after the tool's checks passed; resending it unchanged is answered from memory. Read checked_before_sending, then change target, arguments or date.",
+      "provenance": "four seated games of the 1066 Ireland start (declares, invitations, grants)",
+      "added": "2026-11-20"
+    },
+    {
+      "id": "faction-demand-answered-by-ai",
+      "topic": "succession",
+      "kind": "observed",
+      "scope": "CK3 1.18; any AI-run ruler",
+      "text": "The game's AI answers a faction's demand for your ruler unless you answer first (granting a populist demand can cost every title): do faction respond_demand refuse, or an event_rule.",
+      "provenance": "a seated game of the 1066 Ireland start (1079.11.13: faction_demand.1001 answered grant independence by the AI); levers: do intent faction respond_demand, event_rule (the faction letter's event)",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "marriage-makes-allies",
+      "topic": "succession",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "A marriage or betrothal of close kin of two rulers makes them allies. Without one, a defender's allies can decide your wars.",
+      "provenance": "game localization game_concept_alliance_desc; 00_defines.txt MAX_ALLIANCE_FAMILY_DISTANCE_SUM; three seated games of the 1066 Ireland start (no marriage sent; claim wars lost after a king joined the defender)",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "notes-pad-is-memory",
+      "topic": "tools",
+      "kind": "observed",
+      "scope": "seats whose turns end with a notes pad",
+      "text": "The end_turn pad is the next turn's only memory: plan, claims, vetoes. A birth can split a partition: run succession_plan after each. At 8 counties, 2 duchy titles and the gold: do intent=mint_title args.title_key=k_ireland.",
+      "provenance": "three seated games of the 1066 Ireland start: the one holder read was taken at turn 1 and not again for 15-23 game years; the bare mint_title call created k_ireland live from a saved game (12/14 counties, 325 gold)",
+      "added": "2026-11-22"
+    },
+    {
+      "id": "convert-faith-local",
+      "topic": "claims",
+      "kind": "observed",
+      "scope": "CK3 1.18; 1066 start, Dublin",
+      "text": "do convert_faith to the local faith converts your ruler at once for no piety; a claim war on a county of that faith then costs 100 prestige, not 125 (the other-faith x1.25 is gone), and its holder's opinion of you rises.",
+      "provenance": "a short live game, 1067.11-1068.01: piety 444.8 then 447.2; the declaration took 99 prestige; opinion -16 to -1, the -30 claim modifier unchanged; Catholic opinion not read; 99_casus_belli_values.txt",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "truce-after-any-war-end",
+      "topic": "war",
+      "kind": "game_rule",
+      "scope": "CK3 1.18; any start",
+      "text": "A war's end, white peace too, usually bars its attacker from declaring on that defender for 1825 days (less with the flexible truces perk); see cbs. A claim or de jure war's white peace costs its attacker 5 x the war's prestige factor.",
+      "provenance": "game files 00_war_values.txt and 00_war_effects.txt; three refusals in a seated game of the 1066 Ireland start; a live white peace, prestige 287.89 -> 280.39",
+      "added": "2026-11-21"
+    },
+    {
+      "id": "ai-converts-culture",
+      "topic": "prestige",
+      "kind": "observed",
+      "scope": "CK3 1.18; 1066 start, Dublin",
+      "text": "At Dublin (Norse) an Irish ruler's AI converts to Norse for 1000 prestige before its multipliers once able (convert_to_local_culture_decision); ai_veto decision stops it.",
+      "provenance": "a seated game of the 1066 Ireland start: -1000 in one month of 1087, the ruler's culture irish then norse; the decision's cost block in the game files",
+      "added": "2026-11-21"
+    }
+  ],
+  "turn_one": [
+    "ai-spends-for-you",
+    "perk-path-ducal-conquest",
+    "faction-demand-answered-by-ai",
+    "claim-dies-with-ruler",
+    "guest-activity-blocks-declares",
+    "ai-picks-cost-gold",
+    "marriage-makes-allies",
+    "ally-call-costs-prestige"
+  ],
+  "default_drop": [
+    "ai-may-create-title",
+    "defender-allies-join",
+    "claims-eat-income",
+    "prestige-start-drain",
+    "prestige-flow",
+    "no-fabrication-on-kin",
+    "notes-pad-is-memory",
+    "convert-faith-local",
+    "ai-converts-culture"
+  ],
+  "sets": {
+    "ireland1066": {
+      "about": "Murchad, Count of Dublin, 1066: hold k_ireland (also the Ireland decision starts and the Munster task that ends at the first holding)",
+      "drop": [],
+      "add": [],
+      "turn_one": [
+        "ai-spends-for-you",
+        "perk-path-ducal-conquest",
+        "faction-demand-answered-by-ai",
+        "claim-dies-with-ruler",
+        "guest-activity-blocks-declares",
+        "ai-picks-cost-gold",
+        "marriage-makes-allies",
+        "ally-call-costs-prestige",
+        "notes-pad-is-memory"
+      ]
+    },
+    "francia867": {
+      "about": "Charles, King of West Francia, 867: hold e_france",
+      "drop": [
+        "ai-may-create-title",
+        "defender-allies-join",
+        "claims-eat-income",
+        "prestige-start-drain",
+        "prestige-flow",
+        "convert-faith-local",
+        "ai-converts-culture",
+        "notes-pad-is-memory",
+        "ai-spends-for-you"
+      ],
+      "add": [
+        {
+          "id": "ai-spends-king",
+          "topic": "claims",
+          "kind": "observed",
+          "scope": "CK3 1.18; the 867 start, a king",
+          "text": "Before step 1: do ai_veto what=spending. Unvetoed, a king's AI can raise crown authority ((100 + 10 a realm county) x his learning's factor) and change the court type (500) in a day (no war below 0 prestige), and spends renown.",
+          "provenance": "Three scripted games at 867.01.01, prestige read daily: 986.67 to -305.33 on 0867.03.23; the court-type command named in query_ai_veto; legacies: a seated game of the 867 start, bought 867.04 and 885.10",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "francia-empire-path",
+          "topic": "titles",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; the 867 start",
+          "text": "e_france needs over 80% of its de jure counties in your realm, its gold price and two kingdom titles (formable_titles reads both). Create it before your death: partition sends Aquitaine's counties out; created first, it stays.",
+          "provenance": "The game's creation check read at 867.01.01 (89 of 94, 850 gold); game_concepts 'more than 80%'; succession_plan's partition forecast",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "defender-allies-join-any",
+          "topic": "war",
+          "kind": "observed",
+          "scope": "CK3 1.18; any start",
+          "text": "The defender's allies join his war: a foreign king who joins can decide a claim war. Read cbs defender_allies and compare strength before declaring.",
+          "provenance": "The default set's note, observed in seated games of the 1066 start; the call_ally rule is the game's for every start",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "notes-pad",
+          "topic": "tools",
+          "kind": "tool_use",
+          "scope": "seats whose turns end with a notes pad",
+          "text": "The end_turn pad is the next turn's only memory: plan, claims, vetoes. A birth can split a partition: run succession_plan after each.",
+          "provenance": "The default set's note without its start-specific mint line",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "ai-spends-unvetoed",
+          "topic": "claims",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; any start",
+          "text": "Before step 1: do ai_veto what=spending or the AI spends: crown authority (100 prestige and more by realm size), court type (500), legacies (renown), hires, men-at-arms, builds, vassalage, titles, activities, gold decisions, culture swap.",
+          "provenance": "The preset's ten kinds (seat_events AI_VETO_PRESETS); court type 500 prestige in common/court_types; legacies 250 + 500 a held one (PERK_COST_BASE/MULTIPLIER); prices as the default set's note",
+          "added": "2026-11-22"
+        }
+      ],
+      "turn_one": [
+        "ai-spends-king",
+        "francia-empire-path",
+        "faction-demand-answered-by-ai",
+        "claim-dies-with-ruler",
+        "marriage-makes-allies",
+        "ally-call-costs-prestige",
+        "notes-pad"
+      ]
+    },
+    "sweden867": {
+      "about": "the holder of d_svealand, 867: hold k_sweden",
+      "drop": [
+        "ai-may-create-title",
+        "defender-allies-join",
+        "claims-eat-income",
+        "prestige-start-drain",
+        "prestige-flow",
+        "convert-faith-local",
+        "ai-converts-culture",
+        "notes-pad-is-memory",
+        "ai-spends-for-you"
+      ],
+      "add": [
+        {
+          "id": "sweden-kingdom-path",
+          "topic": "titles",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; the 867 start",
+          "text": "k_sweden needs at least half of its 25 de jure counties in your realm (13; vassals count) and two duchy titles: mint a second duchy you hold half of first. A tribal ruler pays half the gold for a title.",
+          "provenance": "de jure 12 of 25 read at 867.01.01; the at-least-half rule and CREATE_TITLE_OR_TIER_KINGDOM; tribal title_creation_cost_mult -0.5",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "sweden-raids-prestige",
+          "topic": "economy",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; a tribal ruler",
+          "text": "A tribal ruler's men-at-arms cost prestige, not gold, and its AI raids at peace for gold and prestige; a raised army blocks a declaration. Tribal subjugation needs prestige level 2 (1 with some cultures) against a tribal ruler.",
+          "provenance": "Tribal men-at-arms bought for prestige at 867 (60 listed, 54 charged); 00_subjugation.txt prestige_level 2; raid flag read on a live game",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "defender-allies-join-any",
+          "topic": "war",
+          "kind": "observed",
+          "scope": "CK3 1.18; any start",
+          "text": "The defender's allies join his war: a foreign king who joins can decide a claim war. Read cbs defender_allies and compare strength before declaring.",
+          "provenance": "The default set's note, observed in seated games of the 1066 start; the call_ally rule is the game's for every start",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "notes-pad",
+          "topic": "tools",
+          "kind": "tool_use",
+          "scope": "seats whose turns end with a notes pad",
+          "text": "The end_turn pad is the next turn's only memory: plan, claims, vetoes. A birth can split a partition: run succession_plan after each.",
+          "provenance": "The default set's note without its start-specific mint line",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "ai-spends-unvetoed",
+          "topic": "claims",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; any start",
+          "text": "Before step 1: do ai_veto what=spending or the AI spends: crown authority (100 prestige and more by realm size), court type (500), legacies (renown), hires, men-at-arms, builds, vassalage, titles, activities, gold decisions, culture swap.",
+          "provenance": "The preset's ten kinds (seat_events AI_VETO_PRESETS); court type 500 prestige in common/court_types; legacies 250 + 500 a held one (PERK_COST_BASE/MULTIPLIER); prices as the default set's note",
+          "added": "2026-11-22"
+        }
+      ],
+      "turn_one": [
+        "ai-spends-unvetoed",
+        "sweden-kingdom-path",
+        "sweden-raids-prestige",
+        "perk-path-ducal-conquest",
+        "claim-dies-with-ruler",
+        "marriage-makes-allies",
+        "notes-pad"
+      ]
+    },
+    "lorraine1066": {
+      "about": "the holder of d_lower_lorraine, 1066: keep the line in peace",
+      "drop": [
+        "ai-may-create-title",
+        "defender-allies-join",
+        "claims-eat-income",
+        "prestige-start-drain",
+        "prestige-flow",
+        "convert-faith-local",
+        "ai-converts-culture",
+        "notes-pad-is-memory",
+        "ai-spends-for-you"
+      ],
+      "add": [
+        {
+          "id": "lorraine-line-goal",
+          "topic": "succession",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; the 1066 start, a vassal duke",
+          "text": "Scored at the end: the line rules in his dynasty, passed at least once, no offensive war (his AI's and a faction he leads count; joining or being attacked do not), counties with vassals >= start. Turn one: do ai_veto what=war, what=faction.",
+          "provenance": "The task's goal as scored (line_kept_peacefully); the war veto drops his AI's declarations (proven live at 1066); the faction veto drops his AI's faction joins and starts (built, not proven live)",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "lorraine-factions",
+          "topic": "claims",
+          "kind": "tool_use",
+          "scope": "CK3 1.18; a vassal ruler",
+          "text": "news factions_you_are_in names each faction against your liege your ruler is in; a faction he leads goes to war as its attacker when refused: do faction leave. inspect realm realm_counties_with_vassals is the scored count.",
+          "provenance": "The faction war's attacker is its leader (00_faction_effects.txt faction_start_war); the task's realm_counties metric reads his ruler-listing row",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "defender-allies-join-any",
+          "topic": "war",
+          "kind": "observed",
+          "scope": "CK3 1.18; any start",
+          "text": "The defender's allies join his war: a foreign king who joins can decide a claim war. Read cbs defender_allies and compare strength before declaring.",
+          "provenance": "The default set's note, observed in seated games of the 1066 start; the call_ally rule is the game's for every start",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "notes-pad",
+          "topic": "tools",
+          "kind": "tool_use",
+          "scope": "seats whose turns end with a notes pad",
+          "text": "The end_turn pad is the next turn's only memory: plan, claims, vetoes. A birth can split a partition: run succession_plan after each.",
+          "provenance": "The default set's note without its start-specific mint line",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "ai-spends-unvetoed",
+          "topic": "claims",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; any start",
+          "text": "Before step 1: do ai_veto what=spending or the AI spends: crown authority (100 prestige and more by realm size), court type (500), legacies (renown), hires, men-at-arms, builds, vassalage, titles, activities, gold decisions, culture swap.",
+          "provenance": "The preset's ten kinds (seat_events AI_VETO_PRESETS); court type 500 prestige in common/court_types; legacies 250 + 500 a held one (PERK_COST_BASE/MULTIPLIER); prices as the default set's note",
+          "added": "2026-11-22"
+        }
+      ],
+      "turn_one": [
+        "lorraine-line-goal",
+        "lorraine-factions",
+        "ai-spends-unvetoed",
+        "faction-demand-answered-by-ai",
+        "marriage-makes-allies",
+        "ally-call-costs-prestige",
+        "notes-pad"
+      ]
+    },
+    "munster1066once": {
+      "about": "Murchad ua Briain, 1066: k_ireland paid once, play to the end date",
+      "drop": [
+        "notes-pad-is-memory",
+        "convert-faith-local",
+        "ai-converts-culture",
+        "prestige-start-drain",
+        "prestige-flow",
+        "claims-eat-income"
+      ],
+      "add": [
+        {
+          "id": "munster-once-goal",
+          "topic": "titles",
+          "kind": "game_rule",
+          "scope": "the Munster task paid once",
+          "text": "+1/-1 per de jure Irish county won/lost; +10 once, when your ruler first holds k_ireland (play on); -5 and the end if the line ends or passes to a ruler of another dynasty. At 8 counties, 2 duchies, gold: do mint_title title_key=k_ireland.",
+          "provenance": "The task's reward terms and goal (paid once, the episode runs to its end date); the mint line from the default set's pad note",
+          "added": "2026-11-23"
+        },
+        {
+          "id": "notes-pad",
+          "topic": "tools",
+          "kind": "tool_use",
+          "scope": "seats whose turns end with a notes pad",
+          "text": "The end_turn pad is the next turn's only memory: plan, claims, vetoes. A birth can split a partition: run succession_plan after each.",
+          "provenance": "The default set's note without its start-specific mint line",
+          "added": "2026-11-22"
+        }
+      ],
+      "turn_one": [
+        "ai-spends-for-you",
+        "perk-path-ducal-conquest",
+        "faction-demand-answered-by-ai",
+        "claim-dies-with-ruler",
+        "guest-activity-blocks-declares",
+        "ai-picks-cost-gold",
+        "marriage-makes-allies",
+        "ally-call-costs-prestige",
+        "munster-once-goal"
+      ]
+    },
+    "carinthia1066": {
+      "about": "the holder of d_carinthia, 1066: keep the line in peace",
+      "drop": [
+        "ai-may-create-title",
+        "defender-allies-join",
+        "claims-eat-income",
+        "prestige-start-drain",
+        "prestige-flow",
+        "convert-faith-local",
+        "ai-converts-culture",
+        "notes-pad-is-memory",
+        "ai-spends-for-you",
+        "partition"
+      ],
+      "add": [
+        {
+          "id": "carinthia-line-goal",
+          "topic": "succession",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; the 1066 start, a vassal duke",
+          "text": "Scored at the end: the line rules in his dynasty, passed at least once, no offensive war (his AI's and a faction he leads count; joining or being attacked do not), counties with vassals >= start. Turn one: do ai_veto what=war, what=faction.",
+          "provenance": "The task's goal as scored (line_kept_peacefully); the war veto drops his AI's declarations (proven live at 1066); the faction veto drops his AI's faction joins and starts (built, not proven live)",
+          "added": "2026-11-23"
+        },
+        {
+          "id": "carinthia-factions",
+          "topic": "claims",
+          "kind": "tool_use",
+          "scope": "CK3 1.18; a vassal ruler",
+          "text": "news factions_you_are_in names each faction against your liege your ruler is in; a faction he leads goes to war as its attacker when refused: do faction leave. inspect realm realm_counties_with_vassals is the scored count.",
+          "provenance": "The faction war's attacker is its leader (00_faction_effects.txt faction_start_war); the task's realm_counties metric reads his ruler-listing row",
+          "added": "2026-11-23"
+        },
+        {
+          "id": "carinthia-partition",
+          "topic": "succession",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; confederate partition",
+          "text": "Under confederate partition each younger son takes a duchy his father holds and leaves the realm with its counties. Granting him a duchy now gives it away too (a duke has no duke vassals). Disinherit keeps it, cheaper while he is landless.",
+          "provenance": "A live read of the 1066 start: d_verona's grant refused as leaving the realm; disinherit priced 300 prestige and 300 renown for a landless son, 900 and 450 once landed; the forecast kept d_verona after",
+          "added": "2026-11-23"
+        },
+        {
+          "id": "defender-allies-join-any",
+          "topic": "war",
+          "kind": "observed",
+          "scope": "CK3 1.18; any start",
+          "text": "The defender's allies join his war: a foreign king who joins can decide a claim war. Read cbs defender_allies and compare strength before declaring.",
+          "provenance": "The default set's note, observed in seated games of the 1066 start; the call_ally rule is the game's for every start",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "notes-pad",
+          "topic": "tools",
+          "kind": "tool_use",
+          "scope": "seats whose turns end with a notes pad",
+          "text": "The end_turn pad is the next turn's only memory: plan, claims, vetoes. A birth can split a partition: run succession_plan after each.",
+          "provenance": "The default set's note without its start-specific mint line",
+          "added": "2026-11-22"
+        },
+        {
+          "id": "ai-spends-unvetoed",
+          "topic": "claims",
+          "kind": "game_rule",
+          "scope": "CK3 1.18; any start",
+          "text": "Before step 1: do ai_veto what=spending or the AI spends: crown authority (100 prestige and more by realm size), court type (500), legacies (renown), hires, men-at-arms, builds, vassalage, titles, activities, gold decisions, culture swap.",
+          "provenance": "The preset's ten kinds (seat_events AI_VETO_PRESETS); court type 500 prestige in common/court_types; legacies 250 + 500 a held one (PERK_COST_BASE/MULTIPLIER); prices as the default set's note",
+          "added": "2026-11-22"
+        }
+      ],
+      "turn_one": [
+        "carinthia-line-goal",
+        "carinthia-factions",
+        "carinthia-partition",
+        "ai-spends-unvetoed",
+        "faction-demand-answered-by-ai",
+        "marriage-makes-allies",
+        "ally-call-costs-prestige",
+        "notes-pad"
+      ]
+    }
+  }
+}

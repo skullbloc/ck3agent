@@ -115,6 +115,83 @@ def test_every_exclusion_is_still_emitted_and_still_unmapped():
         assert R.map_raw_reason(code)["gate"] == "unmapped_refusal", code
 
 
+#: Codes the walk over every bridge source finds beyond the write paths that no seat's tool receives, with why
+#: (each read from its emitter)
+BRIDGE_WIDE_NOT_A_SEAT_REFUSAL = {
+    "army_disband": "army_orders.cpp: the action's name, the first argument of refuse(out, action, code)",
+    "army_hold": "the same: an action's name, not a code",
+    "army_move": "the same: an action's name, not a code",
+    "army_raid": "the same: an action's name, not a code",
+    "auth_refused": ("ipc_server.cpp: the socket's first-line handshake, answered to the client before any call "
+                     "(bridge_client raises on it at connect)"),
+    "peer_uid_refused": "ipc_server.cpp: a connection from another user, refused and closed at accept",
+    "bridge_busy": "ipc_server.cpp: every client slot held; sent and the socket closed at accept, before any call",
+    "same_world_epoch": ("session.cpp resume_identity_verdict: the reason a resumed session's claims were kept or "
+                         "discarded (the handshake's identity_reason), not a refusal of a call"),
+    "declared_same_save": "the same resume verdict's reason",
+    "declared_different_save": "the same resume verdict's reason",
+    "declared_same_save_after_reload": "the same resume verdict's reason",
+    "world_epoch_unavailable_abstain": "the same resume verdict's reason",
+    "world_changed_no_recorded_identity": "the same resume verdict's reason",
+    "world_changed_no_declared_identity": "the same resume verdict's reason",
+}
+#: below this many codes the walk over every file is broken
+WIDE_FLOOR = 300
+
+
+def wide_census():
+    """{code: file} over every .cpp/.h/.inc of the bridge's sources and headers, the same refusal positions."""
+    if not (BRIDGE / "src").is_dir():
+        pytest.skip("no bridge sources in this layout")
+    found = {}
+    files = [f for d in ("src", "include") for f in sorted((BRIDGE / d).iterdir())
+             if f.suffix in (".cpp", ".h", ".inc")]
+    for f in files:
+        t = _strip(f.read_text(errors="replace"))
+        for p in PATTERNS.values():
+            for m in p.finditer(t):
+                found.setdefault(m.group(1), f.name)
+    return found
+
+
+def test_the_wide_walk_finds_the_read_handlers_codes():
+    found = wide_census()
+    assert len(found) >= WIDE_FLOOR, len(found)
+    # a read's refusal the write-path walk cannot see (a marriage listing for a ruler with no capital)
+    assert found.get("actor_capital_unresolved") == "query_handlers.cpp"
+
+
+def test_every_bridge_code_maps_to_a_gate():
+    """RED before the read handlers' codes had rows: actor_capital_unresolved reached a seat as unmapped_refusal."""
+    found = wide_census()
+    skip = set(NOT_A_SEAT_REFUSAL) | set(BRIDGE_WIDE_NOT_A_SEAT_REFUSAL)
+    unmapped = sorted(c for c in found if c not in skip and R.map_raw_reason(c)["gate"] == "unmapped_refusal")
+    assert not unmapped, unmapped
+
+
+def test_every_wide_exclusion_is_still_emitted_and_still_unmapped():
+    found = wide_census()
+    for code in BRIDGE_WIDE_NOT_A_SEAT_REFUSAL:
+        assert code in found, code
+        assert R.map_raw_reason(code)["gate"] == "unmapped_refusal", code
+
+
+def test_a_marriage_read_for_a_ruler_with_no_capital_says_what_to_send():
+    """The bridge's reply shape (query_handlers.cpp do_query_marriage_candidates) through the envelope every read
+    reply passes: a typed gate and a note naming the argument to change, never unmapped_refusal."""
+    env = R.envelope("query", result={"action": "query_marriage_candidates", "error": "actor_capital_unresolved",
+                                      "hint": "pass require_in_range=0 to browse without a range filter"})
+    b = env["blocked"]
+    assert env["ok"] is False and b["gate"] == "invalid_argument", b
+    assert b["raw_reason"] == "actor_capital_unresolved"
+    assert "require_in_range=false" in b["note"] and "no capital" in b["note"]
+
+
+def test_a_mapped_code_with_no_note_carries_none():
+    b = R.map_raw_reason("bad_cb_list")
+    assert b["gate"] == "invalid_argument" and "note" not in b
+
+
 def test_every_mapped_gate_is_a_declared_gate():
     for code, gate in R.RAW_REASON_TO_GATE.items():
         assert gate in R.GATE_TABLE, (code, gate)

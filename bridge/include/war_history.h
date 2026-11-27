@@ -25,7 +25,7 @@
 // NEVER by the title it targets. The scripted 1066 start ships two wars that
 // both target k_england — the Norwegian Invasion (29767 -> 30853) and the
 // Norman Conquest (31808 -> 30853) — so a target-title match silently follows
-// whichever one happens to be in the set. The paper's meter lane hit exactly
+// whichever one happens to be in the set. A study's meter hit exactly
 // that trap. `match()` below refuses a title-only query with a typed reason
 // instead of answering it; see test_war_history.cpp.
 
@@ -121,14 +121,14 @@ struct WarHistoryFilter {
 // which is fine) — use `filter_is_title_only` to catch the dangerous case.
 bool filter_is_identifying(const WarHistoryFilter& f);
 
-// The trap this bead exists to close: a caller that names ONLY a target title
+// The trap this code exists to close: a caller that names ONLY a target title
 // (with or without extra non-identifying hints) and expects one war back.
 bool filter_is_title_only(const WarHistoryFilter& f);
 
 bool war_matches(const WarEndRecord& rec, const WarHistoryFilter& f);
 
 // The ledger. Bounded ring — an episode is 20 game-years and the bound only
-// has to cover the wars an observer might ask about after the fact; the paper
+// has to cover the wars an observer might ask about after the fact; a study
 // asks about one. Oldest records are dropped first.
 class WarHistory {
 public:

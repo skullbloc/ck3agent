@@ -5,7 +5,7 @@
 // WHY A POLLED FINGERPRINT AND NOT A STATE-MACHINE EDGE
 // -----------------------------------------------------
 // The obvious hook looked like the session state machine's DORMANT -> ACTIVE
-// edge in bridge_init.cpp ("BUILD-B: First tick received"). It is NOT
+// edge in bridge_init.cpp ("First tick received"). It is NOT
 // sufficient, and the reason is visible in the source: bridge_init.cpp declares
 // SessionState::RELOADING, g_last_ai_manager ("detect save reloads (pointer
 // changes)"), g_last_tick_id_at_active and RELOAD_DETECT_TICKS — and NONE of

@@ -4,10 +4,9 @@
 The public CI's "platform layer (windows-latest)" job builds the whole Windows
 bridge with real MSVC (cl.exe): ck3_bridge_core_win (the Linux bridge sources
 over the POSIX shim), ck3_os (the Windows cells), version.dll and their tests.
-The node cross-builds the same targets with clang-cl, which ACCEPTS the GNU
-spellings cl.exe rejects, so 2026.12.1-2026.12.9 built on the test host and failed
-there (1491 cl.exe errors on 2026.12.9: __attribute__ from CK3_EARLY_INIT and
-weak/format attributes, the shim's __extension__ statement expression, the
+The test host cross-builds the same targets with clang-cl, which ACCEPTS the GNU
+spellings cl.exe rejects, so a source can build on the test host and fail
+there (cl.exe refuses __attribute__ from CK3_EARLY_INIT and weak/format attributes, the shim's __extension__ statement expression, the
 __atomic_* builtins). This census stands in for cl.exe on a Linux host that has
 none. Every GNU-only spelling a Windows-compiled file needs goes through ONE
 header, bridge/include/ck3_compiler.h, which is the only file allowed to carry

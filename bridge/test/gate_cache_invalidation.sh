@@ -30,10 +30,10 @@ CLEARS=(
     clear_all_sent_events
     clear_war_score_cache
     reset_war_monitor_state
-    reset_war_history                             # ended-war ledger
-    quarantine_personality_locks_on_world_reset   # write hazard
-    world_identity_on_world_reset                 # save identity
-    clear_line_watches                            # METERLINE: the played-line watches
+    reset_war_history                             # the ended-war ledger
+    quarantine_personality_locks_on_world_reset   # the write hazard
+    world_identity_on_world_reset                 # the save identity
+    clear_line_watches                            # the played-line watches
 )
 
 # Print "file:line: code" for every CODE occurrence of $1 — line comments are
@@ -54,7 +54,7 @@ scan_code() {
     done
 }
 
-echo "ck-hxh7 gate: world-scoped cache invalidation"
+echo "gate: world-scoped cache invalidation"
 
 for fn in "${CLEARS[@]}"; do
     all=$(scan_code "$fn")
@@ -111,10 +111,10 @@ fi
 
 # The restore side must stay behind the identity gate. The gate proper
 # (exactly one caller, on the preprocessed TU) lives in the acceptance; here we
-# only assert that the identity-free loader flagged has not come back.
+# only assert that the identity-free loader the save-identity check flagged has not come back.
 if grep -rnE '(^|[^A-Za-z0-9_])load_personality_locks *\(' "$SRC" "$INC" \
        | grep -v 'load_personality_locks_from_disk' | grep -v '//' | grep -q .; then
-    bad "load_personality_locks() is back — an identity-free reader of /tmp/ck3-personality-locks.json carries one world's steering into the next (ck-9fc3)."
+    bad "load_personality_locks() is back — an identity-free reader of /tmp/ck3-personality-locks.json carries one world's steering into the next."
 else
     note "ok: no identity-free personality-lock loader"
 fi
@@ -126,7 +126,7 @@ note "full acceptance: python3 scripts/acceptance_world_reset.py"
 note "                python3 scripts/acceptance_save_identity.py"
 
 if [ "$fail" -ne 0 ]; then
-    echo "ck-hxh7 gate FAILED" >&2
+    echo "world-scoped cache gate FAILED" >&2
     exit 1
 fi
-echo "ck-hxh7 gate PASSED"
+echo "world-scoped cache gate PASSED"

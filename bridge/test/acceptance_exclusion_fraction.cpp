@@ -1,4 +1,4 @@
-// acceptance_exclusion_fraction.cpp — THE ACCEPTANCE, product lane.
+// acceptance_exclusion_fraction.cpp — the exclusion-fraction ACCEPTANCE (the product's half).
 // Host only: no CK3, no game, no engine.
 //
 // THE CLAIM: the unavailability exclusion threshold X is a RULE — 5% of the
@@ -7,13 +7,13 @@
 // other.
 //
 // Driven by scripts/acceptance_exclusion_fraction.py, which also runs the
-// NEGATIVE CONTROL: the same four lanes over the REAL earlier bytes pulled
-// out of git history (scripts/fixtures/exclusion_rule/pre_2ngg/), which must
+// NEGATIVE CONTROL: the same four lanes over the REAL superseded bytes pulled
+// out of git history (scripts/fixtures/exclusion_rule/superseded/), which must
 // FAIL lanes B and D — it judges the smoke horizon at 365 and passes an episode
 // the rule excludes at 78.
 //
 // LANES
-//   A  the REGISTERED horizon      -> X = 365          (the paper's number, unmoved)
+//   A  the REGISTERED horizon      -> X = 365          (the declared number, unmoved)
 //   B  the SMOKE horizon           -> X = 78           (where the constant was 4.7x out)
 //   C  no declared horizon         -> UNARMED, typed   (never 365)
 //   D  an episode the rule EXCLUDES and the constant would have PASSED
@@ -43,7 +43,7 @@ static void lane(const char* id, bool ok, const std::string& detail) {
     printf("LANE %s %s %s\n", id, ok ? "PASS" : "FAIL", detail.c_str());
 }
 
-// The episode every lane models: 1066.09.15, twelve months of nothing, a gap of
+// The episode every row models: 1066.09.15, twelve months of nothing, a gap of
 // `unsteered` game-days that is 400 WALL-seconds long (over the 360 s anomaly
 // gate, so it is genuinely anomalous under the shipped rule).
 static const int64_t D0 = 1066 * 365 + 243 + 14;
@@ -67,7 +67,7 @@ static bool episode_with_gap_is_invalid(int64_t x_days, bool armed,
 }
 
 // Resolve X the way the BRIDGE does, from the environment the harness sets.
-// Under the control this is the earlier path, which reads no horizon at all
+// Under the control this is the superseded path, which reads no horizon at all
 // and keeps its stored constant — which is precisely what is being measured.
 static void resolve_from_env(const char* start, const char* end) {
     setenv("CK3_EPISODE_MODE", "experiment", 1);
@@ -82,14 +82,14 @@ static void resolve_from_env(const char* start, const char* end) {
 
 int main() {
 #ifdef CK3_EXCLUSION_PREFIX_CONTROL
-    printf("=== ck-2ngg NEGATIVE CONTROL: the PRE-FIX constant module, real "
+    printf("=== NEGATIVE CONTROL: the PRE-FIX constant module, real "
            "bytes from git history ===\n");
 #else
-    printf("=== ck-2ngg acceptance: X = 5%% of the DECLARED horizon, computed "
+    printf("=== acceptance: X = 5%% of the DECLARED horizon, computed "
            "per episode ===\n");
 #endif
 
-    // ── A. THE REGISTERED HORIZON: the number the paper cites does not move ──
+    // ── A. THE REGISTERED HORIZON: the declared number does not move ──
     resolve_from_env("1066.09.15", "1086.09.15");
     EpisodePolicy p = episode_policy().get();
     lane("A", p.unavail_exclusion_days == 365,
@@ -99,7 +99,7 @@ int main() {
 
     // ── B. THE SMOKE HORIZON: where the constant was 4.7x too permissive ────
     // 1066.09.15 -> 1071.01.01 is 1568 game-days on the ENGINE's calendar
-    // (ck3::game_date, real month lengths). 1568 x 0.05 = 78.4, and
+    // (ck3::game_date, the real month lengths). 1568 x 0.05 = 78.4, and
     // the rounding rule is round-half-away-from-zero, so X = 78.
     resolve_from_env("1066.09.15", "1071.01.01");
     p = episode_policy().get();
@@ -112,7 +112,7 @@ int main() {
     resolve_from_env(nullptr, nullptr);
     p = episode_policy().get();
 #ifdef CK3_EXCLUSION_PREFIX_CONTROL
-    const bool armed_ok = false;   // the pre-fix policy has no such concept
+    const bool armed_ok = false;   // the superseded policy has no such concept
     const std::string armed_detail =
         "the pre-fix module has NO unarmed state: with no horizon it keeps X=" +
         std::to_string((long long)p.unavail_exclusion_days);
@@ -131,10 +131,10 @@ int main() {
 
     // ── D. THE DISCRIMINATOR, on ONE episode ────────────────────────────────
     // A smoke-horizon episode with an English session unsteered for 120
-    // game-days. Under the RULE (X=78) it is EXCLUDED. Under the pre-fix
+    // game-days. Under the RULE (X=78) it is EXCLUDED. Under the superseded
     // constant (X=365) it PASSES. Same history, same anomaly gate, opposite
     // verdicts — and the whole difference is whether X was computed for this
-    // episode's own horizon. This is the lane the bead named.
+    // episode's own horizon. This is the row the exclusion rule names.
     resolve_from_env("1066.09.15", "1071.01.01");
     p = episode_policy().get();
     const bool excluded = episode_with_gap_is_invalid(

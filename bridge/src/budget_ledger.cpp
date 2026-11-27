@@ -1,4 +1,4 @@
-// budget_ledger.cpp — R6 decision-budget governor, enforcing half.
+// budget_ledger.cpp — the decision-budget governor, enforcing half.
 //
 // Pure: no engine reads, no offsets, no globals. See budget_ledger.h for the
 // rules this implements and why they live in the bridge rather than the agent.
@@ -294,7 +294,7 @@ std::string BudgetLedger::export_json() const {
         // FIELD NAMES ARE THE BUNDLE'S, NOT THIS CLASS'S. `decisions` and
         // `cached_input_tokens` are what run_summary.json's budget.spent[] rows
         // already call these (scripts/schemas/run_summary.schema.json, added by
-        // this bead's supervisor half); a second vocabulary for the same numbers
+        // this code's supervisor half); a second vocabulary for the same numbers
         // is a reconciliation bug waiting to happen. The four additive fields
         // this ENFORCING half needs — billed_tokens, refusals and the two charge
         // dates — are specified in scripts/schemas/budget_ledger.schema.json.
@@ -306,7 +306,7 @@ std::string BudgetLedger::export_json() const {
         // re-derived — a consumer that re-derived it by adding cache would be
         // violating D4 and nobody would see it.
         s += ",\"billed_tokens\":";         s += jnum(e.usage.billed());
-        // Recorded, never equalised (D4).
+        // Recorded, never equalised.
         s += ",\"cached_input_tokens\":";   s += jnum(e.usage.cache_read_tokens);
         s += ",\"cache_write_tokens\":";    s += jnum(e.usage.cache_write_tokens);
         s += ",\"decisions\":"; s += jnum(e.rounds);

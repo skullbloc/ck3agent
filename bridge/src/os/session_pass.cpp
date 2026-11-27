@@ -1,5 +1,5 @@
 // os/session_pass.cpp — os::session_pass_*, ONE cell for Linux and Windows
-// (m-16 made the two wrappers one). The session-pass hook through a
+// (one wrapper for both). The session-pass hook through a
 // data-pointer swap: re/findings/re_frame_update_hook.md (Linux) and
 // re/findings/windows/re_session_pass_hook_win.md (the MSVC build).
 //

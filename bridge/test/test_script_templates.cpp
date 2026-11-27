@@ -1,9 +1,9 @@
-// test_script_templates.cpp —: the script action layer's templates
+// test_script_templates.cpp — the script action layer's templates
 // (script_templates.h). NO GAME.
 //
 // THE CLAIMS:
-//  1. each template composes the exact script the live probe ran (lane
-//     modprobe e12c / e3a: start_war guarded by can_declare_war, run_interaction
+//  1. each template composes the exact script the live probe ran (the mod
+//     probe: start_war guarded by can_declare_war, run_interaction
 //     gift/sway with execute_threshold accept, set_council_task on cp:<seat>),
 //     with the bridge's own token in both guard branches;
 //  2. no slot can carry script: every key must be a plain identifier, so a key
@@ -12,7 +12,7 @@
 //     console effect's own errors in error.log text (the probe's real lines).
 //
 // Built twice: plain (must pass) and -DSCRIPT_TPL_RAW_CONTROL, registered
-// WILL_FAIL: the probe's channel (lane modprobe do_console_script), which took
+// WILL_FAIL: the probe's channel, which took
 // the script text from its caller. Under it every "refused" check of part 2
 // fails: a caller's text reaches the engine.
 
@@ -20,6 +20,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace bridge::script_tpl;
 
@@ -60,8 +61,77 @@ int main() {
               "title:c_leinster.holder = { if = { limit = { can_declare_war = { defender = "
               "title:d_meath.holder casus_belli = claim_cb target_titles = { title:d_meath } } } "
               "start_war = { cb = claim_cb target = title:d_meath.holder target_title = title:d_meath } "
-              "info_log = \"SACT_7_RAN\" } else = { info_log = \"SACT_7_REFUSED\" } }",
-              "declare_war: the probe's guarded start_war, token in both branches");
+              "info_log = \"SACT_7_RAN\" } else = { "
+              "if = { limit = { has_raised_armies = yes } info_log = \"SACT_7_WHY_RAISED_ARMIES\" } "
+              "if = { limit = { is_in_debt = yes } info_log = \"SACT_7_WHY_IN_DEBT\" } "
+              "if = { limit = { exists = involved_activity } info_log = \"SACT_7_WHY_IN_ACTIVITY\" } "
+              "if = { limit = { is_imprisoned = yes } info_log = \"SACT_7_WHY_IMPRISONED\" } "
+              "if = { limit = { has_trait = incapable } info_log = \"SACT_7_WHY_INCAPABLE\" } "
+              "if = { limit = { has_character_flag = sworn_peace } info_log = \"SACT_7_WHY_SWORN_PEACE\" } "
+              "if = { limit = { is_at_war_with = title:d_meath.holder } info_log = \"SACT_7_WHY_AT_WAR_WITH\" } "
+              "if = { limit = { is_allied_in_war = title:d_meath.holder } info_log = \"SACT_7_WHY_ALLIED_IN_WAR\" } "
+              "if = { limit = { has_truce = title:d_meath.holder } info_log = \"SACT_7_WHY_TRUCE\" } "
+              "if = { limit = { NOT = { can_attack_in_hierarchy = title:d_meath.holder } } "
+              "info_log = \"SACT_7_WHY_HIERARCHY\" } "
+              "if = { limit = { NOT = { has_any_display_cb_on = title:d_meath.holder } } "
+              "info_log = \"SACT_7_WHY_NO_DISPLAY_CB\" } "
+              "if = { limit = { prestige < 0 } info_log = \"SACT_7_WHY_PRESTIGE_BELOW_0\" } "
+              // The rest of the interaction's script conditions (the defender's side among them)
+              "if = { limit = { culture = { has_cultural_parameter = cannot_attack_allies } is_allied_to = "
+              "title:d_meath.holder } info_log = \"SACT_7_WHY_ALLIED_NO_ATTACK\" } "
+              "if = { limit = { has_variable_list = subjugation_offer_under_consideration is_target_in_variable_list = "
+              "{ name = subjugation_offer_under_consideration target = title:d_meath.holder } } "
+              "info_log = \"SACT_7_WHY_SUBJUGATION_OFFER\" } "
+              "if = { limit = { liege ?= { is_at_war_with = title:d_meath.holder } } info_log = \"SACT_7_WHY_LIEGE_AT_WAR\" } "
+              "if = { limit = { is_confederation_member = yes title:d_meath.holder = { is_member_of_confederation = "
+              "title:c_leinster.holder.confederation } } info_log = \"SACT_7_WHY_CONFEDERATION\" } "
+              "if = { limit = { title:d_meath.holder = { government_has_flag = government_is_herder } } "
+              "info_log = \"SACT_7_WHY_TARGET_HERDER\" } "
+              "if = { limit = { title:d_meath.holder = { is_tributary_of_suzerain_or_above = title:c_leinster.holder } } "
+              "info_log = \"SACT_7_WHY_TARGET_TRIBUTARY\" } "
+              "if = { limit = { title:d_meath.holder = { has_strong_hook = title:c_leinster.holder } } "
+              "info_log = \"SACT_7_WHY_TARGET_STRONG_HOOK\" } "
+              "if = { limit = { title:d_meath.holder = { is_imprisoned = yes imprisoner = title:c_leinster.holder } } "
+              "info_log = \"SACT_7_WHY_TARGET_YOUR_PRISONER\" } "
+              "if = { limit = { title:d_meath.holder = { is_playable_character = no } } "
+              "info_log = \"SACT_7_WHY_TARGET_NOT_PLAYABLE\" } "
+              // The casus belli's part, probed by the game
+              "info_log = \"SACT_7_PROBED\" if = { limit = { NOT = { has_cb_on = { target = title:d_meath.holder casus_belli = claim_cb } } } "
+              "info_log = \"SACT_7_WHY_NO_CB_ON\" } "
+              "if = { limit = { can_declare_war = { defender = title:d_meath.holder casus_belli = claim_cb } } "
+              "info_log = \"SACT_7_PROBE_BARE_OK\" } "
+              "if = { limit = { can_declare_war = { defender = title:d_meath.holder casus_belli = claim_cb "
+              "target_titles = { title:d_meath } } } info_log = \"SACT_7_PROBE_TITLE_OK\" }" +
+              // The casus belli's own price in the refused branch (claim_cb with its title)
+              price_scopes("title:d_meath.holder", "", "title:d_meath") +
+              price_block(kCbPrices[cb_price_index("claim_cb")], "SACT_7", "COST", true) +
+              " info_log = \"SACT_7_REFUSED\" } }",
+              "declare_war: the probe's guarded start_war, token in both branches; the refused "
+              "branch asks the game each condition of declare_war_interaction's is_valid; its CB probes; the "
+              "defender's side and the rest");
+        {
+            // Live (a live check, 1069.11.27): an extra brace in a probe closed the else block early, so
+            // REFUSED ran after RAN and an applied war read as refused. The braces balance, and RAN and
+            // REFUSED each sit inside their own branch: the else block is the text after "} else = {" up
+            // to its matching brace, and it holds REFUSED and every probe.
+            int depth = 0, low = 0;
+            for (char ch : c.script) { depth += (ch == '{') - (ch == '}'); low = depth < low ? depth : low; }
+            const size_t e = c.script.find("} else = {");
+            int d = 0; size_t end = std::string::npos;
+            for (size_t i = e + 9; i < c.script.size(); ++i) {
+                if (c.script[i] == '{') ++d;
+                if (c.script[i] == '}' && --d == 0) { end = i; break; }
+            }
+            const std::string els = (e != std::string::npos && end != std::string::npos) ? c.script.substr(e, end - e) : "";
+            CHECK(depth == 0 && low == 0 && els.find("SACT_7_REFUSED") != std::string::npos &&
+                      els.find("SACT_7_PROBE_TITLE_OK") != std::string::npos &&
+                      c.script.substr(0, e).find("SACT_7_REFUSED") == std::string::npos &&
+                      c.script.find("SACT_7_REFUSED", end) == std::string::npos,
+                  "the declare script's braces balance; REFUSED and the probes are inside the else block only");
+        }
+        CHECK(token_marks("SACT_7_WHY_RAISED_ARMIES\nSACT_7_REFUSED\nSACT_7_WHY_IN_DEBT", "SACT_7") ==
+                  std::vector<std::string>({"WHY_RAISED_ARMIES", "WHY_IN_DEBT"}),
+              "the refused branch's readings come back as the token's marks");
         s.claimant_title = "k_ireland";
         c = compose(Template::kDeclareWar, s);
         CHECK(c.ok && c.script.find("claimant = title:k_ireland.holder target_titles") != std::string::npos &&
@@ -126,7 +196,7 @@ int main() {
     }
 
     {
-        // lane peace: end_war. The war the two LEAD on opposite sides; the
+        // end_war. The war the two LEAD on opposite sides; the
         // reading first (LEADS, the open terms, our score band), then the
         // guarded end_war, the side resolved from which side the actor leads.
         const std::string between =
@@ -187,6 +257,30 @@ int main() {
         }
         s.peace_terms = "we_win"; s.target_title = "d_meath } add_gold = 1 {";
         CHECK(!compose(Template::kEndWar, s).ok, "end_war: a bad enemy key refused");
+        // A rebel leader who holds no title (a 1092.01.06 game), at our 100
+        Slots L = base();
+        L.target_title.clear();
+        L.enemy_landless = true;
+        L.peace_terms = "we_win";
+        Composed lc = compose(Template::kEndWar, L);
+        const std::string lb =
+            "OR = { AND = { primary_attacker = title:c_leinster.holder primary_defender = { is_landed = no } } "
+            "AND = { primary_attacker = { is_landed = no } primary_defender = title:c_leinster.holder } }";
+        CHECK(lc.ok && lc.script.find("any_character_war = { " + lb + " }") != std::string::npos,
+              "end_war landless: the war is matched by a leader who holds no title");
+        CHECK(lc.ok && lc.script.find("if = { limit = { any_character_war = { count >= 2 " + lb +
+                                      " } } info_log = \"SACT_7_AMBIGUOUS\" info_log = \"SACT_7_REFUSED\" } else = {") !=
+                          std::string::npos,
+              "end_war landless: two such wars are AMBIGUOUS and nothing ends");
+        CHECK(lc.ok && lc.script.find("end_war = attacker } else = { end_war = defender }") != std::string::npos &&
+                  lc.script.find("title:d_meath") == std::string::npos,
+              "end_war landless we_win: our side wins, no enemy title named");
+        L.target_title = "d_meath";
+        CHECK(!compose(Template::kEndWar, L).ok, "end_war landless with an enemy title too: refused");
+        Slots T = base();
+        T.peace_terms = "we_win";
+        CHECK(compose(Template::kEndWar, T).script.find("AMBIGUOUS") == std::string::npos,
+              "end_war with a titled enemy: unchanged (no count)");
     }
 
     // ── 2. no slot carries script ───────────────────────────────────────────
@@ -208,13 +302,13 @@ int main() {
         CHECK(template_by_name("effect") == Template::kNone && template_by_name("run") == Template::kNone &&
               template_by_name("raw") == Template::kNone,
               "no template passes raw script");
-        CHECK(sizeof(kTemplates) / sizeof(kTemplates[0]) == 11, "the enumerated set is eleven templates");
+        CHECK(sizeof(kTemplates) / sizeof(kTemplates[0]) == 15, "the enumerated set is fifteen templates (activity, claim_price_facts, cb_prices)");
     }
 
-    // ── 5.: every line of ours is INFO ──────────────────────────
+    // ── 5. every line of ours is INFO ──────────────────────────
     // The game drops every message of a level once 100,000 of that level were
     // logged in the session (ck3::nlog::LEVEL_MSG_CAP); DEBUG filled at
-    // 1088.01.27 in the re-pilot and every guard read `unseen` after it. No
+    // 1088.01.27 in a recorded game and every guard read `unseen` after it. No
     // template may write a DEBUG line: each composes, writes kLogEffect, and
     // carries no debug_log.
     {
@@ -228,12 +322,173 @@ int main() {
             s.proposal_answer = tn.t == Template::kProposalPolicy ? proposal_policy_answer("decline")
                                                                    : proposal_answer_code("accept");
             s.proposal_by = proposal_by_code("seat"); s.proposal_id = 12;
-            s.peace_terms = "white_peace";
+            s.peace_terms = "white_peace"; s.reserve_gold = 200;
+            s.price_cbs = {"vassalization_cb"};
             const Composed c = compose(tn.t, s);
             const std::string what = std::string(tn.name) + ": composes, writes info_log, no debug_log";
             CHECK(c.ok && c.script.find("info_log = \"") != std::string::npos &&
                       c.script.find("debug_log") == std::string::npos, what.c_str());
         }
+    }
+
+    // ── 6. the gold reserve, the actor's own scope only ──
+    {
+        Slots s = base();
+        s.reserve_gold = 200; s.reserve_move = true;
+        Composed c = compose(Template::kGoldReserve, s);
+        CHECK(c.ok && c.script ==
+              "title:c_leinster.holder = { set_reserved_gold_maximum = 200 "
+              "if = { limit = { short_term_gold > 0 } move_budget_gold = { gold = short_term_gold from = budget_short_term to = budget_reserved } } "
+              "if = { limit = { long_term_gold > 0 } move_budget_gold = { gold = long_term_gold from = budget_long_term to = budget_reserved } } "
+              "if = { limit = { war_chest_gold > 0 } move_budget_gold = { gold = war_chest_gold from = budget_war_chest to = budget_reserved } } "
+              "info_log = \"SACT_7_RAN\" }",
+              "gold_reserve: the maximum, then the gold held moved in (short term, long term, war chest)");
+        s.reserve_move = false;
+        c = compose(Template::kGoldReserve, s);
+        CHECK(c.ok && c.script == "title:c_leinster.holder = { set_reserved_gold_maximum = 200 info_log = \"SACT_7_RAN\" }",
+              "gold_reserve without move: the maximum only");
+        s.reserve_gold = 0;
+        c = compose(Template::kGoldReserve, s);
+        CHECK(c.ok && c.script.find("set_reserved_gold_maximum = 0 if = { limit = { reserved_gold > 0 } move_budget_gold = "
+                                    "{ gold = reserved_gold from = budget_reserved to = budget_short_term } }") != std::string::npos,
+              "gold_reserve 0: the reserve released back to short term");
+        for (long long bad : {-1LL, -200LL, kReserveMax + 1}) {
+            s.reserve_gold = bad;
+            CHECK(!compose(Template::kGoldReserve, s).ok && compose(Template::kGoldReserve, s).why == "bad_reserve_amount",
+                  "gold_reserve: an amount out of 0..kReserveMax refused");
+        }
+        s.reserve_gold = 200; s.actor_title = "x_script_846";
+        CHECK(!compose(Template::kGoldReserve, s).ok, "gold_reserve: a key script cannot resolve refused");
+    }
+
+    // ── 7. activities (the listing, and one type put to the AI) ──
+    {
+        Slots s = base();
+        Composed c = compose(Template::kActivity, s);
+        CHECK(c.ok && c.script.rfind("title:c_leinster.holder = { save_scope_as = ck3a_me "
+                                     "if = { limit = { is_ai = no } info_log = \"SACT_7_NOT_AI\" } ", 0) == 0,
+              "activity: the actor's own scope, the gates first");
+        CHECK(c.script.find("if = { limit = { years_from_game_start < 3 } info_log = \"SACT_7_EARLY\" }") !=
+                  std::string::npos &&
+              c.script.find("if = { limit = { ai_should_focus_on_building_in_their_capital = yes } "
+                            "info_log = \"SACT_7_BUILD_FOCUS\" }") != std::string::npos,
+              "activity: the files' own AI conditions, word for word");
+        CHECK(c.script.find("if = { limit = { exists = capital_county } capital_county.title_province = "
+                            "{ save_scope_as = ck3a_bfp } if = { limit = { scope:ck3a_bfp = { free_building_slots > 0 } } "
+                            "info_log = \"SACT_7_BF_FREE_SLOT\" }") != std::string::npos &&
+              c.script.find("if = { limit = { culture = { has_innovation = innovation_ledger } scope:ck3a_bfp = "
+                            "{ combined_building_level <= 4 } } info_log = \"SACT_7_BF_LEDGER\" }") != std::string::npos &&
+              c.script.find("info_log = \"SACT_7_BF_SEAT_IS_CAPITAL\"") != std::string::npos,
+              "activity: each branch of the build-focus trigger, at the capital county's seat");
+        CHECK(c.script.find("if = { limit = { can_host_activity = activity_feast } info_log = \"SACT_7_FEAST_CAN_HOST\" }") !=
+                  std::string::npos &&
+              c.script.find("if = { limit = { ai_boldness < 100 } info_log = \"SACT_7_HUNT_AXIS_BELOW_100\" }") !=
+                  std::string::npos &&
+              c.script.find("is_activity_type_on_cooldown = activity_pilgrimage") != std::string::npos,
+              "activity: each type's game verdict, cooldown and the count's throttle value");
+        CHECK(c.script.find("ai_attempt_to_host_activity") == std::string::npos &&
+                  c.script.size() >= 25 && c.script.substr(c.script.size() - 25) == "info_log = \"SACT_7_RAN\" }",
+              "activity: the listing writes nothing to the game");
+        s.activity = "activity_hunt"; s.activity_host = true;
+        c = compose(Template::kActivity, s);
+        CHECK(c.ok && c.script.find("if = { limit = { can_host_activity = activity_hunt } "
+                                    "ai_attempt_to_host_activity = activity_hunt info_log = \"SACT_7_RAN\" } else = { "
+                                    "info_log = \"SACT_7_REFUSED\" } }") != std::string::npos,
+              "activity host: the game's own effect, guarded by its own can_host_activity");
+        s.activity = "activity_tournament";
+        CHECK(!compose(Template::kActivity, s).ok && compose(Template::kActivity, s).why == "bad_activity",
+              "activity: a type outside the set refused");
+        s.activity = "activity_feast } add_gold = 1000 {";
+        CHECK(!compose(Template::kActivity, s).ok, "activity: a type carrying script refused");
+        s.activity = ""; s.activity_host = true;
+        CHECK(!compose(Template::kActivity, s).ok && compose(Template::kActivity, s).why == "activity_required",
+              "activity: host with no type refused");
+        s.activity_host = false; s.actor_title = "x_script_846";
+        CHECK(!compose(Template::kActivity, s).ok, "activity: a key script cannot resolve refused");
+        // A guest leaves by the game's own "Go home" effects; a host is refused by the guard
+        s = base(); s.activity_leave = true;
+        c = compose(Template::kActivity, s);
+        CHECK(c.ok && c.script.find("if = { limit = { exists = involved_activity NOT = { involved_activity.activity_host = "
+                                    "scope:ck3a_me } } remove_from_activity = involved_activity return_home = yes "
+                                    "info_log = \"SACT_7_RAN\" } else = { info_log = \"SACT_7_REFUSED\" } }") !=
+                  std::string::npos && c.script.find("ai_attempt_to_host_activity") == std::string::npos,
+              "activity leave: remove_from_activity + return_home, guarded: in one, not its host");
+        CHECK(c.script.find("info_log = \"SACT_7_IN_ACTIVITY\"") < c.script.find("remove_from_activity"),
+              "activity leave: the listing (which activity) is written before the leave");
+        s.activity_host = true; s.activity = "activity_feast";
+        CHECK(!compose(Template::kActivity, s).ok && compose(Template::kActivity, s).why == "leave_takes_no_activity",
+              "activity leave: leave with host or a type refused");
+    }
+    // ── 8. (W3a): the claim-war price facts, read only ──────────
+    {
+        Slots s = base();
+        Composed c = compose(Template::kClaimPriceFacts, s);
+        CHECK(c.ok && c.script ==
+              "title:c_leinster.holder = { info_log = \"SACT_7_READ\" "
+              "if = { limit = { has_legitimacy_flag = massively_increased_claim_cb_cost } info_log = \"SACT_7_LEGIT_X2_5\" } "
+              "else_if = { limit = { has_legitimacy_flag = very_increased_claim_cb_cost } info_log = \"SACT_7_LEGIT_X2_0\" } "
+              "else_if = { limit = { has_legitimacy_flag = increased_claim_cb_cost } info_log = \"SACT_7_LEGIT_X1_5\" } "
+              "if = { limit = { has_legitimacy_flag = reduced_claim_cb_cost } info_log = \"SACT_7_LEGIT_X0_5\" } "
+              "else_if = { limit = { has_legitimacy_flag = very_reduced_claim_cb_cost } info_log = \"SACT_7_LEGIT_X0_25\" } "
+              "else_if = { limit = { has_legitimacy_flag = extra_reduced_claim_cb_cost } info_log = \"SACT_7_LEGIT_X0_15\" } "
+              "if = { limit = { is_adult = no } info_log = \"SACT_7_CHILD\" } "
+              "if = { limit = { is_male = yes } info_log = \"SACT_7_MALE\" } "
+              "if = { limit = { faith = { has_doctrine = doctrine_gender_male_dominated } } info_log = \"SACT_7_FAITH_MALE_DOMINATED\" } "
+              "else_if = { limit = { faith = { has_doctrine = doctrine_gender_female_dominated } } info_log = \"SACT_7_FAITH_FEMALE_DOMINATED\" } "
+              "info_log = \"SACT_7_RAN\" }",
+              "claim_price_facts: 00_claim.txt's two legitimacy chains, age, sex, the faith's gender doctrine");
+        s.actor_title = "x_script_846";
+        CHECK(!compose(Template::kClaimPriceFacts, s).ok, "claim_price_facts: a key script cannot resolve refused");
+    }
+
+    // ── 9. the game's price of a declaration, read only ─────────
+    {
+        Slots s = base();
+        s.price_cbs = {"vassalization_cb", "claim_cb"};
+        Composed c = compose(Template::kCbPrices, s);
+        const int vi = cb_price_index("vassalization_cb"), ci = cb_price_index("claim_cb");
+        CHECK(vi >= 0 && ci >= 0 && kCbPrices[ci].needs_title && !kCbPrices[vi].needs_title,
+              "cb_prices: vassalization_cb reads no title, claim_cb does");
+        const std::string vw = "SACT_7_C0", cw = "SACT_7_C1";   // by position in the request
+        CHECK(c.ok && c.script.rfind("title:c_leinster.holder = { save_scope_as = attacker title:d_meath.holder = "
+                                     "{ save_scope_as = defender } save_scope_as = claimant info_log = \"SACT_7_READ\"", 0) == 0,
+              "cb_prices: the actor's scope; attacker, defender, claimant (the actor) saved; READ");
+        CHECK(c.script.find(std::string("set_variable = { name = ck3a_cbp value = ") + kCbPrices[vi].prestige + " }") !=
+                  std::string::npos && c.script.find(vw + "P_I17") != std::string::npos &&
+                  c.script.find(vw + "P_F0") != std::string::npos && c.script.find(vw + "P_SET") != std::string::npos &&
+                  c.script.find(vw + "Q_SET") != std::string::npos,
+              "cb_prices: the file's prestige value into the variable, 18 whole and 10 fraction bits, SET");
+        CHECK(c.script.find(cw + "_NOTITLE") != std::string::npos && c.script.find(cw + "P_SET") == std::string::npos,
+              "cb_prices: claim_cb with no title is NOTITLE, never priced without its list");
+        CHECK(c.script.find("remove_variable = ck3a_cbp") != std::string::npos &&
+                  c.script.find("WHY_") == std::string::npos && c.script.find("start_war") == std::string::npos,
+              "cb_prices: the variable removed; no refusal reading, no war");
+        s.war_title = "c_ossory";
+        c = compose(Template::kCbPrices, s);
+        CHECK(c.ok && c.script.find("title:c_ossory = { add_to_temporary_list = target_titles }") != std::string::npos &&
+                  c.script.find(cw + "P_SET") != std::string::npos,
+              "cb_prices: with a title, the list target_titles and claim_cb priced");
+        s.price_cbs = {"vassalization_cb", "add_gold"};
+        CHECK(!compose(Template::kCbPrices, s).ok && compose(Template::kCbPrices, s).why == "bad_cb_key",
+              "cb_prices: a key that is not a row refused");
+        s.price_cbs = {};
+        CHECK(!compose(Template::kCbPrices, s).ok, "cb_prices: no casus belli refused");
+        // the declaration's refused branch prices its own casus belli, against prestige and piety
+        Slots d = base(); d.cb = "vassalization_cb";
+        c = compose(Template::kDeclareWar, d);
+        const size_t els = c.script.find("} else = {");
+        CHECK(c.ok && els != std::string::npos &&
+                  c.script.find("if = { limit = { prestige < var:ck3a_cbp } info_log = \"SACT_7_WHY_PRESTIGE_BELOW_COST\" }", els) !=
+                      std::string::npos &&
+                  c.script.find("SACT_7_COSTP_SET", els) != std::string::npos &&
+                  c.script.find("ck3a_cbp") > els,
+              "declare_war: the refused branch reads the price and whether prestige is below it");
+        d.cb = "claim_cb";
+        CHECK(compose(Template::kDeclareWar, d).script.find("COSTP") == std::string::npos,
+              "declare_war: claim_cb with no title is not priced (its value reads target_titles)");
+        d.cb = "artifact_war";
+        CHECK(compose(Template::kDeclareWar, d).script.find("ck3a_cbp") == std::string::npos,
+              "declare_war: a casus belli with no row is not priced");
     }
 
     // ── 4. the incoming-proposal queue ─────────────────────────
@@ -312,7 +567,7 @@ int main() {
         CHECK(compose(Template::kProposalAnswer, b).why == "bad_by", "proposal_answer: by=rule refused");
     }
     {
-        // Proposal_stage is deleted (live i11p6: run_interaction ...
+        // proposal_stage is deleted (seen live: run_interaction ...
         // send_threshold = decline runs no on_send, so a staged offer is never held);
         // its name is unknown in every build, debug verbs or not.
         CHECK(template_by_name("proposal_stage") == Template::kNone, "proposal_stage: deleted, not nameable");
@@ -390,7 +645,7 @@ int main() {
         CHECK(marker_in(dbg, "SACT_1") == Marker::kUnseen, "marker: an absent token is unseen");
     }
     {
-        // lane peace: end_war's reading, the other marks of the token.
+        // end_war's reading, the other marks of the token.
         const std::string dbg =
             "[10:00:01][D][x.cpp:1]: file: effect console command line: 1: SACT_8_LEADS\n"
             "[10:00:01][D][x.cpp:1]: file: effect console command line: 1: SACT_8_OPEN_WHITE_PEACE\n"
@@ -407,7 +662,7 @@ int main() {
         CHECK(token_marks(dbg, "SACT_9").empty(), "marks: none for an absent token");
     }
     {
-        // error.log of the probe's declare_war_interaction (e12c mp_e2), verbatim
+        // error.log of the probe's declare_war_interaction, verbatim
         // but the two control characters around the icon.
         const std::string err =
             "[20:11:07][E][jomini_script_system.cpp:303]: Script system error!\n"
@@ -424,6 +679,32 @@ int main() {
         CHECK(!e.empty() && e[0].find("run_interaction effect [ Interaction cannot be sent. Reason:") == 0 &&
               e[0].find("No target selected") != std::string::npos,
               "errors: the game's own reason, continuation joined");
+    }
+
+    {
+        // In a 1078.11.27 game Domnall of Oriel's primary title was the duchy the
+        // game created mid-run, x_script_846; title:x_script_846.holder was null and
+        // can_declare_war answered "defender was null".
+        CHECK(!is_script_title_key("x_script_846") && !is_script_title_key("x_x_12"),
+              "a dynamic title's key is not a script link");
+        CHECK(is_script_title_key("c_oriel") && is_script_title_key("d_meath") &&
+              is_script_title_key("k_ireland") && is_script_title_key("e_britannia") &&
+              is_script_title_key("b_athlone") && is_script_title_key("h_china"),
+              "a de-jure title's key is");
+        CHECK(!is_script_title_key("claim_cb") && !is_script_title_key("c_") && !is_script_title_key(""),
+              "a key with no tier prefix (or nothing after it) is not");
+        Slots s = base();
+        s.cb = "claim_cb";
+        s.target_title = "x_script_846";
+        CHECK(!compose(Template::kDeclareWar, s).ok, "declare_war never names a dynamic title's holder");
+        s.target_title = "c_oriel";
+        s.war_title = "x_script_846";
+        CHECK(!compose(Template::kDeclareWar, s).ok, "nor fights for a dynamic title by key");
+        s.war_title = "c_oriel";
+        CHECK(compose(Template::kDeclareWar, s).ok, "the same war through his county composes");
+        Slots g = base(); g.target_title = "x_script_846";
+        CHECK(!compose(Template::kGift, g).ok && !compose(Template::kEndWar, g).ok,
+              "no template addresses a dynamic title");
     }
 
     std::printf("%s (%d failed)\n", g_fail ? "FAILED" : "PASSED", g_fail);

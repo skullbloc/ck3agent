@@ -1,7 +1,7 @@
-﻿# ck3agent incoming-proposal queue (lane QMOD; docs/design/incoming-proposals.md).
+﻿# ck3agent incoming-proposal queue.
 #
 # The triggers the generated interaction copies call (the four enumerated line
-# shapes, scripts/proposal_overrides.py ALLOWED_LINE) and the ones the static
+# shapes, proposal_mod/proposal_overrides.py ALLOWED_LINE) and the ones the static
 # effects use. EVERY trigger below reads only our own variables:
 #   ck3agent_proposal_held_<class>   a list on a SEATED recipient, filled only by
 #                                    the capture effect, which needs the seat marker
@@ -13,7 +13,7 @@
 
 # Hold (shape 2): first line of the interaction's validity. False only when the
 # sender is on the recipient's held list for the class: the engine's re-check on
-# delivery then drops the held offer with no effects (RE HIGH, ck-1ps.5).
+# delivery then drops the held offer with no effects (RE HIGH).
 ck3agent_proposal_not_held_trigger = {
 	NOT = {
 		scope:recipient ?= {

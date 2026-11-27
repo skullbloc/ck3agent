@@ -11,8 +11,8 @@ enum class IntentType : uint8_t {
     INTERACTION = 0,
     WAR_DECLARE = 1,
     DECISION = 2,
-    // 3 (console execute) and 4 (scripted effect) were deleted in cleanup
-    // 2026.11 (D5/D6); the values are not reused.
+    // 3 (console execute) and 4 (scripted effect) were deleted;
+    // the values are not reused.
     // Direct WAR_CREATE_CORE invocation, bypassing CStartWarEffect
     // and the scripted-effect dispatcher. Mirrors WAR_DECLARE_SPECIAL_HANDLER
     // (FUN_065db970): resolves CB by name, builds minimal CB-params struct
@@ -26,7 +26,7 @@ enum class IntentType : uint8_t {
     // WAR_CREATE_CORE_DIRECT (RNG scope + crash-net).
     FACTION = 6,
     // 7 and 8 were RAISE_ARMIES and RAISE_RAIDERS (deleted).
-    // #111 (re_create_title_action.md): LEGITIMATE de-jure create-title. Build a
+    // LEGITIMATE de-jure create-title (re_create_title_action.md). Build a
     // CCreateTitleCommand (ruler@+0x20 = AI ruler full handle, title_id@+0x24 =
     // target de-jure duchy/kingdom title id), run its vt[7] CanExecute pre-gate
     // (the engine's de-jure-control + not-extant + gold-cost check), and on PASS
@@ -37,7 +37,7 @@ enum class IntentType : uint8_t {
     // watchdog + sigsetjmp + fake-RNG (cost eval may advance RNG). actor_id = the
     // AI ruler creating the title; title_id = the de-jure title to create.
     CREATE_TITLE = 9,
-    // #132 (docs/notes/hostile-intrigue-research.md): LEGITIMATE start-a-scheme
+    // LEGITIMATE start-a-scheme
     // (murder / fabricate_hook / claim_throne / …). execute_scheme_intent
     // resolves the owner's scheme manager (GET_SCHEME_MANAGER) + the scheme type
     // by key from SCHEME_TYPE_DB, builds the target_scope (target_type|target_ref),
@@ -53,7 +53,7 @@ enum class IntentType : uint8_t {
     // interaction_name = scheme key. Game-thread-only (drained here) under
     // watchdog + sigsetjmp + fake-RNG, mirroring execute_faction_intent.
     SCHEME = 10,
-    // 11 (break alliance) was deleted in (D6); not reused.
+    // 11 (break alliance) was deleted; not reused.
     // RESERVED: MOVE_ARMY (=12) removed per design (agent does not drive army micro).
     // Value left as a gap so existing intent serialization stays stable; do not reuse.
     // 13 was WAR_FORCE_OFFENSIVE_STANCE (deleted, the engine's own
@@ -63,7 +63,7 @@ enum class IntentType : uint8_t {
 // The queue seq of the intent drain_and_execute_intents is executing on this
 // thread, or 0 when idle. Set after claim(), cleared after finish(); read by the
 // drain's crash recovery (recover_drain_crash) to attribute a crash to THAT
-// intent.: by seq, not request_id, which a caller may
+// intent. By seq, not request_id, which a caller may
 // repeat, so a duplicate queued ahead of the one in flight is never rejected
 // in its place. Thread-local: only the game thread drains.
 extern thread_local uint64_t g_inflight_intent_seq;
@@ -104,6 +104,10 @@ struct Intent {
     // they were applied (options that start enabled included).
     std::string send_options;
     std::string send_options_applied;
+    // Which of the interaction validity check's stages said no when the
+    // engine's text path gave no words (validity_failed_stage, ai_eval_hook.cpp), or
+    // "ai_accept" when the recipient's answer was no. Empty when not read.
+    std::string failed_check;
     // The queue's own bookkeeping, written under its lock.
     // seq names the intent inside the queue (request_id may be empty or
     // repeated); in_flight is true from claim() to finish(): the drain is
@@ -166,7 +170,7 @@ public:
     //     copy, consumed, in_flight cleared. A copy with neither executed nor
     //     rejected (an executor that returned without a verdict) is recorded as
     //     rejected "executor_returned_no_verdict", never as a silent nothing
-    //     (m9). If the record was cleared meanwhile, the verdict goes
+    //. If the record was cleared meanwhile, the verdict goes
     //     straight to the completed ring.
     bool claim(uint64_t seq, Intent* out);
     void finish(const Intent& done);
@@ -174,8 +178,8 @@ public:
     // Return a snapshot of all unconsumed intents (for query_intents IPC)
     std::vector<Intent> snapshot();
 
-    // The count of unconsumed WRITES: pending_writes.size. FB2 (witness
-    // N-10): one meaning wherever a pending count is reported (query_intents'
+    // The count of unconsumed WRITES: pending_writes().size(),
+    // with one meaning wherever a pending count is reported (query_intents'
     // pending_count, send_interaction's pending_count, status' pending_intents,
     // clear_intents); it had counted queued checks too, which no list shows.
     // The drain's own gate is pending_count_fast (every unconsumed intent).
@@ -194,7 +198,7 @@ public:
     // Cancel a specific intent by request_id (for cancel_intent IPC)
     bool cancel_by_request_id(const std::string& request_id);
 
-    // lane-scheme 2026-10-18: retire a still-pending intent IN PLACE (consumed +
+    // 2026-10-18: retire a still-pending intent IN PLACE (consumed +
     // rejected with `reason`) instead of erasing it, so its verdict reaches the
     // completed ring. Only an UNCLAIMED intent is retired: one the drain has
     // claimed is consumed, so this returns false and the caller reads
@@ -257,9 +261,9 @@ private:
 // call_war_create_core) that enqueues an intent and then polls for its
 // completion waits for a drain that cannot run until it returns: it stalls the
 // game for its whole poll window and answers after the client's own 8 s deadline
-// (live867 l5fx3-live-1, the deleted raise_armies: reason_code no_ack). These two
+// (a test run: the deleted raise_armies: reason_code no_ack). These two
 // calls let such a handler see that and answer at once; the intent then drains
-// later in the same drain and the caller confirms by readback.: the game
+// later in the same drain and the caller confirms by readback. The game
 // thread is the session thread when the session-pass hook is live
 // (bridge_init.cpp claim_drain_thread), else the AI-tick worker running on_tick.
 // The drain's crash recovery, after the outer siglongjmp out of

@@ -1,19 +1,19 @@
-"""2026.12.7: a seat cannot claim a character reserved for another declared seat.
+"""A seat cannot claim a character reserved for another declared seat.
 
-v3pilot5 (weak_orders, weak_intent): the king seat called session(action="add")
+A pilot run (two of its cells): the king seat called session(action="add")
 on all five dukes' declared rulers in its first minute and held them; the dukes
-were refused owned_by_other (weak_intent D4: 43 times). The bridge could not
+were refused owned_by_other (one duke 43 times). The bridge could not
 stop it: none of the dukes had bound yet, so every add SUCCEEDED. The cell now
 declares each seat's reservations (CK3_RESERVED_FOR_OTHER_SEATS: the OTHER
 seats' declared ids) and the server refuses the claim before any bridge call.
 
 Controls, each of which RUNS:
-  * PRE-FIX: the scenario rows below, driven through redesign.py at the pre-fix
-    blob PRE_FIX_REDESIGN_BLOB, send the add to the bridge (the defect).
+  * SUPERSEDED: the scenario rows below, driven through redesign.py at the superseded
+    blob PRE_FIX_REDESIGN_BLOB, send the add to the bridge (the hazard).
   * NON-DISCRIMINATING (labelled): an add of an unreserved id is applied in both
     trees; it passes before and after and cannot tell the fix from no fix.
   * NEGATIVE: without the env, add and control return byte for byte what the
-    pre-fix tree returns for the same reply, and nothing is written to the sink.
+    superseded tree returns for the same reply, and nothing is written to the sink.
   * MUTANTS (source-text, loaded as modules): the check dropped, the reason
     swapped, and a self-reservation read as valid; each is caught.
 """
@@ -32,7 +32,7 @@ import redesign  # noqa: E402
 import seat_lineage  # noqa: E402
 import seat_reservations as resv  # noqa: E402
 
-#: redesign.py at release-prep-2026.10 1ff50e61, the tree before this fix.
+#: redesign.py without the reservation rule.
 PRE_FIX_REDESIGN_BLOB = "8f3fe8f7695bd45703fee2f3a370e2ccfe0197bc"
 
 KING, D1, D2 = 12015, 12137, 14445
@@ -212,7 +212,7 @@ def test_the_gate_vocabulary_names_both(monkeypatch):
         assert g in redesign.GATE_TABLE and g in redesign.GATE_WHY, g
         assert redesign.why_blocked(g)["gate"] == g          # never unmapped_refusal
     for g in resv.REASONS:
-        assert g in redesign.GATE_NEXT, g                       # F3
+        assert g in redesign.GATE_NEXT, g
         # the server decides them; the class says so as near as the vocabulary can
         assert redesign.GATE_TABLE[g]["class"] == "steer_vs_control", g
     # server-side, not the bridge's: no set_controlled_character reply carries them
@@ -242,7 +242,7 @@ def test_a_claim_refused_row_is_not_lineage(tmp_path):
 # ── controls ─────────────────────────────────────────────────────────────────
 
 def test_PRE_FIX_CONTROL_the_pre_fix_tree_sends_the_reserved_add(monkeypatch, tmp_path):
-    """Reds on the pre-fix tree: the same scenario there reaches the bridge."""
+    """Reds on the superseded tree: the same scenario there reaches the bridge."""
     old = _pre_fix_redesign()
     _cell_env(monkeypatch, tmp_path)
     assert not refused_reserved(old, "add", D2)
@@ -253,7 +253,7 @@ def test_PRE_FIX_CONTROL_the_pre_fix_tree_sends_the_reserved_add(monkeypatch, tm
 
 
 def test_NON_DISCRIMINATING_CONTROL_an_unreserved_add_applies_in_both_trees(monkeypatch, tmp_path):
-    """Labelled: passes before AND after the fix, so it cannot tell them apart."""
+    """Labelled: passes with AND without the rule, so it cannot tell them apart."""
     old = _pre_fix_redesign()
     _cell_env(monkeypatch, tmp_path)
     for mod in (old, redesign):
@@ -312,14 +312,14 @@ def test_MUTANT_reading_a_self_reservation_as_valid_is_caught(monkeypatch, tmp_p
     assert resv.parse(f"{D1},{KING}", str(KING)).error is not None   # ... which this tree refuses
 
 
-# ── F1: a succession can carry another seat's declared ruler ──────
+# ── A succession can carry another seat's declared ruler ──────
 # `ck3agent run` rewrites CK3_AGENT_CHARACTER_ID to the rulers a continuation
 # CARRIES (cli.py, the carry after a hand-over). After a succession that may be
 # another seat's declared ruler (the lineage rebind, the bridge's heir handoff).
-# At 1eaab8ac the self check compared against it, read a self-reservation, and
+# The superseded self check compared against it, read a self-reservation, and
 # refused every later claim `seat_reservations_unreadable`.
 
-#: seat_reservations.py at lane/resv 1eaab8ac, the self check against CK3_AGENT_CHARACTER_ID.
+#: seat_reservations.py with the self check against CK3_AGENT_CHARACTER_ID, by blob.
 R1_RESV_BLOB = "68d4d16e6cf2e75be49d5d87afaed5b4f8005102"
 
 
@@ -336,8 +336,8 @@ def test_a_carried_heir_who_is_another_seats_ruler_does_not_lock_the_seat(monkey
     assert refused_reserved(redesign, "add", D1)        # D1's ruler is still D1's
 
 
-def test_R1_CONTROL_the_1eaab8ac_parser_locked_the_seat(monkeypatch, tmp_path):
-    """Reds on 1eaab8ac: there the same environment is unreadable."""
+def test_R1_CONTROL_the_superseded_parser_locked_the_seat(monkeypatch, tmp_path):
+    """Reds without the rule: there the same environment is unreadable."""
     try:
         old = subprocess.run(["git", "-C", str(HERE), "cat-file", "blob", R1_RESV_BLOB],
                              capture_output=True, check=True, timeout=30).stdout
@@ -345,7 +345,7 @@ def test_R1_CONTROL_the_1eaab8ac_parser_locked_the_seat(monkeypatch, tmp_path):
         pytest.skip(f"blob {R1_RESV_BLOB} is not in this clone (an export has no history)")
     _succession_env(monkeypatch, tmp_path)
     m = _load("_resv_r1", old.decode("utf-8"))
-    assert m.refusal(99001) == m.R_UNREADABLE           # the defect
+    assert m.refusal(99001) == m.R_UNREADABLE           # the hazard
     assert resv.refusal(99001) is None                  # this tree
 
 

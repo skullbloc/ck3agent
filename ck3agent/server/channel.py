@@ -1,9 +1,9 @@
-"""The inter-seat message channel (pre-registration v3 section 5.2; Study 0).
+"""The inter-seat message channel.
 
 ONE DEFINITION. Everything the channel means lives here and nothing else spells
-it a second time: the conditions-block keys (section 9), their environment
-transcription, the topology rule (who may write to whom), the bounds (section
-7.6), the verdict vocabulary, the ledger's record shapes, the cycle rule, and
+it a second time: the conditions-block keys, their environment
+transcription, the topology rule (who may write to whom), the bounds,
+the verdict vocabulary, the ledger's record shapes, the cycle rule, and
 where the ledger lives. The readers are:
 
   * `mcp_server.py` — registers `msg_send` only when `boot()` says the seat's
@@ -14,12 +14,12 @@ where the ledger lives. The readers are:
     `prompt_block()`;
   * `scripts/registered_launch.py` — parses the keys and transcribes the
     launched arm's topology into the child environment (`transcription_for`);
-  * `scripts/episode_bundle.py` / `scripts/dry_cell.py` — declare and
+  * the experiment's bundle writer and seat launcher (not shipped) — declare and
     collect the ledger as a sealed artefact (`LEDGER_NAME`, `ledger_path`);
-  * `scripts/channel_ledger.py` — the section 4.2 process measures, pure
+  * `scripts/channel_ledger.py` — the channel's process measures, pure
     functions over `materialise()`.
 
-THE TOPOLOGY IS KEYED ON SEATS, NOT CHARACTER IDS (section 7.5): a seat is a
+THE TOPOLOGY IS KEYED ON SEATS, NOT CHARACTER IDS: a seat is a
 lineage, so a rebind after a death changes nothing in who may write to whom.
 The channel never needs a character id and never reads one.
 
@@ -42,7 +42,7 @@ mean rewriting an append-only file.
 
 THE FIXTURE CANNOT FORGE A DELIVERY. `deliver()` is the only writer of receipt
 records and the only reader that returns an inbox, and it has two callers: the
-server's `observe` (`via="observe"`) and, since then, `ck3agent run` at
+server's `observe` (`via="observe"`) and, `ck3agent run` at
 the start of a resumed turn (`via="resume_prompt"`, the text in the prompt). A
 test that claims a message was read has called one of the two.
 """
@@ -74,27 +74,27 @@ except ImportError:                     # imported flat as `channel` (the server
 # 1. THE VOCABULARY
 # ═══════════════════════════════════════════════════════════════════════════
 
-#: The tool's name on the wire (section 5.1: "the 13 and the one").
+#: The tool's name on the wire (the one tool beside the 13).
 TOOL_NAME = "msg_send"
 
-#: The topologies (v4 §3: COUNCIL's complete topology, or none; v3's star is
+#: The topologies (a complete topology, or none; v3's star is
 #: deleted with the arms that used it). `none`: the tool is not registered.
 TOPOLOGY_COMPLETE = "complete"
 TOPOLOGY_NONE = "none"
 TOPOLOGIES = (TOPOLOGY_COMPLETE, TOPOLOGY_NONE)
 
-#: Seat labels (section 3): the king and the dukes D1..Dn.
+#: Seat labels: the king and the dukes D1..Dn.
 KING = "K"
 _DUKE_RE = re.compile(r"^D[1-9][0-9]*$")
 
-#: Conditions-block keys (section 9). `KEY_TOPOLOGY_PREFIX + <arm>` per arm.
+#: Conditions-block keys. `KEY_TOPOLOGY_PREFIX + <arm>` per arm.
 KEY_TOPOLOGY_PREFIX = "channel.topology."
 KEY_QUOTA = "channel.quota_per_cycle"
 KEY_MAX_BYTES = "channel.max_text_bytes"
-#: Section 2.3 / 9: n, from which the seat label set K, D1..Dn is derived.
-#: Owned by the census lane's block; read here because the channel needs n.
+#: n, from which the seat label set K, D1..Dn is derived.
+#: Owned by the census block; read here because the channel needs n.
 KEY_N_DUKES = "census.n_dukes"
-#: Section 5.1: the one tool the channel arms add to the held-constant 13.
+#: The one tool the channel arms add to the held-constant 13.
 KEY_ARMS_ADD = "tool_surface.channel_arms_add"
 
 #: The environment transcription the launcher establishes for a seat's process
@@ -113,7 +113,7 @@ ENV_EPISODE_ID = "CK3_EPISODE_ID"
 #: Every arm-level transcription variable, in the order the record lists them.
 TRANSCRIPTION_KEYS = (ENV_TOPOLOGY, ENV_QUOTA, ENV_MAX_BYTES, ENV_SEATS)
 
-#: The ledger's verdicts (section 5.2), and the order they are decided in:
+#: The ledger's verdicts, and the order they are decided in:
 #: a recipient the table does not allow is refused before the text is looked
 #: at; an over-long text is refused before the quota is counted, because a send
 #: that delivered nothing does not spend the quota; the quota is counted over
@@ -147,7 +147,7 @@ GATE_UNAVAILABLE = "channel_unavailable"
 #: The tool-call refusal (a `blocked.gate`, NOT a ledger verdict) when the
 #: cycle authority cannot say which cycle the send falls in (`send_cycle`):
 #: the cell's schedule is unreadable or the game date at the send is. Never a
-#: default: the block stamped every send before a resumed session's
+#: default: an earlier version stamped every send before a resumed session's
 #: first wait "cycle 0" (the session-local counter's start), and 18 of its 19
 #: quota refusals were false (seat-review.md problem 3).
 R_CYCLE_UNKNOWN = "cycle_unknown"
@@ -195,7 +195,7 @@ def is_duke(label: str) -> bool:
 
 
 def allowed(topology: str, sender: str, recipient: str, seats: Sequence[str]) -> bool:
-    """Section 5.2's table: may `sender` write to `recipient`?
+    """The channel's table: may `sender` write to `recipient`?
 
     complete: any seat to any OTHER seat. none: nobody. A recipient that is not a seat (a label outside
     the set, the sender itself, a typo) is outside the table: `topology_denied`.
@@ -214,7 +214,7 @@ def text_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-#: THE CYCLE RULE (v3 §5.2 / §7.2: ONE cycle, not two) lives in
+#: THE CYCLE RULE (ONE cycle, not two) lives in
 #: `cycle_cadence`: under the registered cadence (CK3_CYCLE_GAME_DAYS) a cycle
 #: ends when the game date has advanced ≥ the cadence since it began, across
 #: the seat's `session(action="wait")` calls; without one, every wait that
@@ -281,7 +281,7 @@ def _posint(environ: Mapping[str, str], key: str) -> int:
     if not _POSINT_RE.match(raw):
         raise ChannelBootRefusal(
             R_BOUNDS_UNDECLARED,
-            f"{key} is {raw!r}; the channel bounds (section 7.6) must be declared "
+            f"{key} is {raw!r}; the channel bounds must be declared "
             "as positive decimal integers, never defaulted")
     return int(raw)
 
@@ -367,7 +367,7 @@ def declared_block(environ: Mapping[str, str]) -> dict:
 def ledger_required(summary: Mapping[str, Any]) -> bool:
     """Is `channel_ledger.jsonl` a REQUIRED artefact of this bundle? Keyed on the
     witness stamped at open: declared, and a topology other than `none`. A
-    bundle with no `channel` block predates the lane: a coverage statement,
+    bundle with no `channel` block predates the channel: a coverage statement,
     never a retroactive requirement."""
     blk = summary.get("channel")
     if not isinstance(blk, Mapping) or not blk.get("declared"):
@@ -476,7 +476,7 @@ def materialise(records: Iterable[Mapping[str, Any]]) -> list[dict]:
                 row["read_cycle"] = rec.get("read_cycle")
                 row["reader"] = rec.get("reader")
                 row["read_utc"] = rec.get("read_utc")
-                # a receipt from before has no `via`: only observe delivered then
+                # an older receipt has no `via`: only observe delivered then
                 row["read_via"] = rec.get("via") or VIA_OBSERVE
                 if rec.get("turn") is not None:
                     row["read_turn"] = rec.get("turn")

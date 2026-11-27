@@ -127,9 +127,9 @@ class Refusing(Gw):
     sends: MEMORY_ACCESS_FAULT_REPLY = {"error":"memory_access_fault"}
     (bridge/include/bridge.h), from answer_memory_access_fault in case_set_speed /
     case_pause_game / case_unpause_game (bridge/src/dispatch_router.cpp). It
-    carries no `success`. (fixture said {"success": false, ...}, a shape
-    the bridge never sends, and so could not see N-MAJ-1.) The state does not
-    move: the clock reads what it read before the write."""
+    carries no `success` (a fixture that answered {"success": false, ...}, a shape
+    the bridge never sends, could not see a write that was not applied). The state
+    does not move: the clock reads what it read before the write."""
 
     async def write(self, action, params=None):
         self.writes.append(action)
@@ -139,7 +139,7 @@ class Refusing(Gw):
 @pytest.mark.parametrize("action,kw", [("speed", {"speed": 2}), ("pause", {}), ("unpause", {})])
 def test_a_refused_clock_write_is_rejected_not_applied(no_sleep, action, kw):
     """The bridge's fault reply is
-    write_blocked, verdict rejected, with the bridge's reason. RED on b84e3634
+    write_blocked, verdict rejected, with the bridge's reason. RED without the rule
     for speed (answered applied)."""
     gw = Refusing(paused=(action == "unpause"))
     gw.speed = 2 if action == "speed" else 1   # even a speed that already reads 2
@@ -160,7 +160,7 @@ def test_speed_reads_the_speed_back(no_sleep):
 
 def test_a_speed_that_never_reads_back_is_pending(no_sleep, monkeypatch):
     """The write was not refused and get_tick_info never reads the speed asked
-    for: pending next_pass, never applied. RED on b84e3634 (applied, no read)."""
+    for: pending next_pass, never applied. RED without the rule (applied, no read)."""
     monkeypatch.setattr(redesign, "_settle_tick",
                         lambda g, settled, timeout_s=3.0: redesign._fresh_tick(g))
     gw = Gw(paused=True, stuck=True)
@@ -172,7 +172,7 @@ def test_a_speed_that_never_reads_back_is_pending(no_sleep, monkeypatch):
 
 def test_a_wait_whose_closing_pause_never_reads_paused_is_pending(no_sleep, monkeypatch):
     """The wait's closing pause is a write like any other: a pause not read back
-    is pending, never applied (N-MAJ-1 sweep). RED on b84e3634."""
+    is pending, never applied. RED without the rule."""
     class NoPause(Gw):
         async def write(self, action, params=None):
             self.writes.append(action)
@@ -190,7 +190,7 @@ def test_a_wait_whose_closing_pause_is_REFUSED_is_rejected_not_pending(no_sleep)
     (MEMORY_ACCESS_FAULT_REPLY, bridge/include/bridge.h, from
     answer_memory_access_fault in case_pause_game, dispatch_router.cpp), the clock
     still running. Nothing will drain: rejected, gate bridge_fault, never ok:true
-    pending next_pass. RED on 293c0e00 (ok True, pending, next_pass)."""
+    pending next_pass. RED without the rule (ok True, pending, next_pass)."""
     class PauseFaults(Gw):
         async def write(self, action, params=None):
             self.writes.append(action)

@@ -46,6 +46,14 @@
 #define CK3_EARLY_INIT __attribute__((init_priority(101)))
 #endif
 
+// The calling function's return address (the AI veto's who-posted test in the
+// GameCommandDispatch hook, entered by a jmp so this is the poster's return address).
+#if defined(_MSC_VER)
+#define CK3_RETURN_ADDRESS() reinterpret_cast<uintptr_t>(_ReturnAddress())
+#else
+#define CK3_RETURN_ADDRESS() reinterpret_cast<uintptr_t>(__builtin_return_address(0))
+#endif
+
 namespace bridge {
 
 // An acquire load of a 64-bit slot in the game's memory (not a std::atomic:

@@ -6,7 +6,7 @@
 // re-derives: the game writes them under its user directory, which a -userdir /
 // userdir.txt / a moved Documents folder can put anywhere.
 //   Linux    the /proc/self/fd walk (readlink of every descriptor), as the
-//            code did it (src/os/linux/game_logs.cpp, moved byte for byte)
+//            Code did it (src/os/linux/game_logs.cpp, moved byte for byte)
 //   Windows  the process's own handles: NtQuerySystemInformation(extended handle
 //            list) filtered to this process, each disk-file handle named by
 //            GetFinalPathNameByHandleW (src/os/windows/game_logs.cpp). Read

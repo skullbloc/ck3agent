@@ -1,5 +1,5 @@
-// council_task_family.h — which task type a named council task is ON A GIVEN SEAT
-// (row B5).
+// council_task_family.h — which task type a named council task is ON A GIVEN SEAT.
+//
 //
 // The engine defines a task once and lets other seats CLONE it: game/common/
 // council_tasks/01_ministry_tasks.txt declares
@@ -12,7 +12,7 @@
 // FUN_05cb9ed0 and the 867 dump, 5 of 72 types set, each at its data template).
 //
 // The handler found the type by the asked name and compared the caller's `seat`
-// with that type's one position, so B5 (Cui 13191, seat minister_justice,
+// with that type's one position, so a ministries ruler (Cui 13191, seat minister_justice,
 // task_fabricate_claim) was refused seat_cannot_take_task / task_seat
 // councillor_court_chaplain before the engine was asked. The rule now:
 //   family(T) = root + every type whose template is root, root = T's template

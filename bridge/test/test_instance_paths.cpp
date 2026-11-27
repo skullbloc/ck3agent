@@ -1,6 +1,6 @@
 // test_instance_paths.cpp — the bridge's instance naming, host-compiled.
 //
-// Two jobs:
+// The instance rules. Two jobs:
 //
 //   1. SELF-CHECK (default invocation): assert the rules directly — legacy
 //      layout is the old host byte for byte, the default layout is the private
@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
         check_eq("named log", field(d, "bridge_log"), "/tmp/xx/ep-a/bridge.log");
     }
 
-    // 4. Two named instances never share anything. This is the whole bead in
+    // 4. Two named instances never share anything. This is the whole task in
     //    one assertion.
     {
         const char* ea[] = {"PATH=/usr/bin:/bin", "CK3_INSTANCE_ID=ep-a", nullptr};
@@ -315,7 +315,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 10.: a malformed layout or id binds NOTHING (instance.py raises on
+    // 10. a malformed layout or id binds NOTHING (instance.py raises on
     //     both, so neither side settles on a path), and the chain above a
     //     named instance's root is checked, not just the leaf.
     {
@@ -395,7 +395,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 11.: leading/trailing ASCII whitespace in the layout and the id
+    // 11. leading/trailing ASCII whitespace in the layout and the id
     //     is stripped, exactly as instance.py (_WS) and ck3_instance.sh do.
     //     Before: "legacy " was refused here and accepted by the client, which
     //     then dialled /tmp/ck3-agent.sock with its owner/peer checks off.
@@ -438,7 +438,7 @@ int main(int argc, char** argv) {
         check_true("blank id not refused", d.find("\"refused\":false") != std::string::npos);
     }
 
-    // 12.: the boot log is written only with CK3_BRIDGE_BOOT_LOG=1 (any
+    // 12. the boot log is written only with CK3_BRIDGE_BOOT_LOG=1 (any
     //     build, any layout), and its base is the resolver's base.
     {
         const char* env[] = {"PATH=/usr/bin:/bin", "CK3_INSTANCE_LAYOUT=legacy", nullptr};
@@ -475,7 +475,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 13.: instance_fopen_private, the by-path open behind every other
+    // 13. instance_fopen_private, the by-path open behind every other
     //     bridge-written file (gen_current.jsonl, session stamp).
     {
         char tmpl[] = "/tmp/ck3-ipt-XXXXXX";

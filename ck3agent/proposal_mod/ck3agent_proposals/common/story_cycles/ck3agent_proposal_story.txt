@@ -1,5 +1,5 @@
 ﻿# ck3agent incoming-proposal queue: one story per held offer, owned by the
-# seated recipient (lane QMOD; docs/design/incoming-proposals.md, "Timing").
+# seated recipient.
 # Nothing in the engine limits a story's life: this cycle ages it in 10-day
 # steps, voids it when the offer can no longer be answered, applies the class's
 # lapse default after ck3agent_proposal_lapse_steps steps (400 days; by=lapse),

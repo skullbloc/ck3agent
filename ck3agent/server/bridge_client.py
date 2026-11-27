@@ -97,7 +97,7 @@ def handshake_summary(ack: dict, kept: Optional[str]) -> str:
 #   mode              str   -- "control" | "observe"; HONOURED ONLY AT >= 2
 #   resume_token      str   -- SERVER-MINTED; present it to resume
 #   world_identity    obj   -- {episode_id, save_sha256, start_date_year}; the
-#                              save the client VOUCHES FOR
+#                              save the client VOUCHES FOR, by its sha256
 #
 # Legacy is preserved byte-for-byte: when no v2 argument is supplied the frame
 # sent is exactly the pre-existing {type, agent_version, capabilities}. The live
@@ -114,7 +114,7 @@ VALID_MODES = (MODE_CONTROL, MODE_OBSERVE)
 # a WORLD: GAME_STATE_ROOT moves on every load including a reload of the very
 # same file, and every 1066 save carries start year 1066. So the bridge is TOLD,
 # by the process that issued the load — and the identity it is told is NOT a new
-# one. It is run_summary.json, read straight off the episode bundle's
+# one. It is the run_summary.json, read straight off the episode bundle's
 # provenance:
 #
 #     episode_id        run_summary.episode_id
@@ -122,7 +122,7 @@ VALID_MODES = (MODE_CONTROL, MODE_OBSERVE)
 #     start_date_year   the YEAR of run_summary.save.bookmark_date
 #
 # Retyping any of these by hand would make it a third identity, which is exactly
-# what docs/design/event-pipeline-conductor.md §6.2 forbids.
+# what §6.2 forbids.
 
 
 class BundleProvenanceError(RuntimeError):
@@ -167,7 +167,7 @@ def world_identity_from_run_summary(summary: dict, source: str = "run_summary") 
     if not sha:
         raise BundleProvenanceError(
             f"{source} carries no save.sha256 — nothing to vouch for. Seal the bundle "
-            "with scripts/episode_bundle.py, which computes it from the file's bytes."
+            "first: sealing writes the save's sha256, computed from the file's bytes."
         )
     ident: dict[str, Any] = {
         "episode_id": summary.get("episode_id") or "",
@@ -220,7 +220,7 @@ class HandshakeRefused(RuntimeError):
 
 #: THE SOLE SEAT DECLARATION IN THE TREE, as client kwargs.
 #:
-#: A FUNCTION RATHER THAN A LITERAL AT EACH CALLER, for reason and
+#: A FUNCTION RATHER THAN A LITERAL AT EACH CALLER, for the reason and
 #: not merely for tidiness: "exactly one declaration site" and "the site is on
 #: the path an episode takes" are DIFFERENT PROPERTIES, and the observer
 #: declaration satisfied only the first — a census counted one literal while
@@ -228,12 +228,8 @@ class HandshakeRefused(RuntimeError):
 #: that must declare calls this; a census counts this.
 #:
 #: WHO CALLS IT: the MCP server's bridge session, which is the session an arm
-#: seat actually runs on — established from ep-02 that the arms' agents
-#: are Claude Code sessions calling MCP tools, and nothing in the MCP server
-#: imports agent.py. `agent.py` (the A path) deliberately does NOT declare: the
-#: registered runs never execute it, and giving it a v2-only key would change
-#: its legacy handshake frame for no arm that exists. That claim is pinned by a
-#: row rather than left as a comment.
+#: seat actually runs on — one recorded episode established that the arms' agents
+#: are Claude Code sessions calling MCP tools.
 def seat_declaration_kwargs() -> dict:
     """The handshake kwargs that declare this session intends to hold a seat."""
     return {"episode_seat": True}
@@ -241,8 +237,8 @@ def seat_declaration_kwargs() -> dict:
 
 #: FRAME-SPLIT RECOVERY, counted process-wide so the driver can SEAL it.
 #:
-#: A line that does not decode used to raise JSONDecodeError out of `recv()`,
-#: through `call()`, to the driver's catch-all: registered-d44 slot 1 sealed
+#: A line that does not decode does not raise JSONDecodeError out of `recv()`,
+#: through `call()`, to the driver's catch-all: one registered run sealed
 #: `abort/unknown` at game date 1073.10.05 after 51 minutes, on
 #: "Extra data: line 1 column 133063 (char 133062)" — one line, 133,062 bytes,
 #: no newline inside, a second document after it.
@@ -308,7 +304,7 @@ def split_frame_line(line: bytes) -> list:
         })
     log.warning(
         "bridge frame line did not decode as one document: %d bytes, "
-        "%d document(s) recovered, %d byte(s) dropped (ck-1qj0)",
+        "%d document(s) recovered, %d byte(s) dropped",
         len(line), len(out), dropped)
     return out
 
@@ -340,7 +336,7 @@ class BridgeClient:
         self.session_mode: Optional[str] = None
         self.session_state: Optional[str] = None
         self.protocol_version_sent: Optional[int] = None
-        # resume state. `resume_token` is SERVER-MINTED and captured
+        # Resume state. `resume_token` is SERVER-MINTED and captured
         # from the ack; holding it is the whole of what makes a reconnect a
         # RESUME rather than a fresh session that silently lost its claims.
         self.resume_token: Optional[str] = None
@@ -431,7 +427,7 @@ class BridgeClient:
             raise ConnectionError("Not connected")
 
         # `timeout` is a DEADLINE for this call, not a budget handed
-        # afresh to each syscall. It used to be `settimeout(timeout)` ONCE above
+        # afresh to each syscall. It is not `settimeout(timeout)` ONCE above
         # the loop, which is a different and much weaker promise: every
         # `sock.recv` below got the FULL timeout again, and the two `continue`s
         # here (keepalive ping, empty line) go round WITHOUT RETURNING, so the
@@ -443,7 +439,7 @@ class BridgeClient:
         # resets the wait forever: recv() never returns, call() never re-checks
         # its absolute deadline, nothing blocks and nothing raises, and the
         # caller waits indefinitely on a call it believes is bounded by 15 s.
-        # MEASURED CONSEQUENCE (arm-C smoke ep-20260921T041851Z): the
+        # MEASURED CONSEQUENCE (a test game): the
         # driver hung on its 10th `query_war_stance`, mid-way through the FIRST
         # sampling pass, and sat there ~4 minutes until the operator killed it —
         # so the poll loop ran exactly ONE iteration, `last_date` never advanced
@@ -455,7 +451,7 @@ class BridgeClient:
         # NOTHING: the loop consumed it and re-armed the full timeout.
         deadline = time.monotonic() + timeout
 
-        # LAZY, because `recv`'s working contract is "set `sock` and
+        # LAZY, because `recv()`'s working contract is "set `sock` and
         # `_buf` and it works" — ck3agent/server/test_bridge_client_recv_deadline
         # and test_handshake_observer_kwarg both build the client with
         # `BridgeClient.__new__(BridgeClient)` and supply exactly those two
@@ -556,8 +552,8 @@ class BridgeClient:
             if resume_token:
                 msg["resume_token"] = resume_token
             # THE EPISODE-OBSERVER DECLARATION, which
-            # this client could not send. `ck3agent/server/harness_client.py` has built
-            # `hs_kwargs["episode_observer"]` since then and handed it to
+            # this client could not send. The research tree's harness client has built
+            # `hs_kwargs["episode_observer"]` and handed it to
             # THIS function, which did not accept it — so every attempt died on
             # `handshake() got an unexpected keyword argument`. Two client
             # implementations, one wired: the privilege was reachable from
@@ -584,7 +580,7 @@ class BridgeClient:
             # CONTROL session, claim or no claim, so the driver's own
             # `steer-probe` and `speed-pin` helpers each accrued a full horizon
             # of unavailability and invalidated a run whose agent session was
-            # perfectly healthy (deploy-31 shakedown 2: 3 sessions counted, 1
+            # perfectly healthy (a shakedown: 3 sessions counted, 1
             # declared, 2 over threshold, 364 days each). Those helpers never
             # claim anything — the probe issues NO verb at all, the pin issues
             # only `set_speed` and `get_tick_info`.
@@ -596,14 +592,14 @@ class BridgeClient:
             # anywhere. Omitted entirely when None, so every existing caller's
             # frame stays byte-identical.
             #
-            # It does NOT replace bridge-side rule. The bridge keys
+            # It does NOT replace the bridge-side rule. The bridge keys
             # the pin on CLAIMS, which is what R3 is about; this declares
             # INTENT, which is what the validator cross-checks against the
             # roster. Two different questions, deliberately not merged.
             if episode_seat is not None:
                 msg["episode_seat"] = bool(episode_seat)
             # Vouch for the save on the frame that authorises the claim
-            # set. The bridge routes this through world_identity_declare
+            # set. The bridge routes this through the world_identity_declare()
             # — the SAME entry point the standalone action takes — so a resume that
             # carries it gets its quarantined steering back in the same round trip
             # instead of steering nothing until a second call lands.
@@ -703,13 +699,13 @@ class BridgeClient:
 
     def declare_save_identity(self, identity: Optional[dict] = None,
                               timeout: float = 15.0) -> Optional[dict]:
-        """Tell the bridge WHICH SAVE is loaded (entry point).
+        """Tell the bridge WHICH SAVE is loaded (the entry point).
 
         Call this after a reload, and after any resume that did not carry the
         identity on its handshake frame. On the same save the bridge restores the
         steering it quarantined at the reload; on a different save it refuses,
         and it also erases any session whose claims were taken in the world the
-        declaration refutes (claims half).
+        declaration refutes (the claims half).
 
         Returns the bridge's reply dict, whose `decision` is a closed vocabulary
         (see bridge/include/world_identity.h) — a caller SHOULD branch on it

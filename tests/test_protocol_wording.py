@@ -2,7 +2,7 @@
 
 Measured live on 2026-10-18: `release_character` for a control session's only
 ruler is refused with `last_claim_of_control_session`; the ruler is freed when
-the session ends. Three protocol files used to instruct that release as the
+the session ends. Three protocol files do not instruct that release as the
 normal stop step.
 """
 from pathlib import Path
@@ -42,8 +42,8 @@ def test_no_protocol_file_instructs_releasing_the_ruler_to_stop():
 
 
 def test_the_several_rulers_section_says_the_five_rules():
-    """lane-multi: add, pin character_id, one posture each (writing that ruler
-    only:, no phase arms the process-wide veto), one clock, and that only a
+    """Add, pin character_id, one posture each (writing that ruler
+    only: no phase arms the process-wide veto), one clock, and that only a
     non-last ruler can be released."""
     for name in ("CLAUDE.md", "CLAUDE-desktop.md"):
         sec = " ".join(_section((PROTOCOL / name).read_text(encoding="utf-8"),

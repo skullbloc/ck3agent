@@ -1,8 +1,7 @@
-"""goal_block.py — what an experiment seat's `observe` says about the goal (v4 §6).
+"""goal_block.py — what an experiment seat's `observe` says about the goal.
 
-THE DEFECT (seat review of set v3-registered-2, problem 5). The goal was not
-operational in anything a seat could observe: no score, no end date, no cycle
-count. s3's king read the de-jure fraction as realm size ("42 of 47") while the
+WHY. Without this block the goal is not operational in anything a seat can
+observe: no score, no end date, no cycle count. In a recorded set a king read the de-jure fraction as realm size ("42 of 47") while the
 meter read 44, down from 89.
 
 THE BLOCK. `observe` carries `result.goal` (first in `result`):
@@ -21,14 +20,14 @@ THE BLOCK. `observe` carries `result.goal` (first in `result`):
       - both mirrors are checked reply by reply in scripts/test_played_line.py;
       - R at the open is NOT re-read: it is the meter's own open sample, which
         the cell passes to the seat (`ENV_R_OPEN`, `ENV_OPEN_DATE`,
-        `ENV_LINE_START`; ck3bench/runner/cell.py `goal_open_env`).
+        `ENV_LINE_START`, set by the harness that starts the seat).
   * `horizon` and `cycle`: `cycle_cadence.schedule_position`, the cycle
     authority (`cell_schedule`); nothing re-derived.
   * `own_counties` (a duke seat only): his own realm's county count, the same
     read and grade as R applied to the seat's own ruler.
 
-OUTSIDE AN EXPERIMENT EPISODE (no horizon start declared) the block is
-`{"state": "not_an_experiment_episode"}`: stated absent, never zeros.
+OUTSIDE A SCHEDULED RUN (no horizon start declared) the block is
+`{"state": "no_scheduled_run"}`: stated absent, never zeros.
 
 Keys read, by emitter (bridge/src/query_handlers.cpp): `query_character`
 build_char_profile `id` (:496) and `alive` (:513); `emit_played_line` (:969-998);
@@ -218,7 +217,7 @@ async def goal_block(gw, *, actor_id: Optional[int], game_date: Any,
     r_open = _env_int(env, ENV_R_OPEN)
     if start is None:
         R = {"read": R_UNREAD, "count": None, "why": WHY_NO_LINE_START,
-             "detail": f"{ENV_LINE_START} is not set: the cell passed no open sample"}
+             "detail": f"{ENV_LINE_START} is not set: the run passed no open sample"}
     else:
         R = await read_line_R(gw, start)
     R = {"now": R.pop("count"), **R,
@@ -226,7 +225,7 @@ async def goal_block(gw, *, actor_id: Optional[int], game_date: Any,
          "line_start_id": start}
     R["change"] = (R["now"] - r_open) if isinstance(R["now"], int) and r_open is not None else None
     if r_open is None:
-        R["at_open_why"] = f"{ENV_R_OPEN} is not set: the cell passed no open sample"
+        R["at_open_why"] = f"{ENV_R_OPEN} is not set: the run passed no open sample"
     R["definition"] = R_DEFINITION
     out.update(R=R, horizon=horizon, cycle=cycle)
     if seat != KING:

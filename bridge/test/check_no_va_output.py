@@ -185,8 +185,8 @@ SELFTEST_BAD = {
     "raw string key": 'snprintf(b, sizeof b, R"({"error":"x","option_array_ptr":"%d"})", n);',
     # The scan stays in phase across a raw string holding a quote, and across a
     # digit separator, each followed by an apostrophe in a comment and a raw
-    # reply key (the miss: query_handlers.cpp's cb_db_ptr went unseen). The
-    # raw-string row is missed by the earlier checker. The digit-separator row is
+    # reply key (the first version's miss: query_handlers.cpp's cb_db_ptr went unseen). The
+    # raw-string row is missed by the superseded checker. The digit-separator row is
     # flagged by it too (non-discriminating against it); it reds a strip_comments
     # fixed without the matching literals() fix.
     "raw key after a raw string with a quote":

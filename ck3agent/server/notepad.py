@@ -1,4 +1,4 @@
-"""The seats' notepads (pre-registration v4 draft sections 3 and 7).
+"""The seats' notepads.
 
 ONE DEFINITION. Everything the notepad means lives here: the two tools' names,
 the pads, the conditions-block keys and their environment transcription, the
@@ -14,15 +14,15 @@ seals. The readers are:
     surface gate and witness grade through `seat_surface.declared`) and
     transcribes the arm's pads into the seat's environment
     (`transcription_for`);
-  * `scripts/dry_cell.py` — transcribes the same into each cell seat's
+  * the experiment's seat launcher (not shipped) — transcribes the same into each seat's
     environment, and seals the log and the final pads into the bundle
     (`seal`);
-  * `scripts/episode_bundle.py` — the bundle's artefact census (`LOG_NAME`,
+  * the bundle's sealer (not shipped) — its artefact census (`LOG_NAME`,
     `log_required`).
 
 THE TWO PADS. `private`: one per seat, read and written by that seat only
-(arms K1 and COUNCIL). `council`: one per episode, read and written by every
-seat (arm COUNCIL only). A seat names a pad by its KIND (`private` or
+(the private-pad arm and the council arm). `council`: one per episode, read and written by every
+seat (the council arm only). A seat names a pad by its KIND (`private` or
 `council`), never by another seat's label: there is no address under which a
 seat can reach another seat's private pad. A seat whose arm did not declare the
 pad it asks for is refused by name (`notepad_pad_not_declared`).
@@ -52,7 +52,7 @@ ever overwrites text it did not see. The rule is the same for both pads.
 THE CYCLE COMES FROM THE CYCLE AUTHORITY. The cell's one schedule
 (`cycle_cadence.cell_schedule`, start + k x cadence on the game calendar) at
 the bridge's game date read at the call, never a per-process counter that a
-resume restarts at zero (the msg_send quota defect: a resumed seat's
+resume restarts at zero (the msg_send quota once had this defect: a resumed seat's
 sends were stamped cycle 0). When there is no schedule or the date cannot be
 read, the operation is refused `notepad_cycle_unknown` and logged with
 `cycle: null`, never stamped with a guess.
@@ -95,7 +95,7 @@ PAD_COUNCIL = "council"
 PADS = (PAD_PRIVATE, PAD_COUNCIL)
 
 #: What an arm may declare (`notepad.pads.<arm>`), ONE spelling each: no pad,
-#: the private pad (K1), both (COUNCIL). A council pad without private pads is
+#: the private pad, both (COUNCIL). A council pad without private pads is
 #: no arm of the design and is refused as an invalid declaration.
 DECL_NONE = "none"
 DECL_PRIVATE = "private"
@@ -116,7 +116,7 @@ KEY_WRITE_MAX = "notepad.max_write_bytes"
 KEY_BOUNDS = (KEY_PRIVATE_MAX, KEY_COUNCIL_MAX, KEY_WRITE_MAX)
 KEY_ARMS_ADD = "tool_surface.notepad_arms_add"
 
-#: The bounds this lane proposes for the v4 registration (them;
+#: The bounds proposed for the v4 registration (them;
 #: nothing reads these as a default — a seat boots only with declared bounds).
 #: private 4096 bytes: about 1k tokens a read, seven of v3's 600-byte messages;
 #: council 8192: twice that for up to six writers; a write 1024: a pad takes
@@ -297,7 +297,7 @@ def declared_block(environ: Mapping[str, str]) -> dict:
 def log_required(summary: Mapping[str, Any]) -> bool:
     """Is the notepad log a REQUIRED artefact of this bundle? Keyed on the
     witness stamped at open (`summary["notepad"]`): declared, with a pad. A
-    bundle with no block predates the lane: never a retroactive requirement."""
+    bundle with no block predates the notepads: never a retroactive requirement."""
     blk = summary.get("notepad")
     if not isinstance(blk, Mapping) or not blk.get("declared"):
         return False

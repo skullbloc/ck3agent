@@ -9,7 +9,7 @@ namespace bridge {
 
 // "%.2f" as glibc prints it: the EXACT binary value, rounded half-to-even. The MSVC
 // runtime rounds an exact tie away from zero (2.625 -> "2.63", glibc "2.62"), which
-// made the same reply differ between the builds (P5: maa upkeep 262500 / 1e5).
+// made the same reply differ between the builds (a men-at-arms upkeep of 262500 / 1e5).
 // Linux keeps snprintf, so its replies are unchanged byte for byte.
 inline int format_fixed2(double v, char* out, size_t n) {
 #ifdef _WIN32

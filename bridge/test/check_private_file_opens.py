@@ -138,9 +138,9 @@ SELFTEST_BAD = {
     "fstream": "std::fstream io(path, std::ios::out);",
     # The scan stays in phase across a raw string and a
     # comment with an apostrophe. The witness's row (an escaped-looking quote) is
-    # flagged by the earlier checker too: its quotes pair (non-discriminating);
+    # flagged by the superseded checker too: its quotes pair (non-discriminating);
     # the row after it (one bare quote inside the raw string, so a later "//"
-    # reads as a comment) is the one the earlier checker misses.
+    # reads as a comment) is the one the superseded checker misses.
     "fopen after a raw string": 'a = R"x(\\")x";\nint b = 1; // it\'s\nFILE* f = fopen("x","w");',
     "fopen after a raw string with a bare quote": 'a = R"x(")x"; b = "//"; FILE* f = fopen("x","w");',
 }

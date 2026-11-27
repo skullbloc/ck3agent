@@ -223,13 +223,13 @@ def test_a_seat_whose_record_names_no_listed_session_is_not_shown_the_other_seat
     """One other seat's session is attached and holds the bridge's
     primary; this seat's record (`ck3agent run` set CK3_SESSION_OUT) is absent (its
     server's connect failed or has not finished) or stale. One session is attached,
-    so the one-seat path would name the other seat's ruler as `You` (red on db8857cc)."""
+    so the one-seat path would name the other seat's ruler as `You` (red without the rule)."""
     hook = load_hook()
     monkeypatch.delenv("CK3_AGENT_CHARACTER_ID", raising=False)
     for path in (str(tmp_path / "absent.session.json"), _seat_record(tmp_path, "s9")):
         monkeypatch.setenv("CK3_SESSION_OUT", path)
         out = report_p(hook, two_rulers(paused=True, sessions=[TWO_SESSIONS[0]]))
-        assert "- You:" not in out and "13902" not in out, out      # the behaviour first: red on db8857cc here
+        assert "- You:" not in out and "13902" not in out, out      # the behaviour first: red without the rule here
         assert "Held by another session" not in out
         assert hook.SEAT_RECORD_UNMATCHED in out and 'session(action="whoami")' in out
     monkeypatch.delenv("CK3_SESSION_OUT")
@@ -280,7 +280,7 @@ def test_display_name_passes_a_name_and_refuses_a_localization_key():
 
 
 def test_an_unlocalized_name_key_is_never_printed_as_the_name():
-    """Live 2026-10-19 (lane-multi run 3): the first snapshot said `E_thelred`
+    """Live 2026-10-19: the first snapshot said `E_thelred`
     where whoami, turns later, said `Æthelred`. The bridge answers a name-cache
     miss with the ruler's localization KEY until the game thread resolves it
     (within a frame); the hook omits a key and says the name is pending."""
@@ -301,7 +301,7 @@ def test_an_unlocalized_name_key_is_never_printed_as_the_name():
 
 
 def test_a_pending_name_from_the_bridge_prints_the_note_and_never_the_key():
-    """lane-namekey: the bridge now states a name-cache miss instead of
+    """The bridge now states a name-cache miss instead of
     disguising it — no `name`, plus `name_key` (the localization key) and
     `name_pending: true`. The hook prints the note from `name_pending`, and
     the key under `name_key` never reaches the page."""

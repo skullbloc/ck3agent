@@ -1,4 +1,4 @@
-"""The seats' notepads (pre-registration v4 draft sections 3 and 7):
+"""The seats' notepads:
 the declaration at boot, the write rule, the bounds, the log, the cycle from the
 cycle authority, the pads' persistence across a resume and a rebind, the seal,
 and the two tools served through the server like msg_send.
@@ -84,7 +84,7 @@ def test_declared_block_names_absence_as_a_state_and_log_required_keys_on_it():
     assert blk["declared"] and blk["pads"] == ["private"] and blk["max_write_bytes"] == "32"
     assert N.log_required({"notepad": blk})
     assert not N.log_required({"notepad": N.declared_block({N.ENV_PADS: "none"})})
-    assert not N.log_required({})                      # a bundle that predates the lane
+    assert not N.log_required({})                      # a bundle that predates the notepads
 
 
 # ── the store: the write rule, the bounds, the log ──────────────────────────

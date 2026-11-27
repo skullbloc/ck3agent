@@ -3,13 +3,13 @@
 // This ring DROPS on full; it does not overwrite. That matters for what can be
 // measured: the hits lost were never written to a slot, so the surviving batch
 // looks complete and the data carries no trace of the loss. `dropped` is the only
-// evidence, and before that nothing published it — a formatter built an
+// evidence, and at first nothing published it — a formatter built an
 // aiwatch_dropped= string and was called from nowhere, so the literal was absent
 // from the
 // .so (strings = 0). Exists, is called, produces: three different claims, and only
 // the first was true.
 //
-// The rows below measure the three things asks for: the real CAPACITY, the
+// The rows below measure the three things the drop check asks for: the real CAPACITY, the
 // threshold at which loss BEGINS (the wrap point), and whether a wrap is VISIBLE.
 #include "ai_enabled_watch.h"
 

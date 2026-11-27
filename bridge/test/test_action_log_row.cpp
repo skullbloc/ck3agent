@@ -1,7 +1,7 @@
-// test/test_action_log_row.cpp —: the action log says what happened to
+// test/test_action_log_row.cpp — the action log says what happened to
 // the action, and the poll's absence is not the action's failure.
 //
-// THE EVIDENCE (pilots-2026.11):
+// THE EVIDENCE (a recorded pilot, raw):
 // every call_war_create_core row in every seat's actions.jsonl (42 rows, deduped
 // by ts+request_id) reads {"success":false,"status":"queued","reason":
 // "no_poll_on_game_thread"}, while the bridge logs show 39 executor runs, every
@@ -38,7 +38,7 @@ static rapidjson::Document parse(const std::string& s) {
     return d;
 }
 
-// scale0/n8/play-s5/runs/20261103-191017.actions.jsonl (n8 shares one sink), Uzur (10647), 0867.02.03:
+// a recorded action log (several seats share one sink), Uzur (10647), 0867.02.03:
 // the row's `result`, byte for byte.
 static const char* kPilotReceipt =
     R"({"success":false,"action":"call_war_create_core","actor_id":10647,"target_id":11840,)"
@@ -75,7 +75,7 @@ static std::string read_file(const std::string& path) {
 }
 
 int main(int argc, char** argv) {
-    printf("test_action_log_row (L18-A)\n\ndecision\n");
+    printf("test_action_log_row\n\ndecision\n");
 
     // 1. The receipt of a queued war is PENDING, and the poll state is its own field.
     ActionLogVerdict v = action_log_verdict_of(kPilotReceipt);
@@ -83,8 +83,8 @@ int main(int argc, char** argv) {
     check(std::string(v.poll) == "skipped_on_game_thread",
           "...and poll skipped_on_game_thread (the poll's state, not the action's)", v.poll);
 
-    // CONTROL, non-discriminating: the 0a969f2e row carried no verdict, so a
-    // reader had only result.success — false for every landed war.
+    // CONTROL, non-discriminating: a row with no verdict leaves a
+    // reader only result.success — false for every landed war.
     {
         rapidjson::Document d = parse(kPilotReceipt);
         check(d.IsObject() && d["success"].IsBool() && !d["success"].GetBool(),
@@ -118,16 +118,16 @@ int main(int argc, char** argv) {
           "a synchronous write: applied, no poll", std::string(v.verdict) + "/" + v.poll);
     v = action_log_verdict_of(R"({"success":false,"action":"create_title","status":"queued","reason":"no_poll_on_game_thread"})");
     check(std::string(v.verdict) == "pending", "create_title's queued receipt (success:false) is pending", v.verdict);
-    // fix10: council-a's row (bridge action_log.jsonl, 1070.08.26, K 37067 on
+    // Council-a's row (bridge action_log.jsonl, 1070.08.26, K 37067 on
     // 31808, SACT_17): the effect script ran (success true) and its guard did not
-    // let the war start (guard refused). Red on 5e506f28: applied.
+    // let the war start (guard refused). Red without the rule: applied.
     v = action_log_verdict_of(R"({"success":true,"action":"script_action","template":"declare_war","actor_id":37067,"token":"SACT_17","guard":"refused","errors":[],"logs_found":true})");
     check(std::string(v.verdict) == "rejected" && std::string(v.poll) == "answered",
           "a script action whose guard refused: rejected, answered", std::string(v.verdict) + "/" + v.poll);
     v = action_log_verdict_of(R"({"success":true,"action":"script_action","template":"declare_war","actor_id":37067,"token":"SACT_8","guard":"ran"})");
     check(std::string(v.verdict) == "applied",
           "[control] a script action whose guard ran: applied", v.verdict);
-    // lane peace: end_war with no terms is the read-only listing; it wrote
+    // end_war with no terms is the read-only listing; it wrote
     // nothing to the game (guard ran = the listing was written), so the row is
     // a read. Red without the read_only rule: applied.
     v = action_log_verdict_of(R"({"success":true,"action":"script_action","template":"end_war","actor_id":37067,"token":"SACT_9","guard":"ran","marks":["LEADS","OPEN_WE_YIELD"],"read_only":true})");

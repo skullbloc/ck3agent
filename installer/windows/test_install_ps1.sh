@@ -9,7 +9,15 @@
 set -Eeuo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${PWSH:?PWSH=<pwsh>}" "${SRC:?SRC=<export tree>}" "${DLL:?DLL=<version.dll>}" "${EXE:?EXE=<pinned ck3.exe>}"
-pin="${PIN:-$here/../../../bridge/src/os/windows/pinned_identity.h}"
+# the pin beside the bridge: two levels up in a release tree (installer/windows/), three in the
+# research tree (release/overlay/installer/windows/); refused when neither holds it
+pin="${PIN:-}"
+if [ -z "$pin" ]; then
+  for c in "$here/../../bridge/src/os/windows/pinned_identity.h" "$here/../../../bridge/src/os/windows/pinned_identity.h"; do
+    [ -f "$c" ] && { pin="$c"; break; }
+  done
+fi
+[ -f "$pin" ] || { echo "REFUSED: no pinned_identity.h (set PIN=<path>)"; exit 2; }
 t="$(mktemp -d)"; trap 'rm -rf "$t"' EXIT
 fail=0; ok() { echo "ok:   $*"; }; bad() { echo "FAIL: $*"; fail=$((fail+1)); }
 
@@ -28,7 +36,14 @@ cmp -s "$game/binaries/version.dll" "$DLL" && ok "version.dll placed beside ck3.
 python3 - "$t/play/.mcp.json" <<'PY' && ok ".mcp.json names an existing ck3agent command" || bad ".mcp.json"
 import json, os, sys
 e = json.load(open(sys.argv[1]))["mcpServers"]["ck3"]
-sys.exit(0 if os.path.exists(e["command"]) and e["args"] == ["serve"] else 1)
+sys.exit(0 if os.path.exists(e["command"]) and e["args"] == ["serve"] and e.get("alwaysLoad") is True else 1)
+PY
+cmp -s "$t/play/CLAUDE.md" "$(ls "$t"/data/venv/lib/python3*/site-packages/ck3agent/protocol/CLAUDE.md | head -1)" \
+  && ok "CLAUDE.md is the installed play protocol" || bad "CLAUDE.md"
+python3 - "$t/play/.claude/settings.json" <<'PY' && ok "settings.json: ck3 tools allowed, MCP auto-background off" || bad "settings.json"
+import json, sys
+s = json.load(open(sys.argv[1]))
+sys.exit(0 if "mcp__ck3" in s["permissions"]["allow"] and s["env"]["CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS"] == "0" else 1)
 PY
 grep -q '"identity_match": true' "$t/data/install.json" && ok "identity matched pin.json" || bad "identity match not recorded"
 [ "$(head -c3 "$t/play/.mcp.json" | od -An -tx1 | tr -d ' ')" != "efbbbf" ] && ok ".mcp.json has no byte-order mark" || bad ".mcp.json starts with a BOM"

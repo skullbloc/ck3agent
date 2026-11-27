@@ -25,7 +25,7 @@
 // every call, so two in-flight bdt tickets collided in that map and the first
 // was orphaned exactly as above.
 //
-// THE FIX, and the rule it comes from (same lesson as): SETTLEMENT
+// THE FIX, and the rule it comes from (the same lesson as the params fallback): SETTLEMENT
 // MUST NEVER DEPEND ON A FIELD THE CLIENT WAS FREE NOT TO SEND. Correlation is
 // by the BRIDGE-MINTED TICKET, which is unique by construction and always
 // present. The ticket rides to the game thread on the drain ENVELOPE — not on
@@ -129,7 +129,7 @@ private:
     mutable std::mutex                            mu_;
     std::unordered_map<uint64_t, PendingCall>     payloads_;
 #if defined(CK3_DRAIN_LEGACY_RID_KEY)
-    // NEGATIVE CONTROL ONLY — the pre-fix correlation, keyed by the client's
+    // NEGATIVE CONTROL ONLY — the superseded correlation, keyed by the client's
     // optional, non-unique request_id. Never compiled into the shipped bridge.
     std::unordered_map<std::string, uint64_t>     rid_waiting_;
 #else

@@ -1,7 +1,7 @@
-// Second pass — GRADE THE LEDGER'S REPORT, not the registry.
+// The claim pin, second pass — GRADE THE LEDGER'S REPORT, not the registry.
 //
 // The first pass destroyed the non-participants and I proved it: the registry forgot
-// them, twelve rows said so, and the acceptance passed. Shakedown 3 on deploy-32 then
+// them, twelve rows said so, and the acceptance passed. A shakedown then
 // sealed INVALID on unavailability_over_x anyway. The bridge log says "UNDECLARED
 // CLAIMLESS DETACH — destroying, not pinning" twice, and unavailability_game_days
 // STILL reports both helpers — `ended: true`, `activity_count: 0`, one span open for
@@ -24,7 +24,7 @@ static void row(const char* n, bool ok, const std::string& d) {
     if (!ok) failures++;
 }
 
-// The shakedown-3 shape, in the ledger's own terms: a control session appears, the
+// The shape a recorded episode showed, in the ledger's own terms: a control session appears, the
 // world's clock runs on for a year, and the session never speaks again.
 static void run_silent_year(bridge::UnavailabilityLedger& L, const char* id,
                             int64_t first_day) {

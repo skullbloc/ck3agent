@@ -915,7 +915,7 @@ const char* resolve_decision_name(uint32_t hash) {
 //
 // Pattern: game thread populates the cache, reader thread reads under a mutex.
 //
-// What a miss looks like to a client (lane-namekey): the reply carries NO
+// What a miss looks like to a client: the reply carries NO
 // `name`; it carries `name_key` (the key on the object, `E_thelred`) and
 // `name_pending: true` (ad_read_char_name_full / emit_char_name in
 // dispatch_router.cpp). A paused game runs no on_tick, so step 2 waits for
@@ -937,7 +937,7 @@ static std::set<uint32_t> g_needs_resolution CK3_EARLY_INIT;
     register_world_reset("character_name_cache", &clear_name_cache);
 });
 
-// Test seam (regression test). When non-null, populate_name_cache
+// Test seam. When non-null, populate_name_cache()
 // resolves through this instead of the engine, so the cache's WORLD-LIFETIME
 // behaviour can be exercised host-side with no game attached. Always null in a
 // deployed bridge; the engine path below is untouched.
@@ -971,7 +971,7 @@ static uintptr_t name_cache_char_lookup(uint32_t id) {
 // override name, localization) and BUILDS a std::string inside the engine.
 // If the character has been freed/reused or its name std::string is
 // mid-mutation, the resolver over-reads a stale length/pointer and corrupts
-// the heap (crash2 20260626). The slot-ID match in name_cache_char_lookup
+// the heap (a recorded crash). The slot-ID match in name_cache_char_lookup
 // only proves the hash slot is occupied — it does NOT prove the object is a
 // live character with sane name fields.
 //
@@ -1048,7 +1048,7 @@ void populate_name_cache() {
     if (!resolve_fn && !override_fn) return;
     // No address for the engine's resolver in this build (Windows: poisoned until
     // mapped): names stay pending, as they are before the first tick, rather than
-    // faulting once per tick (P6 full1).
+    // faulting once per tick (ADR 0001 P6).
     if (!override_fn && !is_mapped(reinterpret_cast<uintptr_t>(resolve_fn))) return;
 
     int resolved = 0;
@@ -1065,7 +1065,7 @@ void populate_name_cache() {
 
             // Never hand a stale/dead/being-destroyed character to the engine's
             // name resolver — it over-reads bad name fields and corrupts the heap
-            // (crash2 20260626). Skip → numeric-id fallback at the read site.
+            // (a recorded crash). Skip → numeric-id fallback at the read site.
             if (!name_resolve_input_is_safe(char_ptr)) {
                 skipped++;
                 continue;

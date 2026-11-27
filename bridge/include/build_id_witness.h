@@ -1,6 +1,6 @@
 // build_id_witness.h — WHAT THE BRIDGE ACTUALLY SAW, and under what rule.
 //
-// Leg (e). The offsets in ck3_offsets.h are valid against exactly
+// The offsets in ck3_offsets.h are valid against exactly
 // ONE CK3 binary (e61ff2642f07094defd140fcc98e078d42541275), and until this
 // header existed NOTHING IN A SEALED BUNDLE RECORDED WHICH BINARY ACTUALLY RAN.
 //
@@ -25,7 +25,7 @@
 //     wire — renaming a wire field is its own hazard — it is DOCUMENTED as the
 //     expected constant.
 //
-//  2. THE MANDATE HAD NO WITNESS. On mismatch the resolver aborts only under
+//  2. THE REQUIREMENT HAD NO WITNESS. On mismatch the resolver aborts only under
 //     CK3_STRICT_BUILD_ID, whose shipped CMake default is OFF and which the
 //     environment overrides IN BOTH DIRECTIONS. So a wrong CK3 version could
 //     run to horizon with a warning in a log nobody reads. Making strictness
@@ -34,13 +34,13 @@
 //     enforced by whoever launched the episode, recorded nowhere, unfalsifiable
 //     afterwards.
 //
-//     A MANDATE THAT LEAVES NO TRACE IN THE EVIDENCE IS A MANDATE THE EVIDENCE
+//     A REQUIREMENT THAT LEAVES NO TRACE IN THE EVIDENCE IS ONE THE EVIDENCE
 //     CANNOT BE AUDITED AGAINST.
 //
 // WHY THE BRIDGE IS THE RIGHT WITNESS. It is an LD_PRELOAD inside the game
 // process, so its getenv() IS the game process's environment. A LAUNCHER
 // READING ITS OWN ENVIRONMENT REPORTS THE VALUE IT WISHED FOR — the same
-// distinction drew when it read /proc/<pid>/environ rather than the
+// distinction the instance check draws when it reads /proc/<pid>/environ rather than the
 // launcher's shell.
 //
 // AND IT RECORDS THE ATTEMPT, NOT ONLY THE OUTCOME. Modelled on §7.1's
@@ -102,7 +102,7 @@ void set_build_id_witness(const BuildIdWitness& w);
 
 // Fill the strictness half from the CURRENT PROCESS's compile-time define and
 // environment. Called from check_build_id() BEFORE the observation, so the
-// witness exists on every path — including NOT_FOUND, where the old code
+// witness exists on every path — including NOT_FOUND, where the superseded code
 // resolved nothing at all because it only asked about strictness on mismatch.
 void resolve_build_id_strictness(BuildIdWitness& w);
 

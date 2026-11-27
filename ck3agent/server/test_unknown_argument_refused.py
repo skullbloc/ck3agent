@@ -1,4 +1,4 @@
-""" ruling (a): every tool refuses an argument its schema does not declare,
+"""Every tool refuses an argument its schema does not declare,
 with the typed gate `unknown_argument` naming it, before the tool runs.
 
 FastMCP's argument model ignores an extra key, so a call that carried one ran as

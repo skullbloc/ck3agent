@@ -1,14 +1,14 @@
 // game_date.h — THE single source of truth for CK3 raw-date -> Y.M.D rendering.
 //
-// Every date the bridge emits used to be rendered with twelve 30-day
+// Every date the bridge emits is not rendered with twelve 30-day
 // months at nine separate copy-pasted sites:
 //
 //     year = total_days / 365; doy = total_days % 365;
 //     month = doy / 30 + 1;    day = doy % 30 + 1;      // WRONG
 //
 // Twelve 30-day months is 360, not 365, so days-of-year 360..364 rendered as
-// MONTH 13 (a date CK3 cannot produce — three of the 99 samples in the E0
-// paper series carried 1066.13.01 / 1083.13.05 / 1084.13.01) and the rest of
+// MONTH 13 (a date CK3 cannot produce — dates such as 1066.13.01,
+// 1083.13.05 and 1084.13.01 were read) and the rest of
 // the year drifted from the real calendar by up to four days.
 //
 // ─── THE ENGINE'S REAL CALENDAR ────────────────────────────────────────────
@@ -19,7 +19,7 @@
 // Four independent sources, all agreeing (HIGH confidence):
 //
 //  1. GROUND TRUTH, raw memory vs the save CK3 itself wrote at that instant.
-//     ~/ck3_dumps/william_1066_baseline.core, *(GAME_STATE_ROOT)+GAME_DATE
+//     a core dump of the 1066 baseline save, *(GAME_STATE_ROOT)+GAME_DATE
 //     = 53144904 -> total_days 389371 (exact, remainder 0 sub-day ticks).
 //       old rendering : 1066.10.12
 //       this header   : 1066.10.09

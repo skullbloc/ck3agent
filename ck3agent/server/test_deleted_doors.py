@@ -1,11 +1,11 @@
-"""Doors deleted in (lane S2) answer as unknown and send nothing.
+"""Deleted doors answer as unknown and send nothing.
 
-Finding 7: no read yielded an
+No read yielded an
 event id, so `do(intent="respond_event")` had no input, and
 `session(action="auto_events")` acts only while no client is connected, so never
 for a caller of this server. Both are deleted with
 `query(domain="event_probabilities")` (in test_query_tool.py's DELETED_DOMAINS).
- (ruling R3) deleted the bridge handlers behind them too (respond_event,
+The bridge handlers behind them are deleted too (respond_event, behind them too (respond_event,
 query_event_probabilities / event_probabilities, set_auto_respond_events:
 scripts/test_bridge_action_census.py); the no-agent fallback stays.
 """
@@ -52,8 +52,8 @@ def _refused_unknown(env, gw):
 
 #: (tool, door) -> why it went. A door added back reds here by name.
 DELETED = {
-    ("do", "respond_event"): "finding 7: no read yields an event id",
-    ("session", "auto_events"): "finding 7: inert while any client is connected",
+    ("do", "respond_event"): "no read yields an event id",
+    ("session", "auto_events"): "inert while any client is connected",
 }
 
 
@@ -76,7 +76,7 @@ def test_session_auto_events_is_refused_unknown_and_writes_nothing():
     _refused_unknown(env, gw)
 
 
-# ── finding 8: one door per read, one succession vocabulary ──────────────────
+# ── one door per read, one succession vocabulary ──────────────────
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -156,18 +156,18 @@ def test_the_scan_sees_a_deleted_spelling():
 # The verdict has three states (succession_verdict.OUTCOMES): passes_intact is
 # true, false, or null (undetermined). A taught line that acts only on
 # `passes_intact:false` / `== false` takes no action on undetermined, which is
-# the state a failed read now answers (N-MAJ-2). Such a line must also name the
+# the state a failed read answers. Such a line must also name the
 # third state on the same line ("not true", "undetermined" or the
 # `succession_undetermined` warning).
 
 FALSE_KEYED = re.compile(r"passes_intact`?\s*(?:==|=|:|\bis\b)?\s*`?\s*false\b", re.I)
 NAMES_THE_THIRD_STATE = re.compile(r"undetermined|not true", re.I)
 
-#: Human-owned boot text.d FA2's wording in: the
+#: Human-owned boot text. The wording below was settled for good: the
 #: four lines that acted on `passes_intact` false alone now name the third
 #: state, so no taught line is licensed to stay false-keyed. Each entry is the
-#: line as wrote it; it must still be in its file.
-OWNER_RULED_LINES = {
+#: line as it was settled; it must still be in its file.
+SETTLED_LINES = {
     ("ck3agent/boot/operator-directives.md",
      "a `passes_intact` that is not true (false or undetermined) → you MUST have the next war declared within TWO"),
     ("ck3agent/boot/operator-directives.md",
@@ -197,7 +197,7 @@ def test_the_owner_ruled_lines_are_in_the_boot_text():
     """The owner's wording is present verbatim (a revert to the false-keyed
     lines reds here and in the scan above)."""
     texts = _taught_texts()
-    for path, line in OWNER_RULED_LINES:
+    for path, line in SETTLED_LINES:
         if path not in texts:
             continue            # the public export ships no boot text
         lines = {l.strip() for l in texts[path].splitlines()}
@@ -212,12 +212,12 @@ def test_the_false_keyed_scan_sees_the_spellings():
                 "- trigger: `observe().succession.passes_intact == false` OR the",
                 "on passes_intact false act on the named splits_away cadets",
                 "If `passes_intact==false`, enumerate every",
-                # the four boot lines as they read before
+                # the four boot lines as they read before the rule changed
                 "a `passes_intact:false` → you MUST have the next war declared within TWO",
                 "1 (`succession_plan()`). If `passes_intact==false`, enumerate every",
                 "If `passes_intact==false`, enumerate every `splits_away` title, read the"):
         assert FALSE_KEYED.search(red) and not NAMES_THE_THIRD_STATE.search(red), red
     for green in ("when `passes_intact` is not true (false OR undetermined/null; or the",
                   "passes_intact:true guarantees only the PRIMARY KINGDOM TITLE",
-                  *(line for _p, line in OWNER_RULED_LINES)):
+                  *(line for _p, line in SETTLED_LINES)):
         assert not (FALSE_KEYED.search(green) and not NAMES_THE_THIRD_STATE.search(green)), green

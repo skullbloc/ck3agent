@@ -1,4 +1,4 @@
-"""The several-rulers guard fires on the bridge's own roster.
+"""Witness M1: the several-rulers guard fires on the bridge's own roster.
 
 Both gateways' multi_actor() (now actor_gate(), redesign.actor_gate_of) read `get_controlled_roster` under keys the bridge
 never wrote (`characters` / `controlled`), so `actor_required` could not fire and,
@@ -88,27 +88,6 @@ def _mcp_gateway(monkeypatch, bridge, sid=SID):
     return ms.BridgeGateway(state)
 
 
-def _agent_gateway(bridge):
-    agent = pytest.importorskip("agent")
-
-    class Loop:
-        _last_observation = {"paused": True, "tick_id": 1, "game_speed": 1}
-        _last_game_date = "867.1.2"
-
-        def __init__(self):
-            self.bridge = type("B", (), {"connected": True})()
-
-        async def _send_and_wait(self, action, params, timeout=10.0):
-            return bridge.reply(action, params)
-
-        async def _send_no_wait(self, action, params):
-            bridge.reply(action, params)
-
-        async def _read(self, action, params):
-            return bridge.reply(action, params)
-    return agent._AgentGateway(Loop())
-
-
 def _do_without_an_id(gw):
     return asyncio.run(R.do_impl(gw, intent="council_task", character_id=0,
                                  args={"task": "chancellor_domestic_affairs"}))
@@ -123,14 +102,6 @@ def test_two_rulers_held_by_this_seat_a_write_without_an_id_is_actor_required(mo
     env = _do_without_an_id(_mcp_gateway(monkeypatch, bridge))
     assert env["ok"] is False and _blocked(env) == "actor_required", env
     assert not WRITES & set(bridge.sent), bridge.sent
-
-
-def test_the_agent_loop_gateway_answers_the_same(monkeypatch):
-    bridge = Bridge([ME, OTHER], [_session(SID, [ME, OTHER])])
-    env = _do_without_an_id(_agent_gateway(bridge))
-    # The loop's gateway cannot name its seat (own_session_id is None), so a
-    # roster of two is ambiguous for it and the call must name its actor.
-    assert _blocked(env) == "actor_required", env
 
 
 def test_with_an_id_the_same_seat_is_not_refused(monkeypatch):

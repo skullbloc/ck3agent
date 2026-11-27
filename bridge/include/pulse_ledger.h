@@ -1,6 +1,6 @@
-// pulse_ledger.h — R1c: the pulse ledger.
+// pulse_ledger.h — the pulse ledger.
 //
-// Design of record: docs/design/event-pipeline-conductor.md §2.9.
+// Part of the event pipeline (pipeline.h).
 //
 // A PULSED GLOBAL is process-wide engine state the bridge changes for the
 // duration of ONE engine call and restores afterwards. `AI_WAR_SUPPRESS` is the
@@ -217,7 +217,7 @@ struct PulseVerdict {
     PulseLeak   first;        // the first one, which is the one that broke it
 
     // §2.9: "in experiment mode abort the episode with that typed reason".
-    // The bridge cannot terminate an episode — that is abort ladder
+    // The bridge cannot terminate an episode — that is the abort ladder
     // (reason `pulse_leak`, exit 13). What it does is latch this, publish it as
     // `pipeline.pulse_leak`, and refuse further control-session work so nothing
     // else contaminates a run whose validity is already gone. In FREE-PLAY a

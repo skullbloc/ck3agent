@@ -2,7 +2,7 @@
 // launcher binary path (`/launcher/dowser`) to the actual game binary
 // (`/binaries/ck3`) at the moment Steam's pressure-vessel chain tries to
 // exec it. This replaces the legacy `/tmp/ck3-launch-wrapper.sh` sed-swap
-// (/ epic-F).
+// (epic-F).
 //
 // How interposition works:
 //   - This .so is LD_PRELOAD'd into every process Steam spawns (Steam

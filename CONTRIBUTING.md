@@ -96,7 +96,7 @@ reformat-only or rename-only PRs: export overwrites files shared with upstream, 
 ## 11. Glossary
 
 Terms such as dormant, active, envelope and observer save are in [docs/glossary.md](docs/glossary.md).
-Code comments cite research notes by name (`re/findings/re_<system>.md`, `docs/design/*.md`,
+Code comments cite research notes by name (`re/findings/re_<system>.md`, design notes,
 `scripts/...`); those notes live in the private research tree and are not published. The comment
 beside the citation states the reason.
 

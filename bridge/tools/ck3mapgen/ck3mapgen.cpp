@@ -745,7 +745,7 @@ int run_generate(const std::string& game_dir, const std::string& out_path,
     // P2 static enrichment: terrain + holy sites.
     ProvTerrain pterr = parse_province_terrain(common + "/province_terrain");
     std::unordered_set<std::string> holy = parse_holy_site_counties(common + "/religion/holy_sites");
-    LOGF("      [P2] province_terrain: %zu explicit (default=%u), holy-site titles: %zu\n",
+    LOGF("      [terrain] province_terrain: %zu explicit (default=%u), holy-site titles: %zu\n",
          pterr.by_id.size(), (unsigned)pterr.def, holy.size());
 
     // -----------------------------------------------------------------------

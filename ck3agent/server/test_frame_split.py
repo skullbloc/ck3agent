@@ -1,21 +1,19 @@
 """The frame-split path, tested where the code RUNS.
 
-`acceptance_1qj0_frame_split` owned the pre-fix CONTROL (it staged
-`bridge_client.py` from a pinned blob and proved the defect reproduced; it
+The frame-split acceptance script owned the superseded CONTROL (it staged
+`bridge_client.py` from a pinned blob and proved the hazard reproduced; it
 drove the 1066 episode driver's recovery seals and went with that driver,
 2026-11-12). That needed git, and the test host's checkout is a `git archive`
-export — so on the test host the lane exited 3 having graded NOTHING. Measured
-during deploy-45 verification.
+export — so on the test host it exited 3 having graded NOTHING. Measured
+during a verification.
 
 Meanwhile the split path runs in production on every seat
 (`async_bridge_client` wraps `BridgeClient`; `mcp_server` imports it), and it
-FIRED TWICE in registered-d45 slot 1 — 4 documents recovered from frames of
+FIRED TWICE in one recorded episode — 4 documents recovered from frames of
 109,262 and 135,749 bytes, 0 bytes dropped. This file is that behaviour,
 asserted in the suite CLAUDE.md calls THE gate: no game, no git, no socket.
 
-The lane answered "did the fix change anything, against the code that was
-broken"; this answers "does the split behave, here, now", and is now the only
-reader of it.
+This answers "does the split behave, here, now", and is the only reader of it.
 """
 import collections
 import json
@@ -49,19 +47,19 @@ class ScriptedSock:
 
 
 def test_the_client_CARRIES_the_frame_split_fix():
-    """Reds FIRST and names the absence, so a pre-fix tree gives one legible
+    """Reds FIRST and names the absence, so a superseded tree gives one legible
     failure instead of twelve fixture ERRORS.
 
-    Measured: against the pinned pre-fix blob this file produced
+    Measured: against the pinned superseded blob this file produced
     `12 errors in 0.03s`, because the autouse fixture below touched
     `FRAMING_RECOVERY` before any test could speak. Twelve errors do red the
     gate, so it discriminated — but "error in setup" says the suite is broken
     where "the fix is absent" says what is true, and the second is the one a
-    reader can act on. Same shape as the two rows the refinery caught in
-    acceptance_1qj0, and the third time is enough to write it down.
+    reader can act on. Same shape as the two rows the review caught in
+    the frame-split acceptance, and the third time is enough to write it down.
     """
     assert hasattr(bridge_client, "split_frame_line"), (
-        "bridge_client has no split_frame_line — this tree predates ck-1qj0 and "
+        "bridge_client has no split_frame_line — this tree predates frame recovery and "
         "a desynchronised frame will kill the episode, not cost a reply")
     assert hasattr(bridge_client, "FRAMING_RECOVERY"), (
         "bridge_client has no FRAMING_RECOVERY — the split may work but nothing "
@@ -175,8 +173,8 @@ def test_recv_returns_None_on_a_quiet_socket_rather_than_raising():
 def test_recv_raises_nothing_for_a_line_it_cannot_use_at_all():
     """The whole point: a desynchronised frame costs a REPLY, not the episode.
 
-    Pre-fix this raised JSONDecodeError out of recv(), through call(), to the
-    driver's catch-all — registered-d44 slot 1 sealed abort/unknown INVALID at
+    Without the split this raised JSONDecodeError out of recv(), through call(), to the
+    driver's catch-all — one registered run sealed abort/unknown INVALID at
     1073.10.05 after 51 minutes on exactly that.
     """
     c = _client([b"not json at all\n"])

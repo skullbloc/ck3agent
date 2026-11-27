@@ -1,4 +1,4 @@
-"""Lane peace: do(intent='end_war'), the script layer's peace, and the three
+"""do(intent='end_war'), the script layer's peace, and the three
 fixes beside it (the war-declaration arguments, the council task's character
 target).
 
@@ -121,7 +121,9 @@ def test_we_win_goes_as_the_template_with_ids_and_terms_and_applies_when_the_war
     gw = gw_with(ran("end_war", terms="we_win", read_only=False),
                  marks=["LEADS", "OPEN_WE_WIN", "OPEN_WHITE_PEACE", "OPEN_WE_YIELD", "SCORE_GE_100"],
                  on_write=ends)
-    env = end(gw, enemy_id=FOE, terms="we_win", script="add_gold = 1")
+    # A stray `script` arg is now refused unknown_argument before anything is sent (test_do_intent_census); this
+    # row grades the write without it
+    env = end(gw, enemy_id=FOE, terms="we_win")
     assert scripts_sent(gw) == [{"actor_id": ME, "target_id": FOE, "terms": "we_win", "template": "end_war"}]
     assert env["verdict"] == "applied", env
     r = env["result"]
@@ -185,7 +187,9 @@ def test_an_unaddressable_leader_is_refused_and_never_sent_natively():
                   "detail": "target_id"})
     env = end(gw, enemy_id=COURTIER, terms="we_yield")
     assert env["blocked"]["gate"] == "target_ineligible", env
-    assert [a for a, _ in gw.writes] == ["script_action"]
+    # The second send matches the war by its landless leader; never a native send
+    assert [a for a, _ in gw.writes] == ["script_action", "script_action"]
+    assert gw.writes[1][1].get("enemy_landless") is True
 
 
 # ── the read-only form ───────────────────────────────────────────────────────
@@ -226,9 +230,9 @@ def test_end_war_is_an_intent_with_its_args_documented():
 # ── the native council task cannot carry a character target ─────────────────
 
 def test_a_council_task_on_an_untitled_character_is_refused_not_sent_without_its_target():
-    """lane peace: the script path cannot name a character without a title, and
+    """The script path cannot name a character without a title, and
     the native set_council_task drops target_character_id (tools.resolve_act)
-    and the bridge never uses it. Red on 29c8e303: the native set_council_task
+    and the bridge never uses it. Red without the rule: the native set_council_task
     was sent with no character target."""
     gw = Gw({"success": False, "action": "script_action", "reason": "target_not_script_addressable",
              "detail": "target_character_id"})
@@ -265,7 +269,7 @@ class StrictGw(Gw):
 
 def test_a_casus_belli_group_name_is_refused_before_any_guard():
     """discover(what='war_targets') prints cb_type "claim" on its claim rows; a
-    group name satisfies has_cb_on but never can_declare_war. Red on 29c8e303:
+    group name satisfies has_cb_on but never can_declare_war. Red without the rule:
     the script was sent (and its guard could only say no)."""
     gw = StrictGw(_strict({"cb_name": "claim_cb", "target_mode": "claim", "declarable": True},
                           {"cb_name": "county_conquest_cb", "target_mode": "title", "declarable": False}),
@@ -287,8 +291,8 @@ def test_CONTROL_an_empty_strict_read_still_declares():
 def test_a_claim_targeted_cb_named_otherwise_gets_its_claimant():
     """norman_conquest_cb and norwegian_invasion_cb are claim-targeted
     (game/common/casus_belli_types/00_event_war.txt: target_titles = claim, 12
-    scope:claimant reads each); the strict read says target_mode "claim". Red on
-    29c8e303: claimant_id 0 (the name test is_claim_cb_name says no)."""
+    scope:claimant reads each); the strict read says target_mode "claim". Red without
+    the rule: claimant_id 0 (the name test is_claim_cb_name says no)."""
     gw = StrictGw(_strict({"cb_name": "norman_conquest_cb", "target_mode": "claim", "declarable": True}),
                   script_reply=ran("declare_war"))
     run(R.declare_war_impl(gw, ME, target_id=FOE, cb="norman_conquest_cb", cb_title_id=1141,

@@ -1,6 +1,6 @@
-// speed_read.h —. ABSENCE IS A DIFFERENT TYPE THAN A VALUE.
+// speed_read.h — ABSENCE IS A DIFFERENT TYPE THAN A VALUE.
 //
-// THE DEFECT THIS HEADER EXISTS TO REMOVE. `get_tick_info` used to emit the
+// THE HAZARD THIS HEADER EXISTS TO REMOVE. `get_tick_info` does not emit the
 // game speed as:
 //
 //     int32_t speed_raw = safe_read<int32_t>(gs + ck3::game_state::GAME_SPEED);
@@ -10,7 +10,7 @@
 // (bridge.h). So a FAILED read produced `speed_raw == 0` and the handler
 // emitted `0 + 1 == 1`. **One is a valid speed.** A memory fault inside a
 // healthy world was therefore indistinguishable on the wire from a world
-// genuinely running at speed 1, and under pre-registration §7.3 that turns a
+// genuinely running at speed 1, and under the experiment design that turns a
 // transient read fault into `speed_mismatch` — a real, typed, archived claim
 // about EXPERIMENTAL CONDUCT, manufactured by an arithmetic accident.
 //
@@ -18,7 +18,7 @@
 // READ RAW → ADD AN OFFSET → EMIT. Any zero-returning failed read that is then
 // arithmetically shifted becomes a valid-looking datum. The `+ 1` is what
 // converts an abstention into a lie. Its two cousins in this codebase
-// (`fd = 0` from raw .bss, `world_epoch == 0`) at
+// (the `fd = 0` from raw .bss, the `world_epoch() == 0`) at
 // least produced a SENTINEL, which a careful consumer can route to abstain.
 // This one produced a value in the same range as the data, so there was
 // nothing to route and no consumer-side fix existed: the information was
@@ -33,9 +33,9 @@
 // ENGINE-FREE ON PURPOSE. No offsets, no `safe_read`, no CK3. The classifier
 // is a pure function of three facts the caller already has, so the same code
 // that runs in the live handler also runs in `bridge/test/test_speed_read` and
-// in `bridge/test/speed_read_probe` — including the pre-fix negative control,
+// in `bridge/test/speed_read_probe` — including the superseded negative control,
 // which is a separate BINARY rather than a re-typed python model of what the
-// bridge used to do.
+// bridge does not do.
 #pragma once
 
 #include <cstdint>
@@ -77,7 +77,7 @@ struct Reading {
 
     bool ok() const { return status == ReadStatus::Ok; }
 
-    // THE COMPAT SHAPE, in one place. The earlier contract was "an integer,
+    // THE COMPAT SHAPE, in one place. The superseded contract was "an integer,
     // 1..5 for a speed and 0 for no reading" — and the whole bug was that the
     // fault case did not honour it, emitting 1. A legacy integer consumer gets
     // that contract here, with the fault case FIXED to the 0 it always should
@@ -123,9 +123,9 @@ inline Reading classify(bool root_ok, bool speed_faulted, int32_t raw) {
 //   game_speed         int 1..5 when a speed was read, else JSON null.
 //                      NEVER 0 and NEVER `raw + 1` on a fault.
 //   speed_read_status  "ok" | "root_unreadable" | "read_faulted".
-//   game_speed_legacy  the earlier integer contract (0 == no reading), for
+//   game_speed_legacy  the superseded integer contract (0 == no reading), for
 //                      consumers that predate `speed_read_status`. Documented
-//                      in docs/ci.md; nothing in-tree decides from it.
+//                      for CI consumers; nothing in-tree decides from it.
 template <typename Builder>
 inline void emit(Builder& b, const Reading& r) {
     b.key("game_speed");

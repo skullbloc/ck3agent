@@ -4,7 +4,7 @@
 //
 // A pipeline result frame is the bridge's envelope (request_id, clock, ticket,
 // flush_id, bridge_record) with the HANDLER's own JSON object spliced into it,
-// braces removed. That splice used to be two lines inline in pipeline.cpp:
+// braces removed. That splice is not two lines inline in pipeline.cpp:
 //
 //     frame += ",";
 //     frame += result_json.substr(1);     // handler keys AND its closing brace
@@ -13,7 +13,7 @@
 // no request_id — and ~20 shipped clients send none — such a frame carried
 // neither a type nor a key: literally unroutable, and impossible to skip-list
 // the way tick_start / observation / notification are skip-listed. That is the
-// aggravating half of; the primary half is that those clients then
+// aggravating half of the hazard; the primary half is that those clients then
 // read the ACCEPTANCE ACK as their answer instead.
 //
 // So the frame is now TYPED. Getting that right needed one correction that the
@@ -33,16 +33,16 @@
 // event_handler.cpp are unsolicited observations, not handler replies — so
 // this costs one depth-0 scan and changes nothing on the current surface. It
 // exists so that the day one does, the frame stays unambiguous instead of
-// silently re-opening this bead.
+// silently re-opening this code.
 //
 // Pulled into a header so the splice can be proved on a host. It rewrites EVERY
 // pipeline reply; a malformed frame here breaks the whole mode at once, and
 // pipeline.cpp itself is NOT pulled in by this header, which is the point of
 // splitting the splice out — but it CAN be linked on a host, and the sentence
-// that used to stand here said it could not. measured it: 21 ordinary
+// that used to stand here said it could not. A host build links it: 21 ordinary
 // host TUs, the generated dispatch-handler stubs, and a small engine boundary
-// (bridge/test/clock_release_probe.cpp). That false belief is why
-// clock release went unwitnessed through two beads — nobody tried.
+// (a host probe the research tree keeps). That false belief is why
+// clock release went unwitnessed through two tasks — nobody tried.
 #pragma once
 
 #include <cstring>
@@ -163,7 +163,7 @@ inline bool has_top_level_key(const std::string& body, const char* quoted_key) {
 // THE ATTRIBUTION SPINE (§2.8) — ONE DECLARATION, THREE READERS.
 //
 // The bridge mints this; the agent never reports it. It was written out inline
-// in emit_keyed_result and NOWHERE ELSE, which is the whole of: every
+// in emit_keyed_result and NOWHERE ELSE, which is the whole of the hazard: every
 // game-thread verb (set_council_task and the rest of is_game_thread_action)
 // replies from the drain in bridge_init.cpp, whose frame injects request_id and
 // the clock fragment ONLY. pipeline_note_drain_result deliberately emits no
@@ -178,10 +178,10 @@ inline bool has_top_level_key(const std::string& body, const char* quoted_key) {
 // collects a ticket by `check` still hands the driver something
 // episode_driver.py cannot read, since it reads `frame["bridge_record"]`.
 // Folding `check` in is a wire-shape change to a reply that clients already
-// parse, so it is its own bead, not a rider on this one.
+// parse, so it is its own task, not a rider on this one.
 //
 // `esc` is the caller's own JSON escaper: there are four in bridge/src and
-// consolidating them is not this bead's business, so the SHAPE is shared here
+// consolidating them is not this code's business, so the SHAPE is shared here
 // while each TU keeps its escaper. `t == nullptr` means the ticket did not
 // resolve, and reproduces byte for byte what emit_keyed_result has always
 // emitted in that case — empty strings and zeroes. Callers for whom that
@@ -192,7 +192,7 @@ inline bool has_top_level_key(const std::string& body, const char* quoted_key) {
 // copies already (pipeline.cpp, event_handler.cpp, budget_ledger.cpp).
 // Adding a fourth to ipc_server.cpp to serve one new caller
 // is how there came to be three. Consolidating the existing ones is not this
-// bead's business; not adding to them is.
+// task's business; not adding to them is.
 //
 // Deliberately escapes rather than trusting the inputs. The values passed are
 // a bridge-minted session id, a request id and a typed reason token, none of
@@ -225,7 +225,7 @@ inline std::string json_escape_min(const std::string& v) {
 // The FIELD-BASED core. A third reader arrived — the inline
 // management path, which has no Ticket because its verbs are never ticketed —
 // and the choice was a third spelling of the spine or one core with three
-// callers. rule says core.
+// callers. The rule says core.
 template <class Esc>
 inline void frame_append_attribution_fields(std::string& frame,
                                             const char* ticket_str,
@@ -288,14 +288,14 @@ inline void frame_append_attribution(std::string& frame, uint64_t ticket_id,
 // `escaped_action`      already-escaped action name. Emitted whenever the
 //                       handler's own reply does not carry a top-level
 //                       `action` key, so the frame always names the verb it is
-//                       a record of. It used to be emitted ONLY when
+//                       a record of it. It is not emitted ONLY when
 //                       the reply was unusable, which left every reply that
 //                       was a valid object but did not name itself anonymous.
 // `type`                the frame type, e.g. "result".
 //
 // Degenerate inputs are survivable by construction: an empty reply, "{}", a
 // non-object, and a truncated object with no closing brace all produce VALID
-// JSON. The pre-fix splice produced invalid JSON for the truncated case.
+// JSON. The superseded splice produced invalid JSON for the truncated case.
 inline void frame_append_result_body(std::string& frame,
                                      const std::string& result_json,
                                      const std::string& escaped_action,
@@ -310,13 +310,13 @@ inline void frame_append_result_body(std::string& frame,
 
         // ── A ROW THAT CANNOT SAY WHAT WAS EXECUTED ──────────────
         //
-        // `escaped_action` used to be used ONLY in the else branch below —
+        // `escaped_action` is not used ONLY in the else branch below —
         // "used when the handler gave back nothing usable" — so a handler that
         // answered with a perfectly good JSON object that simply did not name
         // itself produced a frame with no `action` key at all. The driver's
         // relay copies `action` off the frame, `split_bridge_rows` calls a row
         // with no name "unnameable", and `decision_capture` declines it
-        // outright. measured the result in a d39 episode: 2,302 of
+        // outright. A measurement found the result in one episode: 2,302 of
         // 3,009 ticketed rows carried ticket, request_id, character_id,
         // flush_id, game_date_executed and tick_executed — everything except
         // the verb.
@@ -356,7 +356,7 @@ inline void frame_append_result_body(std::string& frame,
         frame += "\"";
     }
 #if defined(CK3_PIPELINE_FRAME_UNTYPED)
-    // NEGATIVE CONTROL ONLY — the pre-fix frame, with no type at all.
+    // NEGATIVE CONTROL ONLY — the superseded frame, with no type at all.
     (void)type;
     frame += "}";
 #else

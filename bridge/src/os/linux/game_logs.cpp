@@ -1,5 +1,5 @@
 // game_logs.cpp (Linux) — os/game_logs.h on Linux. The three functions are the
-// code of action_handlers.cpp (find_game_logs, file_size_of, read_from),
+// Code of action_handlers.cpp (find_game_logs, file_size_of, read_from),
 // moved here byte for byte; only their names changed.
 #include "os/game_logs.h"
 

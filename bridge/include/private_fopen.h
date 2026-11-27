@@ -1,4 +1,4 @@
-// private_fopen.h —: the one way a bridge TU opens a file it writes.
+// private_fopen.h — the one way a bridge TU opens a file it writes.
 //
 // SECURITY.md says bridge files are 0600 and opened without following
 // symlinks. This is what makes that true for files opened by path:

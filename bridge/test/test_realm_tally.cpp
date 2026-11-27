@@ -1,10 +1,10 @@
-// test_realm_tally.cpp —. NO GAME. realm_tally.h against the
+// test_realm_tally.cpp — NO GAME. realm_tally.h against the
 // per-ruler loop it replaced.
 //
 // THE CLAIM: for every ruler R, Tally::total(R, demesne(R)) and
 // Tally::unresolved_for(R) answer exactly what count_realm_counties(R) answered
 // when it walked the character table itself (the loop below is that function's
-// body at d1e28164, bridge/src/query_handlers.cpp, with the bridge's reads
+// body as it stood in bridge/src/query_handlers.cpp, with the bridge's reads
 // replaced by a fake population), and a Tally is ONE walk however many rulers
 // it answers. The population mixes independent holders (top == self), vassals
 // of several tops, unwalkable chains (top 0), holders of no county, dead and
@@ -44,7 +44,7 @@ static void each_of(const std::vector<Ch>& pop, Cb cb) {
     for (size_t i = 0; i < pop.size(); i++) cb(pop[i].id, pop[i].alive, pop[i].has_realm, i);
 }
 
-// count_realm_counties at d1e28164, its reads replaced by the fake population.
+// count_realm_counties as it walked the table itself, its reads replaced by the fake population.
 static int reference(const std::vector<Ch>& pop, uint32_t ruler_id, int ruler_demesne, int* unresolved) {
     ruler_id &= 0xFFFFFF;
     int total = ruler_demesne;

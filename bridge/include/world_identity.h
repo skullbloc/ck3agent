@@ -1,7 +1,7 @@
 #pragma once
 // world_identity.h — the SAVE/WORLD IDENTITY, and the rule that decides whether
 // quarantined agent steering may be restored after a save is loaded into a live
-// CK3 process (epic R7).
+// CK3 process.
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // THE QUESTION THIS ANSWERS
@@ -18,7 +18,7 @@
 // with values belonging to a world that no longer exists — silently, and in a
 // bundle that still looks clean.
 //
-// made the wrong answer UNREACHABLE by emptying the live write set on
+// The first fix made the wrong answer UNREACHABLE by emptying the live write set on
 // every detected reload and MOVING the entries to a quarantine. That killed the
 // P1 and left exactly one thing open: quarantined locks are never re-applied, so
 // a legitimate same-save resume loses its steering. This header is the missing
@@ -35,19 +35,19 @@
 //                            file included        -> cannot prove SAMENESS
 //   START_DATE_YEAR          1066 for every 1066 save -> cannot prove DIFFERENCE
 //   GAME_DATE                ditto at the bookmark date
-//   character names / ids    explicitly untrustworthy — that is itself,
+//   character names / ids    explicitly untrustworthy — that is the stale-world defect itself,
 //                            and inferring identity from ids is the specific
-//                            mistake this bead forbids
+//                            mistake this code forbids
 //
 // So the bridge is TOLD, by the process that issues the load (the episode
 // harness), through `declare_save_identity`. The identity is deliberately the
 // one that already exists twice in this repository rather than a third one:
 //
-//    run_summary.json  "episode_id"  and  "save": {"sha256": ...}
-//   ck3agent/server/session_memory.py's save key (playthrough_id > save stem)
+//   run_summary.json  "episode_id"  and  "save": {"sha256": ...}
+//   a session-memory module's save key (playthrough_id > save stem)
 //
-// UNIFICATION NOTE, read before editing. (branch
-// `ck-6kvq.5-session-resume`, OPEN and unmerged at the time of writing) defines
+// UNIFICATION NOTE, read before editing. The session-resume work (a separate
+// branch, open and unmerged at the time of writing) defines
 // the same record, under the same name, at this same path, for the CLAIMS half
 // of resume. That is the point: one identity, two consumers. Neither branch may
 // depend on the other (main is canonical), so the record is stated here
@@ -56,7 +56,7 @@
 // purpose. Whoever merges second keeps a single definition; do not fork it.
 //
 // The two branches also carry the identity over the wire differently, and that
-// is a merge decision, not a disagreement: presents it on the v2
+// is a merge decision, not a disagreement: session resume presents it on the v2
 // HANDSHAKE (where it authorises a claim set), this one on a `declare_save_identity`
 // action (where it authorises restoring steering, which a session need not exist
 // to do — an observer-mode harness declares before any control session attaches).
@@ -69,7 +69,7 @@
 // WHAT THE WORLD IS STILL GOOD FOR: REFUTATION
 // ═══════════════════════════════════════════════════════════════════════════
 // A declaration is trusted to AFFIRM and never to overrule the world. The
-// bridge reads START_DATE_YEAR out of the loaded world (fingerprint,
+// bridge reads START_DATE_YEAR out of the loaded world (the fingerprint,
 // which is a read of game memory, not an inference from any id) and refuses the
 // match when the world visibly disagrees with what was declared. So the split
 // is: the world can only ever say NO; only a declaration can say YES; and the
@@ -89,7 +89,7 @@ struct WorldIdentity {
     // run_summary.json "episode_id". Identifies a RUN, not a save.
     std::string episode_id;
     // run_summary.json save.sha256 — THE save key, over the bytes of
-    // the save file. The value session_memory.py's save key is reaching for.
+    // the save file. The value a session-memory save key is reaching for.
     std::string save_sha256;
     // Corroboration, cheap to cross-check against the live world. Never
     // sufficient on its own: every 1066 save carries 1066.
@@ -152,7 +152,7 @@ SameSave judge_same_save(const WorldIdentity& recorded,
 // ===========================================================================
 // Every declaration produces exactly one of these, it is published on
 // get_tick_info, and the harness reads `gap_game_days` off it to record the
-// resume-to-steer gap (R7: how long an episode ran unsteered after a reload).
+// resume-to-steer gap (how long an episode ran unsteered after a reload).
 //
 // `decision` is a CLOSED vocabulary; a consumer may switch on it:
 //   pending_no_declaration                 locks are quarantined, nobody has
@@ -203,7 +203,7 @@ WorldIdentity world_identity_quarantined();
 // "save_identity". Always emitted, always well-formed, never throws.
 std::string world_identity_emit_json();
 
-// Registered with world-reset registry. Moves the declared identity
+// Registered with the world-reset registry. Moves the declared identity
 // to the quarantine slot and leaves the declared identity EMPTY — after a
 // reload nobody has vouched for the new world, which is the whole point.
 void world_identity_on_world_reset();

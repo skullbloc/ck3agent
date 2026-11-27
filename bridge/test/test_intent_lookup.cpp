@@ -1,7 +1,7 @@
-// test_intent_lookup.cpp —: a reader never finds an intent
+// test_intent_lookup.cpp — a reader never finds an intent
 // in NEITHER the live queue nor the completed ring.
 //
-// Links the REAL IntentQueue (src/intent_queue.cpp). Before,
+// Links the REAL IntentQueue (src/intent_queue.cpp). Without the rule,
 // query_dispatch_result asked the completed ring, then the live queue for an
 // UNCONSUMED intent, each under its own lock, and the drain moved a consumed
 // intent to the ring in a separate step after tick_maintenance had erased it:
@@ -24,13 +24,13 @@
 //      separately address): a reported race or use-after-free is a red
 //      (ctest rows test_intent_lookup_thread / _address; SKIPPED where the
 //      toolchain has no sanitizer runtime; evidence in
-//      Md);
+//      sanitizers.md);
 //   5  retire on a claimed intent returns false (the drain's verdict stands);
 //   6  (m10) a crash rejects the in-flight intent by seq, not a duplicate
 //      request_id queued ahead of it;
 //   7  (m11) a crash puts g_current_client_context back to the drain's entry
 //      value;
-//   8  (surface-eval finding 3): a slot READ (the interaction check and the
+//   8  a slot READ (the interaction check and the
 //      scheme check, shaped as their handlers build them) is found by its asker
 //      and leaves no row in the completed ring inspect(pending) lists; a WRITE
 //      leaves exactly one; 200 reads do not push a write's verdict out;
@@ -38,7 +38,7 @@
 //      params (the wire shape), not 0 (drain_write_verdict.h drain_actor_id).
 //  10: pending_writes (query_intents' pending[] and pending_count)
 //      lists a queued write and none of the queued checks.
-//  11  FB2 N-10: pending_count counts the same writes (not the checks).
+//  11: pending_count() counts the same writes (not the checks).
 // Exit 0 pass, 1 fail.
 #include "bridge.h"
 #include "intent_queue.h"
@@ -287,7 +287,7 @@ int main() {
             g_current_client_context == &entry && marked == 0, "");
         g_current_client_context = nullptr;
     }
-    // Row 8 (finding 3): reads are delivered, never listed.
+    // Row 8: reads are delivered, never listed.
     {
         IntentQueue q;
         auto drain_one = [&](Intent in) {
@@ -338,7 +338,7 @@ int main() {
             "listed " + std::to_string(listed.size()) + " row(s)" +
                 (listed.empty() ? "" : ", first " + listed[0].request_id));
     }
-    // Row 9 (finding 3): the record's actor is the one the call names.
+    // Row 9: the record's actor is the one the call names.
     {
         auto actor_of = [](const char* msg) {
             rapidjson::Document d;
@@ -378,7 +378,7 @@ int main() {
             q.snapshot().size() == 3 && pw.size() == 1 && pw[0].request_id == "si_9238_5_3",
             "pending_writes " + std::to_string(pw.size()) + " of " + std::to_string(q.snapshot().size()));
     }
-    // Row 11 (FB2 N-10): pending_count is the same count as
+    // Row 11: pending_count() is the same count as
     // pending_writes(): send_interaction's pending_count and status'
     // pending_intents report it, query_intents reports pending_writes().size().
     {

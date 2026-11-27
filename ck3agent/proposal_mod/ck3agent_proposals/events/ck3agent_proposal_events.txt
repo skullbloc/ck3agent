@@ -1,6 +1,6 @@
 ﻿namespace = ck3agent_proposal
 
-# ck3agent incoming-proposal queue (lane QMOD): the rule answer. Armed by the
+# ck3agent incoming-proposal queue: the rule answer. Armed by the
 # capture effect one day after it held an offer whose class policy is accept
 # or decline (codes 1, 2). It re-reads each open offer's class policy now, so a
 # rule the seat changed in between is the rule applied, and answers through the

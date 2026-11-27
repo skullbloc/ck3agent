@@ -1,25 +1,25 @@
-// log_dedupe.h —: a log line that fires per OCCURRENCE becomes the log.
+// log_dedupe.h — a log line that fires per OCCURRENCE becomes the log.
 //
-// THE DEFECT THIS CLOSES. `resolve_title_realm` emitted one line per failed
-// resolve, with no dedupe, counter or rate limit. Measured share of each run's
-// bridge log:
+// THE HAZARD THIS GUARDS AGAINST. `resolve_title_realm` emitted one line per failed
+// resolve, with no dedupe, counter or rate limit. Measured share of the bridge
+// log in each of ten recorded episodes (its lines / all lines):
 //
-//   d39 s01  100771/135578  74%      d45      56074/93977   60%
-//   d39 s02  139946/173658  81%      d46      10179/44606   23%
-//   d42       8449/44729    19%      d47      58732/91106   64%
-//   d43     195823/229852   85%      d49      51455/84821   61%
-//   d44       4531/17356    26%      d50      17978/50529   36%
+//   100771/135578  74%      56074/93977   60%
+//   139946/173658  81%      10179/44606   23%
+//     8449/44729   19%      58732/91106   64%
+//   195823/229852  85%      51455/84821   61%
+//     4531/17356   26%      17978/50529   36%
 //
 // It is NOT a crash precursor — that is how it was first noticed, and the
 // cross-run rates refuted it: it starts around line 600 of every run, runs to
 // the last line written, appears in both arms, and fires in runs that reached
-// the horizon and sealed valid. confirmed the d50 faulting stack
+// the horizon and sealed valid. A measurement confirmed one episode's faulting stack
 // carries no bridge frames at all.
 //
-// WHY IT STILL MATTERS. rotates the log at 64MB keeping three windows,
+// WHY IT STILL MATTERS. The bridge rotates the log at 64MB keeping three windows,
 // and rotation is what makes `coverage_is_floor` true and starts costing
 // SEALED EVIDENCE. No run has rotated yet (0 rotation banners, 0 gaps across
-// seven coverage files) but d43 reached 23.13MB with 85% of it one line, so
+// seven coverage files) but one episode's log reached 23.13MB with 85% of it one line, so
 // this single message is consuming most of the headroom a longer run needs.
 //
 // THE SHAPE. First occurrence per KEY is logged; the rest are counted. A

@@ -1,5 +1,5 @@
 """observe(), inspect(heir_plan) and inspect(guardian_candidates): behaviour against
-a scripted gateway (F15).
+a scripted gateway.
 
 All three resolve their actor the same way, so one table drives the actor gates
 through each tool: actor_required (several rulers, no character_id),
@@ -9,7 +9,7 @@ layer's own gate.
 
 observe: the envelope and the brief/full sections, every read carrying the
 character_id, the de-jure meters keyed on what the seat holds (two, one, none),
-the standing facts, and an unknown depth refused (it used to read as brief).
+the standing facts, and an unknown depth refused (it does not read as brief).
 
 heir_plan: the roster order (heir line, then children) and its cap, each row's
 fields, the conqueror verdict and the groom list, a child read that names nobody
@@ -163,10 +163,10 @@ def test_no_bridge_is_bridge_disconnected(tool, monkeypatch, which):
 
 # ── observe ───────────────────────────────────────────────────────────────────
 
-#: `goal` (first; `not_an_experiment_episode` outside a cell);
-#: `standing_policies` (v4 draft section 6)
+#: `goal` (first; `no_scheduled_run` outside a scheduled run);
+#: `standing_policies`
 BRIEF = {"goal", "de_jure", "standing", "wars", "money", "succession", "posture", "since",
-         "standing_policies"}
+         "standing_policies", "military", "liege", "council", "news"}   # The last four
 FULL = BRIEF | {"self", "war_brief", "council_brief", "evaluations"}
 
 
@@ -206,13 +206,13 @@ def test_observe_brief_is_the_one_envelope(tool):
     assert env["actor"]["id"] == RULER and env["actor"]["name"] == "Halfdan"
     assert env["game"]["date"] == "867.4.1"
     assert isinstance(env["delta"], list)
-    # ruling (b): a bridge reply without lock_state reads not_reported
+    # A bridge reply without lock_state reads not_reported
     assert env["result"]["posture"] == {"genome": {"boldness": 40, "lock_state": "not_reported"}}
 
 
 @pytest.mark.parametrize("state", ["live", "quarantined", "none"])
 def test_observe_posture_genome_carries_the_bridge_lock_state(tool, state):
-    """ ruling (b): posture.genome.lock_state is the bridge's word
+    """posture.genome.lock_state is the bridge's word
     (do_get_ai_personality's `lock_state`), passed through."""
     gw = Gw({**_seat("d_york"), "query_dejure_progress": _meters,
              "get_ai_personality": {"boldness": 40, "lock_state": state, "world_epoch": 2}})
@@ -233,11 +233,11 @@ def test_observe_full_adds_its_sections_and_the_war_stance_when_at_war(tool):
 
 
 def test_observe_full_self_carries_the_faith_and_culture_keys(tool):
-    """Query_character sends the display names and the scripted
+    """query_character sends the display names and the scripted
     keys (emit_char_names, dispatch_router.cpp: culture/culture_key,
     faith/faith_key); self carries both, as doctrine teaches the keys. The
-    values are Ivar's, read off the 867 dump (the round-2 witness). RED on
-    b84e3634 (no key fields)."""
+    values are Ivar's, read off the 867 dump (the round-2 witness). RED without
+    the rule (no key fields)."""
     gw = Gw({**_seat()},
             chars={0: {"id": RULER, "name": "Ivar", "alive": True,
                        "faith": "\u00c1satr\u00fa", "faith_key": "norse_pagan",
@@ -251,10 +251,10 @@ def test_observe_full_self_carries_the_faith_and_culture_keys(tool):
 
 
 def test_observe_full_self_titles_held_is_query_realms_held_title_count(tool):
-    """Self.titles_held read realm.titles_held /
+    """self.titles_held read realm.titles_held /
     title_count, which do_query_realm never writes, so every seat read 0 (l14i
     geval-p eval_e_names: Ludwig, 61 counties, titles_held 0). It is
-    held_title_count. RED on 627af763 (0)."""
+    held_title_count. RED without the rule (0)."""
     gw = Gw({**_seat("k_france", "d_paris", "c_paris")})
     me = tool(gw, "observe", depth="full")["result"]["self"]
     assert me["titles_held"] == 3, me
@@ -298,7 +298,8 @@ def test_observe_one_held_title_and_none(tool):
     gw = Gw({**_seat()})
     none = tool(gw, "observe")["result"]["de_jure"]
     assert none["primary_title"]["unavailable"] and none["second_title"]["unavailable"]
-    assert none["can_mint_now"] is False
+    # No held title, no chain to climb: next_title says it was not read
+    assert none["next_title"]["title"] is None and none["next_title"]["unread"]
     assert [a for a, _ in gw.reads if a == "query_dejure_progress"] == [], \
         "no guessed title is read"
 
@@ -309,9 +310,9 @@ def test_observe_one_held_title_and_none(tool):
     {"success": False, "action": "query_title_hierarchy"},        # dispatch failure
 ], ids=["absent", "error", "declined"])
 def test_observe_a_failed_held_titles_read_says_unread_not_one_title(tool, failed):
-    """When query_title_hierarchy FAILED, observe said "this seat
-    holds only one resolvable title": nobody looked, told as a count. RED on
-    03f19352 (the count line)."""
+    """Witness m3: when query_title_hierarchy FAILED, observe said "this seat
+    holds only one resolvable title": nobody looked, told as a count. RED without
+    the rule (the count line)."""
     seat = {**_seat("d_york"), "query_title_hierarchy": failed,
             "query_dejure_progress": _meters}
     second = tool(Gw(seat), "observe")["result"]["de_jure"]["second_title"]
@@ -324,10 +325,10 @@ def test_observe_a_failed_held_titles_read_says_unread_not_one_title(tool, faile
 
 
 def test_observe_a_clamped_held_titles_list_says_unread_not_one_title(tool):
-    """Do_query_title_hierarchy zeroed a title count above 500 and
+    """Witness n6: do_query_title_hierarchy zeroed a title count above 500 and
     still emitted `held_titles: []`, while do_query_realm writes the count
-    unclamped (`held_title_count`). RED on 16dd7f14: the empty list read as a
-    successful read, "holds only one". Since then the emitter answers an error
+    unclamped (`held_title_count`). RED without the rule: the empty list read as a
+    successful read, "holds only one". The emitter now answers an error
     instead; this is the reader's second line of defence."""
     seat = {"query_realm": _realm("d_york", held_title_count=612),
             "query_title_hierarchy": {"character_id": RULER, "held_titles": [],
@@ -358,8 +359,8 @@ LOOKUP_FAILED = {"character_id": RULER, "error": "title_lookup_failed",
                          ids=["clamped", "lookup_failed"])
 def test_observe_names_the_bridges_held_titles_error(tool, reply, err):
     """The emitter answers a clamp or a skipped lookup as an error with
-    the raw count, and observe says which, by the bridge's own word. RED on
-    24cac589 (the generic "failed or came back empty ... (clamped)" line)."""
+    the raw count, and observe says which, by the bridge's own word. RED without
+    the rule (the generic "failed or came back empty ... (clamped)" line)."""
     seat = {"query_realm": _realm("d_york", held_title_count=reply["raw_count"]),
             "query_title_hierarchy": dict(reply), "query_dejure_progress": _meters}
     second = tool(Gw(seat), "observe")["result"]["de_jure"]["second_title"]
@@ -540,7 +541,7 @@ def _court():
             {"id": 601, "name": "Far King", "skills": {"martial": 25, "learning": 0}, "age": 50},
             {"id": 401, "name": "Marshal", "skills": {"martial": 20, "learning": 5}, "age": 40}]}
     # query_council as do_query_council writes it (query_handlers.cpp :5701/:5703,
-    # rows :5786-:5803: position_id, position_key, holder_id, vacant).: the
+    # rows :5786-:5803: position_id, position_key, holder_id, vacant). The
     # double was {"seats": [{"character_id": 401}]}, a shape the bridge never
     # writes, and it hid a council arm that found nobody live.
     replies = {"query_council": {"character_id": RULER, "council": [

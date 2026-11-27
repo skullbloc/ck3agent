@@ -182,7 +182,7 @@ def test_setup_writes_play_dir_and_config(install, supported, tmp_path, capsys):
 
 
 def test_setup_takes_back_the_sleep_allowance_an_earlier_setup_wrote(install, supported, tmp_path):
-    """D12: the play-dir allow-list no longer carries Bash(sleep:*): the protocol
+    """The play-dir allow-list carries no Bash(sleep:*): the protocol
     lets time pass with session(action="wait"), never a Bash sleep. A play
     directory set up by 2026.10 has the entry; setup removes it and keeps the
     player's own rules."""
@@ -575,7 +575,7 @@ def test_launch_continue_repairs_a_pointer_2026_12_1_wrote(install, supported, o
 
 
 def test_a_plain_launch_repairs_a_pointer_2026_12_1_wrote(install, supported, owner_tree, monkeypatch, capsys):
-    """Witness F6: only --continue repaired a title-only pointer; a plain `launch`
+    """Only --continue repaired a title-only pointer; a plain `launch`
     kept it, and the main menu's Continue may go through the same reader."""
     ck3, so = install
     monkeypatch.setenv("CK3_BINARY", str(ck3))
@@ -648,7 +648,7 @@ class _WritesLog(_Popen):
 ])
 def test_launch_timeout_says_what_the_game_is_doing(row, log_text, want, never, install, supported,
                                                     owner_tree, monkeypatch, capsys):
-    """Witness F3: game_stage returned None for a missing log and for a log with no
+    """game_stage returned None for a missing log and for a log with no
     idler (both "still loading"), called every idler but Frontend/In Game "loading
     the save", and read a previous run's debug.log as this launch's."""
     ck3, so = install
@@ -679,7 +679,7 @@ def test_launch_timeout_says_what_the_game_is_doing(row, log_text, want, never, 
 ])
 def test_launch_socket_not_up_says_what_the_game_is_doing(args, want, never, install, supported,
                                                           owner_tree, monkeypatch, capsys):
-    """Witness F1: troubleshooting.md, under "bridge socket not listening", says that
+    """troubleshooting.md, under "bridge socket not listening", says that
     when the wait runs out `launch` reads the game's log and says what the game is
     doing; the socket-not-up branch printed no stage (only the game-not-active one did)."""
     ck3, so = install
@@ -703,7 +703,7 @@ def test_a_plain_launch_waits_like_the_others():
 
 
 @pytest.mark.parametrize("log_text, rc, want, never", [
-    # The headless node sat after "End loading of history" with no idler
+    # The headless test host sat after "End loading of history" with no idler
     (_HISTORY, cli.EXIT_TIMEOUT, ["game not at its main menu", "CK3 is still loading"], "game at its main menu"),
     (_HISTORY + _IDLER_LINE.format("Frontend"), 0, ["game at its main menu"], "not at its main menu"),
 ])
@@ -748,7 +748,7 @@ def test_launch_busy_socket_names_the_holder(install, supported, monkeypatch, ca
     ("/steam/Crusader Kings III/binaries/ck3", False, True),
 ])
 def test_busy_socket_kill_note_only_for_an_exe_read_as_not_ck3(exe, unidentified, game):
-    """Witness F2: a holder whose exe could not be read ("?"), or a live game whose
+    """A holder whose exe could not be read ("?"), or a live game whose
     binary was replaced ("... (deleted)"), was told "pid N is not CK3 ... kill N"."""
     detail, notes = cli.busy_socket_lines("/run/s.sock", [(31, exe)])
     text = "\n".join(notes)
@@ -873,13 +873,13 @@ open(os.environ["FAKE_ARGV"] + ".env", "w").write(json.dumps({"CK3_SESSION_OUT":
 if os.environ.get("FAKE_ACTION_LOG"):
     open(os.environ["FAKE_ACTION_LOG"], "a").write(os.environ.get("FAKE_ACTION_ROWS", '{"action":"during"}\n'))
 if os.environ.get("FAKE_SESSION_REC"):
-    # fix10: what the seat's server records at its handshake (every session held)
+    # what the seat's server records at its handshake (every session held)
     open(os.environ["CK3_SESSION_OUT"], "w").write(os.environ["FAKE_SESSION_REC"])
 cfg = json.load(open(args[args.index("--mcp-config") + 1]))["mcpServers"]["ck3"]
 open(os.environ["FAKE_ARGV"] + ".agent_ids", "a").write(repr(os.environ.get("CK3_AGENT_CHARACTER_ID")) + "\n")
 _start = len(open(os.environ["FAKE_ARGV"] + ".agent_ids").read().splitlines())
 if str(_start) in os.environ.get("FAKE_FAIL_STARTS", "").split(","):
-    # fix10: this start's MCP server came up failed: no ck3 tools. A real claude
+    # this start's MCP server came up failed: no ck3 tools. A real claude
     # would go on to run its turn blind; this one waits to be stopped.
     sys.stdout.write(json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "uuid": f"bad{_start}",
                                  "tools": ["Bash"], "mcp_servers": [{"name": "ck3", "status": "failed"}],
@@ -954,7 +954,7 @@ RESULT = {"type": "result", "subtype": "success", "is_error": False, "duration_m
           "total_cost_usd": 0.5, "usage": {"input_tokens": 10, "output_tokens": 4},
           "modelUsage": {"claude-x": {"inputTokens": 10}}, "permission_denials": [], "uuid": "u2"}
 if "--resume" in args:
-    # claude reports total_cost_usd CUMULATIVE over a resumed session (the v3reg2
+    # claude reports total_cost_usd CUMULATIVE over a resumed session (recorded
     # bundles: one session id, 0.21, 0.24 ... 1.575 over 40 processes): each
     # continuation of s1 costs 0.3 more than the last report.
     RESULT["total_cost_usd"] = 0.5 + 0.3 * len(open(os.environ["FAKE_ARGV"] + ".resumes").read().split())
@@ -1068,7 +1068,7 @@ def test_run_records_the_session(play, tmp_path, monkeypatch):
     assert m["actions"]["lines"] == 1
     stamp = Path(m["prompt_file"]).name.split(".")[0]
     runs = play / "runs"
-    # fix10: a row naming no session is nobody's: counted, not copied
+    # A row naming no session is nobody's: counted, not copied
     assert (runs / f"{stamp}.actions.jsonl").read_text() == ""
     assert m["actions"]["unattributed_rows"] == 1 and m["actions"]["rows"] == 0
     lines = (runs / f"{stamp}.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1110,7 +1110,7 @@ def test_the_run_stops_itself_at_its_cycle_count(play, monkeypatch):
     """The run prompt names no cycle count; the run
     counts cycles from the transcript and ends the session at --cycles. The fake
     plays two cycles and then would play on (it ignores nothing, writes its result
-    on SIGINT); --wall-seconds is only the backstop that ends the base tree's run."""
+    on SIGINT); --wall-seconds is only the backstop that ends a run without the rule."""
     monkeypatch.setenv("FAKE_MODE", "hang-result")
     monkeypatch.setenv("FAKE_CYCLES", "2")
     assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "2", "--wall-seconds", "20"]) == 0
@@ -1126,7 +1126,7 @@ def test_the_manifests_count_is_the_counter_the_stop_read(play, monkeypatch):
     `observe` before its result (a call in flight when SIGINT landed). The
     manifest's `cycles_completed` is the counter's reading at the stop, 2; the
     transcript's recount, `cycles_recounted`, counts the late observe as an open
-    cycle, 3, and is the cross-check beside it. Red on db8857cc, where the
+    cycle, 3, and is the cross-check beside it. Red without the rule, where the
     manifest re-read the transcript (cycles_completed 3, no cycles_recounted)."""
     monkeypatch.setenv("FAKE_MODE", "hang-result")
     monkeypatch.setenv("FAKE_CYCLES", "2")
@@ -1271,7 +1271,7 @@ def test_a_server_holding_two_rulers_releases_all_but_its_last(play, bridge, tmp
 
 def test_a_prebound_list_binds_every_ruler_and_the_manifest_records_them(
         play, bridge, tmp_path, monkeypatch, capsys):
-    """lane-multi: CK3_AGENT_CHARACTER_ID=42,43 binds 42 as the primary and ADDS 43.
+    """CK3_AGENT_CHARACTER_ID=42,43 binds 42 as the primary and ADDS 43.
     The teardown reads clean: 42 released by the server, 43 its last claim, freed
     when the session closed; the manifest lists both at start and at stop."""
     fb = bridge()
@@ -1287,7 +1287,7 @@ def test_a_prebound_list_binds_every_ruler_and_the_manifest_records_them(
     assert [(p["character_id"], p.get("add")) for p in binds] == [(42, None), (43, True)], (binds, log)
     rel = m["server_release"]
     assert rel["released"] == [42] and rel["refused"] == {"43": cli.LAST_CLAIM}, (rel, log)
-    # lane-prebind: `bound_at` is the reply's clock stamp (the fake bridge stamps
+    # `bound_at` is the reply's clock stamp (the fake bridge stamps
     # none), `prebind_wait` says the game was active at the handshake (no wait).
     assert m["rulers"] == {"declared": [42, 43], "bound_at_start": [42, 43], "refused_at_start": {},
                            "bound_at": {"42": {"tick": None, "date": None},
@@ -1574,9 +1574,9 @@ def _results(*rows):
 def test_a_resumed_sessions_cost_is_its_last_cumulative_value_not_the_sum():
     """seat-review.md problem 15: summary.json showed resumed seats at 20-30x their
     cost because every result event's CUMULATIVE total_cost_usd was summed. The
-    numbers are seat K of the sealed-flat_hom-s3 bundle (one session
+    numbers are seat K of a sealed pilot bundle (one session
     0649e4ae, two processes: 0.8999130 then 1.6094637; turns 71 then 46); the
-    bundle's summary recorded K at 2.5093767, their sum. Red on 8cef520a: 2.5093767."""
+    bundle's summary recorded K at 2.5093767, their sum. Red without the rule: 2.5093767."""
     m = cli.summarize_stream(_results(("0649e4ae", 0.8999129999999997, 71), ("0649e4ae", 1.6094637, 46)))
     assert m["total_cost_usd"] == 1.6094637 and m["num_turns"] == 117
     assert m["total_cost_usd_rule"] == cli.COST_RULE
@@ -1600,11 +1600,11 @@ def test_mcp_server_imports_and_registers_tools():
 
 
 def test_the_run_stops_itself_when_its_server_says_the_horizon_is_reached(play, monkeypatch):
-    """2026.12.4: under a cell the stop is the server's
+    """Under a cell the stop is the server's
     `horizon_reached`, not --until-date: a `session` reply of the run's ck3 server
     carrying `horizon_reached: true` stops the run (stop_reason "horizon", exit 0).
-    The fake would play on; --wall-seconds is only the backstop that ends the base
-    tree's run (red on 08bb8f92: stop_reason "wall_seconds")."""
+    The fake would play on; --wall-seconds is only the backstop that ends a run
+    without the rule (red without it: stop_reason "wall_seconds")."""
     monkeypatch.setenv("FAKE_MODE", "hang-result")
     monkeypatch.setenv("FAKE_HORIZON", "reply")
     monkeypatch.setenv("CK3_EPISODE_HORIZON_END", "867.07.02")
@@ -1627,11 +1627,11 @@ def test_a_seat_saying_horizon_is_not_the_servers_reply(play, monkeypatch):
 
 
 def test_the_run_names_the_seat_session_for_the_lineage_rows(play, tmp_path, monkeypatch):
-    """2026.12.4 (cell0 gap 11): lineage rows carry seat_session_id from
-    CK3_SESSION_ID, and `ck3agent run` set none (null in every row). The run now
+    """Lineage rows carry seat_session_id from
+    CK3_SESSION_ID: the run
     sets it, to the harness's value when one is declared, else "run-<stamp>"; the
     server's entry and claude's environment carry the same value, and the manifest
-    says which source. Red on 08bb8f92 (no CK3_SESSION_ID anywhere)."""
+    says which source. Red without the rule (no CK3_SESSION_ID anywhere)."""
     monkeypatch.delenv("CK3_SESSION_ID", raising=False)
     assert cli.main(["run", "--no-game-check", "--quiet", "--cycles", "1"]) == 0
     m = manifest_of(play)
@@ -1694,7 +1694,7 @@ def test_a_cell_seat_that_ends_its_session_early_is_resumed(play, tmp_path, monk
     their sessions (`end_turn` after a cycle summary) at 867.04, and the run
     recorded them as finished. Under a cell the run now resumes the session
     (`claude --resume <id>`, the same flags, the continuation text); here the
-    resumed session reaches the horizon and the run stops on it. Red on 85c6dd98:
+    resumed session reaches the horizon and the run stops on it. Red without the rule:
     stop_reason None, nothing resumed."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
@@ -1723,10 +1723,9 @@ def _turns(play: Path) -> list[dict]:
 
 
 def test_every_turns_prompt_is_recorded_beside_the_transcript(play, tmp_path, monkeypatch):
-    """ (seat review problem 11: the seat review could not see what a
-    resumed seat was told). Turn 0 is the run's prompt, turn k the k-th
+    """A reviewer of a seat must see what a resumed seat was told. Turn 0 is the run's prompt, turn k the k-th
     continuation's, each verbatim with its sha256, game date and cycle; the
-    manifest names the file and counts its rows. Red on 8cef520a: no
+    manifest names the file and counts its rows. Red without the rule: no
     TURNS_SUFFIX, no record."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
@@ -1747,11 +1746,11 @@ def test_every_turns_prompt_is_recorded_beside_the_transcript(play, tmp_path, mo
 
 
 def test_a_resumed_turn_carries_the_seats_pending_messages_once(play, tmp_path, monkeypatch):
-    """ (seat review problem 9: messages reached a seat only inside
-    observe; s6 D1 read one 530 days late). A resumed turn's prompt carries the
+    """Messages must not reach a seat only inside observe (a recorded duke
+    seat read one 530 days late). A resumed turn's prompt carries the
     seat's pending messages after the continuation text, through the channel's
     one delivery function, which stamps the receipt (via resume_prompt, the
-    turn): observe never shows them again. Red on 8cef520a: the prompt is the
+    turn): observe never shows them again. Red without the rule: the prompt is the
     bare continuation text and the message stays unread."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
@@ -1795,7 +1794,7 @@ def test_the_hooks_sink_variable_is_the_runs():
 def test_a_cell_seat_past_its_continuations_cap_is_refused(play, tmp_path, monkeypatch):
     """The cap: a seat that keeps ending early is resumed --continuations times,
     then the run exits non-zero with stop_reason continuations_exhausted (never 0,
-    never `horizon`). Red on 85c6dd98: exit 0 after the first session."""
+    never `horizon`). Red without the rule: exit 0 after the first session."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
     monkeypatch.setattr(cli, "DEFAULT_CONTINUATIONS", 2, raising=False)
@@ -1813,7 +1812,7 @@ def _agent_ids(tmp_path: Path) -> list[str]:
 
 
 def test_outside_a_cell_a_session_that_ends_early_is_not_resumed(play, tmp_path, monkeypatch):
-    """The behaviour control (r2 item 5): the SAME fake as the resumed test (it
+    """The behaviour control: the SAME fake as the resumed test (it
     ends on its own after its result, and would reach the horizon if resumed),
     run without the cell's start: exactly one claude process, never resumed."""
     monkeypatch.delenv("CK3_EPISODE_HORIZON_START", raising=False)
@@ -1826,7 +1825,7 @@ def test_outside_a_cell_a_session_that_ends_early_is_not_resumed(play, tmp_path,
 
 
 def test_continuations_flag_sets_the_cap(play, tmp_path, monkeypatch):
-    """`--continuations N` itself (r2 item 5): N=1 resumes once, then exit 3."""
+    """`--continuations N` itself: N=1 resumes once, then exit 3."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
     rc = cli.main(["run", "--no-game-check", "--quiet", "--cycles", "0", "--wall-seconds", "30",
@@ -1837,10 +1836,10 @@ def test_continuations_flag_sets_the_cap(play, tmp_path, monkeypatch):
 
 
 def test_a_resumed_seat_binds_the_ruler_it_held_not_the_declared_one(play, tmp_path, monkeypatch):
-    """r2 item 1: the declared ruler 100 died and the seat was rebound to 300.
+    """The declared ruler 100 died and the seat was rebound to 300.
     The resumed claude's NEW server pre-binds CK3_AGENT_CHARACTER_ID; the run
     now carries what the old server's session held at exit (its release record),
-    so the resumed server binds 300, not the dead 100. Red on b6998ec5: '100'."""
+    so the resumed server binds 300, not the dead 100. Red without the rule: '100'."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
     monkeypatch.setenv("CK3_AGENT_CHARACTER_ID", "100")
@@ -1853,7 +1852,7 @@ def test_a_resumed_seat_binds_the_ruler_it_held_not_the_declared_one(play, tmp_p
 
 
 def test_without_a_release_record_the_sink_names_the_ruler(play, tmp_path, monkeypatch):
-    """r2 item 1, the fallback: no release record (a server killed at exit); the
+    """No release record (a server killed at exit); the
     seat's lineage sink's last row is the rebind 100 -> 300, so 300 is carried."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
@@ -1869,9 +1868,9 @@ def test_without_a_release_record_the_sink_names_the_ruler(play, tmp_path, monke
 
 
 def test_a_claude_that_exits_before_its_horizon_reply_is_drained_is_not_resumed(play, tmp_path, monkeypatch):
-    """r2 item 2: the loop tested horizon.reached BEFORE the drain had fed the
+    """The loop tested horizon.reached BEFORE the drain had fed the
     server's horizon reply; the fake writes the reply and exits at once, and the
-    drain is held back until claude has exited. Red on b6998ec5: one continuation."""
+    drain is held back until claude has exited. Red without the rule: one continuation."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
     monkeypatch.setenv("FAKE_HORIZON", "reply")
@@ -1904,7 +1903,7 @@ def test_a_cell_run_that_stops_without_a_resume_keeps_its_rulers_record(play, tm
     """The resume loop consumed the old server's release
     and session records BEFORE deciding not to resume, so a wall stop or an
     exhausted cap in a cell recorded held_at_stop [] (and waited 5 s). The
-    records are consumed only when a resume is certain. Red on 685cb506: []."""
+    records are consumed only when a resume is certain. Red without the rule: []."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
     monkeypatch.setenv("FAKE_HELD", "[300]")
@@ -1921,18 +1920,18 @@ def test_a_cell_run_that_stops_without_a_resume_keeps_its_rulers_record(play, tm
 
 # ── 2026.12.5: the seat's bridge session is handed over, never left blocking ──
 #
-# v3 pilot smoke (orders_hom, 2026-11-09): a cell seat's claude ended, the run
+# Smoke (orders_hom, 2026-11-09): a cell seat's claude ended, the run
 # resumed it, and the resumed claude's NEW server pre-bound the seat's ruler on a
 # fresh session while the old session (pinned by the bridge in an experiment,
 # its last claim unreleasable) still held it: owned_by_other, K unbound for 94
-# game-days. Red on 5718f403: the second bind is made by a different session.
+# game-days. Red without the rule: the second bind is made by a different session.
 
 def _binds(fb) -> list:
     return [(s, p["character_id"]) for s, a, p in fb.log if a == "set_controlled_character"]
 
 
 def test_a_cell_continuation_hands_the_seats_session_to_the_new_server(play, bridge, tmp_path, monkeypatch):
-    """Also the seat's BUDGET identity (signed v3 §6 bounds tokens per seat per
+    """Also the seat's BUDGET identity (an episode bounds tokens per seat per
     game-year): the bridge's budget gate is keyed by the bridge session id
     (dispatch_router.cpp, budget_ledger().evaluate(session->session_id, ...)),
     so a continuation on a fresh session restarted the seat's ceiling at 0. The
@@ -1989,7 +1988,7 @@ def _dead_run(play: Path, stamp: str = "20000101-000000", lock: bool = True, kee
 def test_a_run_takes_over_the_seat_a_dead_earlier_run_left_holding_it(play, bridge, tmp_path, monkeypatch):
     """The restart case: the stale holder's run is dead (its lock is free) and its
     session has no connection, so this run's server resumes it and binds 42 there.
-    Red on 5718f403: a fresh session's bind of 42 is refused owned_by_other."""
+    Red without the rule: a fresh session's bind of 42 is refused owned_by_other."""
     fb = bridge(pin_claims=True)
     sid, _ = _dead_run(play)
     monkeypatch.setenv("FAKE_SERVE", str(tmp_path / "server.log"))
@@ -2008,7 +2007,7 @@ def test_a_live_or_unknown_holder_is_never_taken_over(play, bridge, tmp_path, mo
     """The controls: the other run still holds its lock (alive, maybe between two
     claudes), or its session is still connected, or the record predates the lock
     (cannot tell): nothing is adopted, the record stays, and the bind is the
-    bridge's refusal. NON-DISCRIMINATING: green on 5718f403 too (nothing was
+    bridge's refusal. NON-DISCRIMINATING: green without the rule too (nothing was
     ever adopted there; `adopted_session` is read with .get for that reason)."""
     import fcntl
     fb = bridge(pin_claims=True)
@@ -2046,8 +2045,8 @@ def _alive(pid: int) -> bool:
 def test_a_killed_run_takes_its_claude_with_it(play, tmp_path, monkeypatch):
     """2026.12.5 (draft smoke): SIGKILL to `ck3agent run` left its claude
     playing ~108 s to the horizon. The claude it spawns now gets SIGTERM from the
-    kernel when the run dies (the fake claude exits 143 on SIGTERM). Red on
-    e8411492: the fake claude is still alive after the run is killed. Only
+    kernel when the run dies (the fake claude exits 143 on SIGTERM). Red without
+    the rule: the fake claude is still alive after the run is killed. Only
     processes this test started are signalled, by their own recorded pids."""
     monkeypatch.setenv("FAKE_MODE", "hang-ignore")
     pidfile = tmp_path / "argv.json.pid"
@@ -2090,10 +2089,10 @@ _PRCTL_FAILS = ("import ctypes\n"
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux")
 @pytest.mark.parametrize("case", ["ok", "no_ctypes_in_the_shim", "prctl_fails"])
 def test_the_shim_starts_claude_and_says_when_it_cannot_tie_it_to_the_run(case):
-    """r3. The shim ignored prctl's return (a failure fell back
+    """The shim ignored prctl's return (a failure fell back
     silently) and a Python without ctypes never started claude (rc 1). Now
     claude starts in every case, and a failure is one stderr line naming the
-    step and the errno or exception class. Red on 5e42c229: no_ctypes (rc 1)
+    step and the errno or exception class. Red without the rule: no_ctypes (rc 1)
     and prctl_fails (silent). `ok` is the control (green on both)."""
     argv = cli.dies_with_run(["/bin/echo", "claude-started"])
     assert argv[:3] == [sys.executable, "-I", "-c"]
@@ -2108,7 +2107,7 @@ def test_the_shim_starts_claude_and_says_when_it_cannot_tie_it_to_the_run(case):
 
 
 def test_a_python_without_ctypes_spawns_claude_directly(monkeypatch):
-    """r3: with no ctypes the run does not wrap claude at all,
+    """With no ctypes the run does not wrap claude at all,
     and the manifest's `claude_dies_with_run` says why."""
     import importlib.util
     real = importlib.util.find_spec
@@ -2121,10 +2120,10 @@ def test_a_python_without_ctypes_spawns_claude_directly(monkeypatch):
 
 
 def test_a_seats_action_rows_are_its_own_sessions_only(play, tmp_path, monkeypatch):
-    """fix10 (v4 pilot 2: each seat's bundled actions.jsonl held ~20 sessions'
+    """A pilot's finding (each seat's bundled actions.jsonl held ~20 sessions'
     rows, every seat's). The shared action log's window holds rows of this
     seat's two sessions, another seat's, and one naming none; the seat's copy
-    keeps its own two and counts the rest. Red on 5e506f28: all four copied."""
+    keeps its own two and counts the rest. Red without the rule: all four copied."""
     action_log = Path(br.action_log_path())
     action_log.parent.mkdir(parents=True)
     action_log.write_text('{"session_id":"mine-old","verb":"before"}\n')
@@ -2144,7 +2143,7 @@ def test_a_seats_action_rows_are_its_own_sessions_only(play, tmp_path, monkeypat
 
 
 def test_own_action_rows_unit():
-    """fix10: the filter alone, on bytes (one definition: own_action_rows)."""
+    """The filter alone, on bytes (one definition: own_action_rows)."""
     data = b'{"session_id":"a","x":1}\nnot json\n{"session_id":"b"}\n\n{"x":2}\n{"session_id":"a"}'
     kept, info = cli.own_action_rows(data, ["a"])
     assert kept == b'{"session_id":"a","x":1}\n{"session_id":"a"}\n'
@@ -2152,11 +2151,11 @@ def test_own_action_rows_unit():
 
 
 def test_a_cell_start_without_the_ck3_tools_is_stopped_and_restarted_once(play, tmp_path, monkeypatch):
-    """fix10 (v4 pilot 2 COUNCIL: 31 duke starts came up `ck3:failed`, zero game
+    """A pilot's finding (31 duke starts came up `ck3:failed`, zero game
     tools, and each ran its turn blind). Start 2 (the first resume) comes up
     without the ck3 server: the run stops it at its init and starts it again,
     a turn row and a `surface_restart` continuation that the cap does not count;
-    the run then goes on to its cap. Red on 5e506f28: the blind start is never
+    the run then goes on to its cap. Red without the rule: the blind start is never
     stopped (it hangs here until the wall stop) and nothing is restarted."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
@@ -2176,8 +2175,8 @@ def test_a_cell_start_without_the_ck3_tools_is_stopped_and_restarted_once(play, 
 
 
 def test_a_second_blind_start_in_a_row_stops_the_run_loudly(play, tmp_path, monkeypatch):
-    """fix10: the restart also comes up without the tools: the run stops with
-    seat_surface_failed (exit 3), never a turn run blind. Red on 5e506f28: the
+    """The restart also comes up without the tools: the run stops with
+    seat_surface_failed (exit 3), never a turn run blind. Red without the rule: the
     run waits out its wall limit on the blind start."""
     for k, v in CELL_ENV.items():
         monkeypatch.setenv(k, v)
@@ -2191,7 +2190,7 @@ def test_a_second_blind_start_in_a_row_stops_the_run_loudly(play, tmp_path, monk
 
 
 def test_an_init_with_the_ck3_tools_is_not_a_failure():
-    """fix10 control: the predicate on the two init shapes the pilot recorded."""
+    """control: the predicate on the two init shapes the pilot recorded."""
     good = {"type": "system", "subtype": "init", "tools": ["mcp__ck3__observe"],
             "mcp_servers": [{"name": "ck3", "status": "connected"}]}
     bad = {**good, "tools": [], "mcp_servers": [{"name": "ck3", "status": "failed"}]}

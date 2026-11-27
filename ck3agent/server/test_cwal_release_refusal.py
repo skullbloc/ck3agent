@@ -1,13 +1,13 @@
 """A control seat's LAST-character release is refused, and surfaced.
 
-Progenitor ruling 2026-09-24: the bridge refuses it and the session tool
+The rule: the bridge refuses it and the session tool
 surfaces the refusal with its explanation. This is the TOOL half. The bridge
 half is not written yet; the tool half landing first is agreed, and
 until the bridge enforces it the gate degrades to `refusal_reason_unknown` with
 the raw reason verbatim, which is the safe direction.
 
-THE CARVE-OUT CONTRACT IS NOW STATED, because it was answered from the handler
-rather than inferred. read bridge_init.cpp:1575 (2026-09-25): the direct
+THE CARVE-OUT CONTRACT IS STATED, answered from the handler rather than
+inferred. Per bridge_init.cpp (the handoff's session update): the direct
 assignment there only refreshes the session's cached primary, while the CLAIM is
 made in `swap_character`, which the handoff always goes through and which moves
 the id between `claimed_character_ids` under one lock. A succession-seated
@@ -15,8 +15,8 @@ character is therefore an ordinary claim, indistinguishable from one made by
 set_controlled_character, and `last_steered_character_id` is not a second
 seating path — it only recovers WHICH corpse to run the handoff for.
 
-AND ONE OF THE TWO CARVE-OUTS DISSOLVED. I had planned to exempt a handoff
-corpse release; there is nothing to exempt, because the corpse is removed by
+AND NO CARVE-OUT FOR A HANDOFF CORPSE RELEASE: there is
+nothing to exempt, because the corpse is removed by
 `swap_character` inside the handoff and never reaches do_release_character. So
 the list is ONE, and it is stated positively: the refusal applies to every
 release an agent can make, and the only thing it lets through is the switch's
@@ -37,9 +37,9 @@ LITERAL = "last_claim_of_control_session"
 class TheLiteralIsTheAGREEDONE(unittest.TestCase):
 
     def test_the_code_is_in_the_closed_set(self):
-        """The two halves meet at exactly this string. emits it; this
+        """The two halves meet at exactly this string. Emits it; this
         recognises it. A mismatch routes a real refusal into
-        `refusal_reason_unknown` — safe, and not the explanation the ruling
+        `refusal_reason_unknown` — safe, and not the explanation the rule
         asks for."""
         self.assertIn(LITERAL, rd.RELEASE_REFUSAL_REASONS)
 
@@ -50,14 +50,14 @@ class TheLiteralIsTheAGREEDONE(unittest.TestCase):
                              set(rd.RELEASE_REFUSAL_SUMMARIES))
 
     def test_the_summary_gives_the_RULED_explanation(self):
-        """The ruling's own words: 'you steer; the AI runs regardless'. An
+        """The rule's own words: 'you steer; the AI runs regardless'. An
         agent told only that it cannot release will try again."""
         s = rd.RELEASE_REFUSAL_SUMMARIES[LITERAL]
         self.assertIn("you steer", s.lower())
         self.assertIn("ai runs regardless", s.lower())
 
     def test_the_summary_says_SWITCHING_IS_STILL_ALLOWED(self):
-        """The ruling keeps switching legal. A refusal that did not say so
+        """The rule keeps switching legal. A refusal that did not say so
         would read as 'you are stuck with this character', which is a different
         and wrong contract."""
         s = rd.RELEASE_REFUSAL_SUMMARIES[LITERAL].lower()
@@ -68,7 +68,7 @@ class TheLiteralIsTheAGREEDONE(unittest.TestCase):
 class TheRefusalSaysWhatToDoInstead(unittest.TestCase):
 
     def test_the_reply_fix_names_the_switch_and_the_end_of_session(self):
-        """/17: release of the only held ruler answered
+        """Two smokes: release of the only held ruler answered
         `last_claim_of_control_session` and nothing about the two ways out. The
         reply's `fix` now carries both: switch with session(control), or end the
         session, which frees the ruler."""
@@ -114,7 +114,7 @@ class AnUnknownCodeStillDegradesSafely(unittest.TestCase):
 
 class TheCarveOutContractIsStatedNow(unittest.TestCase):
     """This class REPLACES the row that kept the contract unstated. That row's
-    job was to fail if anyone wrote the contract before that answered from
+    job was to fail if anyone wrote the contract before the bridge half answered from
     the handler; the answer arrived 2026-09-25, so the row is discharged rather
     than deleted — these assert what was learned, in its place."""
 
@@ -132,7 +132,7 @@ class TheCarveOutContractIsStatedNow(unittest.TestCase):
 
     def test_the_summary_still_does_not_mention_a_CORPSE_case(self):
         """Same assertion as the discharged row, for the OPPOSITE reason, which
-        is why it is worth keeping rather than dropping. It used to mean "we do
+        is why it is worth keeping rather than dropping. It does not mean "we do
         not know yet". It now means "there is no such case": the corpse is
         removed by `swap_character` inside the handoff and never reaches
         do_release_character, so there is no release request to exempt.

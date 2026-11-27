@@ -1,5 +1,5 @@
 """The ONE C++ tokenizer every checker in this repo reads source through
-(/X5).
+(one set of rules for every checker).
 
 Seven hand-rolled strippers each re-decided what a comment and a literal are,
 and each got one case wrong in its own way: a backslash inside a raw string

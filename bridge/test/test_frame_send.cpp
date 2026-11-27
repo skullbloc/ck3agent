@@ -1,4 +1,4 @@
-// test_frame_send.cpp — fix10: a frame nobody waits on never waits on a client
+// test_frame_send.cpp — a frame nobody waits on never waits on a client
 // that is not reading (frame_send.h). A real AF_UNIX socketpair, the kind of
 // socket the bridge serves, filled until it is not writable.
 //
@@ -6,10 +6,10 @@
 //  1. an empty socket: a best-effort frame is written whole (kOk).
 //  2. a full socket: a best-effort frame is refused at once (< 50 ms), stage
 //     kBackpressure, NOTHING written (the stream stays clean).
-//  3. CONTROL (the pre-fix behaviour, kept for replies): the same full socket
-//     with best_effort=false waits its full bound and fails kPollTimeout. On
-//     5e506f28 every frame took this path, pings and broadcasts included
-//     (council-a: 346 pings, 2 s each, on the IPC reader thread).
+//  3. CONTROL (the superseded behaviour, kept for replies): the same full socket
+//     with best_effort=false waits its full bound and fails kPollTimeout. Without
+//     best effort every frame takes this path, pings and broadcasts included
+//     (one recorded run: 346 pings, 2 s each, on the IPC reader thread).
 //  4. after the reader drains, a best-effort frame goes through again.
 #include "frame_send.h"
 

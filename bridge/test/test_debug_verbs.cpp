@@ -1,4 +1,4 @@
-// test_debug_verbs.cpp —: the debug verbs are compiled out and refused.
+// test_debug_verbs.cpp — the debug verbs are compiled out and refused.
 //
 // Links the REAL dispatch_router.cpp (same scaffolding as test_release_handler).
 //
@@ -104,10 +104,10 @@ struct Scoped {
 
 int main() {
 #ifdef CK3_BRIDGE_DEBUG_VERBS
-    std::cout << "=== rc2 B2 NEGATIVE CONTROL (dispatch_router.cpp built with "
+    std::cout << "=== NEGATIVE CONTROL (dispatch_router.cpp built with "
                  "CK3_BRIDGE_DEBUG_VERBS): must FAIL ===\n";
 #else
-    std::cout << "=== rc2 B2 debug verbs compiled out ===\n";
+    std::cout << "=== debug verbs compiled out ===\n";
 #endif
     std::set<std::string> rel(std::begin(kReleaseTable), std::end(kReleaseTable));
     std::set<std::string> debug;

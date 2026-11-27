@@ -10,9 +10,9 @@
 // not hold, or a subject that is not a live DB character is left out.
 //
 // Evidence (re/findings/re_vassal_contract.md, "Contract parties"): in dumps
-// ivar867 and 1097 the subjects of every ruler's contracts equal the rulers whose
+// the 867 and 1097 dumps the subjects of every ruler's contracts equal the rulers whose
 // realm-parent holder (get_liege_id_from_addr PATH2) is that ruler. title_realm
-// +0xA8, which the bridge used to read as "direct vassals", holds no landed
+// +0xA8, which the bridge does not read as "direct vassals", holds no landed
 // character at all (re_realm_size_vassal_inclusive.md).
 //
 // Header-only and engine-free: the memory comes in through `Mem`, so the unit
@@ -35,7 +35,7 @@
 
 namespace bridge::vassal_roster {
 
-//: Bound on the contract array a read will walk (the largest on dump ivar867 holds
+//: Bound on the contract array a read will walk (the largest on the 867 dump holds
 //: 88 contracts).
 constexpr int32_t MAX_CONTRACTS = 4096;
 

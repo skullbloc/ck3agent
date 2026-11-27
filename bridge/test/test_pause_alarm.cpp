@@ -1,4 +1,4 @@
-// test_pause_alarm.cpp —: the game-day pause alarm's rule (pause_alarm.h),
+// test_pause_alarm.cpp — the game-day pause alarm's rule (pause_alarm.h),
 // driven the way the drain drives it: a date that advances by whole days, a
 // check after every pass, and the pause the caller would write.
 #include <cstdio>
@@ -43,7 +43,7 @@ int main() {
     CHECK(pa::arm(now - 1, now) == pa::Arm::NotInFuture);
     CHECK(!pa::armed() && pa::snapshot().state == pa::State::None);
 
-    // ask: 10 days from 0867.01.26 — one day per pass fires AT the target
+    // The ask: 10 days from 0867.01.26 — one day per pass fires AT the target
     CHECK(pa::arm(now + 10, now) == pa::Arm::Armed && pa::armed());
     int passes = 0;
     int32_t at = run(now, 1, 1000, &passes);

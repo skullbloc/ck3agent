@@ -1,8 +1,8 @@
-"""2026.12.5: a seat's NEW MCP server takes over the bridge session its previous
+"""A seat's NEW MCP server takes over the bridge session its previous
 server left, instead of minting a fresh one that the old session's claims block.
 
-The defect (v3 pilot smoke, orders_hom, 2026-11-09; evidence
- README finding B): K's claude ended at
+The hazard (a test game):
+K's claude ended at
 867.09.30 and `ck3agent run` resumed it. The resumed claude started a new
 server, which handshook a FRESH bridge session and pre-bound K's ruler 12015.
 In an experiment episode the bridge pins a dropped seat session's claims and
@@ -20,7 +20,7 @@ stand-in client whose handshake follows resume_by_token's three answers. The
 end-to-end rows (a real server under a fake claude and a fake bridge that pins
 claims) are in release/overlay/tests/test_cli.py and run on an exported tree.
 
-Red on 5718f403 (the pre-fix tree, measured on the test host): row 1, row 2 (no
+Red without the rule (the superseded tree, measured on the test host): row 1, row 2 (no
 token is presented), row 4 resumed=True (5 bound first). Row 3 and row 4
 resumed=False are NON-DISCRIMINATING controls, green before and after: a server
 with nothing to take over, or outside `ck3agent run`, handshakes and binds
@@ -140,7 +140,7 @@ def _binds(sent):
 def test_a_new_server_takes_over_the_session_its_predecessor_left(seat):
     """Row 1. The record names the old session (detached, holding 42): the new
     server presents its token, the session is resumed and the pre-bind of 42
-    lands on THAT session. Red on 5718f403: no token presented, a fresh session
+    lands on THAT session. Red without the rule: no token presented, a fresh session
     binds 42 (on the bridge: owned_by_other)."""
     ses, sent, _ = seat
     ses.write_text(json.dumps({"session_id": "old7", "resume_token": "tok-old7", "pid": 1}))
@@ -154,18 +154,18 @@ def test_a_new_server_takes_over_the_session_its_predecessor_left(seat):
 
 
 def test_an_unknown_token_starts_fresh_and_says_why(seat):
-    """Row 2 (red on 5718f403: no token presented; the bind's outcome is the
+    """Row 2 (red without the rule: no token presented; the bind's outcome is the
     same before and after, which is the point). An unknown token (the bridge
     dropped the session) is a fresh start: the bridge mints a fresh session and
     the pre-bind lands on it. Never a steal. (Row 2's `attached` half moved to
-    test_a_session_still_attached_is_retried_not_abandoned, fix10.)"""
+    test_a_session_still_attached_is_retried_not_abandoned.)"""
     ses, sent, _ = seat
-    ses.write_text(json.dumps({"session_id": "live3", "resume_token": "tok-live3"}))
+    ses.write_text(json.dumps({"session_id": "sess3", "resume_token": "tok-sess3"}))
     st = _start_server()
-    assert _Client.made[0].handshake_kwargs.get("resume_token") == "tok-live3"
+    assert _Client.made[0].handshake_kwargs.get("resume_token") == "tok-sess3"
     assert st.resumed_session is False
     sid = _Client.made[0].session_id
-    assert sid != "live3" and _binds(sent) == [(sid, 42, False)]
+    assert sid != "sess3" and _binds(sent) == [(sid, 42, False)]
     rec = json.loads(ses.read_text())
     assert rec["session_id"] == sid and rec["resumed"] is False
     assert rec["resume_status"] == "unknown_token"
@@ -189,11 +189,11 @@ def _start_then_call(n_calls=1, between=None):
 
 
 def test_a_lost_startup_handshake_keeps_the_seats_session(seat, monkeypatch):
-    """fix10 row A (v4 pilot 2 COUNCIL D2/D3). The startup handshake gets no
+    """Row A (a recorded seat). The startup handshake gets no
     ack (the bridge's reader thread is behind): the server must not keep that
     socket as its session. It closes it, keeps the predecessor's token, binds
     nothing, and the first tool call reconnects presenting the token: the
-    seat's own session is resumed with its claims. Red on 5e506f28: the server
+    seat's own session is resumed with its claims. Red without the rule: the server
     stays `connected` on the unacked socket, no reconnect happens, the token is
     dropped, nothing is pre-bound (the agent's later control lands on a session
     nobody can resume)."""
@@ -221,10 +221,10 @@ def test_a_lost_startup_handshake_keeps_the_seats_session(seat, monkeypatch):
 
 
 def test_a_lost_first_handshake_with_no_predecessor_binds_on_reconnect(seat, monkeypatch):
-    """fix10 row B: the seat's FIRST server (no record) loses its handshake:
+    """Row B: the seat's FIRST server (no record) loses its handshake:
     the reconnect mints a fresh session and pre-binds the declared ruler on it,
-    so the session holding the ruler is the one the record names. Red on
-    5e506f28: nothing is pre-bound and no session record is written."""
+    so the session holding the ruler is the one the record names. Red without
+    the rule: nothing is pre-bound and no session record is written."""
     ses, sent, _ = seat
     real = _Client.handshake
     calls = {"n": 0}
@@ -242,44 +242,44 @@ def test_a_lost_first_handshake_with_no_predecessor_binds_on_reconnect(seat, mon
 
 
 def test_a_session_still_attached_is_retried_not_abandoned(seat):
-    """fix10 row C. The predecessor's server has not let go yet (its session is
+    """Row C. The predecessor's server has not let go yet (its session is
     still attached): the bridge refuses the resume `session_attached`. The new
     server binds nothing on the fresh session it was handed, drops it, and the
-    next tool call resumes the seat's session once it is detached. Red on
-    5e506f28: the fresh session pre-binds 42 (refused owned_by_other on the
+    next tool call resumes the seat's session once it is detached. Red without
+    the rule: the fresh session pre-binds 42 (refused owned_by_other on the
     bridge) and the token is never presented again."""
     ses, sent, _ = seat
-    ses.write_text(json.dumps({"session_id": "live3", "resume_token": "tok-live3"}))
-    _Client.attached["tok-live3"] = "live3"
+    ses.write_text(json.dumps({"session_id": "sess3", "resume_token": "tok-sess3"}))
+    _Client.attached["tok-sess3"] = "sess3"
 
     def detach(i):
         if i == 1:                      # the old server exits between the first and second call
-            _Client.attached.pop("tok-live3", None)
-            _Client.detached["tok-live3"] = "live3"
+            _Client.attached.pop("tok-sess3", None)
+            _Client.detached["tok-sess3"] = "sess3"
     st, refusals = _start_then_call(2, between=detach)
-    assert _binds(sent) == [("live3", 42, False)]
+    assert _binds(sent) == [("sess3", 42, False)]
     assert refusals[0] is not None and refusals[0]["blocked"]["gate"] == "bridge_disconnected"
     assert refusals[1] is None and st.resumed_session is True
-    assert all(c.handshake_kwargs.get("resume_token") == "tok-live3" for c in _Client.made)
+    assert all(c.handshake_kwargs.get("resume_token") == "tok-sess3" for c in _Client.made)
 
 
 def test_attached_retries_are_bounded(seat):
-    """fix10 row D (bound): a predecessor that never lets go costs at most
+    """Row D (bound): a predecessor that never lets go costs at most
     RESUME_ATTACHED_RETRIES refused calls; then the fresh session is kept and
     bound, and the bridge's own owned_by_other is what the seat reads."""
     ses, sent, _ = seat
-    ses.write_text(json.dumps({"session_id": "live3", "resume_token": "tok-live3"}))
-    _Client.attached["tok-live3"] = "live3"
+    ses.write_text(json.dumps({"session_id": "sess3", "resume_token": "tok-sess3"}))
+    _Client.attached["tok-sess3"] = "sess3"
     n = mcp_server.RESUME_ATTACHED_RETRIES
     st, refusals = _start_then_call(n)
     assert all(r is not None for r in refusals[:n - 1]) and refusals[-1] is None
     sid = _Client.made[-1].session_id
-    assert sid != "live3" and _binds(sent) == [(sid, 42, False)]
+    assert sid != "sess3" and _binds(sent) == [(sid, 42, False)]
 
 
 @pytest.mark.parametrize("case", ["no_record", "not_a_run"])
 def test_with_nothing_to_take_over_the_handshake_is_unchanged(seat, monkeypatch, case):
-    """Row 3 (NON-DISCRIMINATING control: green on 5718f403 too). The first
+    """Row 3 (NON-DISCRIMINATING control: green without the rule too). The first
     server of a run has no record; a server outside `ck3agent run`
     (CK3_RELEASE_ON_EXIT unset, e.g. an experiment driver's or an interactive
     one) never reads one. Either way no token is presented."""
@@ -300,7 +300,7 @@ def test_a_taken_over_session_keeps_its_primary_first(seat, monkeypatch, resumed
     is 9. On a resumed session the first pre-bind (a switch, no `add`) is 9, so
     the switch does not drop the primary (session.cpp swap_character moves the
     claim off `from`). A fresh session keeps the declared order and reads
-    nothing. Red on 5718f403 for resumed=True: 5 first, no get_bridge_state."""
+    nothing. Red without the rule for resumed=True: 5 first, no get_bridge_state."""
     ses, sent, primary = seat
     monkeypatch.setenv(mcp_server.AGENT_CHARACTER_ENV, "5,9")
     if resumed:

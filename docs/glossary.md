@@ -25,6 +25,6 @@ The terms the docs, tools and logs use.
 | **Claim / roster** | the rulers a session holds; `whoami` lists them under `my_claims`. |
 | **Handshake** | the first exchange on connect, which fixes the session's mode and reports the bridge's state (`dormant`, `active`) and configuration. |
 | **Instance** | one game plus its bridge socket, logs and telemetry, named by `CK3_INSTANCE_ID` when more than one game runs on a machine. |
-| **Arm, episode** | research terms: an *episode* is one recorded run; an *arm* is one condition of a study (treatment, control). Only the research notes use them. |
+| **Arm, episode** | research terms: an *episode* is one recorded run; an *arm* is one condition of a study (treatment, control). A play session needs neither; the research pages use them ([research](research.md), [scripted runs](scripted-runs.md), [bridge contract](reference/bridge-contract.md)), and so does the `CK3_EPISODE_ARM` variable ([files and paths](reference/files-and-paths.md)). |
 | **Hook** | inside the game, the bridge's interception of an engine function (the AI tick, war declaration). In Claude Code, the *live-state hook* `ck3agent hook-state` that prepends game state to each prompt. |
 | **Action log** | `action_log.jsonl`, one line per bridge call, except reads and most management verbs, such as `set_controlled_character`. See [research notes](research.md#what-is-recorded). |

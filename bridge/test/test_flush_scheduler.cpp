@@ -1,4 +1,4 @@
-// test/test_flush_scheduler.cpp — unit tests for the R1a flush scheduler.
+// test/test_flush_scheduler.cpp — unit tests for the flush scheduler.
 //
 // Standalone: compiles flush_scheduler.cpp with NO engine, NO game, NO CK3
 // binary and — unlike test_session_registry.cpp — not even a stub global,
@@ -7,7 +7,7 @@
 //   cmake -DBUILD_BRIDGE_TESTS=ON .. && make -j$(nproc) test_flush_scheduler
 //   ./test_flush_scheduler
 //
-// What is asserted maps 1:1 onto the bead's acceptance list; see the banner
+// What is asserted maps 1:1 onto the task's acceptance list; see the banner
 // printed by each section.
 
 #include "flush_scheduler.h"
@@ -278,11 +278,11 @@ static void test_one_span_and_ordering() {
     // not touched at all ("ensure unpaused" is a no-op when it already is, and
     // so is "restore the resting speed" when it already is that).
     //
-    // THE SPEED HERE IS LOAD-BEARING AND USED TO BE A COINCIDENCE. It
+    // THE SPEED HERE IS LOAD-BEARING AND IS NOT A COINCIDENCE. It
     // was the literal 3, which happened to equal the planner's hard-coded
     // resting speed, so the restore step found nothing to do. That hard-coded 3
-    // is the defect this bead removed — it was a second home for a
-    // pre-registered constant declared as 2 elsewhere — so the reading now says
+    // is the hazard this code guards against — it was a second home for a
+    // declared constant declared as 2 elsewhere — so the reading now says
     // what it always meant: the clock is AT REST.
     FlushScheduler s3;
     submit_n(s3, "a", "declare_war", Polarity::TICK_WRITE, 2, 0);
@@ -309,7 +309,7 @@ static void test_one_span_and_ordering() {
 // eval, conquest targets) needs a live tick for an engine verdict, but it is
 // still a READ. Ordered behind the writes of its own flush it would answer from
 // a world those writes had already moved — which silently widens the §2.6
-// coherence claim past what the paper can defend.
+// coherence claim past what a study can defend.
 // ===========================================================================
 static void test_tick_read_before_tick_write() {
     section("tick split: TICK_READ drains before TICK_WRITE");
@@ -729,7 +729,7 @@ static void test_resting_state() {
 }
 
 int main() {
-    std::printf("test_flush_scheduler (ck-6kvq.8)\n");
+    std::printf("test_flush_scheduler\n");
     test_partition();
     test_all_any_never_touches_clock();
     test_one_span_and_ordering();

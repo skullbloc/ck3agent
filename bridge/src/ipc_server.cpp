@@ -3,7 +3,7 @@
 // Background reader thread continuously reads NDJSON from the client
 // and pushes complete messages to a thread-safe queue.
 
-#include "log_redact.h"   // 2026.12.5: no token reaches the log
+#include "log_redact.h"   // No token reaches the log
 #include "instance_paths.h"
 #include "listener_fd.h"     // Close-on-exec descriptors
 #include "init_order.h"      // CK3_EARLY_INIT (ck3_compiler.h: empty under MSVC)
@@ -34,8 +34,8 @@
 #include "pipeline.h"
 #include "episode_policy.h"
 #include "client_slot.h"
-#include "world_identity.h"   // ONE identity, shared with
-#include "world_epoch.h"      // world_epoch, the "did the world change" half
+#include "world_identity.h"   // ONE identity, shared with session.cpp
+#include "world_epoch.h"      // the world_epoch(), the "did the world change" half
 
 #include <rapidjson/document.h>
 #include <rapidjson/writer.h>
@@ -167,7 +167,7 @@ static int g_send_timeout_ms = 2000;
 thread_local bridge::SendOutcome* g_last_send_outcome = nullptr;
 
 
-// #123: live tick + game_date stamping for EVERY response.
+// Live tick + game_date stamping for EVERY response.
 //
 // The MCP-side envelope {ok,data,error,tick,game_date} carries the tick and date
 // of the reply itself. A cache of tick_start / observation pushes cannot supply
@@ -206,7 +206,7 @@ std::string build_envelope_clock_fragment() {
 }
 
 // --- Multi-client slot table ---
-// The bridge now serves up to MAX_CLIENTS concurrent clients (e.g. the MCP
+// The bridge serves up to MAX_CLIENTS concurrent clients (e.g. the MCP
 // server + a per-turn UserPromptSubmit hook). Responses to a client's own
 // request are routed back to that client via a thread-local target set by the
 // reader thread before it processes a slot's lines (so e.g. a handshake_ack
@@ -227,12 +227,12 @@ std::string build_envelope_clock_fragment() {
 // host-compiled by test/test_client_slot.cpp.  The concurrency invariant above
 // is restated there.
 
-// INIT ORDER.  `dll_init` (the __attribute__((constructor)) in
+// — INIT ORDER.  `dll_init` (the __attribute__((constructor)) in
 // bridge_init.cpp) is .init_array[1], AHEAD of every C++ dynamic initializer in
 // this library, and it calls bridge_init() -> start_ipc_server() ->
 // std::thread(reader_loop).  Without a priority, this TU's globals are
 // constructed at .init_array[3] and the reader thread can reach a slot table
-// that is still raw .bss — which is exactly the crash this bead fixes (see
+// that is still raw .bss — which is exactly the crash this code guards against (see
 // client_slot.h).  init_priority puts these initializers in .init_array.101,
 // which the linker orders BEFORE the unprioritised entries, so the table, the
 // queue and the thread handles all exist before dll_init can start anything.
@@ -305,7 +305,7 @@ static void release_slot_locked(int idx, const char* reason) {
     if (idx < 0 || idx >= MAX_CLIENTS) return;
     ClientSlot& s = g_clients[idx];
 
-    // The close + field reset is now client_slot_release, which is a
+    // The close + field reset is now client_slot_release(), which is a
     // no-op on a slot that is not open — never constructed, never accepted, or
     // already released.  It also hands the session back instead of tearing it
     // down, because session teardown needs the registry and the pipeline and
@@ -321,7 +321,7 @@ static void release_slot_locked(int idx, const char* reason) {
     }
 
     if (rel.session) {
-        // The session id is copied BY VALUE.  Every call below used to
+        // The session id is copied BY VALUE.  Every call below does not
         // pass `s.session->session_id`, a reference that lives INSIDE the very
         // object destroy() erases from sessions_; it survived only because
         // destroy() happens to stop reading the parameter before the erase.
@@ -333,8 +333,8 @@ static void release_slot_locked(int idx, const char* reason) {
         // their tickets survive and are still flushed and still attributed.
         bridge::pipeline_unregister_session(session_id.c_str());
 
-        // R3 (design §2.7): THE CLAIM PIN — the half of R3 that
-        // SURVIVED the 2026-09-12 G3' reversal. In an EXPERIMENT episode a
+        // THE CLAIM PIN — the half of the unavailability rule that
+        // stays with a free-running clock. In an EXPERIMENT episode a
         // dropped socket must NOT destroy the session. Destroying it releases
         // its claims, which re-enables `ai_ctrl+0x28` for a character the
         // episode's frozen arm says is agent-controlled — an uncontrolled change
@@ -344,16 +344,16 @@ static void release_slot_locked(int idx, const char* reason) {
         // changes. The gap is instead RECORDED as unavailability in game-days
         // and, past X, invalidates the episode.
         //
-        // NOTE the pin is now on EXPERIMENT MODE, not on an armed gate — bead
+        // NOTE the pin is now on EXPERIMENT MODE, not on an armed gate — task
         // .5's resume rebinds this same session and re-registers it.
         //
-        // This deliberately overrides docs/design/multi-agent-control.md Q5 for
+        // This deliberately overrides the multi-agent control design for
         // experiment runs. FREE PLAY IS NOT AN EPISODE, so Q5's orphan-to-native
         // behaviour below is exactly what it has always been.
         //: THE PIN IS KEYED ON CLAIMS, because a session that has never
         //: held one is not a seat.
         //:
-        //: The shakedown-2 episode sealed INVALID on unavailability_over_x with the
+        //: A recorded episode sealed INVALID on unavailability_over_x with the
         //: agent blameless — its seat had 70 activities and zero unavailable days.
         //: The cost came from two driver helpers, episode-driver-C-steer-probe (0
         //: activities) and episode-driver-C-speed-pin (2), which handshake in CONTROL
@@ -381,11 +381,11 @@ static void release_slot_locked(int idx, const char* reason) {
         //:
         //: FREE PLAY IS UNTOUCHED — the else arm below still notes detached and then
         //: ended, byte for byte as before. This narrows only the experiment pin.
-        //: THREE STATES, ruled by the progenitor ("amend, re-freeze, then fix"):
+        //: THREE STATES:
         //:   (a) NOT declared and claims_ever == 0 -> not a participant. Suppress the
         //:       detached note, end it, destroy it, accrue nothing.
         //:   (b) DECLARED, claimed or not -> today's behaviour exactly. A seat that
-        //:       dies in pre-claim window stays a MEASURED HOLE, which is
+        //:       dies in the pre-claim window stays a MEASURED HOLE, which is
         //:       the point: the fix must not make a genuine agent failure invisible.
         //:   (c) claims_ever > 0 -> today's behaviour exactly. This also covers a
         //:       seat whose declaration went missing, so a dropped field cannot
@@ -410,8 +410,8 @@ static void release_slot_locked(int idx, const char* reason) {
                     session_id.c_str());
                 fflush(bridge::g_logfile);
             }
-            //: Second pass: FORGET, not end. Destroying the session was
-            //: necessary and NOT SUFFICIENT — shakedown 3 on deploy-32 shows this
+            //: second pass: FORGET, not end. Destroying the session was
+            //: necessary and NOT SUFFICIENT — a shakedown shows this
             //: branch firing twice and unavailability_game_days still reporting both
             //: helpers, ended, each with an open 364-day span over an X of 18. The
             //: registry forgot them; the ledger kept accruing, because its
@@ -427,21 +427,21 @@ static void release_slot_locked(int idx, const char* reason) {
             //: falling through are the same. That is a property of the current shape,
             //: not a guarantee — add cleanup after that block and this return silently
             //: skips it for claimless sessions only, which is the worst shape of bug
-            //: to find. acceptance_j6lk asserts the block is still last, so the next
+            //: to find. A host acceptance asserts the block is still last, so the next
             //: edit reds a row instead of inheriting a hazard.
             return;
         }
 
         bridge::pipeline_note_session_detached(session_id.c_str());
         if (bridge::episode_pins_claims()) {
-            // 10 stopped the DESTROY; this is the other half — the
+            // .10 stopped the DESTROY; this is the other half — the
             // session moves to DETACHED and stays RESUMABLE BY TOKEN.  The
             // slot-generation argument is the guard: if the client already
             // reconnected and rebound this session to another slot, the registry
             // refuses this close and NOTHING changes.  Without it a late reap of
             // a socket that is already dead (peer-pid probe, keepalive sweep)
             // takes a LIVE session's claims offline.
-            // hands back `bound_gen`, the generation the session was
+            // Hands back `bound_gen`, the generation the session was
             // bound at, captured BEFORE the release bumped it — which is
             // exactly the binding this close is entitled to tear down.
             const bool detached = bridge::g_session_registry.detach_from_slot(
@@ -514,7 +514,7 @@ std::vector<std::string> ipc_reconcile_declared_world(const WorldIdentity& decla
 #define CK3_BRIDGE_VERSION "unknown"
 #endif
 
-// rc2 provenance: release version, wire-protocol tag, and every env var the
+// Provenance: release version, wire-protocol tag, and every env var the
 // bridge reads ("" when unset). Keep the list in step with getenv() calls in
 // bridge/src. Secrets are reported as "<set>", never echoed.
 static std::string handshake_provenance_fields() {
@@ -526,7 +526,7 @@ static std::string handshake_provenance_fields() {
         "CK3_STRICT_BUILD_ID", "CK3_BRIDGE_STRICT",
         "CK3_INSTANCE_LAYOUT", "CK3_INSTANCE_ID", "CK3_INSTANCE_ROOT", "CK3_INSTANCE_DIR",
         "CK3_BRIDGE_SOCKET", "CK3_BRIDGE_PORT", "CK3_TELE", "CK3_BRIDGE_LOG", "CK3_BRIDGE_LOG_ARCHIVE_DIR",
-        "CK3_BRIDGE_SEND_TIMEOUT_MS", "CK3_BRIDGE_TRACE", "CK3_AI_WATCH",
+        "CK3_BRIDGE_SEND_TIMEOUT_MS", "CK3_BRIDGE_TRACE", "CK3_BRIDGE_EVENT_RULES", "CK3_BRIDGE_AI_VETO", "CK3_BRIDGE_UNLOCK_PERK", "CK3_BRIDGE_ARMY_ORDERS", "CK3_BRIDGE_ARMY_HOLD", "CK3_AI_WATCH",
         "CK3_LAW_TRIGGER_HARVEST",
         "CK3_UNAVAIL_ANOMALY_WALL_S", "CK3_UNAVAIL_EXCLUSION_FRACTION", "CK3_UNAVAIL_X_DAYS",
         "BRIDGE_DISTRUST_INNER_CB_VALIDITY", "BRIDGE_NO_PER_CB_OUTER_TRIGGER",
@@ -635,8 +635,8 @@ static HandshakeResult handle_handshake_for_slot(int idx, uint32_t read_gen,
         mode = bridge::session_mode_from_string(doc["mode"].GetString(),
                                                 bridge::Session::Mode::CONTROL);
 
-    // Landed: in `null` mode NOBODY gets a
-    // control session. That is the enforcement behind E0's "bridge attached, no
+    // In `null` mode NOBODY gets a
+    // control session. That is the enforcement behind null mode's "bridge attached, no
     // steering, zero tokens" — without it, "no control sessions" was a
     // convention that nothing in the bridge checked, and the two guards that
     // rest on it could not fire.
@@ -673,12 +673,12 @@ static HandshakeResult handle_handshake_for_slot(int idx, uint32_t read_gen,
 
     // The save/world the client VOUCHES FOR.  Supplied, never derived
     // — world_identity.h explains at length why the bridge cannot work this out
-    // itself.  The spelling is run_summary.json, so there is one:
+    // itself.  The spelling is the run_summary.json, so there is one:
     //   "world_identity": {"episode_id":..., "save_sha256":..., "start_date_year":N}
     //
     // Carrying it here does NOT replace `declare_save_identity`; it IS a
     // declaration, routed through the same single entry point below, because
-    // says so in as many words ("its `world` field must call
+    // the design says so in as many words ("its `world` field must call
     // world_identity_declare() rather than keep a parallel store").  A client
     // that prefers the standalone action still works: the resume then abstains
     // and SessionRegistry::reconcile_declared_world picks the answer up when the
@@ -709,7 +709,7 @@ static HandshakeResult handle_handshake_for_slot(int idx, uint32_t read_gen,
     {
         std::lock_guard<std::mutex> lock(g_client_mutex);
         ClientSlot& s = g_clients[idx];
-        // The frame above was parsed
+        // Release racing a handshake: the frame above was parsed
         // WITHOUT this mutex. If the socket dropped in that window the slot has
         // been released — and possibly already re-accepted by a different
         // client — so binding a session here would either orphan it on a free
@@ -795,7 +795,7 @@ static HandshakeResult handle_handshake_for_slot(int idx, uint32_t read_gen,
                 // resume_by_token already rebound it to (idx, slot_gen) under
                 // the registry lock, and destroying it would throw away the very
                 // claims the client came back for — turning a lost race into the
-                // mid-episode arm change this bead exists to prevent. Put it
+                // mid-episode arm change this code exists to prevent. Put it
                 // back to DETACHED instead, still holding everything, still
                 // resumable on the next attempt.
                 bridge::g_session_registry.detach_from_slot(
@@ -871,7 +871,7 @@ static HandshakeResult handle_handshake_for_slot(int idx, uint32_t read_gen,
         // (observe) and the driver's own control session at least. If both send
         // it the privilege goes to whoever handshakes first, and THE WRONG
         // WINNER FAILS SILENTLY: the read-lane trigger sits on a session that
-        // does no reading, reads keep stalling exactly as before the fix, and
+        // does no reading, reads keep stalling exactly as without it, and
         // `pipeline.episode_observer` names a plausible session. This converts
         // that into a loud logged refusal.
         //
@@ -884,7 +884,7 @@ static HandshakeResult handle_handshake_for_slot(int idx, uint32_t read_gen,
         // PRIVILEGE rather than of this call site. The if/else that used to live
         // here made it a property of one caller, and a caller that logged
         // REFUSED and then declared anyway conferred the read-lane trigger on a
-        // control session while lane, reading this site's source text,
+        // control session while the old check, reading this site's source text,
         // passed 9/9.
         //
         // THE MINTED MODE, not the requested one: null mode downgrades every
@@ -951,17 +951,17 @@ static int connected_client_count_locked() {
 // bytes pending, skip the write rather than blocking the game/reader thread.
 // The LARGEST reply the bridge is known to produce in normal service.
 // enumerate_ai_chars walks 65,869 characters and was measured at roughly this
-// size in arma7. The threshold below is derived from it rather than chosen, so
+// size in one arm run. The threshold below is derived from it rather than chosen, so
 // that the relationship — not the number — is what an acceptance checks.
 static constexpr int LARGEST_OBSERVED_REPLY_BYTES = 66 * 1024;
 
-// Was 32768, which NORMAL TRAFFIC GRAZED. arma7 dropped a reply at
+// Was 32768, which NORMAL TRAFFIC GRAZED. That run dropped a reply at
 // 33792 bytes pending — over by 1024, about 3%. A limit that ordinary replies
 // cross by 3% is not a flood guard; it is an intermittent abort generator, and
 // on a counting run it SELECTS ON COMPLETION, which is the one thing an
 // episode-level instrument must not do.
 //
-// Ruled by bt-bbd 2026-09-21: raise to >= 512KB, at least 8x the largest
+// The rule: raise to >= 512KB, at least 8x the largest
 // observed reply, so that only a genuine flood trips it. Kept as DROP-with-
 // record rather than block: blocking on the serving thread is a real hang risk,
 // and makes every drop counted on the heartbeat and every recorded drop
@@ -986,7 +986,7 @@ static constexpr int BACKPRESSURE_THRESHOLD = 8 * LARGEST_OBSERVED_REPLY_BYTES;
 // `out` (optional) records WHICH exit fired and how far the body got.
 // Every `return false` below sets it, so an unset stage in a failure record
 // means this function was not the one that failed — never "we did not look".
-// fix10: `best_effort` (a keepalive ping, a broadcast: frames nobody waits on)
+// `best_effort` (a keepalive ping, a broadcast: frames nobody waits on)
 // writes only when the whole frame has room now and otherwise drops it whole,
 // counted as backpressure; it never waits on a client that is not reading
 // (frame_send.h has the measured stall this closes).
@@ -1012,7 +1012,7 @@ static bool send_to_slot(int idx, uint32_t gen, const char* json_data, size_t le
         // and the game thread — a data race, so even the throttled number it
         // printed was not reliable. And being one static for the whole
         // function, it was shared across every slot, session and send path: the
-        // "1 total dropped" in arma7 silenced the next 98 drops ANYWHERE, with
+        // "1 total dropped" in that run silenced the next 98 drops ANYWHERE, with
         // six agents running. The verbose line stays throttled for volume; the
         // COUNT is now on the heartbeat and cannot be silenced.
         const uint64_t n_drops =
@@ -1023,7 +1023,7 @@ static bool send_to_slot(int idx, uint32_t gen, const char* json_data, size_t le
                 "(%d bytes pending, threshold %d, %llu dropped process-wide; "
                 "THROTTLED to the 1st and every 100th across ALL slots — see "
                 "backpressure_drops on the accept-thread heartbeat for the "
-                "true count) (ck-0zfc)\n",
+                "true count)\n",
                 idx, pending, BACKPRESSURE_THRESHOLD,
                 (unsigned long long)n_drops);
         }
@@ -1043,7 +1043,7 @@ static bool send_to_slot(int idx, uint32_t gen, const char* json_data, size_t le
 // Try to serve an envelope from the IPC thread. Returns true if processed
 // (every reply sent), false if it should be queued for the game thread.
 //
-// One execution thread for game objects. Classification:
+// — one execution thread for game objects. Classification:
 //   TIER 0/1 (is_bridge_internal_query): bridge state, intent enqueuers that poll,
 //     and the deferred-slot submitters; served HERE, on the IPC thread, in any
 //     clock state. A handler that polls must never run on the thread it waits for.
@@ -1094,15 +1094,15 @@ static void emit_management_ledger_record(const char* verb,
     //: The frame carries the caller's id under `caller_request_id`,
     //: NEVER `request_id`. request_id is what makes a frame a REPLY: both readers
     //: pop the caller's pending future on the FIRST frame bearing the id, before
-    //: any type dispatch (agent.py's _message_loop, mcp_server.py's
-    //: _bridge_listener), and schema states request_id is the only
+    //: any type dispatch (the MCP server's bridge listener,
+    //: mcp_server.py _bridge_listener), and the schema states request_id is the only
     //: discriminator. The order is not a race either: this send and the handler's
     //: own reply are both in try_inline_safe_query's TIER-1 arm, this one first,
     //: no branch between them, because dispatch_action_with_response only FILLS
-    //: the buffer. Cited by FUNCTION deliberately — the line numbers here went
-    //: stale once already (this site is :1053 at ep-02's sha 0c24ba48), and
-    //: acceptance_h4pn asserts the ordering by measurement so this prose cannot
-    //: rot silently. RENAMED RATHER THAN DROPPED (ruled by bt-bbd): the pop
+    //: the buffer. Cited by FUNCTION deliberately — line numbers go
+    //: stale, and
+    //: a host acceptance asserts the ordering by measurement so this prose cannot
+    //: rot silently. RENAMED RATHER THAN DROPPED: the pop
     //: cannot match, the real reply resolves the future, and the value survives
     //: for decision rows instead of becoming null. The relay is unaffected —
     //: records_in admits on bridge_record being a Mapping and session_id being
@@ -1112,7 +1112,7 @@ static void emit_management_ledger_record(const char* verb,
     //: bridge/test/mgmt_ledger_probe.cpp calls to obtain these exact bytes. It was
     //: inline here, and the probe assembled its own copy: a producer nothing
     //: compared to, beside a relay fixture hand-shaped to the consumer. Those two
-    //: agreed with each other while ep-02's bundle held zero ledger rows.
+    //: agreed with each other while a recorded episode's bundle held zero ledger rows.
     const std::string frame = bridge::build_management_ledger_frame(
         verb, request_id, response, sid, cid,
         bridge::g_tick_id.load(std::memory_order_relaxed),
@@ -1126,20 +1126,20 @@ static void emit_management_ledger_record(const char* verb,
     //: observer, never the caller, so the routing must not depend on which thread
     //: happens to reach the emitter.
     //:
-    //: WHAT THE MISROUTING DOES *NOT* EXPLAIN. ep-02 shows zero ledger frames in
+    //: WHAT THE MISROUTING DOES *NOT* EXPLAIN. That episode shows zero ledger frames in
     //: the sealed bundle, and it is tempting to read that as the unicast having
-    //: hidden them from the relay. read refutes that: the CALLER did not
+    //: hidden them from the relay. A live read refutes that: the CALLER did not
     //: receive them either — zero record-shaped replies across 584 recorded
     //: tool_results, against 1151 management dispatches. So nobody received the
     //: frames, and the misrouting is a real defect that is nevertheless NOT the
     //: cause of that zero. An earlier version of this note asserted the causal
     //: reading and a ~386 denominator; both are WITHDRAWN as unobserved. The
-    //: emitter IS compiled into the .so ep-02 loaded (strings witness on
-    //: the emitter-unique literal below reads 1, and 0 on the earlier .so), and
+    //: emitter IS compiled into the .so that episode loaded (the strings witness on
+    //: the emitter-unique literal below reads 1, and 0 on the superseded .so), and
     //: the symptom could not have shown in that population anyway: the client
     //: builds its tool_result in redesign.py's session_impl and discards the
     //: frame, and the one field the record lacks (controlled_primary) triggers a
-    //: fallback that returns the right answer — so the defect was absorbed by a
+    //: fallback that returns the right answer — so the hazard was absorbed by a
     //: fallback added for an unrelated reason. Compiled in / reached / sent /
     //: received are FOUR claims; received is the one still open.
     broadcast_observation(frame.c_str(), frame.size());
@@ -1259,7 +1259,7 @@ static bool try_inline_safe_query(const std::string& msg,
 
         // --- TIER 0: the deferred calls, under the single-flight lock ---
         // CB validity / acceptance / trigger / decision-eval / faction / cascade
-        // submit a game-thread query slot and poll for its verdict.: they
+        // submit a game-thread query slot and poll for its verdict. They
         // are game-thread reads now (is_game_state_query), so the whole handler
         // runs in the drain and services its own slot there
         // (service_slots_if_game_thread); query_interaction_check, which enqueues
@@ -1310,7 +1310,7 @@ static bool try_inline_safe_query(const std::string& msg,
         // --- TIER 2: Game-state reads — on the game thread, in either clock state ---
         // The read runs inside the session-pass drain: serial with every engine
         // command and the whole daily tick, so it can neither race the AI
-        // workers nor see a half-applied tick (which is why the #93 torn-read
+        // workers nor see a half-applied tick (which is why the torn-read
         // re-read and the paused-only gate are gone). The originating session
         // is reinstalled there by id. The drain refreshes the readable-range
         // table before reads (bridge_init.cpp refresh_ranges_for_reads).
@@ -1330,7 +1330,7 @@ static bool try_inline_safe_query(const std::string& msg,
             fflush(bridge::g_logfile);
         }
 
-        // Inject request_id + live tick/game_date (#123) into response.
+        // Inject request_id + live tick/game_date into response.
         if (!response_out.empty() && response_out[0] == '{') {
             std::string injected = "{";
             if (request_id[0]) {
@@ -1354,7 +1354,7 @@ static bool try_inline_safe_query(const std::string& msg,
             g_last_send_outcome = &rr_out;
             bool sent_ok = send_observation(response_out.c_str(), response_out.size());
             g_last_send_outcome = nullptr;
-            // The elapsed comes from in-flight record, which
+            // The elapsed comes from the in-flight record, which
             // already stamped this request's start on the same CLOCK_MONOTONIC
             // the log prefix uses. If the seqlock read is not stable, or the
             // slot is no longer busy, the elapsed is UNKNOWN and says so — it
@@ -1374,13 +1374,13 @@ static bool try_inline_safe_query(const std::string& msg,
     return true;
 }
 
-// D1-C + N1 + N2 (bridge-investigation-20260801): last-line guard on the
+// The last-line guard on the
 // g_msg_queue fall-through.
 //
 // Anything that reaches this point would be pushed to g_msg_queue, which the
 // game-thread drain empties every session pass, paused or running.
 //
-//   D1-C: an UNREGISTERED action name (query_titles, overlay's query_title,
+//   An UNREGISTERED action name (query_titles, overlay's query_title,
 //   any typo) has no handler at all — queued it would only learn
 //   "unknown_action" from the drain. We fast-fail these inline via
 //   is_registered_action() (dispatch_router.cpp — generated from the same
@@ -1388,8 +1388,8 @@ static bool try_inline_safe_query(const std::string& msg,
 //   on the snapshot.cpp classifier lists: legit Tier-3/unclassified actions
 //   must still queue.
 //
-//   N2 rider: "handshake" sent as an ACTION lands here too (it is not a
-//   registered action) and gets a typed redirect instead of the historical
+//   "handshake" sent as an ACTION lands here too (it is not a
+//   registered action) and gets a typed redirect instead of a
 //   silent stall.
 //
 // Envelopes are consumed whole or not at all: a partially-rejected envelope
@@ -1446,7 +1446,7 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
             resp += request_id;
             resp += "\",";
         }
-        resp += build_envelope_clock_fragment();  // #123: "tick":N,"game_date":"..."
+        resp += build_envelope_clock_fragment();  // "tick":N,"game_date":"..."
         resp += ',';
         if (compiled_out) {
             // Same shape as dispatch_router.cpp:refuse_debug_verb.
@@ -1454,12 +1454,12 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
             resp += action_type;
             resp += "\"}";
         } else {
-            // D1-C fast-fail: same shape as dispatch_action's unknown tail.
+            // Fast-fail: same shape as dispatch_action's unknown tail.
             resp += "\"success\":false,\"error\":\"unknown_action\",\"action\":\"";
             resp += action_type;
             resp += '"';
             if (strcmp(action_type, "handshake") == 0) {
-                // N2: misframed handshake-as-action — typed redirect.
+                // A misframed handshake-as-action — typed redirect.
                 resp += ",\"hint\":\"handshake is a frame type, not an action: "
                         "send {\\\"type\\\":\\\"handshake\\\"} as its own NDJSON line.\"";
             }
@@ -1484,17 +1484,17 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
 // answers inline (routing the reply to the originating slot via the
 // thread-local target) or queues mutating actions for on_tick.
 //
-// WAVE 13: ONE LINE PER SLOT PER ROUND. This thread is the only
+// ONE LINE PER SLOT PER ROUND. This thread is the only
 // one that serves any client, and a Tier-2 read blocks it until the game-thread
 // drain has run that read (serve_on_game_thread, up to kGameThreadReadWaitMs
-// each). It used to serve EVERY complete line of a slot's read() chunk before it
+// each). It does not serve EVERY complete line of a slot's read() chunk before it
 // looked at another slot, so a client that issued a batch of reads together held
 // every other client for the whole batch. In a seated episode that was the
 // seat's observe: its pushed-warnings step reads query_realm once per direct
 // vassal, concurrently (32 for the king of France), and the meter's
 // get_tick_info -- a Tier-1 read that needs no game thread -- waited behind the
-// batch and timed out at the meter's 15 s on 47 of 51 observes of pilot 2's K1
-// Now complete lines go to
+// batch and timed out at the meter's 15 s on 47 of 51 observes of one seat in a
+// pilot run. Now complete lines go to
 // a per-slot FIFO and each round serves at most one line of each slot, starting
 // one slot further on each round, so a waiting client is held for at most one
 // line of each other busy client. Within a slot the order is unchanged. A slot
@@ -1504,7 +1504,7 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
 // served before it is released: every line taken off the socket runs, as when
 // they ran at read time (test_reader_fairness).
 //
-// WAVE 19: fairness moved the cost to the seats. Each of those
+// Fairness moved the cost to the seats. Each of those
 // vassal reads was a ~0.9 s walk of the character table on the game thread
 // (count_realm_counties), so a round of six seats' batches held this thread
 // ~0.9 s per line and the king's 32 lines took ~30 s, most past his read
@@ -1512,7 +1512,7 @@ static bool try_queue_fallthrough_rejection(const std::string& msg) {
 // from one walk (query_handlers.cpp query_realm_batch, realm_tally.h): it holds
 // this thread about as long as one single read did, so the bound above (one line
 // of each other busy client) is unchanged
-//
+// (README.md).
 static void reader_loop() {
     bridge::register_thread(bridge::ThreadRole::IpcReader);
     // Mask SIGALRM on this thread — the watchdog timer targets the game thread
@@ -1564,7 +1564,7 @@ static void reader_loop() {
             return false;
         }
 
-        // N2 (surface audit 2026-08-01): an ACTIONS envelope is never a
+        // An ACTIONS envelope is never a
         // handshake. Without the "actions" exclusion, a misframed
         // {"actions":[{"action":"handshake",...}]} whose text also
         // contained "type" matched this substring test, got a plain
@@ -1615,7 +1615,7 @@ static void reader_loop() {
                              line_buf.find("\"actions\"") == std::string::npos);
 
         if (is_handshake) {
-            // 2026.12.5: a handshake carries the resume token, which never reaches
+            // A handshake carries the resume token, which never reaches
             // a log (log_redact.h); the rest of the line is kept.
             if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Handshake received (slot=%d): %s\n", idx, bridge::redact_for_log(line_buf).c_str());
 
@@ -1635,7 +1635,7 @@ static void reader_loop() {
             const char* resume_token = hs_result.session
                 ? hs_result.session->resume_token.c_str() : "";
 
-            // leg (e): WHAT WE ACTUALLY SAW, beside what we
+            // Leg (e): WHAT WE ACTUALLY SAW, beside what we
             // expected. `binary_build_id` keeps its name and its
             // meaning — ck3_version::BUILD_ID_HEX, the EXPECTED
             // constant the offsets were cut against — because renaming
@@ -1646,7 +1646,7 @@ static void reader_loop() {
 
             // Grown from 2048 with the six fields: a truncated
             // ack is a SILENT provenance failure, which is the exact
-            // class of defect this bead exists to end.
+            // class of defect this code exists to end.
             char ack_buf[4096];
             const int ack_len = snprintf(ack_buf, sizeof(ack_buf),
                 "{\"type\":\"handshake_ack\","
@@ -1722,7 +1722,7 @@ static void reader_loop() {
                             "will see no build provenance\n",
                             ack_len, sizeof(ack_buf));
             }
-            // rc2: splice the provenance fields in after "type". Built
+            // Splice the provenance fields in after "type". Built
             // separately because env values are unbounded.
             static const char kAckHead[] = "{\"type\":\"handshake_ack\",";
             std::string ack(kAckHead);
@@ -1765,10 +1765,10 @@ static void reader_loop() {
             bridge::pipeline_note_session_activity(slot_session);
 
             // The pipeline conductor's first stop. In
-            // LEGACY mode (the default, G11) this is one relaxed atomic
+            // LEGACY mode (the default) this is one relaxed atomic
             // load and a `return false`, so the ladder below runs
             // exactly as it did before — that indistinguishability is
-            // the acceptance gate for the bead, not an aspiration.
+            // the acceptance gate for the task, not an aspiration.
             // In pipeline mode it buffers the call and returns a ticket,
             // EXCEPT for ANY-polarity calls, which fall through to the
             // synchronous inline path below because the whole ops ladder
@@ -1789,7 +1789,7 @@ static void reader_loop() {
             // broadcast, which is another request's answer, well-formed
             // and complete and about something else entirely.
             //
-            // hit exactly this probing a live world: two malformed
+            // A live probe hit exactly this probing a live world: two malformed
             // envelopes each came back with a full query_character payload
             // for Harold Godwinson. They read a field off it, wrote the
             // OPPOSITE of the truth into a report, and caught it only
@@ -1812,7 +1812,7 @@ static void reader_loop() {
                     "[CK3-Bridge] REFUSED a malformed envelope on slot=%d "
                     "(no \"actions\" array) — refusing rather than queueing, "
                     "because a queued envelope's caller reads the next "
-                    "BROADCAST as its own answer (ck-dzxr)\n", idx);
+                    "BROADCAST as its own answer\n", idx);
             } else if (bridge::pipeline_handle_envelope(line_buf, slot_session)) {
                 // Buffered + acknowledged (or answered, for `check`).
             } else if (try_inline_safe_query(line_buf, slot_session)) {
@@ -1828,7 +1828,7 @@ static void reader_loop() {
                     if (bridge::g_logfile) fprintf(bridge::g_logfile, "[CK3-Bridge] Rejected action (slot=%d state=%s)\n",
                             idx, session_state_string());
                 } else if (try_queue_fallthrough_rejection(line_buf)) {
-                    // D1-C/N2: an envelope of unregistered names
+                    // An envelope of unregistered names
                     // answered inline with unknown_action.
                 } else {
                     // Queue for the game-thread drain. The drained response is broadcast
@@ -1847,7 +1847,7 @@ static void reader_loop() {
                 }
             }
 
-            // R1c (design §2.9): the READER-THREAD anchor of
+            // The READER-THREAD anchor of
             // the pulse ledger. This envelope's inline dispatch is over,
             // so any pulse THIS thread still has open is leaked — the
             // same argument as the drain anchor in bridge_init.cpp, and
@@ -2025,9 +2025,9 @@ static void reader_loop() {
     }
 }
 
-// / §6.2: the max_detach_s bound.
+// §6.2: the max_detach_s bound.
 //
-// The BOUND is, and its authority is the episode manifest
+// The BOUND is the abort ladder's, and its authority is the episode manifest
 // (`bounds.max_detach_s`, default 900s) read by scripts/episode_abort.sh.  The
 // bridge cannot parse the manifest, so it reads the SAME env override and falls
 // back to the SAME default — one number, one spelling, no third name.
@@ -2056,7 +2056,7 @@ static void sweep_detached_sessions() {
             fprintf(bridge::g_logfile,
                 "[CK3-Bridge] max_detach_s EXCEEDED for session %s — REPORTED as "
                 "lost (claims retained, ai_ctrl+0x28 untouched). The episode is "
-                "terminated by episode_abort.sh with reason=session_lost; the "
+                "ended from outside the bridge with reason=session_lost; the "
                 "bridge releases nothing here.\n",
                 sid.c_str());
             fflush(bridge::g_logfile);
@@ -2136,7 +2136,7 @@ static void server_loop() {
                     char ib[512];
                     char pb[192];
                     if (bridge::g_logfile) {
-                        // The host's PSI beside the drain
+                        // A live proof: the host's PSI beside the drain
                         // lock, so a host thrash and a bridge lock stall read
                         // differently (bridge/include/host_pressure.h).
                         fprintf(bridge::g_logfile,
@@ -2164,7 +2164,7 @@ static void server_loop() {
                 // QUIET log is still readable. "No REPLY NOT DELIVERED line"
                 // only means something beside a climbing attempt count; on its
                 // own it is equally consistent with the instrument never having
-                // run, which is the exact ambiguity this bead exists to remove.
+                // run, which is the exact ambiguity this code exists to remove.
                 char rc[160];
                 // Refusal counts ride the heartbeat too, so a caller
                 // bug that a fix made QUIET still shows as a climbing number
@@ -2178,7 +2178,7 @@ static void server_loop() {
                 // here would drop the new counters off the end of the line and
                 // leave the heartbeat looking healthy. scope_slot_probe.cpp
                 // asserts the formatted length against this size.
-                char ss[768];   // Scope-slot outcomes + latch
+                char ss[1280];  // Scope-slot outcomes + latch; deferred restore; script actions / watchdog (worst case 1,130)
                 char la[192];   // Rotated-window archiving
                 fprintf(bridge::g_logfile,
                     "[CK3-Bridge] IPC accept-thread heartbeat: "
@@ -2324,7 +2324,7 @@ static void server_loop() {
                 if (bridge::slot_is_open(g_clients[chosen_slot]))
                     release_slot_locked(chosen_slot, "stale slot displaced by new accept");
                 ClientSlot& s = g_clients[chosen_slot];
-                // In_use + fd + gen are written together under BOTH
+                // in_use + fd + gen are written together under BOTH
                 // g_client_mutex (held here) and send_mtx (taken inside); bumping
                 // gen makes the reader reset framing and invalidates any stale
                 // send snapshot.
@@ -2460,7 +2460,7 @@ bool start_ipc_server(const char* socket_path) {
         }
     }
 
-    // Create socket. (node): close-on-exec. Without it CK3's crash
+    // Create socket. Close-on-exec. Without it CK3's crash
     // handler handed the listener to CrashReporter (fork + exec), which kept the
     // socket accepting with no bridge behind it after the game died.
 #ifdef _WIN32
@@ -2495,7 +2495,7 @@ bool start_ipc_server(const char* socket_path) {
     // but the listen backlog is intentionally larger: if the accept-thread
     // stalls briefly (mutex wait, log pressure, etc.), a backlog of 1 makes
     // the kernel drop follow-up connects with EAGAIN, which is exactly the
-    // failure mode (Recv-Q=2 vs backlog=1 → every admin connect
+    // Failure mode (Recv-Q=2 vs backlog=1 → every admin connect()
     // returns EAGAIN until someone drains the queue). Backlog=16 lets new
     // clients ride out short stalls without the socket looking "full".
     if (listen(g_server_fd, 16) < 0) {
@@ -2606,7 +2606,7 @@ bool get_client_lock_info(ClientLockInfo* out) {
 // MATCHED BY ID, NOT BY POINTER, per client_slot.h's own warning: a session can
 // be ERASED out from under a live slot, so the by-value session_id copy is the
 // only key that does not dereference a pointer that may already be freed
-// (generalising).
+// (the client-slot rule, generalised).
 //
 // FALLS BACK TO BROADCAST, DELIBERATELY. An unsolicited engine event has no
 // originating session, and a client that disconnected mid-flight has no slot.

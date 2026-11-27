@@ -1,16 +1,15 @@
 """seat_reservations.py — THE reader of the cell's seat reservations (toolkit 2026.12.7).
 
-WHY (v3pilot5, 2026-11-10). In weak_orders and weak_intent the king seat called
+WHY. In two cells of a pilot run the king seat called
 `session(action="add")` on all five dukes' declared characters within its first
 minute and held them to the horizon; the duke seats were refused
-`owned_by_other` (weak_intent D4: 43 times, continuations exhausted). Nothing
+`owned_by_other` (one duke 43 times, continuations exhausted). Nothing
 stopped one seat claiming another declared seat's ruler before that seat bound.
-Owner ruling 2026-11-10, "Toolkit 2026.12.7 (Recommended)": the server refuses
+The rule: the server refuses
 the claim (`reserved_for_another_seat`) and the cell passes each seat its
 reserved ids.
 
-THE DECLARATION. The cell (`scripts/dry_cell.py build_plan`, which the cell
-runner `ck3bench/runner/cell.py` uses for every seat's environment) sets
+THE DECLARATION. The harness that starts the seats sets
 `CK3_RESERVED_FOR_OTHER_SEATS` on each seat to the declared characters of the
 OTHER seats, comma-separated ("12137,14445"). It never names the seat's own
 ruler. This module is the one place the value is read and parsed; the cell
@@ -29,8 +28,8 @@ read as "no reservations": every claim is refused `seat_reservations_unreadable`
 until it is fixed, because a reservation the server cannot establish is not one
 it may default away.
 
-THE SELF CHECK IS AGAINST THE SEAT'S ORIGINAL DECLARED ID (F1 on
-1eaab8ac), `CK3_SEAT_DECLARED_CHARACTER_ID`, which the cell plan sets once and
+THE SELF CHECK IS AGAINST THE SEAT'S ORIGINAL DECLARED ID,
+`CK3_SEAT_DECLARED_CHARACTER_ID`, which the cell plan sets once and
 nothing rewrites. NOT `CK3_AGENT_CHARACTER_ID`: `ck3agent run` rewrites that to
 the rulers the seat CARRIES into a continuation (cli.py, the carry after a
 hand-over), and after a succession a carried heir may be another seat's
@@ -46,7 +45,7 @@ import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
-#: THE spelling. scripts/dry_cell.py sets it; scripts/test_dry_cell.py checks the mirror.
+#: THE spelling. The experiment's seat launcher sets it, and its own test checks the mirror.
 RESERVED_ENV = "CK3_RESERVED_FOR_OTHER_SEATS"
 #: The seat's ORIGINAL declared ruler, as the cell plan records it (the plan's
 #: seat character_id). Set beside RESERVED_ENV; never rewritten by a continuation.
@@ -63,7 +62,7 @@ R_UNREADABLE = "seat_reservations_unreadable"
 REASONS = (R_UNREADABLE, R_RESERVED)
 
 #: The session actions that claim a character and so are checked: `add` (the
-#: v3pilot5 route) and `control`, which SWITCHES the seat onto the character and
+#: route a pilot run took) and `control`, which SWITCHES the seat onto the character and
 #: takes it from its seat just the same. `release` claims nothing.
 CLAIM_ACTIONS = ("add", "control")
 

@@ -1,12 +1,12 @@
 // action_log_row.h — what one action-log row says about the action.
 //
-// THE DEFECT. The action log (<telemetry>/action_log.jsonl, dispatch_router.cpp
+// THE HAZARD. The action log (<telemetry>/action_log.jsonl, dispatch_router.cpp
 // emit_action_log) splices the handler's reply in as `result` at dispatch time.
 // For a write the drain runs LATER (call_war_create_core on the game thread,
 // create_title, faction, scheme, interaction, decision), that reply is the
 // enqueue receipt: {"success": false, "status": "queued", "reason":
 // "no_poll_on_game_thread", "drains_when": "next_pass"}. The row therefore read
-// `success:false` for every landed war in the 2026.11 pilots — all 31
+// `success:false` for every landed war in the recorded runs — all 31
 // call_war_create_core rows, including Manasseh's war 13 that was won and
 // enforced — while the seat's reply said `applied, verified_active: true`. The
 // poll's absence was being recorded as the action's failure, and the drain's
@@ -75,14 +75,14 @@ inline ActionLogVerdict action_log_verdict_of(const char* result_json) {
         return {"pending", poll};
     if (strcmp(status, "war_created") == 0 || strcmp(status, "rejected") == 0) poll = "answered";
 
-    // fix10 (v4 pilot 2, council-a: 15 `script_action declare_war ... applied`
+    // (one recorded run had 15 `script_action declare_war ... applied`
     // rows whose reply said guard "refused", while the seat was told
     // `rejected can_declare_war_false`). A script action's `success` is the
     // engine running the effect script; its guard (`if = { limit = {
     // can_declare_war ... } }`) deciding NOT to act is `guard: refused`, and
     // the action did not happen: rejected, answered.
     if (strcmp(str("guard"), "refused") == 0) return {"rejected", "answered"};
-    // lane peace: a script action that writes nothing to the game (end_war with
+    // A script action that writes nothing to the game (end_war with
     // no terms, the read-only listing) is a READ, never applied: the action log
     // is read as the write log (attribution, writes.txt).
     {

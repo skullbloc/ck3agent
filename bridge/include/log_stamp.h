@@ -1,7 +1,7 @@
 // ONE spelling of the bridge log's wall-clock prefix.
 //
-// WHY THIS EXISTS. tried to measure per-action bridge latency from
-// arma7 and could not, then tried from arma8's 204MB of preserved trace and
+// WHY THIS EXISTS. One review tried to measure per-action bridge latency from
+// one arm run and could not, then tried from another's 204MB of preserved trace and
 // still could not. The reason is structural: blog() (bridge_init.cpp) stamps
 // CLOCK_MONOTONIC as "[%5ld.%03ld] " and is declared `static`, so ONLY that
 // translation unit can call it. Every other log path — the BT_TRACE

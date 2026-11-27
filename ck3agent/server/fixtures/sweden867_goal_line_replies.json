@@ -1,0 +1,1147 @@
+{
+ "_doc": "Two replies of a seated Sweden 867 run as the seat received them, cut by the cap (their `truncated` blocks removed): T1 inspect subject=title title_key=k_sweden (10,984 bytes before the cut, counties 15 of 25 shown) and T7 cbs target_id=14128 (12,519 bytes, valid_options 1 of 4 shown). The rows not shown were not recorded; the tests rebuild the lists to their recorded lengths from the shown rows.",
+ "inspect_title_t1": {
+  "result": {
+   "subject": "title",
+   "title_key": "k_sweden",
+   "title_id": 2416,
+   "name": "Sweden",
+   "tier": "kingdom",
+   "holder_id": null,
+   "holder_name": null,
+   "summary": {
+    "counties_you_control": 12,
+    "counties": 25,
+    "held": 12,
+    "total": 25,
+    "fraction": 0.48,
+    "creation_needs_counties": 13,
+    "duchies_you_hold": 1,
+    "duchies": 7
+   },
+   "counties": [
+    {
+     "title_id": 2442,
+     "key": "c_varmland",
+     "duchy": "d_bergslagen",
+     "holder_id": 14128,
+     "realm_ruler_id": 14128,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2458,
+     "key": "c_vastergotland",
+     "duchy": "d_vastergotland",
+     "holder_id": 14127,
+     "realm_ruler_id": 14127,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2464,
+     "key": "c_skara",
+     "duchy": "d_vastergotland",
+     "holder_id": 14127,
+     "realm_ruler_id": 14127,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2468,
+     "key": "c_dal",
+     "duchy": "d_vastergotland",
+     "holder_id": 14127,
+     "realm_ruler_id": 14127,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2471,
+     "key": "c_nordmark",
+     "duchy": "d_vastergotland",
+     "holder_id": 14128,
+     "realm_ruler_id": 14128,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2490,
+     "key": "c_more",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2494,
+     "key": "c_sevede",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2498,
+     "key": "c_varend",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2504,
+     "key": "c_njudung",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2509,
+     "key": "c_finnveden",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2521,
+     "key": "c_medelpad",
+     "duchy": "d_norrland",
+     "holder_id": 14813,
+     "realm_ruler_id": 14813,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2526,
+     "key": "c_angermanland",
+     "duchy": "d_norrland",
+     "holder_id": 14814,
+     "realm_ruler_id": 14814,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2532,
+     "key": "c_gutland",
+     "duchy": "d_gotland",
+     "holder_id": 14320,
+     "realm_ruler_id": 14320,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2485,
+     "key": "c_narke",
+     "duchy": "d_ostergotland",
+     "holder_id": 13425,
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": "unpressed"
+    },
+    {
+     "title_id": 2418,
+     "key": "c_upland",
+     "duchy": "d_svealand",
+     "holder_id": 12330,
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    }
+   ],
+   "duchies": [
+    {
+     "title_id": 2436,
+     "key": "d_bergslagen",
+     "holder_id": null,
+     "you_hold_it": false,
+     "counties": 4,
+     "counties_you_control": 3,
+     "your_claim": false,
+     "if_you_hold_it": {
+      "no_claim_needed_on": [
+       "c_varmland"
+      ],
+      "cb": "individual_county_de_jure_cb"
+     }
+    },
+    {
+     "title_id": 2457,
+     "key": "d_vastergotland",
+     "holder_id": 14127,
+     "you_hold_it": false,
+     "counties": 4,
+     "counties_you_control": 0,
+     "your_claim": false
+    },
+    {
+     "title_id": 2489,
+     "key": "d_smaland",
+     "holder_id": 15054,
+     "you_hold_it": false,
+     "counties": 6,
+     "counties_you_control": 1,
+     "your_claim": false,
+     "if_you_hold_it": {
+      "no_claim_needed_on": [
+       "c_more",
+       "c_sevede",
+       "c_varend",
+       "c_njudung",
+       "c_finnveden"
+      ],
+      "cb": "individual_county_de_jure_cb"
+     }
+    },
+    {
+     "title_id": 2515,
+     "key": "d_norrland",
+     "holder_id": null,
+     "you_hold_it": false,
+     "counties": 3,
+     "counties_you_control": 1,
+     "your_claim": false,
+     "if_you_hold_it": {
+      "no_claim_needed_on": [
+       "c_medelpad",
+       "c_angermanland"
+      ],
+      "cb": "individual_county_de_jure_cb"
+     }
+    },
+    {
+     "title_id": 2531,
+     "key": "d_gotland",
+     "holder_id": null,
+     "you_hold_it": false,
+     "counties": 1,
+     "counties_you_control": 0,
+     "your_claim": false
+    },
+    {
+     "title_id": 2475,
+     "key": "d_ostergotland",
+     "holder_id": null,
+     "you_hold_it": false,
+     "counties": 3,
+     "counties_you_control": 3,
+     "your_claim": false
+    },
+    {
+     "title_id": 2417,
+     "key": "d_svealand",
+     "holder_id": 12330,
+     "you_hold_it": true,
+     "counties": 4,
+     "counties_you_control": 4,
+     "your_claim": false
+    }
+   ],
+   "realms": [
+    {
+     "ruler_id": 12330,
+     "ruler_name": "Björn",
+     "primary_title": "d_svealand",
+     "military_strength": 1542,
+     "realm_counties": 12,
+     "counties_here": 12
+    },
+    {
+     "ruler_id": 15054,
+     "ruler_name": "Vagn",
+     "primary_title": "d_smaland",
+     "military_strength": 1923,
+     "realm_counties": 5,
+     "counties_here": 5
+    },
+    {
+     "ruler_id": 14127,
+     "ruler_name": "Hrane",
+     "primary_title": "d_vastergotland",
+     "military_strength": 1537,
+     "realm_counties": 3,
+     "counties_here": 3
+    },
+    {
+     "ruler_id": 14128,
+     "ruler_name": "Þorfinn",
+     "primary_title": "c_varmland",
+     "military_strength": 883,
+     "realm_counties": 2,
+     "counties_here": 2
+    },
+    {
+     "ruler_id": 14320,
+     "ruler_name": "Steinn",
+     "primary_title": "c_gutland",
+     "military_strength": 501,
+     "realm_counties": 1,
+     "counties_here": 1
+    },
+    {
+     "ruler_id": 14813,
+     "ruler_name": "Ragnarr",
+     "primary_title": "c_medelpad",
+     "military_strength": 502,
+     "realm_counties": 1,
+     "counties_here": 1
+    },
+    {
+     "ruler_id": 14814,
+     "ruler_name": "Sverker",
+     "primary_title": "c_angermanland",
+     "military_strength": 822,
+     "realm_counties": 1,
+     "counties_here": 1
+    }
+   ],
+   "creation_rule": "counties of its de jure land in your realm (yours and your vassals'): a duchy or kingdom at least half, an empire more than 80% (the game's rule)",
+   "creation": {
+    "source": "the requirements mcp__ck3__do(action_class='formable_titles') gives for this title",
+    "counties": {
+     "have": 12,
+     "need": 13,
+     "met": false
+    },
+    "tier_rule": {
+     "met": false,
+     "rule": "hold 2 duchy titles (you hold 1) (or hold 1 title of kingdom tier or above)",
+     "bill": {
+      "currency": "gold",
+      "cost": 225.0,
+      "of": [
+       "d_ostergotland",
+       "k_sweden"
+      ]
+     }
+    },
+    "price": {
+     "met": true,
+     "cost": 150.0,
+     "currency": "gold",
+     "have": 156.0
+    },
+    "game_check": {
+     "met": false,
+     "reasons": [
+      "You only have 12 of 13 required Counties"
+     ]
+    },
+    "nearest_unmet": {
+     "requirement": "tier_rule",
+     "step": "create d_ostergotland",
+     "counties": "3/3 held",
+     "cost": 75.0,
+     "currency": "gold",
+     "you_have": 156.0,
+     "gate": null,
+     "next_call": {
+      "tool": "mcp__ck3__do",
+      "args": {
+       "intent": "mint_title",
+       "args": {
+        "title_key": "d_ostergotland"
+       }
+      }
+     }
+    }
+   },
+   "next_call_templates": {
+    "council_task_task_fabricate_claim": {
+     "args": {
+      "args": {
+       "seat": "court_chaplain",
+       "target_title_id": "<title_id>",
+       "task": "task_fabricate_claim"
+      },
+      "intent": "council_task"
+     },
+     "tool": "mcp__ck3__do"
+    }
+   },
+   "county_rows": "a county row's realm ruler's name and strength are in realms (ruler_id); a next_call that is a name is a call in next_call_templates, with <title_id> the row's own title_id"
+  },
+  "recorded_bytes": 10984,
+  "delivered_bytes": 7987,
+  "of": {
+   "counties": 25
+  }
+ },
+ "cbs_t7": {
+  "result": {
+   "target_id": 14128,
+   "target_state": {
+    "independent": true,
+    "imprisoned": false,
+    "in_alliance": false,
+    "in_truce": false,
+    "already_at_war_opposing": false,
+    "truce_source": "relation_slot",
+    "claim_on_target": "unpressed",
+    "claim_note": "unpressed: it dies with you (the game passes only pressed claims to your children); a white peace in its war presses it"
+   },
+   "valid_options": [
+    {
+     "cb": "claim_cb",
+     "valid": true,
+     "scope": "county",
+     "grants": "the claimed title(s) and the counties under them (installs the claimant)",
+     "requirements_unmet": [],
+     "tradeoffs": [
+      "target_mode=6 (claim): pass claimant_id + cb_title_id to dispatch",
+      "engine gates this read does not evaluate (gates_unchecked): valid_to_start, ai_only_against_neighbors, max_ai_diplo_distance_to_title, per_cb_allowed_against_character"
+     ],
+     "target_mode": 6,
+     "needs_cb_title_id": true,
+     "needs_claimant": true,
+     "dispatch_supported": true,
+     "cb_title_id": 2442,
+     "claimant_id": 12330,
+     "family": "claim",
+     "cost_prestige": 31.25,
+     "cost_piety": 0.0,
+     "affordable": true,
+     "may_refuse": {
+      "armies_raised": 1741,
+      "why": "your armies are raised: the game's declare-war interaction refuses a declaration while they are (common/character_interactions/00_war.txt); the war is sent anyway and a refusal names the game's own reading",
+      "fix": "do army action=disband disbands one first (refused in hostile land or near enemies)",
+      "next": {
+       "tool": "mcp__ck3__do",
+       "args": {
+        "intent": "army",
+        "args": {
+         "action": "disband",
+         "army_id": 136
+        }
+       }
+      }
+     },
+     "prestige_if": {
+      "have": 1335.7,
+      "declare": -31.25,
+      "after_declare": 1304.45,
+      "each_ally_joining": "-75 county, -150 duchy, -350 kingdom (call_ally)",
+      "win": 15.0,
+      "white_peace": -7.5,
+      "defeat": -15.0,
+      "outcome_basis": "00_claim.txt: 5 / 10 x the war's factor, measured 1.5 for a county claim (one game); a defeat also costs legitimacy, the claim, gold",
+      "floor": "below 0: the game refuses every declaration (declare_war_interaction)",
+      "monthly": -0.15,
+      "months_to_afford": 0
+     },
+     "cost_source": "the game's own price: the casus belli's cost block (common/casus_belli_types) evaluated by the game for you against this defender",
+     "declare_args": {
+      "target_id": 14128,
+      "cb": "claim_cb",
+      "cb_title_id": 2442,
+      "claimant_id": 12330
+     },
+     "if_you_lose": {
+      "gold": -187.9,
+      "you": "loses the claim; loses prestige (10 x the war's prestige factor) and legitimacy",
+      "truce_days": 1825,
+      "prestige": -15.0,
+      "gold_basis": "3 x 12 x your monthly income on the day you lose (pay_short_term_gold yearly_income, the casus belli's on_defeat); 5.22 a month now: each +1 a month adds 36 to it"
+     }
+    }
+   ],
+   "best": "claim_cb",
+   "invalid_count": 51,
+   "invalid_by_gate": {
+    "engine_cb_validity_check_failed": 29,
+    "outer_filter_dropped": 14,
+    "de_jure_not_liege": 4,
+    "faith_gate": 4
+   },
+   "by_family": {
+    "claim": [
+     "claim_cb"
+    ],
+    "conquest": [
+     "county_conquest_cb"
+    ],
+    "de_jure": [],
+    "great_holy_war": [],
+    "holy_war": [],
+    "invasion": [],
+    "raid": [],
+    "subjugation": [
+     "tribal_subjugation_cb"
+    ],
+    "vassalization": [
+     "vassalization_cb"
+    ]
+   },
+   "authority": "engine",
+   "defender_allies": {
+    "his_own": 965,
+    "with_allies": 965,
+    "likely_strength": 965,
+    "allies": [
+     {
+      "id": 38711,
+      "strength": 0,
+      "forced": true,
+      "would_join": false,
+      "why": "under 100 strength: an AI war leader cannot call him (call_ally_interaction is_shown)"
+     }
+    ],
+    "basis": "an estimate: the game's call_ally_interaction ai_accept (common/character_interactions/00_alliance.txt) from the reads; the game runs it on the war itself, which does not exist before you declare",
+    "estimate_not_read": [
+     "court-language terms (+10/+30) and a language he speaks without sharing the culture (+5)",
+     "-1000 when he is a conqueror, or saves gold for his capital's buildings while the defender is a lesser AI ruler in a war between AI rulers (your ruler is an AI ruler in the game)",
+     "-50 to -200 for a friend, best friend, lover or soulmate of yours; -100 a bloc member; hostages; -200 when the defender is his tributary",
+     "whether the defender's AI calls him at all (it calls while it wants more strength)",
+     "his being at war already with a side of this war"
+    ]
+   },
+   "strength_verdict": {
+    "verdict": "stronger_than_all_his_allies",
+    "yours": 1741,
+    "his_likely": 965,
+    "his_worst": 965,
+    "committed": 528,
+    "left": 1213
+   },
+   "committed_strength": {
+    "yours": 1741,
+    "wars": [
+     {
+      "war_id": 5,
+      "name": "Sons of Loðbrók Invasion of Northumberland",
+      "side": "attacker",
+      "enemy_leader": 12037,
+      "against_you": 3266,
+      "with_you": 6293,
+      "committed": 0
+     },
+     {
+      "war_id": 16777226,
+      "name": "Upplander-Gotlander Vassalization War",
+      "side": "attacker",
+      "enemy_leader": 14320,
+      "against_you": 528,
+      "with_you": 0,
+      "committed": 528
+     }
+    ],
+    "committed": 528,
+    "left": 1213,
+    "offensive_open": [
+     5,
+     16777226
+    ],
+    "basis": "each open war of yours: the strength of the side against you (each participant's own military strength, query_character) less your co-belligerents' on your side, at most what you have left; `left` is your strength less all of it. Information only: no war is refused"
+   },
+   "offensive_war_open": "you already lead 2 offensive war(s) (war 5 (Sons of Loðbrók Invasion of Northumberland): 3266 against you, 6293 with you; war 16777226 (Upplander-Gotlander Vassalization War): 528 against you): of your 1741 strength 528 is committed to your open wars and 1213 is left for a new one; a new war is compared with 1213, not 1741",
+   "ducal_conquest": {
+    "valid": false,
+    "grants": "one county next to your land in an uncreated de jure duchy where you hold a county",
+    "requires": [
+     "the Ducal Conquest perk (ducal_conquest_perk: diplomacy, Foreign Affairs, after Thoughtful)",
+     "a county of yours in the target's de jure duchy, that duchy not created",
+     "the target county borders your land (neighbor_land)",
+     "50 prestige as a count, 100 above, times the common multipliers"
+    ],
+    "missing_now": [
+     "the duchy and the border: not read here; mcp__ck3__inspect(subject='map') shows your counties, their duchies (layer duchy) and neighbours"
+    ],
+    "game_says": [
+     "engine_cb_validity_check_failed"
+    ]
+   },
+   "engine_failed_why": {
+    "others": "no condition named; allowed_for_character, valid_to_start not evaluated"
+   }
+  },
+  "recorded_bytes": 12519,
+  "delivered_bytes": 6311,
+  "of": {
+   "valid_options": 4
+  }
+ },
+ "prestige_step10": {
+  "was": 1213.2,
+  "now": 1314.6,
+  "monthly_prestige": -0.12,
+  "from": "0869.09.13",
+  "to": "0869.11.25",
+  "your_acts": [
+   {
+    "what": "mint_title k_sweden",
+    "prestige": 400.0,
+    "date": "0869.09.13"
+   }
+  ],
+  "ai_acted": [
+   {
+    "what": "decision",
+    "key": "adopt_special_succession_decision",
+    "date": "0869.10.25",
+    "price": {
+     "prestige": 300.0
+    }
+   }
+  ],
+  "recorded_unexplained": -298.31
+ },
+ "inspect_title_live_0867": {
+  "result": {
+   "subject": "title",
+   "title_key": "k_sweden",
+   "title_id": 2416,
+   "name": "Sweden",
+   "tier": "kingdom",
+   "holder_id": null,
+   "holder_name": null,
+   "strength_unit": "military_strength: the game's own soldier-strength figure for the ruler's realm (levies plus men-at-arms), comparable between rows",
+   "next_call_rule": "next_call per county not yours: declare_war (declare_args) when the casus-belli read cbs() answers says a war for that county is declarable now against its realm ruler; else, without a claim, the court chaplain's fabricate-claim do call (no read gives how long a fabrication takes); else the gate. A war's target_id is the realm ruler (realm_ruler_id: the independent ruler at the top, the holder himself when he is independent): declare_war refuses a vassal (target_not_independent).",
+   "creation_rule": "counties of its de jure land in your realm (yours and your vassals'): a duchy or kingdom at least half, an empire more than 80% (the game's rule)",
+   "county_rows": "a county row's realm ruler's name and strength are in realms (ruler_id); a next_call that is a name is a call in next_call_templates, with <title_id> the row's own title_id",
+   "creation": {
+    "source": "the requirements do(action_class='formable_titles') gives for this title",
+    "counties": {
+     "have": 12,
+     "need": 13,
+     "met": false
+    },
+    "tier_rule": {
+     "met": false,
+     "rule": "hold 2 duchy titles (you hold 1) (or hold 1 title of kingdom tier or above)",
+     "bill": {
+      "currency": "gold",
+      "cost": 225.0,
+      "of": [
+       "d_ostergotland",
+       "k_sweden"
+      ]
+     }
+    },
+    "price": {
+     "met": true,
+     "cost": 150.0,
+     "currency": "gold",
+     "have": 156.0
+    },
+    "game_check": {
+     "met": false,
+     "reasons": [
+      "You only have 12 of 13 required Counties"
+     ]
+    },
+    "nearest_unmet": {
+     "requirement": "tier_rule",
+     "step": "create d_ostergotland",
+     "counties": "3/3 held",
+     "cost": 75.0,
+     "currency": "gold",
+     "you_have": 156.0,
+     "gate": null,
+     "next_call": {
+      "tool": "do",
+      "args": {
+       "intent": "mint_title",
+       "args": {
+        "title_key": "d_ostergotland"
+       }
+      }
+     }
+    }
+   },
+   "next_call_templates": {
+    "council_task_task_fabricate_claim": {
+     "args": {
+      "args": {
+       "seat": "court_chaplain",
+       "target_title_id": "<title_id>",
+       "task": "task_fabricate_claim"
+      },
+      "intent": "council_task"
+     },
+     "tool": "do"
+    }
+   },
+   "duchies": [
+    {
+     "title_id": 2417,
+     "key": "d_svealand",
+     "name": "Uppland",
+     "holder_id": 12330,
+     "holder_name": "Björn",
+     "you_hold_it": true,
+     "counties": 4,
+     "counties_you_control": 4,
+     "your_claim": false
+    },
+    {
+     "title_id": 2436,
+     "key": "d_bergslagen",
+     "name": "Bergslagen",
+     "holder_id": null,
+     "holder_name": null,
+     "you_hold_it": false,
+     "counties": 4,
+     "counties_you_control": 3,
+     "your_claim": false,
+     "if_you_hold_it": {
+      "no_claim_needed_on": [
+       "c_varmland"
+      ],
+      "cb": "individual_county_de_jure_cb"
+     }
+    },
+    {
+     "title_id": 2457,
+     "key": "d_vastergotland",
+     "name": "Västergötland",
+     "holder_id": 14127,
+     "holder_name": "Hrane",
+     "you_hold_it": false,
+     "counties": 4,
+     "counties_you_control": 0,
+     "your_claim": false
+    },
+    {
+     "title_id": 2475,
+     "key": "d_ostergotland",
+     "name": "Östergötland",
+     "holder_id": null,
+     "holder_name": null,
+     "you_hold_it": false,
+     "counties": 3,
+     "counties_you_control": 3,
+     "your_claim": false
+    },
+    {
+     "title_id": 2489,
+     "key": "d_smaland",
+     "name": "Småland",
+     "holder_id": 15054,
+     "holder_name": "Vagn",
+     "you_hold_it": false,
+     "counties": 6,
+     "counties_you_control": 1,
+     "your_claim": false,
+     "if_you_hold_it": {
+      "no_claim_needed_on": [
+       "c_more",
+       "c_sevede",
+       "c_varend",
+       "c_njudung",
+       "c_finnveden"
+      ],
+      "cb": "individual_county_de_jure_cb"
+     }
+    },
+    {
+     "title_id": 2515,
+     "key": "d_norrland",
+     "name": "Norrland",
+     "holder_id": null,
+     "holder_name": null,
+     "you_hold_it": false,
+     "counties": 3,
+     "counties_you_control": 1,
+     "your_claim": false,
+     "if_you_hold_it": {
+      "no_claim_needed_on": [
+       "c_medelpad",
+       "c_angermanland"
+      ],
+      "cb": "individual_county_de_jure_cb"
+     }
+    },
+    {
+     "title_id": 2531,
+     "key": "d_gotland",
+     "name": "Visby",
+     "holder_id": null,
+     "holder_name": null,
+     "you_hold_it": false,
+     "counties": 1,
+     "counties_you_control": 0,
+     "your_claim": false
+    }
+   ],
+   "realms": [
+    {
+     "ruler_id": 12330,
+     "ruler_name": "Björn",
+     "primary_title": "d_svealand",
+     "military_strength": 1542,
+     "realm_counties": 12,
+     "counties_here": 12
+    },
+    {
+     "ruler_id": 15054,
+     "ruler_name": "Vagn",
+     "primary_title": "d_smaland",
+     "military_strength": 1923,
+     "realm_counties": 5,
+     "counties_here": 5
+    },
+    {
+     "ruler_id": 14127,
+     "ruler_name": "Hrane",
+     "primary_title": "d_vastergotland",
+     "military_strength": 1537,
+     "realm_counties": 3,
+     "counties_here": 3
+    },
+    {
+     "ruler_id": 14128,
+     "ruler_name": "Þorfinn",
+     "primary_title": "c_varmland",
+     "military_strength": 883,
+     "realm_counties": 2,
+     "counties_here": 2
+    },
+    {
+     "ruler_id": 14320,
+     "ruler_name": "Steinn",
+     "primary_title": "c_gutland",
+     "military_strength": 501,
+     "realm_counties": 1,
+     "counties_here": 1
+    },
+    {
+     "ruler_id": 14813,
+     "ruler_name": "Ragnarr",
+     "primary_title": "c_medelpad",
+     "military_strength": 502,
+     "realm_counties": 1,
+     "counties_here": 1
+    },
+    {
+     "ruler_id": 14814,
+     "ruler_name": "Sverker",
+     "primary_title": "c_angermanland",
+     "military_strength": 822,
+     "realm_counties": 1,
+     "counties_here": 1
+    }
+   ],
+   "summary": {
+    "counties_you_control": 12,
+    "counties": 25,
+    "held": 12,
+    "total": 25,
+    "fraction": 0.48,
+    "creation_needs_counties": 13,
+    "duchies_you_hold": 1,
+    "duchies": 7
+   },
+   "counties": [
+    {
+     "title_id": 2418,
+     "key": "c_upland",
+     "name": "Uppland",
+     "duchy": "d_svealand",
+     "holder_id": 12330,
+     "holder_name": "Björn",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2423,
+     "key": "c_gastrikland",
+     "name": "Gestrikalandia",
+     "duchy": "d_svealand",
+     "holder_id": 12330,
+     "holder_name": "Björn",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2427,
+     "key": "c_sodermannaland",
+     "name": "Södermannaland",
+     "duchy": "d_svealand",
+     "holder_id": 12330,
+     "holder_name": "Björn",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2433,
+     "key": "c_aland",
+     "name": "Ahvenanmaa",
+     "duchy": "d_svealand",
+     "holder_id": 12762,
+     "holder_name": "Sölvi",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2437,
+     "key": "c_vastmanland",
+     "name": "Västmannaland",
+     "duchy": "d_bergslagen",
+     "holder_id": 13758,
+     "holder_name": "Ivar",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2442,
+     "key": "c_varmland",
+     "name": "Värmaland",
+     "duchy": "d_bergslagen",
+     "holder_id": 14128,
+     "holder_name": "Þorfinn",
+     "realm_ruler_id": 14128,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2447,
+     "key": "c_dalarna",
+     "name": "Övre Dalarna",
+     "duchy": "d_bergslagen",
+     "holder_id": 13758,
+     "holder_name": "Ivar",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2452,
+     "key": "c_dalabergslagen",
+     "name": "Dalabergslagen",
+     "duchy": "d_bergslagen",
+     "holder_id": 13758,
+     "holder_name": "Ivar",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2458,
+     "key": "c_vastergotland",
+     "name": "Västergötland",
+     "duchy": "d_vastergotland",
+     "holder_id": 14127,
+     "holder_name": "Hrane",
+     "realm_ruler_id": 14127,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2464,
+     "key": "c_skara",
+     "name": "Skara",
+     "duchy": "d_vastergotland",
+     "holder_id": 14127,
+     "holder_name": "Hrane",
+     "realm_ruler_id": 14127,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2468,
+     "key": "c_dal",
+     "name": "Dal",
+     "duchy": "d_vastergotland",
+     "holder_id": 14127,
+     "holder_name": "Hrane",
+     "realm_ruler_id": 14127,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2471,
+     "key": "c_nordmark",
+     "name": "Nordmark",
+     "duchy": "d_vastergotland",
+     "holder_id": 14128,
+     "holder_name": "Þorfinn",
+     "realm_ruler_id": 14128,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2476,
+     "key": "c_ostergotland",
+     "name": "Östergötland",
+     "duchy": "d_ostergotland",
+     "holder_id": 14810,
+     "holder_name": "Rikulfr",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2481,
+     "key": "c_kinda",
+     "name": "Kinda",
+     "duchy": "d_ostergotland",
+     "holder_id": 14810,
+     "holder_name": "Rikulfr",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2485,
+     "key": "c_narke",
+     "name": "Neeric",
+     "duchy": "d_ostergotland",
+     "holder_id": 13425,
+     "holder_name": "Guðmundr",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": "unpressed"
+    },
+    {
+     "title_id": 2490,
+     "key": "c_more",
+     "name": "Möre",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "holder_name": "Vagn",
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2494,
+     "key": "c_sevede",
+     "name": "Sevede",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "holder_name": "Vagn",
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2498,
+     "key": "c_varend",
+     "name": "Värend",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "holder_name": "Vagn",
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2504,
+     "key": "c_njudung",
+     "name": "Njudung",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "holder_name": "Vagn",
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2509,
+     "key": "c_finnveden",
+     "name": "Finnveden",
+     "duchy": "d_smaland",
+     "holder_id": 15054,
+     "holder_name": "Vagn",
+     "realm_ruler_id": 15054,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2512,
+     "key": "c_oland",
+     "name": "Öland",
+     "duchy": "d_smaland",
+     "holder_id": 14555,
+     "holder_name": "Sveinn",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2516,
+     "key": "c_halsingland",
+     "name": "Halsingland",
+     "duchy": "d_norrland",
+     "holder_id": 14131,
+     "holder_name": "Hrolfr",
+     "realm_ruler_id": 12330,
+     "you_control": true,
+     "your_claim": false
+    },
+    {
+     "title_id": 2521,
+     "key": "c_medelpad",
+     "name": "Medelpad",
+     "duchy": "d_norrland",
+     "holder_id": 14813,
+     "holder_name": "Ragnarr",
+     "realm_ruler_id": 14813,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2526,
+     "key": "c_angermanland",
+     "name": "Ångermanland",
+     "duchy": "d_norrland",
+     "holder_id": 14814,
+     "holder_name": "Sverker",
+     "realm_ruler_id": 14814,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    },
+    {
+     "title_id": 2532,
+     "key": "c_gutland",
+     "name": "Gotland",
+     "duchy": "d_gotland",
+     "holder_id": 14320,
+     "holder_name": "Steinn",
+     "realm_ruler_id": 14320,
+     "you_control": false,
+     "your_claim": false,
+     "next_call": "council_task_task_fabricate_claim"
+    }
+   ]
+  },
+  "_how": "Live 0867.01.01: page 1 and page 2 of inspect title k_sweden joined; the base pager put the 25 counties whole on page 2"
+ }
+}

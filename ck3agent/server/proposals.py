@@ -1,4 +1,4 @@
-"""Incoming proposals, the server side (design: docs/design/incoming-proposals.md).
+"""Incoming proposals, the server side (design: docs/incoming-proposals.md).
 
 An AI ruler's offer to a seated character (a marriage, an alliance, a call to
 war, a peace offer, vassalization) is held in the game by the
@@ -23,7 +23,7 @@ server means by that:
     process.
 
 Declared or not is the experiment's (`[episode].proposal_mod`), transcribed into
-the seat's environment as `MOD_ENV=1` by scripts/dry_cell.py. Not declared:
+the seat's environment as `MOD_ENV=1` by the experiment's seat launcher. Not declared:
 `observe` carries no block, no read is made, and both intents refuse
 `proposal_mod_not_declared` (a typed state, never "no offers").
 """
@@ -129,8 +129,8 @@ WORD_HELD = "CK3AGENT_PROPOSAL_HELD"
 WORD_RESOLVED = "CK3AGENT_PROPOSAL_RESOLVED"
 WORD_VOID = "CK3AGENT_PROPOSAL_VOID"
 WORDS = (WORD_HELD, WORD_RESOLVED, WORD_VOID)
-#: The fields of each word's line, in order (HELD's are pinned by this lane:
-#: docs/design/incoming-proposals.md, "Contract changes (QSRV)").
+#: The fields of each word's line, in order (HELD's are pinned by
+#: the incoming-proposal contract).
 HELD_FIELDS = ("id", "kind", "class", "actor_id", "recipient_id")
 RESOLVED_FIELDS = ("id", "answer", "by", "rule")
 VOID_FIELDS = ("id", "reason")
@@ -182,7 +182,7 @@ U_LIST_INCONSISTENT = "proposal_list_inconsistent"
 #: and the list's window cannot be read: never an empty list, never "incomplete".
 U_LOG_UNREADABLE = "script_log_unreadable"
 
-#: Ledger row kinds: the design's offer events, then this lane's bookkeeping
+#: Ledger row kinds: the design's offer events, then this module's bookkeeping
 #: (what the next process of the same seat re-reads).
 L_HELD, L_SHOWN, L_ANSWERED, L_HANDED_BACK, L_VOID, L_LAPSED = (
     "held", "shown", "answered", "handed_back", "void", "lapsed")
@@ -264,7 +264,7 @@ class SeatState:
     #: proposal id -> {actor_id, class}: every offer this server saw addressed to one
     #: of its actors (HELD, shown, listed, answered). Never dropped on an answer, so
     #: the RESOLVED / VOID line that follows the answer is still known as this
-    #: seat's (live qf2).
+    #: seat's.
     offer_to: dict = field(default_factory=dict)
     offset: int = 0
     write_error: Optional[str] = None

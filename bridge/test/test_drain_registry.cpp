@@ -1,4 +1,4 @@
-// test/test_drain_registry.cpp — regression tests for.
+// test/test_drain_registry.cpp — regression tests for the drain registry.
 //
 // THE BUG. A tick-polarity call is handed to the game thread and settled when
 // the game thread reports back. The correlation was keyed by the client's
@@ -54,7 +54,7 @@ static int g_failures = 0;
     } while (0)
 
 // Build the payload a submit would have stored. `rid` is what the CLIENT sent:
-// "" is the whole point of this bead.
+// "" is the whole point of this code.
 static PendingCall mk(uint64_t ticket, const char* rid, const char* action,
                       const char* inner) {
     PendingCall pc;
@@ -93,7 +93,7 @@ static void test_no_request_id_still_settles() {
 
     const uint64_t settled = round_trip(reg, 7);
 
-    // The whole bead: this was 0 forever.
+    // The whole task: this was 0 forever.
     CHECK(settled == 7);
     // ...and this was 1 forever, for every such call, for the whole episode.
     CHECK(reg.payload_count() == 0);
@@ -327,7 +327,7 @@ static void test_concurrent_handoff_and_settle() {
 }
 
 int main() {
-    std::printf("test_drain_registry — ck-6kvq.19 ticket-keyed drain settlement\n");
+    std::printf("test_drain_registry — ticket-keyed drain settlement\n");
 #if defined(CK3_DRAIN_LEGACY_RID_KEY)
     std::printf("*** NEGATIVE CONTROL BUILD (request_id-keyed). "
                 "THIS MUST FAIL. ***\n");

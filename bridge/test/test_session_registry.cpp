@@ -14,7 +14,7 @@
 
 // Stub globals referenced by bridge.h / session.cpp when compiled standalone.
 namespace bridge {
-// Session.cpp now links world_identity.cpp (judge_same_save
+// session.cpp now links world_identity.cpp (the judge_same_save
 // — one identity rule, not a second copy), which reaches world_epoch.cpp's
 // guarded reads. These are the globals those engine-free TUs reference when the
 // game is not there.
@@ -399,7 +399,7 @@ int main() {
     }
 
     // ========================================================================
-    // DETACH / RESUME.  The bead's acceptance criteria, in the file
+    // DETACH / RESUME.  The task's acceptance criteria, in the file
     // it names.  The FULL treatment (the identity rule, the unavailability
     // covariate, the abort ladder's detach report, and a negative control that
     // must fail) is bridge/test/acceptance_session_resume.cpp; this is the

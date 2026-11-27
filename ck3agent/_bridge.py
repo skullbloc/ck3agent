@@ -64,7 +64,7 @@ def socket_holders(path: str) -> list[tuple[int, str]]:
     By inode: /proc/net/unix maps the path to its inodes, /proc/<pid>/fd/* to
     `socket:[inode]`. The pid is NOT SO_PEERCRED's: that names the process
     that called listen(), and after a crash it is the dead game while a
-    child that inherited the descriptor (CK3's crash reporter, smoke18) keeps
+    child that inherited the descriptor (CK3's crash reporter, in a test launch) keeps
     the socket answering. Empty when nothing is found or /proc cannot say;
     exe is UNKNOWN_EXE when the holder's executable could not be read.
     """
@@ -228,7 +228,7 @@ def _sessions(r) -> list[dict]:
 def _session_rows(r) -> list[dict] | None:
     """get_bridge_state's session list, or None when the reply carries none.
 
-    2026.12.5 (the draft smoke, smoke5 row 2): `_sessions` reads a reply with no
+    2026.12.5 (a test of the draft release): `_sessions` reads a reply with no
     `sessions` list (a fault or refusal envelope, a frame that is not the
     get_bridge_state reply) as an EMPTY registry, so a pinned, detached session
     read as gone and the teardown said "already closed, nothing held" while the
@@ -294,9 +294,9 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None,
     `sessions` are this run's bridge sessions (the MCP server's, named in the
     session record it wrote at handshake, CK3_SESSION_OUT). Only their claims are
     this run's: a ruler another session holds (a second `ck3agent run` beside
-    this one, an attached `serve`) is named and left alone. Before L20-B every
+    this one, an attached `serve`) is named and left alone. At first every
     session's claims were tried, and a run's teardown warned that it could not
-    release the OTHER run's ruler (smoke17: "13902 still held by session ...14:
+    release the OTHER run's ruler (in a test: "13902 still held by session ...14:
     not_owned_by_session").
 
     Only the session that claimed a ruler may release it (the bridge answers
@@ -304,7 +304,7 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None,
     server's, on its own shutdown. This waits up to `wait` seconds for it to
     land, then tries a release of its own and names the holder if that fails.
     "No ruler bound" means none of this run's sessions holds a ruler: a session
-    may hold several (lane-multi). With no session given (the record was missing
+    may hold several (several seats in one run). With no session given (the record was missing
     or unreadable) nothing can be attributed, so nothing is released and the
     step is not clean: `session_record_missing`, the claims seen listed as
     unattributed.
@@ -327,7 +327,7 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None,
                 return out
             rows = _session_rows(link.call("get_bridge_state"))
             if rows is None:
-                # 2026.12.5: a reply with no session list says nothing about
+                # A reply with no session list says nothing about
                 # what is held; never read it as "no ruler bound".
                 if time.monotonic() < deadline:
                     time.sleep(1.0)
@@ -336,7 +336,7 @@ def teardown(sock: str, wait: float = 15.0, link: Link | None = None,
                                               "rulers unknown"))
                 return out
             if not mine:
-                # L20 r3 (witness item 2): the session record is the only
+                # The session record is the only
                 # attribution. Without it every claim would read as another
                 # run's and the teardown as clean, so it releases nothing and
                 # says so; the claims it saw are listed, unattributed.
@@ -506,7 +506,7 @@ def bridge_version_row(ack: dict) -> bool:
     release number to compare but a build to name by its commit."""
     bv = ack.get("bridge_version")
     if not bv:
-        con.warn("bridge version", "the bridge sent no bridge_version (older than rc2); "
+        con.warn("bridge version", "the bridge sent no bridge_version (a build from before the bridge reported one); "
                  f"ck3agent {__version__} cannot check it")
         return True
     if bv == RESEARCH_BRIDGE_VERSION:

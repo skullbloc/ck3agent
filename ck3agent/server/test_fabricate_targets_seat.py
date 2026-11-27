@@ -1,11 +1,11 @@
-"""Do(action_class="fabricate_targets") and the seat.
+"""do(action_class="fabricate_targets") and the seat.
 
-THE DEFECT (c9610822, redesign.py:5888-5900). The enumeration never passed
-`seat` to query_fabricate_targets, and every row's do_call printed `seat:
-court_chaplain` (FABRICATE_CLAIM_SEAT). For B5's ruler (Cui 13191, ministries:
- probe-paused.jsonl:32, set_council_task minister_justice /
-task_fabricate_claim) that call resolves to the chaplain's task. The bridge has
-taken `seat` since then and names the version it evaluated.
+THE HAZARD. An enumeration that does not pass `seat` to
+query_fabricate_targets prints `seat: court_chaplain` (FABRICATE_CLAIM_SEAT) in
+every row's do_call. For a ministries ruler (Cui 13191, ministries: a recorded
+probe, set_council_task minister_justice / task_fabricate_claim) that call
+resolves to the chaplain's task. The bridge takes `seat` and names the version
+it evaluated.
 
 THE REPLY KEYS are do_query_fabricate_targets' r.key lines
 (bridge/src/action_handlers.cpp): the success reply's task, task_used,
@@ -24,7 +24,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 R = pytest.importorskip("redesign")
-from test_lane_query import ScriptedGateway                       # noqa: E402
+from test_query_and_do_rows import ScriptedGateway                      # noqa: E402
 
 BRIDGE = Path(__file__).resolve().parents[2] / "bridge" / "src" / "action_handlers.cpp"
 CUI = 13191
@@ -68,19 +68,19 @@ def test_the_seat_reaches_the_bridge_and_the_do_call_names_the_seat_it_resolved(
                          args={"seat": JUSTICE}))
     (params,) = [p for a, p in gw.reads if a == "query_fabricate_targets"]
     assert params["seat"] == JUSTICE, params
-    call = env["result"]["available"][0]["do_call"]
+    call = env["result"]["available"][0]["do_call"]["args"]
     assert call == {"intent": "council_task",
                     "args": {"seat": JUSTICE, "task": "task_fabricate_claim", "target_title_id": 14606}}
 
 
 def test_CONTROL_with_no_seat_the_bridge_is_asked_without_one_and_the_row_names_the_chaplain():
-    # CONTROL: passes on c9610822 too (the no-seat path is the old behaviour); labelled, not discriminating.
+    # CONTROL: passes without the rule too (the no-seat path is the old behaviour); labelled, not discriminating.
     gw = ScriptedGateway(cid=13902, replies={"query_fabricate_targets": _ok(
         "task_fabricate_claim", CHAPLAIN, [{"title_id": 329, "title": "c_y", "assignable": True}])})
     env = _run(R.do_impl(gw, action_class="fabricate_targets", character_id=13902))
     (params,) = [p for a, p in gw.reads if a == "query_fabricate_targets"]
     assert "seat" not in params
-    assert env["result"]["available"][0]["do_call"]["args"]["seat"] == "court_chaplain"
+    assert env["result"]["available"][0]["do_call"]["args"]["args"]["seat"] == "court_chaplain"
 
 
 def test_a_missing_chaplain_version_warns_with_the_bridges_task_seats():
@@ -120,9 +120,10 @@ def test_a_seat_with_no_version_is_refused_naming_the_seats_that_have_one():
     assert re.search(r"court_chaplain, minister_justice", b["summary"]), b["summary"]
 
 
-def test_each_row_names_the_task_version_the_bridge_evaluated():
+def test_the_reply_names_the_task_version_the_bridge_evaluated():
     """With seat minister_justice the bridge evaluated
-    task_fabricate_claim_minister_of_rites, but the rows dropped task_used."""
+    task_fabricate_claim_minister_of_rites, but the rows dropped task_used.
+    said once, on the result, not on each row."""
     gw = ScriptedGateway(cid=CUI, replies={"query_fabricate_targets": _ok(
         "task_fabricate_claim_minister_of_rites", JUSTICE,
         [{"title_id": 621, "title": "c_a", "assignable": True},
@@ -131,4 +132,4 @@ def test_each_row_names_the_task_version_the_bridge_evaluated():
                          args={"seat": JUSTICE}))
     rows = env["result"]["available"] + env["result"]["unavailable"]
     assert len(rows) == 2
-    assert {r.get("task_used") for r in rows} == {"task_fabricate_claim_minister_of_rites"}, rows
+    assert env["result"]["task_used"] == "task_fabricate_claim_minister_of_rites", env["result"]

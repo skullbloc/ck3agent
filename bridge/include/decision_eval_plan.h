@@ -26,7 +26,7 @@
 // a behaviour change, said in the CHANGELOG). Confidence MEDIUM (static
 // path + the smoke's registers and rows); the live row decides.
 //
-// The skip list: hashes whose trigger eval FROZE the game thread (#64, SIGALRM
+// The skip list: hashes whose trigger eval FROZE the game thread (SIGALRM
 // masked, no watchdog can bound it). Named here by the engine's own key hash
 // (murmur3_32, the hash the decision DB entry carries at +8): the old seed
 // comments had the first two swapped (0x0d3cbc02 was called "ruler 13902
@@ -90,7 +90,7 @@ inline uint32_t murmur3_32(const char* data, uint32_t len) {
 inline bool extract_failure_key(bool shown, bool block_passed) {
 #ifdef DECISION_EVAL_PLAN_PREFIX_CONTROL
     (void)shown;
-    return !block_passed;                 // earlier: every failing block
+    return !block_passed;                 // superseded: every failing block
 #else
     return shown && !block_passed;
 #endif
@@ -107,11 +107,11 @@ struct SkipSeed {
 
 constexpr SkipSeed kSkipSeeds[] = {
     {0x0d3cbc02u, "foster_integration_decision",
-     "froze the game thread in its trigger eval (#64 full scan, ruler 13902)"},
+     "freezes the game thread in its trigger eval"},
     {0xcce24e04u, "commission_legend_artifact_decision",
-     "froze the game thread in its trigger eval (#64 self-heal capture, 2026-06-19)"},
+     "freezes the game thread in its trigger eval"},
     {0x5f86cc47u, "create_armenian_empire_decision",
-     "froze the game thread in its trigger eval (#109 Surface-2 live check, 2026-06-22)"},
+     "freezes the game thread in its trigger eval"},
 };
 
 // The seed entry for a hash, or nullptr (a learned hash: an in-flight marker a

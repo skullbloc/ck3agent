@@ -1,6 +1,6 @@
 // Does rotation KEEP the previous window, and say so when it cannot?
 //
-// The old code called freopen(path, "w") on the live FILE*: same inode,
+// The superseded code called freopen(path, "w") on the live FILE*: same inode,
 // truncated, nothing retained. A test could only have grepped for that, and a
 // grep cannot tell a rename from a truncate. rotate_log() is a function so this
 // can drive it against real files.
@@ -68,7 +68,7 @@ int main() {
         "small log left alone");
 
     // 2. OVER the cap: the previous window SURVIVES, and the live file is empty.
-    //    This is the whole bead — the old code failed exactly here.
+    //    This is the whole task — the superseded code failed exactly here.
     r = bridge::rotate_log(path.c_str(), &fp, 4, 3);
     row("over_cap_rotates", r.rotated, "threshold crossed");
     row("previous_window_is_ARCHIVED_not_truncated",
@@ -77,7 +77,7 @@ int main() {
     row("live_log_is_empty_after_rotation", slurp(path) == "",
         "writing continues into a fresh file");
 
-    // 2b.: the fresh file is 0600 whatever the umask (freopen took the
+    // 2b. The fresh file is 0600 whatever the umask (freopen took the
     //     umask: 0666 here), the FILE* other threads hold is the same object,
     //     and writes land in the NEW file, not the archive.
     {
@@ -153,10 +153,10 @@ int main() {
         // window BEGAN at the previous rotation's tick, or at 0 for the first.
         // So rotations at 100/200/300 leave archives covering [200,300),
         // [100,200) and [0,100) — the earliest retained window begins at 0, the
-        // start of the run. My first draft of these two rows asserted 100 and
-        // 200, one window off, and the probe disagreed with the code. The CODE
-        // was right; I fixed the expectations after re-deriving what a rotation
-        // marker means, not by adjusting whichever side was easier.
+        // start of the run, not 100 and 200 (one window
+        // off). The expectations follow from what a rotation
+        // marker means; the probe and the code agree on them, and neither is
+        // adjusted to fit the other.
         bridge::LogCoverage cov; cov.archives = 3;
         cov.note_rotation(100); cov.note_rotation(200); cov.note_rotation(300);
         row("coverage_starts_at_run_start_while_ring_fills",

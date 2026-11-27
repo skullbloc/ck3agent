@@ -1,8 +1,8 @@
 """No branch of session_impl may say "applied" over a reply that
 does not support it. The CLASS, asserted once, for every verb.
 
-Three of us fixed instances of one pattern and stopped. found `control`;
-I found `release`; four more were in the same 218 lines the whole time — `speed`
+Fixing one instance of a pattern does not find the rest: `control` and
+`release` were found one at a time; four more were in the same 218 lines the whole time — `speed`
 and `auto_events` carrying `raw: res` into a result whose verdict contradicts
 it, `unpause` re-reading gw.game() so only its verdict was wrong, and `pause`
 assigning the reply to `res`, never mentioning `res` again, and hard-coding
@@ -41,7 +41,7 @@ WRITE_ACTIONS = {
     "pause":       {},
     "unpause":     {},
 }
-# (auto_events was the sixth write verb; its door was deleted in, finding 7.)
+# (auto_events was the sixth write verb; its door was deleted.)
 
 
 class _RefusingGw:
@@ -54,7 +54,7 @@ class _RefusingGw:
         # The clock pause/unpause read back: a write the bridge did
         # not refuse moves it, as the bridge's PAUSE_SET does.
         self._paused = None
-        # .. and the speed: set_speed is read back as game_speed.
+        # ... and the speed: set_speed is read back as game_speed.
         self._speed = None
 
     async def write(self, action, params=None):
@@ -94,7 +94,7 @@ def test_a_REFUSED_write_never_reports_applied(action):
 
 
 #: The replies the bridge and the gateway really send for a write that did not
-#: run, none of which carries `success` (the witness's runs 2/3):
+#: run, none of which carries `success` (two review runs):
 #:   memory_access_fault  MEMORY_ACCESS_FAULT_REPLY, bridge/include/bridge.h, sent
 #:                        by every answer_memory_access_fault (case_set_speed,
 #:                        case_pause_game, case_unpause_game in dispatch_router.cpp)
@@ -117,7 +117,7 @@ FAULT_REPLIES = {
 @pytest.mark.parametrize("shape", sorted(FAULT_REPLIES))
 @pytest.mark.parametrize("action", sorted(WRITE_ACTIONS))
 def test_a_FAULTED_write_never_reports_applied(action, shape):
-    """RED on b84e3634: reply_refusal and this guard read only `success is False`,
+    """RED without the rule: reply_refusal and this guard read only `success is False`,
     so every one of these answered applied (speed, control, release) or settled
     on a clock the write never moved."""
     out = _run(action, FAULT_REPLIES[shape])
@@ -126,7 +126,7 @@ def test_a_FAULTED_write_never_reports_applied(action, shape):
     assert out["blocked"]["raw_reason"] == shape, (action, shape, out["blocked"])
 
 
-#: The gate each fault shape resolves to (int5): the bridge's own fault and
+#: The gate each fault shape resolves to: the bridge's own fault and
 #: timeout are bridge_fault (one typed gate, not retryable: the effect may have
 #: landed); the gateway's disconnect keeps its own gate.
 FAULT_GATES = {"memory_access_fault": "bridge_fault",
@@ -137,7 +137,7 @@ FAULT_GATES = {"memory_access_fault": "bridge_fault",
 @pytest.mark.parametrize("shape", sorted(FAULT_REPLIES))
 @pytest.mark.parametrize("action", sorted(WRITE_ACTIONS))
 def test_a_FAULTED_write_names_a_typed_gate(action, shape):
-    """RED on e262847e: memory_access_fault came back as refusal_reason_unknown
+    """RED without the rule: memory_access_fault came back as refusal_reason_unknown
     (control, release: unmapped_refusal elsewhere) and game_thread_timeout as
     drain_timeout, retryable, through the "timeout" substring."""
     out = _run(action, FAULT_REPLIES[shape])
@@ -163,9 +163,9 @@ IN_FLIGHT_DROP = {"error": "bridge_disconnected"}
 
 @pytest.mark.parametrize("action", sorted(WRITE_ACTIONS))
 def test_a_write_IN_FLIGHT_at_a_disconnect_is_not_retryable(action):
-    """RED on 293c0e00: the in-flight drop resolved to bridge_disconnected,
+    """RED without the rule: the in-flight drop resolved to bridge_disconnected,
     retryable True, for a write the bridge may already have run (the double-apply
-    hazard int5 removed from drain_timeout). It is write_unconfirmed: read back
+    hazard that drain_timeout does not carry). It is write_unconfirmed: read back
     first."""
     out = _run(action, IN_FLIGHT_DROP)
     assert out.get("verdict") != "applied" and out.get("ok") is False, (action, out)
@@ -179,7 +179,7 @@ def test_a_write_IN_FLIGHT_at_a_disconnect_is_not_retryable(action):
 def test_an_experimental_flag_write_IN_FLIGHT_at_a_disconnect_is_not_retryable():
     """The same sweep over set_experimental, which named its refusal from the
     reply's own fields (`reason or error`), so the in-flight drop read as the
-    retryable bridge_disconnected. RED on 293c0e00."""
+    retryable bridge_disconnected. RED without the rule."""
     flag = sorted(redesign._EXPERIMENTAL_FLAGS)[0]
     out = asyncio.run(redesign._set_experimental_flag(_RefusingGw(IN_FLIGHT_DROP), flag, True))
     assert out["ok"] is False and out["blocked"]["gate"] == "write_unconfirmed", out
@@ -296,7 +296,7 @@ def test_the_guard_is_applied_ONCE_and_not_per_branch():
 
 
 def test_EVERY_write_is_considered_not_only_the_last():
-    """ structural note, closed rather than documented.
+    """The structural note, closed rather than documented.
 
     Every branch performs exactly one write today, so a last-write-wins slot
     would be CORRECT — and "one guard, one recorded reply" would be a

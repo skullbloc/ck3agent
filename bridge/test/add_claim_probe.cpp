@@ -1,4 +1,4 @@
-// lane-multi — several rulers in ONE session: `claim_character(..., keep_primary)`.
+// Several rulers in ONE session: `claim_character(..., keep_primary)`.
 //
 // Drives the REAL SessionRegistry in-process. The rows that matter: an added
 // claim keeps the session's primary, counts against the cap like any claim,
@@ -53,7 +53,7 @@ int main() {
         first && primary(a) == 13902,
         "primary " + std::to_string(primary(a)) + (why.empty() ? "" : " " + why));
 
-    // ── THE ROW THIS LANE EXISTS FOR: a second, added claim keeps the primary.
+    // ── THE ROW THIS PROBE EXISTS FOR: a second, added claim keeps the primary.
     why.clear();
     const bool added = g_session_registry.claim_character(a, 12145, &why, true);
     row("an_add_keeps_the_primary",

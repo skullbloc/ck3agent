@@ -200,9 +200,9 @@ SELFTEST_BAD = {
     "address key": 'bool do_x(const char* p, std::string* o) { int a = json_get_int(p, "address"); return a; }',
     # The scan stays in phase across a raw string and a
     # comment with an apostrophe. The escaped-looking-quote row is flagged by the
-    # earlier checker too (its quotes pair; non-discriminating); the bare-quote
+    # superseded checker too (its quotes pair; non-discriminating); the bare-quote
     # row (a later "/*" then reads as a comment that swallows the handler) is
-    # the one the earlier checker misses.
+    # the one the superseded checker misses.
     "pointer key after a raw string": ('static const char* k = R"x(\\")x";\nint b = 1; // it\'s\n'
         'bool do_x(const char* p, std::string* o) { const char* s = json_get_string(p, "cb_ref"); return s; }'),
     "pointer key after a raw string with a bare quote": ('static const char* k = R"x(")x"; const char* u = "/*";\n'

@@ -3,6 +3,673 @@
 All notable changes to ck3agent. Versions are calendar-based
 (`YYYY.MM.PATCH`); the git tag is the version with a `v` prefix.
 
+## 2026.12.12 — 2026-11-27
+
+For a model seat that must reach a multi-year goal from the tool surface
+alone, such as a count in 1066 Ireland who would create the Kingdom of
+Ireland, a king of Sweden in 867, or a ruler who must keep his line. Since
+2026.12.11 the toolkit was played by model seats for many game-decades on
+several starts, and each run's failures were reproduced from its recorded
+replies and fixed. New server and bridge, released together. Still thirteen
+tools by default (the four scheduled-run tools, `msg_send`, `note_read`,
+`note_write` and `guide_read`, register only when a scripted environment
+declares them). Items marked "not yet read live" are tested on recorded replies only.
+
+**Steering the game's AI for your ruler**
+
+* **`ai_veto`: the AI's own spending and politics, dropped for your ruler.**
+  `do(intent="ai_veto", args={"op": "set", "what": ...})` makes the bridge
+  drop, before the game runs it, what the game's AI would otherwise do for
+  the seat's ruler: create a title, change a law, hire mercenaries, build,
+  buy men-at-arms, call allies into your wars, pick a lifestyle perk, take a
+  decision (all, or named keys), accept a vassal offer, declare a war of its
+  own, change the court type, start or join a faction, buy a dynasty legacy,
+  answer an incoming call to arms, or host an activity. `what="spending"`
+  sets the kinds whose drop costs the seat nothing but the AI's own pick, in
+  one call, and spares the titles the goal needs. Every dropped command is a
+  news row with its price; an unvetoed AI act names the veto that would stop
+  it. Vetoes carry to the heir when the ruler changes.
+* **Event rules.** `do(intent="event_rule")` sets how the seat's ruler
+  answers a recurring event (always, never, or `pay_if` a gold threshold,
+  with an option the event really has), so a claim letter or a chaplain's
+  bill is answered by rule between turns. Rules carry to the heir; every
+  variant of a priced event is covered.
+* **A rule for a whole family of events.** `do(intent="event_rule", args=
+  {"op": "set", "event": "stress_threshold.*", "answer": "decline"})` (an
+  `event` of the form `"<namespace>.*"`) sets, before any of them fires, one
+  rule on each event of the namespace that has an option taking gold and one
+  that does not, read from the game's event files: the free option, and as
+  its else a free option the event offers. The reply lists each rule set
+  (`guarded`), the events where the game's AI can still pick when neither
+  named option is offered (`exposed`), and every event left without a rule
+  and why (`not_guarded`); `op: "clear"` clears them. The turn's news keeps
+  one short row per pick a rule decided (`rules_answered`), and says when
+  your rule's else option answered rather than the game's AI. A rule's
+  `else` is checked against the event's options whether or not the rule
+  names an option. The `spending` veto also drops the two stress-relief
+  decisions that take gold, and a decision's price follows the events its
+  effect fires (not yet read live).
+* **What an answer does, at the call that sets it.** An `event_rule` set
+  on one event carries `option_effects`: for the option the rule names
+  and its else, what the option does, read from the event's file and the
+  scripted effects it calls (gold, prestige, piety, legitimacy and county
+  control with their amounts, modifiers with their duration and what they
+  change, titles, traits and factions), each on the scope it touches, with
+  the condition of a branch (`when`) and `not_read` for effects the engine
+  computes. `do(intent="faction", args={"action": "respond_demand",
+  "response": "accept"})` (or `"refuse"`) carries the same for the demand
+  letters of the factions now against your ruler (not yet read live). The
+  read follows the scripted effects an option calls wherever the game
+  defines them, the event's own file included (a faction demand's refusal
+  had read "none"), and names what it fires (`trigger_event`: an event, a
+  hidden letter to another character, an on_action, said to be the
+  engine's own when common/on_action lists nothing for it), the truces it
+  sets (`for`), and what its tooltip shows done another way, such as the
+  faction's war (`shown_in_tooltip`). A branch's condition is cut at a word,
+  never inside one, with its conditions joined by AND; a value the file
+  writes as an expression (`scope:cost x -1`) is written out.
+* **Your ruler's own levers.** A guest can leave an activity; men-at-arms
+  can be disbanded by type; the ruler's perk points can be spent
+  (`do lifestyle perk=<key>`); activities can be hosted through the game's
+  AI with a pre-send check (pilgrimage proven live). Army disband, move and
+  hold levers exist behind switches that default off; with army orders on
+  (`CK3_BRIDGE_ARMY_ORDERS=1`), `do(intent="army", args={"action": "raid",
+  "army_id": ..., "on": true})` toggles an army's raiding the way the army
+  window does and reads the raiding flag back (not yet read live).
+* **The AI's gold reserve.** `do(intent="gold_reserve", args={"amount": N})`
+  sets the ruler's AI reserved-gold maximum (the game's own, whole gold;
+  `move: true` also moves the gold held now into it); with no amount it
+  reads the budget's buckets and the debt. Income fills the reserve first
+  and the AI's budget-aware spending leaves it alone; forced charges still
+  take it, so it is not a stop on AI buying (`ai_veto` is).
+
+**Reads that say what the game will do**
+
+* **Succession.** The heir line puts the holder's children first; heir rows
+  carry their dynasty, with a warning when the primary heir is of another
+  dynasty; the partition forecast says which son takes which title (one
+  assignment, created duchies included); disinherit and vows are priced by
+  the game's own check, and every reader gives the same answer. A diarch
+  (regent) who blocks a lever is read, named in news and refusals, and can
+  be dismissed at the target the game names.
+* **What keeps a duchy in the realm, on the first page.** `succession_plan`
+  carries `prevent_split` on page 1, after `breaker`: for each son who would
+  leave the realm with land, what he takes and the disinherit and vows rows
+  (price, whether the game allows it now, why not, what would allow it, and
+  the call); the news rows about a split point at it.
+* **Prices remembered per ruler.** A title's creation price is kept per
+  ruler and title, and a read made for the bound ruler is kept under his
+  own id. After a ruler change the briefing gives the late ruler's price
+  (`was`, with the date it was read) beside the heir's and why it changed
+  (`why_changed`, for example a discount of the late ruler's own that died
+  with him); the realm's lost counties are counted from the late ruler's
+  newest read.
+* **Allies you cannot call.** `query(domain="alliances")` marks an ally who
+  holds no realm (`not a ruler`: a courtier or a relative at court, whom
+  the game's check refuses), a hegemon while you rank below emperor, your
+  vassal (not callable, in the game's words), an ally under 100 military
+  strength (the call is shown to an AI-run ruler only towards a stronger
+  one), your liege or a ruler inside your realm, and lists the ones not
+  callable under `not_callable` with their strength; an ally of your house
+  carries a `house_member` note (the house call may be the one the game
+  shows). `call_ally` refuses an ally who is not a ruler, a hegemon above
+  your rank, a vassal or a dead ally before sending (not yet read live). An
+  ally the reply lists under `forced_allies` is `is_forced` in his
+  alliance row too, with `forced_read` saying the row's own flag read false.
+* **A dead character is said first.** A read or call that names a dead
+  character (`query`, `inspect`, the `do` intents that take a character,
+  the marriage pair reads) answers `character_dead` before any other check,
+  with the date of the read that first found him dead.
+* **The acceptance of a call to war, per war.** `discover(what=
+  "acceptance")` for `call_ally_interaction` and `join_war_interaction` runs
+  the game's check once per war the send could name, with that war: one
+  war gives its verdict with `war_id`, several give `by_war` rows, and the
+  ready call is the war intent with its `war_id`. An interaction whose send
+  names what the check cannot take (a title, a marriage's pair) is marked
+  `not_checked`.
+* **Hiring mercenaries against your purse.** The listing carries `purse`
+  (gold, monthly income, the next title's price and how short you are) and
+  each row its price in `months_of_income` (on the estimate) and
+  `months_of_income_at_upper` (on the upper price). The estimate counts
+  your own perks' and traits' `mercenary_hire_cost_mult` from the game's
+  files beside your rank's (a duke holding soldiers_of_lesser_fortune_perk
+  pays 30% less: the listing had read 166.73 for a hire charged 121); the
+  modifiers it does not read are named in the price note. Known limit: in a
+  live game the read of your own modifiers can come back empty
+  (`your_modifiers: []`), and the estimate is then up to 30% above the
+  charge (192.24 listed for a hire charged 135). The rows are the
+  cheapest first, at most twelve, each a company's numbers only (what every
+  row would repeat is said once, in `rows_read`); a listing with more
+  companies in range says how many were left out (`cut`), names them
+  (`cut_ids`) and gives the call that reads them (`read_them`:
+  `do(action_class="mercenaries", candidates=[<company ids>])`, which now
+  reads only the companies named), on every path a cut takes, and never
+  shows a company without its price. `debt_after_hire` carries the game's
+  `debt_line` (a hire may go into debt down to 24 months of income) and
+  says per row whether the game allows that hire (`allowed`).
+  The reads behind a hire still see every company in range. A hire the game
+  refuses while the price, range and contract reads pass reads gate
+  `engine_refused`, with what was ruled out, instead of `cannot_afford`.
+* **What a defeat costs, on the declaration.** `declare_war`'s reply, and
+  the rows that offer a war, carry `if_you_lose`: the gold, prestige and
+  truce of yielding, from the game's peace-price table at your income.
+  The prestige of each ending is read per casus belli from its own block
+  in the game's files, for either side: a win as a claim or de jure
+  attacker gives prestige experience, not prestige (a claim war's win had
+  read +15), and a claim war's defeat is "-10 x the war's prestige
+  factor (unread), at least -1000" with `prestige_not_read`: the game
+  sets that factor for each war and no file or read gives it (it had read
+  -15). The news prices a war's end for your ruler as defender too (an
+  independence war lost: -150).
+* **A death estimate.** The ruler's death is a calibrated band, not a
+  date, with what his death would take (the titles that leave and the
+  levers still open) on the reads that show the goal.
+* **Wars.** Committed strength (what your open wars already use), the
+  game's own declaration prices, priced defeats for every casus belli, the
+  truce from the game's relation read, ducal-conquest rows per county,
+  siege progress with its blocker and days left, raised armies and debt
+  refusing a declaration before it is sent, and peace refusals with the
+  score and what is missing.
+* **Money and prestige.** The purse attributes gold, prestige and piety by
+  cause in date order (your acts, the AI's, events, the monthly change),
+  with months to a gold target at net income; levy upkeep and one-off costs
+  are named; the kingdom bar is the game's at-least-half rule.
+* **An act is charged in one step.** An act the server sent on the day a
+  step ended, before that day's read, is charged in that step and not again
+  in the next (acts and reads share one order). An answered event's piety
+  and prestige are priced from its option in the game's files.
+* **A cause in the ledger needs its record.** The purse names a cause only
+  from a letter or an act it read, never from the shape of the numbers.
+  The head of faith's gold-for-piety rows appear only when his accept
+  letter is among the step's answered events (gold rising while piety
+  fell had stood in for it). An answered event that is the letter an
+  interaction sends when it runs is priced from that interaction's block
+  in the game's files (gold, prestige, piety: an excommunication request
+  costs 500 piety), with `sent_by` (your act, or the game's AI for your
+  ruler, or another character). A spouse seat that changed holder is
+  named, with `if_a_divorce` (the divorce's piety cost; a death costs
+  none; which it was is not read). A piety change of more than 50 left
+  unexplained carries `ruled_out` and `not_read`. A title gained whose
+  price the gold fell by is no longer said to be the AI's creation when
+  the bridge's record of the AI's posts was read and holds none
+  (`not_created_by_the_ai`) (not yet read live).
+* **The ledger's arithmetic, in one rule.** A purse row's `unexplained` is
+  its change less every priced row of its step, each counted once: your
+  acts, the monthly change, every `in_this_step` row with an `expected`
+  and a matched price. A post the game's AI made for your ruler with a
+  price (an `ai_acted` decision's 300 prestige) is now a row of the step
+  and subtracted whatever its amount (it had been subtracted only when the
+  fall matched it); a prestige row over 50 subtracts its monthly change (one
+  had read the whole change as unexplained). Also priced from the game's
+  files: an answered event's option that gives gold (a wedding's gift, a
+  year's income, at least 75), and a realm law's pass cost (`expected` 0 for
+  a law with no `pass_cost` block; a law that came another way names its
+  cost as `pass_cost`, not counted).
+* **A letter's sender, across steps.** An interaction's letter that comes
+  in the step after its send names your act (`sent_by: you ...`): the ask
+  the same news answers with that letter, or your act of that interaction
+  up to 60 days before it. A call your ruler's AI sent that an acceptance
+  letter answered is an ally who joined (an `allies_joined` row priced by
+  his tier, `called_by` the game's AI), and "no ally joined a war you
+  attack in" is never said beside an acceptance letter. A letter that
+  several interactions send, or that the game's script also fires from
+  elsewhere (an illness event), names them (`senders`, `elsewhere`) and
+  counts no charge unless an act of yours names the one that ran.
+* **Exclusive branches are one of them.** A charge read from an `if` /
+  `else_if` / `else` chain (a call to war's prestige by the ally's tier) is
+  one of its branches: `one_of` lists the totals it can come to and
+  `if_its_conditions_held` is the largest of them (-750 for a call to war,
+  which had read -1,335, the sum of every branch); a letter whose join an
+  ally-joined row prices is `counted_in` that row.
+* **Factions and threats.** A faction's strength against the ruler, its
+  levers, and faction membership in the news.
+* **Answers to your calls and your own wars.** A call to war is an ask: the
+  news reads the ally's answer from the game's acceptance or refusal letter
+  (joined, declined, the war ended first, or waiting), prices a join the
+  letter records, and no longer rules out "an ally joined" when it could not
+  read the letters. A war you declared and that ended between two reads is
+  described as yours, with the date you declared it. The disinherit lever
+  names the son whose check refused, beside the sons it allows.
+
+**Replies a model can use**
+
+* **Paging.** `observe`, `plan_war`, `succession_plan`, `inspect` title and
+  `cbs` replies over the cap are served in pages, never cut; a page is kept
+  per call until another call of the same kind replaces it, and
+  `inspect(subject="more")` reads its next page (`CK3_REPLY_PAGES=off` gives
+  back the single-reply size rule). Read replies
+  stay within 8 KB. A purse row (gold, prestige or piety) whose change or
+  unexplained part is 50 or more stays on `observe`'s first page, and so does
+  the purse at a ruler change (`new_ruler`, now with the late ruler's last
+  read beside the heir's, `predecessor_last_read`).
+* **News that keeps the seat's own losses.** When `observe` must shorten,
+  the rows about the seat's own losses stay. A briefing follows each ruler
+  change; a ruler-change row says what the change cancelled.
+* **Every refusal in words.** Unknown arguments are refused on every `do`
+  intent and on declarations; refusals carry the game's own reason when it
+  gives one; law refusals name the game's conditions; grant refusals name
+  the liege chain.
+* **The bridge's refusal codes, mapped.** Each refusal code the bridge's
+  sources pass to a refusal reply is mapped to a gate, or listed as one no
+  seat's call meets; a busy read slot
+  is the new transient gate `read_busy` (retry), and a few codes carry a note
+  on what to ask instead (a marriage read for an actor with no capital: ask
+  again with `require_in_range=false`).
+* **Shared notes.** `discover(what="notes")` serves short game facts and
+  tool-use lessons. With `CK3_NOTES_SET` unset a server serves the default
+  set: general game rules and tool use, no note scoped to one start, no title
+  key in any note. A set names one start's notes (`CK3_NOTES_SET`):
+  `ireland1066` (the 1066 Dublin seat, with a turn-one note that ends with
+  the call creating `k_ireland`), `munster1066once`, `francia867`,
+  `sweden867`, `lorraine1066`, `carinthia1066`. The Munster set leaves out
+  five notes that describe the Dublin start: four scoped to Dublin, and
+  `convert-faith-local`, which reports Dublin's ruler converting to Insular
+  Celtic, the faith Munster's ruler already holds at the 1066 start (its
+  scope now says Dublin). Notes and reply strings are written as rules: what
+  the game does, in the present tense, a figure as a rule or an approximate
+  range. `ck3agent/server/test_notes_general.py` defines what is served (each
+  set's note texts, kinds and scopes; the string constants and f-strings of the
+  server, the hooks, `ck3agent/cli.py` and the command line's helper modules,
+  and the proposal mod's generator; the bridge's string literals, adjacent
+  ones joined; the prompt files in `ck3agent/protocol/`; the two mods' game
+  scripts without their comments; the tool descriptions) and refuses, in all
+  of it, the narration forms it lists: a count of runs or games, a recorded
+  case, a live case's tag, a character by its id, an in-game date other than a
+  start's, runs or tests counted with a word between, a repeat count, one of
+  thirteen past-tense verbs (fell, rose, came, ran, took, made, went, dropped,
+  gave, refused, arrived, created, hired) with a figure after it, a live test
+  or check, a probe as the evidence, an observed figure served as a bound
+  ("up to about N gold") or a measurement ("measured: ...", "a measured
+  average rate"), a release candidate's label, a save's character ids as an
+  example; it also refuses a served text that names a script (`*.sh`, `*.py`)
+  the tree does not hold. A story told in other words is not caught, and a
+  figure from one game with no such words is not either. So each figure was
+  checked by hand against its source for this release: a list of 286 rows
+  over 251 served texts (the 245 a sweep found holding a figure beside a game
+  quantity such as gold, prestige, piety, months, years, %, levies or opinion,
+  or beside an estimate word such as about, roughly or measured, and six more
+  notes read by hand), of which 279 hold a figure (the other 7 hold list
+  numbers, format strings or none). Each is sourced to a key of the installed
+  game's files (`common/`, `events/`, the defines) or to a constant or
+  computation of this code, except four that rest on this project's own
+  reading of the game's binary rather than its data files (the siege gate's
+  strength ratio, the council pass interval) and the shader cache's size
+  below; the sentence's scope was matched to the source's (which casus belli,
+  which title tier, which era, which modifiers it leaves out). 50 were
+  narrowed to their source's scope and 9 were dropped. A second pass checked
+  the server's tables of bare numbers (the outcome table served where the
+  game's files cannot be read among them) and the texts reworded after the
+  first: 28 rows, 27 of them figures, 12 narrowed. The estimates left say
+  they are estimates and their scope: the money read's small-realm
+  shortfall (the code's own constant), the shader cache's size on a first
+  start (not a game figure), and the reparations a peace-price or news row
+  prices as years x 12 x the monthly income read (the game charges its own
+  yearly income, which can differ). A note's
+  provenance (a record of where the fact came from, not served) may name the
+  games it was read in. The spending note names no count of the kinds it
+  sets (the preset sets ten; it had said eight) and names activities among
+  them; the Munster goal note states the reward in the prompt's words (your
+  ruler first holds `k_ireland`; the line ending, or passing to a ruler of
+  another dynasty, ends play). Each note's provenance says its source.
+  Anything that froze a notes version must re-freeze: every set's version
+  moved.
+* **What a client may tell the server.** `CK3_TOOL_PREFIX` (the prefix the
+  client puts before the tool names: the calls a reply suggests carry it)
+  and `CK3_GOAL_TITLE` (the title the run's goal names: the create_title veto
+  never drops it, and a cut reply keeps its `formable_titles` row).
+* **Plain words in what is served.** Refusals, the `session` description,
+  the run prompt and `ck3agent run --help` say "a scheduled run" (a harness
+  that runs several seats on one schedule, the docs' "Scheduled runs") where
+  they said "an experiment cell", and "this run" where they said "this
+  experiment"; the decisions refusal and the money read's two absence notes
+  carry no tracking numbers. The war-stance reply's surrender cost names
+  the defeat of the claim, de jure, conquest, vassalization, tributary and
+  holy-war families as their files give it (a claim or de jure war: 10 x the
+  war's prestige factor, legitimacy and 3 years of income, and a claim war's
+  claim is lost; a conquest: 150 or 350 prestige, legitimacy and 2 or 3
+  years; a vassalization war: 350 and 3 years; a tributary war: 350; a holy
+  war: no prestige, legitimacy and 2 to 4 years) and says other casus belli
+  are not listed, with `end_war`'s check giving one war's price; the
+  claim-war yield's line says the game charges 3 years of its own yearly
+  income and that the row's 3 x 12 x the monthly income read can differ from
+  it (it is served under `rule`, where it was under `measured`), and every
+  line that prices reparations from the monthly income read says the same of
+  its own years. A won claim or de jure
+  war gives its attacker prestige experience (fame), not prestige, in the
+  peace-price rows as in the outcome table, whose conquest rows now give a
+  win 0 prestige (the 75 and 150 there were prestige experience). Known
+  limit: the row can misprice that gold (in one game it priced a yield at
+  171 gold and the game took about 121, so the game's yearly income for
+  reparations can differ from 12 x the monthly income read); the war-end act
+  records the charge the purse read shows, and the row's price only when no
+  charge was read. The truce the peace-price rows and the replies of
+  `end_war` and `make_peace` state is the casus belli's own, from its
+  endings in the game's files: the one-way truce of 1825 days for the
+  priced casus belli whose endings call the game's standard truce effects;
+  for a refused liege demand war, a truce both ways of 1825 days on its
+  victory or white peace and none on its defeat; any other casus belli's
+  truce reads "not read" in `make_peace`'s reply (the peace-price table
+  prices no other). They had stated the one-way truce for every casus
+  belli. The fabrication's rate names the terms that slow it (x0.5
+  off your border, x0.3 on a county held inside your realm, x0.8 with a rival
+  chaplain, x0.7 with a nemesis): the most months it states are for a
+  chaplain who is neither, and `overdue` is set only past the most a nemesis
+  allows and only once the county's holder was read and is outside your
+  realm. A county held inside your realm is priced at its x0.3 alone, and the
+  reply says the months may be up to twice that: the game's files do not say
+  whether it also takes the x0.5 off your border there. A
+  coping trait's gold is 50 or more (its file's floor); the crown-authority
+  price is said before faith and culture modifiers. Notes: a claim war's
+  declare price per title tier (100 a county, 200 a duchy, 400 a kingdom,
+  800 an empire, a quarter less pressed); a white peace's and a yield's
+  prestige for a claim or de jure war; a war won as attacker gives fame, not
+  prestige; disinheriting a son who would take a share (300 prestige, 150
+  renown x the era factor); a hunt's prestige by quarry and its main
+  modifiers, saying other modifiers exist; the truce's usual length, less
+  with the flexible truces perk; a hegemon called into your war costs no
+  prestige (the call's effect has no branch for him); the 867 start's empire and king
+  notes give the rule, not that start's figures. Anything that froze a notes
+  version must re-freeze again. The refusal codes and the 13 tools, with
+  their names and parameters, are unchanged. The goal
+  block outside a scheduled run reads `{"state": "no_scheduled_run"}` (it read
+  `not_an_experiment_episode`).
+
+**Bridge**
+
+* **Hires and recruits by a ruler born during the game.** The bridge
+  passes the game whole character and company ids for the mercenary hire,
+  the men-at-arms recruit, the raid order, the council seat swap and war
+  creation. It had passed the low 24 bits only, so for a ruler born during
+  the game his hires were refused, and his recruits, raid orders, seat swaps
+  and war creations named a character the game could not find.
+* **A scope fix without an engine lock.** The bridge's temporary script
+  scope no longer takes the engine's random-scope lock (it could deadlock
+  the game); a restore it cannot make yet is deferred to the next safe point
+  instead of latching, and counters record each deferral.
+* For a scripted environment only (not reachable from the public tools):
+  a speed the environment declares at launch lifts the bridge's cap at 3
+  (4 and 5 checked live), and it can arm the bridge's pause alarm at each
+  check date. From the tools, `session` still takes speed 1 to 3 and refuses
+  anything else.
+* The Windows build has the veto and event hooks and the newer levers; it
+  builds with clang-cl and the MSVC libraries (xwin) from Linux (docs/porting), CI builds its
+  platform layer with MSVC, and it is not yet proven on a live Windows game.
+* The offset header (`re/offsets/ck3_offsets.h`, and the Windows headers
+  generated from it) says each fact with its confidence and evidence, without
+  the research process's round tags, labels, process ids, dump names and
+  dates. Since 2026.12.11 it
+  also holds the offsets this release's levers and reads use, and some values
+  were corrected, each with its evidence in the comment (among them the two
+  vtable slots of the mercenary hire command, which had been recorded the
+  wrong way round). The bridge compiles the header's md5 into its build
+  provenance, so this build reports a new `build_offsets_md5`.
+* The bridge's log lines and replies were reworded to carry no tracking
+  numbers and no design-stage labels (the served-text test above reads its
+  string literals for the spellings it lists; the create_title hint names "the bridge's own
+  de-jure-majority bar"; the pipeline-mode refusal names no design tag; the
+  casus-belli option buffer's two log lines say "CB option buffer full"; the
+  dispatch-context line, and the init, tick and drain lines, carry no stage
+  prefix; the casus-belli query's gate lines name the gate: "group-trigger
+  gate", "relation gate"); a port phase a Windows or macOS line names is the
+  port plan's (docs/adr/0001); the scoring-hook dispatch's log lines start
+  `DISPATCH score_hook:` (they started `DISPATCH_V5:`). Wording only: a log
+  reader keyed on `DIAG tick=` reads it as before.
+* **Parents read the right way round.** The family record's father and
+  mother ids were recorded in the offset header each in the other's place:
+  every read of a character's `father_id` and `mother_id` (the character
+  reads behind `observe` and `query(domain="character")`, and the pair reads
+  of the marriage and relation checks) had given the mother as the father and
+  the father as the mother. They are corrected (the header's family record,
+  with its evidence).
+
+**The tool surface since 2026.12.11** (every difference of the 13 tools'
+parameters and enums, read from the generated tool reference of each
+version):
+
+* **Breaking: `query` lost six parameters**, the `map_graph` domain's options:
+  `scope`, `hops`, `max_nodes`, `target_county`, `target_county_key` and
+  `counties`. A call that passes one is now refused as an unknown argument;
+  `query(domain="map_graph")` is still served with its defaults, and
+  `inspect(subject="map")` is the region read.
+* `query`: `title_id` takes an integer or a title key; `detail` enumerates
+  `brief`, `full`; `sort` and `sort_order` enumerate their values (`age`,
+  `diplomacy`, `gold`, `intrigue`, `learning`, `martial`, `military`,
+  `prowess`, `realm_counties`, `realm_size`, `stewardship`, `tier`; `asc`,
+  `desc`).
+* `discover`: `what` adds `notes`, with a new `topic` parameter; `action`,
+  a free string before, now enumerates its values in the schema
+  (`back_claimant`, `banish`, `claim`, `declare_war`, `execute`,
+  `execute_prisoner_interaction`, `imprison`, `imprison_interaction`,
+  `press_claim`, `revoke_title`, `revoke_title_interaction`, `war`), and so
+  does `decision_type`, listing the two decisions `decision_why_blocked`
+  models (`found_kingdom`, `negotiate_the_danelaw`, each also with
+  `_decision`); the server reads both as before and does not refuse another
+  value; `title_id` and `location_id` take an integer or a key.
+* `do`: `intent` adds `ai_veto`, `event_rule`, `gold_reserve`,
+  `host_activity`; `action_class` adds `activities`, `income_levers`.
+* `inspect`: `subject` adds `map`, `more` and `threats` (`inspect(subject=
+  "threats")`: who can declare war on your ruler now and on what, the game's
+  own casus-belli check asked with each nearby ruler as the attacker, his
+  strength against yours, and the vassalization rule with your county
+  count); a new `layers` parameter (the map's columns); `title_id`
+  takes an integer or a key.
+* `observe`: `depth` adds `news`.
+* `cbs`: a new `include_invalid` parameter.
+* `declare_war`: `cb_title_id` takes an integer or a title key.
+
+**Earlier in this release**:
+
+* **A map of the region in one reply.** `inspect(subject="map")` gives one
+  line per county of a kingdom (the seat's own, its target, or the one
+  named) and the counties bordering it, in the game's de jure order, with
+  columns by `layers` (holders, casus belli, armies, strength, adjacency,
+  duchy, land); a value no read gives prints `?` and says why once, and
+  each row's deep-dive call comes with the reply.
+* **A de jure title in one call.** `inspect(subject="title",
+  title_key="k_ireland")` answers one row per de jure county (id, key, name,
+  duchy, holder, the ruler at the top of the holder's liege chain with his
+  realm's military strength, whether you control it, your claim on it) and
+  a `next_call`: the `declare_war` arguments when the game's casus-belli
+  check says a war for it is declarable now, else the gate, else the
+  claim-fabrication council task. Beside them: each de jure duchy, each
+  realm, and `summary` (counties held of total, the counties creation
+  needs). A field that was not read is null with the read named in
+  `errors`, never defaulted.
+* **Title keys wherever a title id is taken.** `title_id`, `cb_title_id`,
+  `target_title_id` and `location_id` take a key (`c_dublin`) as well as an
+  id, in tool arguments and in `do`'s `args`; the reply names each title it
+  resolved (`titles_named`). An unknown key is refused
+  (`target_not_assignable`), never sent as 0.
+* **Every creation requirement at once.** `do(action_class=
+  "formable_titles", candidates=[...])` (candidates now required) gives each
+  title's `requirements`, met or unmet: de jure counties held against
+  needed, the price against the gold held (read even while the county bar is
+  unmet), and the game's own creation check in its words. The game's tier
+  rule (one of: a duke holding enough duchy titles, or a title of kingdom
+  tier or above) is one `tier_rule` row read off the game's own lines,
+  saying what it asks of you at your present tier ("become a duke holding 2
+  duchy titles (or hold 1 title of kingdom tier or above)" for a count),
+  met or not, with what you hold; the game's lines had read as four
+  separate requirements. When it asks for duchy titles you lack, the row
+  names the cheapest duchies the same reply priced and the whole bill (on
+  the 1066 start: 212.50 gold for each of two duchies and 425 for the
+  kingdom, 850). Without those lines it is `met: null`, unknown. `mint_title`'s refusal carries the same list,
+  and takes `args.title_key` only. `observe`'s `de_jure.next_title` names
+  the next title up that the ruler does not hold, with its requirements; it
+  replaces `can_mint_now`, which was true for a title already held.
+* **One answer to "can I declare this war now".** `cbs`,
+  `discover(what="war_targets")`, the title table's `next_call` and
+  `observe`'s news all judge a war by the same casus-belli read. A
+  `war_targets` row is `declarable` only when that read says so, with its
+  `declare_args`; otherwise it carries the gate (`declarable_authoritative`
+  is gone). On a live 1066 game the old list offered county-conquest wars
+  that `declare_war` then refused; and after a fabricated claim arrived its
+  claim row said there was no claim while `cbs` offered `claim_cb`: a claim
+  row now matches the claim casus belli on that title.
+* **Claim targets you name.** `do(action_class="fabricate_targets")` takes
+  `args.within` (a kingdom or duchy key) or `candidates` (county keys) and
+  answers each county: yours already, a claim you hold already, or a target
+  with its ready council-task call (the game's own check of that target is
+  not read; the council task's reply carries any refusal). Without them it answers the bridge's
+  county list with a warning (`targets_not_ruler_specific`): on a live 1066
+  game that list was the same 40 counties, none in Ireland, for three
+  different counts.
+* **News in `observe`.** A `news` block of what changed since the server's
+  last `observe`, each row with a `next` call: claims gained (with the
+  claim war's `declare_args` when it is declarable now) and lost, wars
+  started and ended (with the outcome from the war-end ledger), ruler,
+  liege and heir changes, council seats whose holder or task changed (a
+  claim fabrication that left the chaplain names the next fabricate call),
+  schemes ended, titles gained and lost. A read that did not answer makes
+  its rows `unread`; an outcome no read gives is `null` with the reason.
+  The brief also carries military strength (levies, men-at-arms), the
+  liege, the council, and the money unit.
+* **Sent is not refused.** A sent offer whose effect the game applies later
+  (calling an ally into a war) is `pending` with where to read it, never
+  `recipient_refuses`. `discover(what="acceptance")` runs the send's own
+  checks, so it and the send agree, and says `sendable`; `interaction` and
+  `interaction_type` are the same argument. The war-stance stall verdict
+  reads the same sieges `inspect(subject="wars")` lists; occupation 0 with
+  no siege is `null` (`stall_unknown`), not a stall. No reply is `ok: true`
+  while it carries a handler's error.
+* **Small default replies.** `cbs` lists the valid options whole and counts
+  the rest by gate (`invalid_by_gate`; `include_invalid=true` lists them).
+  The interaction and decision lists are capped at 40 names with the rest
+  counted and take name fragments to filter; the fabricate list and
+  `war_targets` are capped at 24 rows. On recorded replies from a live 1066
+  game, every one of these defaults is under 8 KB (`cbs` from 36 to 38 KB
+  to under 3 KB; the interaction list from 82 KB to under 6 KB).
+* **Truer descriptions and schemas.** Every closed value set is an enum in
+  the schema; numbers in the text come from the code's own constants. Also
+  new: `do(action_class="income_levers")`; `end_war` with
+  `check=true` says what each term needs; one sentence on armies (no tool
+  raises, moves or disbands them: the game's AI does).
+* **One shape for a ready call.** Every field that hands you a call
+  (`do_call`, `next_call`, `next`, `fix`, `check_first`, `enumerate`) is
+  `{tool, args}`: a `do_call` is `{"tool": "do", "args": {"intent": ...,
+  "args": {...}}}`, and the title table's `next_call` no longer names the
+  tool as its key. A scripted driver had broken on the two shapes.
+* **Marriage candidates you can send.** Each listed row is paired with a
+  spouse-to-be on your side the fields allow: you or one of your children,
+  unmarried, of age, of the other sex (the ruler, his children and each
+  candidate are read for it). Rows that cannot be paired are counted by why
+  (`not_listed`), at most 10 rows are listed, and the reply is under 8 KB
+  (17 KB before). The game's own send check then judges each listed row
+  with its pair (nothing is sent): a row the game would refuse, or whose
+  recipient would answer no, leaves the list and is counted under the
+  game's reason (a few are named in `excluded`); a listed row carries the
+  game's `answer`, `accept_score` and chance. Faith and kinship are applied
+  by that check. When the check does not answer, the rows are listed
+  unjudged and the reply says so. (An earlier build in this release dropped
+  the check because, without the pair, the game refused every marriage.)
+* **The head of faith's claim.** The bridge now sends
+  `hof_ask_for_claim_interaction` through its own pipeline with the title
+  passed as `args.title_id`, so the send check can judge it (before, it
+  went through the AI-scoring fallback, ignored the title and was refused
+  `ai_no_valid_target`). Its interaction-list row carries the rules of the
+  game's own interaction file: name the title's holder as `target_id` (the
+  interaction redirects to your head of faith), it is shown only when the
+  holder shares your faith, it costs 100 piety on a county (200 a duchy,
+  400 a kingdom) plus 10 per county of your realm, and it gives a pressed
+  claim. A send to a holder of another faith is refused before it is sent.
+  `do(intent="interact")` still warns `title_not_applied` when a title is
+  passed to an interaction the bridge does not send itself. Not yet run in
+  a live game.
+* **News: baronies.** A barony gained in the same step as its de jure
+  county takes the county's `how` (`with_county`); one gained later stays
+  unknown.
+* **Fixes.** A game speed above 3 is refused and nothing is written (it was
+  set to 3 and answered as applied); `query` refuses an unknown characters
+  sort or filter (the bridge read them as other values); a frame with no
+  request id, or another call's drain record, is never taken as a call's
+  reply. With `CK3_CLOCK_OWNER=env` (an environment owns the clock),
+  `session` does not list pause, unpause, speed or wait and refuses them
+  (`clock_owned_by_env`).
+* **A war score is the war's total.** Every reply that shows one (`inspect`
+  `war_stance`, `wars` and `war_score`, `query` `wars`, `plan_war`'s active
+  wars, `observe`, the refused `make_peace`) names the total the game uses
+  for peace terms `war_score`, with its parts (`battle`, `occupation`,
+  `imprisonment`, `ticking`) under `war_score_parts`. When the game has not
+  computed the total yet it is `null` with `war_score_unread`, never the
+  battle part (`query_wars` had sent battle plus ticking under that name).
+  Once the total reaches what `we_win` needs for your side, the row carries
+  the ready `end_war` call; `end_war check=true` does too when the game says
+  `we_win` is open. A model seat had waited in a war whose score it read as
+  the battle part only.
+* **News reaches the seat every turn.** `observe(depth="news")` answers only
+  the news, compact, since the last `depth="news"` read; it does not move the
+  news of the seat's own `observe`. News also says when the prestige, piety
+  or gold changed (with the acts this server sent whose cost it read; the
+  cause is otherwise `unknown`) and which wars are at `we_win`.
+* **Council targets read as what they are.** The game stores a county
+  council task's target as the county's capital province; the bridge named
+  it as a title with that id (the chaplain fabricating on Athlone read
+  "Blue Horde"). `query(domain="council_tasks")` now gives
+  `target_province_id` and `target: "unknown"`, or the title for a
+  fabrication this server set (it reads the province back when it sets it).
+* **The claim fabrication.** The council reads (`query` `council_tasks`,
+  `inspect` `council`) and the news say whether a fabricate task runs, on
+  what, since which date this server saw it, and how many days; its
+  progress is `null` (the bridge reads none). A fabrication this server set
+  that the game's AI stopped is said loudly, with the call that sets it
+  again; one that ended with the claim held is not. The `council_task`
+  reply carries the game's rate for the task: its terms, and the most months
+  it takes for a chaplain who is neither your rival nor your nemesis.
+* **The cost of declaring.** `declare_war`'s reply carries the casus
+  belli's cost (`declare_cost`) as the `cbs` and `plan_war` rows showed it
+  before the war.
+* **A war you cannot pay for is not offered as declarable.** The game's
+  casus-belli check does not ask whether you can pay: on a live 1066 game
+  `cbs` and `plan_war` offered a claim war that the game then refused
+  without a word, twice while the ruler was in debt and once with his
+  prestige below the war's cost. Every place that judges a war (`cbs`,
+  `plan_war`, `discover(what="war_targets")`, the title table's
+  `next_call`, the news) now checks gold below zero, the claim war's
+  prestige cost (from the game's own cost table: 100 a county before the
+  game's multipliers, 75 if the claim is pressed; about 125 measured on the
+  1066 start; the bridge had priced it at 0) and a truce. `cbs` lists such
+  wars under `blocked_now` with what is missing; `declare_war` refuses them
+  before sending, naming the condition and the amount; and when the game
+  refuses a war these all pass, the refusal lists what was checked and what
+  was not. The bridge's cost estimate for other casus belli is shown, never
+  a refusal.
+* **Where the purse went.** News prices what it saw move the prestige,
+  piety or gold in the step: a fabricated claim arriving (the game charges
+  (40 - the chaplain's learning) x 3 gold, at least 40-60; four such claims
+  took 79 to 101 gold each on the 1066 start), a war declared or ended, a
+  realm law passed, a county gained, and the expected income at the monthly
+  rate; what is left is `unexplained`, and a change nothing priced stays
+  `unknown`.
+* **`idle` in the news.** Facts the reads hold that nothing uses: vacant
+  council seats, no claim being fabricated, claims with no war, no
+  alliance, piety of 100 or more; each with the call that lists what can
+  be done, absent when none holds. A model seat had spent 19 of 46 turns
+  with no call while one claim was being fabricated.
+* **Appointing to your council.** `do(intent="appoint")` sends the acting
+  ruler (it had sent none, and the bridge read the courtier as the actor:
+  `actor_not_claimed` on the seat's own council) and takes the seat by its
+  name (`steward` or `councillor_steward`). A vacant seat is refused before
+  sending: the bridge's council write only swaps two occupied seats, and
+  the game's AI fills vacant ones.
+* **The creation bill in the title table.** `inspect(subject="title")`'s
+  `creation` prices as many duchies as the tier rule needs (the nearest
+  first, creatable or not), so its bill agrees with `formable_titles` (it
+  had read "unread" with one duchy priced).
+* **What creating the title takes, in the title table.** `inspect(subject=
+  "title")` for a title you do not hold carries `creation`: counties held
+  and needed, the tier rule, the price and the bill, and the nearest unmet
+  requirement with its ready call (on the recorded Ireland state: create
+  d_meath, 2 of 2 counties held, 212.50 gold of 229.67), from the same
+  function as `formable_titles`; two create-title checks in one span.
+* These last twelve items are tested on recorded replies from live 1066
+  games, not yet read live.
+* Read live: at the 1066 start (CK3 1.18.3.1), a scripted policy drove
+  this release's server from its replies alone through a fabricated claim
+  on Athlone, the claim war and the county gained. The changes above that
+  were made after that run (the tier rule row, `war_targets` claims,
+  marriage pairs, the one call shape, the head of faith row, baronies in
+  the news) are tested on the replies recorded in it, not yet read live.
+
 ## 2026.12.11 — 2026-11-19
 
 From a 25-year seated pilot on 2026.12.10: a king's `observe` took about
@@ -76,7 +743,7 @@ build is green and gates CI. The surface is still thirteen tools.
 
 ## 2026.12.10 — 2026-11-17
 
-From the v4 pilots on 2026.12.9: several seats in one game read and wrote as
+From multi-seat runs on 2026.12.9: several seats in one game read and wrote as
 each other's rulers, a council task the seat set was reassigned by the game's
 AI, the bridge's one reader thread fell behind under a seat's read batch, and
 every offer the AI made to a seat's ruler was answered by the AI. Offers can
@@ -228,7 +895,7 @@ tarball); `observe` gains two blocks. The surface is still thirteen tools.
 
 ## 2026.12.8 — 2026-11-10
 
-From the v3 pilots on 2026.12.6 and 2026.12.7: `inspect(subject="war_stance")`
+From test runs on 2026.12.6 and 2026.12.7: `inspect(subject="war_stance")`
 answered `stance "unavailable"` for 29 of 32 reads, all after the war was
 declared, and labelled that placeholder as the engine's. The surface is
 still thirteen tools; `ck3agent run` is unchanged.
@@ -267,13 +934,13 @@ still thirteen tools; `ck3agent run` is unchanged.
 
 ## 2026.12.7 — 2026-11-10
 
-From the v3 pilot on 2026.12.6: in two arms the king's seat claimed the
-dukes' rulers before the dukes' seats bound them, and held them to the end.
+For experiment cells: a seat can no longer claim a ruler the cell reserved
+for another seat before that seat binds it.
 The surface is still thirteen tools; `ck3agent run` is unchanged, and so is
 everything outside an experiment cell.
 
 * **A seat cannot claim a ruler the cell reserved for another seat.** In
-  the pilot's weak_orders and weak_intent arms the king's seat called
+  two cells of a pilot run the king's seat called
   `session(action="add")` on all five dukes' declared characters within its
   first minute; every duke's seat was then refused `owned_by_other` (one of
   them 43 times). An experiment cell now tells each seat's server which
@@ -318,8 +985,8 @@ everything outside an experiment cell.
 
 ## 2026.12.6 — 2026-11-10
 
-From the v3 pilot on 2026.12.5: a seat that held its ruler was recorded as
-having lost it. The surface is still thirteen tools; `ck3agent run` is
+For experiment cells: a failed lineage read no longer records a seat that
+holds its ruler as having lost it. The surface is still thirteen tools; `ck3agent run` is
 unchanged.
 
 * **A lineage read that fails is read again, up to three times in a row.**
@@ -847,7 +1514,7 @@ still thirteen tools.
   public run used them. The server registers the same 13 tools in every
   process.
 * **The first `set_phase` holds, and the reply says whether it does.** In the
-  2026.11 pilots the first `set_phase` of 12 of 32 seats was undone at the
+  first test runs the first `set_phase` of 12 of 32 seats was undone at the
   first tick: the bridge first saw the world after unpause and set aside, as
   a reload, the personality written while paused at the start date. The
   bridge now samples the world at every drain, before any queued action.
@@ -1499,7 +2166,7 @@ proven against a live game before they were merged.
   of them (default 20, at most 64). `observe_v2` is renamed `observe`; the old
   `observe` and its `include` parameter are removed, and `observe(depth="full")`
   carries the AI evaluations it read (the personality axes are in `posture`
-  at every depth). The code of the tools retired in rc2
+  at every depth). The code of the tools retired before 2026.10.0
   (`act`, `game`, `control`, `bridge`, `execute_console_command`) is deleted
   too.
 * **One reply shape.** `query`, `discover`, `steer`, `pass_turn` and the board

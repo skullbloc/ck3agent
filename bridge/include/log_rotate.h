@@ -1,15 +1,15 @@
 // One spelling of "the log got too big", drivable by a test.
 //
-// THE DEFECT. Rotation used to be freopen(path, "w") on the live FILE*: the same
+// THE HAZARD. Rotation is not freopen(path, "w") on the live FILE*: the same
 // inode, truncated in place, no copy retained. The only survivor was line 1 of
 // the new file.
 //
 // That was written for an untraced log where discarding the old window costs
-// nothing — and measured that it costs nothing because IT NEVER FIRES
+// nothing — and a measurement showed it costs nothing because IT NEVER FIRES
 // THERE: across 11 sealed bundles an untraced bridge.log is 250KB-1.1MB and not
 // one had ever rotated. With CK3_BRIDGE_TRACE armed it is ~0.148 MB/tick, so one
 // episode blows a 64MB cap repeatedly. The rotation's only real-world effect was
-// on traced runs — precisely the runs whose evidence we cannot replace. In arma8
+// on traced runs — precisely the runs whose evidence we cannot replace. In one arm run
 // it deleted an observed Backpressure drop line before anyone could read it.
 //
 // A diagnostic that erases its own output is worse than no diagnostic: the short
@@ -47,7 +47,7 @@ struct RotateResult {
 // than left to infer it from how many files exist.
 //
 // Sized by the measurement that prompted it: a traced episode writes 158-266MB
-// (two independent estimates from arma8 — 0.148 MB/tick from 45MB at tick 304,
+// (two independent estimates from that run — 0.148 MB/tick from 45MB at tick 304,
 // 0.088 MB/tick from 210s-apart snapshots, over ~1795 ticks). A 3-deep 64MB
 // ring retains 192MB. At the low estimate that covers a run; at the high one
 // the head falls off. Rather than pick a depth against an estimate that spans a

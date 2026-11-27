@@ -1,6 +1,6 @@
-// test_vassal_roster.cpp —. NO GAME. The direct-vassal
+// test_vassal_roster.cpp — NO GAME. The direct-vassal
 // read the bridge's realm queries call (vassal_roster.h), driven over a fake memory
-// laid out as dumps ivar867 / 1097 show a ruler's contracts: the ruler's
+// laid out as the 867 and 1097 dumps show a ruler's contracts: the ruler's
 // title_realm VASSAL_CONTRACT_ARRAY holds contract refs; each contract carries its
 // key at REF_KEY, its SUBJECT at +0x20 and its LIEGE at +0x28.
 //
@@ -118,7 +118,7 @@ int main() {
           "contract_with: the first of two contracts with one subject");
     check(contract_with(m, tr, KING, 777) == 0, "contract_with: another liege's vassal has none");
     check(contract_with(m, tr, OTHER, 12829) == 0, "contract_with: not the liege, no contract");
-    // Control: a contract keyed where the pre-fix walk looked it up
+    // Control: a contract keyed where the superseded walk looked it up
     // (+0x10) is not found, so the test tells the two lookups apart.
     {
         FakeMem k;
@@ -136,7 +136,7 @@ int main() {
         bridge::vassal_roster::MAX_CONTRACTS + 1;
     check(direct_vassal_ids(m, huge, KING).empty(), "a count past the bound is not walked");
 
-    // Negative control: the same contracts laid out the pre-fix way (liege +0x20,
+    // Negative control: the same contracts laid out the superseded way (liege +0x20,
     // subject +0x28) must give nobody: the read keys on the layout the dumps show.
     FakeMem old;
     uintptr_t oking = character(old, KING), ov = character(old, 12829);

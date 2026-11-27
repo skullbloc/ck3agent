@@ -245,9 +245,17 @@ static const uint32_t kWinReviewedHookRvas[] = {
     ck3_win::funcs::INTERACTION_TRY_SEND,  // on_interaction_try_send(uintptr_t* ctx, long extra) -> char
     ck3_win::funcs::WAR_SCORE_UPDATE,   // on_war_score_update(void* war); components adapted in war_score_hook.cpp
     ck3_win::funcs::LOBBY_VIEW_CTOR,    // lobby_view_ctor_hook(this, a2, a3) -> this (MSVC ctor)
-    // WINRE: on_war_decl_handler(void* req, void* ctx), diagnostic; the Windows body reads
+    // on_war_decl_handler(void* req, void* ctx), diagnostic; the Windows body reads
     // req+8/+0x10/+0x28 and ctx+0x2D8/+0x2DC, the hook's fields (ck3_offsets_win.h).
     ck3_win::funcs::DECLARE_WAR_SPECIAL_HANDLER,
+    // on_game_command_dispatch(mgr, cmd_pp, flags, extra) -> u64 (army_orders.cpp), the AI
+    // veto's shared hook. MSVC: rcx/rdx/r8d/r9, al returned; the callee owns *cmd_pp (unique_ptr by
+    // value) and its own refusal is vt[0](cmd, 1) + *cmd_pp = 0 + al = 0, the veto's drop on Windows.
+    ck3_win::funcs::GAME_COMMAND_DISPATCH,
+    // on_ai_pick_event_option(event, ctx, rng, flag) -> u64 (factions.cpp), the event-rule and
+    // faction-demand hook. rcx event, rdx scope ctx, r8d roll, r9b flag (its one caller zero-extends
+    // it), the index in eax, as Linux; its inlined option gate is the EVENT_OPTION_IS_AVAILABLE recipe.
+    ck3_win::funcs::AI_PICK_EVENT_OPTION,
 };
 
 // The INT3-first install's window. Linux has a SIGTRAP handler for a thread that

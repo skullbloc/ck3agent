@@ -1,7 +1,7 @@
-""" defects 2 and 5: the registered schema accepts what the toolkit itself
+"""Defects 2 and 5: the registered schema accepts what the toolkit itself
 tells a seat to send, and drops nothing silently.
 
-D2 (budget0 e1/s4 0867.01.01 Eung-ryeom 14942, scale0 n8/s7 Nasr 12843). plan_war
+D2 (recorded seats: Eung-ryeom 14942 at 0867.01.01, Nasr 12843). plan_war
 writes `"claimant_id": null` in every non-claim row's declare_args
 (redesign.plan_war_impl). Two seats passed the row's fields flat and the MCP
 boundary refused before the tool ran:
@@ -74,10 +74,14 @@ def test_D2_declare_war_takes_the_null_claimant_plan_war_writes(refusing):
 
 
 def test_D2_CONTROL_a_claimant_that_is_not_an_id_is_still_refused(refusing):
-    with pytest.raises(Exception) as e:
-        run(ms.mcp.call_tool("declare_war", {"target_id": 14660, "cb": "claim_cb",
-                                             "claimant_id": "the duke"}))
-    assert "claimant_id" in str(e.value)
+    # Refused as the typed envelope naming the field (mcp_server.raised_reply), not
+    # a raised validation error; the tool body (bridge_disconnected here) never ran
+    out = run(ms.mcp.call_tool("declare_war", {"target_id": 14660, "cb": "claim_cb",
+                                                "claimant_id": "the duke"}))
+    import json
+    env = json.loads(next(b.text for b in (out[0] if isinstance(out, tuple) else out) if getattr(b, "text", None)))
+    assert env["blocked"]["gate"] == "invalid_argument", env
+    assert env["blocked"]["fix"]["rejected_fields"] == ["claimant_id"]
 
 
 def test_D5_every_registered_tool_takes_character_id():

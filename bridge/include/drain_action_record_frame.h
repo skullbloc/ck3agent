@@ -1,10 +1,10 @@
 #pragma once
 //: A DRAIN-SETTLED CALL'S RECORD MUST REACH THE OBSERVER.
 //:
-//: THE DEFECT, IN THE ORDER IT WAS BUILT. Three correct changes, and the third
+//: THE HAZARD, IN THE ORDER IT WAS BUILT. Three correct changes, and the third
 //: one landed on a premise the second had already removed:
 //:
-//:     the pipeline records every action as `bridge_record`, minted
+//:   The pipeline records every action as `bridge_record`, minted
 //:               by the bridge, and the driver's ArmActionRelay keys its rows
 //:               off exactly that. For an INLINE-serviced call the record IS
 //:               the reply, emitted by emit_keyed_result via send_observation
@@ -26,7 +26,7 @@
 //:               receiving the day before, so the record reached the AGENT and
 //:               the recorder still had nothing to key off.
 //:
-//: then measured the consequence in a d39 episode: `construct_building`
+//: The consequence was measured in a recorded episode: `construct_building`
 //: in bridge.log 168 times, `execute=1` 167 times, and `action=construct_building`
 //: rows in actions.jsonl ZERO. Not truncation — a whole action class absent end
 //: to end, and every game-thread verb is in that class
@@ -34,7 +34,7 @@
 //: set_council_task, construct_building, move_capital,
 //: appoint_councillor, maa_recruit, set_character_faith, ...).
 //:
-//: THE FIX IS'S RULE, APPLIED ONE PATH OVER: **a record is not a reply,
+//: THE FIX IS THE OBSERVATION RULE, APPLIED ONE PATH OVER: **a record is not a reply,
 //: whoever emits it.** The unicast reply stays exactly as it is — that is what
 //: the caller blocks on — and the RECORD is broadcast separately, keyed
 //: `caller_request_id` and never `request_id`, because request_id is what makes
@@ -43,10 +43,10 @@
 //:
 //: Deliberately free of the socket layer and of rapidjson, so
 //: bridge/test/drain_record_probe.cpp can obtain these exact bytes on a host
-//: with no game, no bridge and no CK3, and scripts/acceptance_td8m_drain_record.py
+//: with no game, no bridge and no CK3, and the drain-record acceptance script
 //: can feed the PRODUCER's bytes to the relay that has to read them. A fixture
 //: written to the consumer's shape cannot falsify the producer's shape — that is
-//: not hypothetical in this repository, it is own finding.
+//: not hypothetical in this repository, it was measured here.
 //:
 //: The two inputs this cannot reach from a header are PARAMETERS: the envelope
 //: clock fragment (built from live tick state) and the attribution fragment
@@ -76,7 +76,7 @@ namespace bridge {
 //: `clock_fragment` carries NO TRAILING COMMA and that is a contract, not a
 //: style choice: `frame_append_attribution_fields` opens with one, and
 //: `build_envelope_clock_fragment` ends with the game_date value for exactly
-//: this reason. probe recorded the failure — a comma added here
+//: this reason. The probe recorded the failure — a comma added here
 //: produced `..."game_date":"1066.09.15",,"flush_id"...`, invalid JSON, and a
 //: hand-built dict shaped to the consumer could never have shown it.
 //:
@@ -84,7 +84,7 @@ namespace bridge {
 //: `frame_append_result_body`, the same body every inline reply is built with.
 //: So `action`, `success` and `reason` come from the handler rather than being
 //: restated here, and a verb whose reply does not name itself produces a record
-//: with no action name. THAT IS NOT REPAIRED HERE: this bead is about
+//: with no action name. THAT IS NOT REPAIRED HERE: this code is about
 //: the record REACHING the observer, and inventing a name in the one path that
 //: happens to have the parameter to hand would leave the other paths unfixed
 //: while making the gap look closed.
@@ -98,7 +98,7 @@ inline std::string build_drain_action_record_frame(
     if (attribution_fragment.empty()) return std::string();
 
     std::string frame = "{";
-    //: `caller_request_id`, NEVER `request_id`. See the header note;
+    //: `caller_request_id`, NEVER `request_id`. See the header note; its
     //: acceptance asserts the same rule for the management ledger by
     //: measurement, and this frame is broadcast to EVERY client, so a
     //: `request_id` on it would resolve some other agent's future.
@@ -111,20 +111,20 @@ inline std::string build_drain_action_record_frame(
     frame += attribution_fragment;
     //: Which path minted this row, IN the row, so the three are distinguishable
     //: without consulting anything outside the bundle: `record_path:
-    //: drain_settled` here, `ledger_source: inline_management` on
+    //: drain_settled` here, `ledger_source: inline_management` on the
     //: management rows, and neither on an `emit_keyed_result` record.
     //:
     //: `record_path` AND NOT `ledger_source`, AND THAT IS NOT A STYLE CHOICE.
-    //: terminal else in BOTH clients (mcp_server.py's
-    //: `_bridge_listener`, agent.py's `_message_loop`) logs a WARNING for any
+    //: The terminal else in the client (mcp_server.py's
+    //: `_bridge_listener`) logs a WARNING for any
     //: unmatched frame carrying `ledger_source`: "This is a management record
     //: that reached the client and went nowhere." That sentence is TRUE of a
     //: management row and FALSE of this one — this record's audience IS the
     //: observer, it is broadcast on purpose, and it did arrive where it was
     //: meant to. Reusing the key would make every agent seat log a false
-    //: warning once per game-thread verb: counted 168
+    //: warning once per game-thread verb: one count found 168
     //: construct_building executions in one episode, in six seats, against
-    //: 27 management rows for the whole episode. A guard's message
+    //: The 27 management rows for the whole episode. A guard's message
     //: names the case it was written for, not the one that fired it, so this
     //: frame stays out of that population instead of quietly redefining it.
     frame += ",\"record_path\":\"drain_settled\"";

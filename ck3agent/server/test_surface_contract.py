@@ -87,8 +87,8 @@ CHANNEL_DECLARED = {"CK3_EPISODE_ARM": "council", "CK3_CHANNEL_TOPOLOGY": "compl
 
 
 def test_msg_send_is_registered_exactly_when_a_topology_is_declared():
-    """Pre-registration v4 (v3 section 5.1 by reference): the 13 and the one. `msg_send` is on the
-    wire only under a declared topology other than `none`; in E0, K1 and free
+    """The 13 and the one. `msg_send` is on the
+    wire only under a declared topology other than `none`; in null mode, single-seat runs and free
     play the NAME IS ABSENT, not present-and-refused; an arm with no topology
     key does not boot at all (channel_topology_undeclared)."""
     rc, names, _ = _probe({})
@@ -106,13 +106,13 @@ NOTEPAD_DECLARED = {"CK3_NOTEPAD_PRIVATE_MAX_BYTES": "4096", "CK3_NOTEPAD_COUNCI
 
 
 def test_the_notepad_tools_are_registered_exactly_when_the_arm_declares_a_pad():
-    """v4 draft §5/§7: the 13, msg_send where a topology is
+    """The 13, msg_send where a topology is
     declared, and note_read/note_write where pads are declared, each a
     declared per-arm addition; absent (not present-and-refused) otherwise."""
     both = {"note_read", "note_write"}
     rc, names, _ = _probe({"CK3_EPISODE_ARM": "k1", "CK3_CHANNEL_TOPOLOGY": "none",
                            "CK3_NOTEPAD_PADS": "private", "CK3_SEAT_LABEL": "K", **NOTEPAD_DECLARED})
-    assert rc == 0 and set(names) == THE_13 | both                # K1: private pad, no channel
+    assert rc == 0 and set(names) == THE_13 | both                # one private pad, no channel
     rc, names, _ = _probe(dict(CHANNEL_DECLARED, CK3_NOTEPAD_PADS="private,council", **NOTEPAD_DECLARED))
     assert rc == 0 and set(names) == THE_13 | {"msg_send"} | both   # COUNCIL
     rc, names, _ = _probe({"CK3_EPISODE_ARM": "k1", "CK3_CHANNEL_TOPOLOGY": "none",
@@ -136,30 +136,30 @@ def test_no_retired_tool_or_handler_is_left_in_the_server():
         assert not hasattr(R, attr), attr
 
 
-#: What redesign.py calls on a gateway. The fallbacks for a gateway lacking one
-#: (D2) are deleted, so both gateway classes must carry every member.
+#: What redesign.py calls on a gateway. There is no fallback for a gateway lacking one,
+#: so both gateway classes must carry every member.
 GATEWAY_SURFACE = ("read", "read_many", "write", "confirmed_write",
                    "delta_records_since_last", "actor_gate", "game", "health", "clock")
 
-#: deleted these: the gateway never changes the clock, so it has no scope to
+#: Deleted: the gateway never changes the clock, so it has no scope to
 #: open, no polarity to look up and no tick to wait for.
 GATEWAY_DELETED = ("read_unpaused", "read_inline", "unpaused_window", "_scoped_pause",
                    "_await_tick_advance", "sync_polarity_table", "_polarity",
                    "_classify_local", "Polarity", "_UNPAUSED_READS", "_ANY_ACTIONS")
 
 
-def test_both_gateways_carry_everything_redesign_calls():
-    agent = pytest.importorskip("agent")
+def test_the_gateway_carries_everything_redesign_calls():
+    """The MCP server's gateway; the retired loop's twin is held to the same
+    surface in test_agent_gateway_twin.py (research tree only)."""
     src = Path(R.__file__).read_text(encoding="utf-8")
     code = "\n".join(l.split("#", 1)[0] for l in src.splitlines())
     called = set(re.findall(r"\bgw\.([a-z_]+)", code))
     assert len(called) * 2 > len(GATEWAY_SURFACE), "the census is stale (fail OPEN)"
     assert called <= set(GATEWAY_SURFACE), sorted(called - set(GATEWAY_SURFACE))
-    for cls in (ms.BridgeGateway, agent._AgentGateway):
-        missing = [m for m in GATEWAY_SURFACE if not hasattr(cls, m)]
-        assert not missing, (cls.__name__, missing)
-        left = [m for m in GATEWAY_DELETED if hasattr(cls, m)]
-        assert not left, (cls.__name__, left)
+    missing = [m for m in GATEWAY_SURFACE if not hasattr(ms.BridgeGateway, m)]
+    assert not missing, missing
+    left = [m for m in GATEWAY_DELETED if hasattr(ms.BridgeGateway, m)]
+    assert not left, left
 
 
 # ── the vocabularies ──────────────────────────────────────────────────────────
@@ -167,7 +167,8 @@ def test_both_gateways_carry_everything_redesign_calls():
 def test_do_intent_enum_is_INTENTS_and_every_intent_has_a_route():
     assert _enum("do", "intent") == list(R.INTENTS)
     dedicated = {R._CANCEL_PENDING_INTENT, R._FACTION_INTENT, R._POLICY_INTENT, R._PROPOSAL_INTENT,
-                 R._END_WAR_INTENT}
+                 R._END_WAR_INTENT, R._EVENT_RULE_INTENT, R._GOLD_RESERVE_INTENT, R._AI_VETO_INTENT,
+                 R._HOST_ACTIVITY_INTENT}
     assert set(R.INTENTS) == set(R.INTENT_TO_ACT) | dedicated
     for intent in R.INTENT_TO_ACT:
         resolved = T.resolve_act(R._intent_to_act_params(intent, {}, 1)) \
@@ -176,7 +177,8 @@ def test_do_intent_enum_is_INTENTS_and_every_intent_has_a_route():
     src = Path(R.__file__).read_text(encoding="utf-8")
     fn = src[src.index("async def do_impl("):]
     for name in ("_CANCEL_PENDING_INTENT", "_FACTION_INTENT", "_POLICY_INTENT", "_PROPOSAL_INTENT",
-                 "_END_WAR_INTENT"):
+                 "_END_WAR_INTENT", "_EVENT_RULE_INTENT", "_GOLD_RESERVE_INTENT", "_AI_VETO_INTENT",
+                 "_HOST_ACTIVITY_INTENT"):
         assert f"if intent == {name}:" in fn, f"dedicated intent {name} has no branch in do_impl"
 
 
@@ -301,10 +303,17 @@ def test_speed_constants_mirror_the_bridge_clamp():
     cpp = (ROOT / "bridge" / "src" / "event_handler.cpp").read_text(encoding="utf-8")
     body = cpp[cpp.index("static void speed_primitive(int speed)"):]
     body = body[:body.index("\n}\n")]
-    lo = re.search(r"if \(speed < (\d+)\) speed = (\d+);", body)
-    hi = re.search(r"if \(speed > (\d+)\) speed = (\d+);", body)
-    assert lo and hi, "speed_primitive's clamp moved: re-read it (fail OPEN)"
-    assert int(lo.group(2)) == R.SPEED_MIN and int(hi.group(2)) == R.SPEED_MAX
+    # The clamp lives in registered_speed.h clamp_speed_write: 1 below, the sink cap above unless the
+    # EPISODE declared a faster speed. A seat's server declares no episode speed: its bound is the sink cap.
+    assert "speed = bridge::clamp_speed_write(speed, bridge::resolve_game_speed_from_env());" in body, \
+        "speed_primitive's clamp moved: re-read it (fail OPEN)"
+    hdr = (ROOT / "bridge" / "include" / "registered_speed.h").read_text(encoding="utf-8")
+    fn = hdr[hdr.index("inline int clamp_speed_write("):]
+    fn = fn[:fn.index("\n}\n")]
+    lo = re.search(r"if \(requested < (\d+)\) return (\d+);", fn)
+    cap = re.search(r"^constexpr int kGameSpeedSinkCap = (\d+);", hdr, re.M)
+    assert lo and cap and "game_speed_write_ceiling(d)" in fn, "clamp_speed_write moved: re-read it (fail OPEN)"
+    assert int(lo.group(2)) == R.SPEED_MIN and int(cap.group(1)) == R.SPEED_MAX
 
 
 def test_no_second_copy_of_the_speed_cap_in_the_server():
@@ -389,13 +398,20 @@ def test_redesign_error_paths_return_named_gates(call, gate):
     assert _gate(run(call(Gw()))) == gate
 
 
-def test_speed_above_the_cap_at_war_is_refused_by_name_and_clamped_at_peace():
+def test_speed_above_the_cap_is_refused_at_war_and_at_peace_and_nothing_is_written():
+    """defect: speed 4 at peace answered success and wrote 3. Above the cap
+    is refused (at war by its own gate), and nothing is written: the reply never
+    names a speed the game was not set to."""
     at_war = Gw({"get_active_wars": {"wars": [{"war_id": 1}]}})
     assert _gate(run(R.session_impl(at_war, action="speed", speed=5))) == "speed_refused_at_war"
     assert at_war.writes == []
     peace = Gw({"get_active_wars": {"wars": []}})
-    env = run(R.session_impl(peace, action="speed", speed=5))
-    assert env["ok"] is True and peace.writes == [("set_speed", {"speed": R.SPEED_MAX})]
+    env = run(R.session_impl(peace, action="speed", speed=4))
+    assert _gate(env) == "invalid_argument" and peace.writes == []
+    assert f"1-{R.SPEED_MAX}" in env["blocked"]["summary"] and "nothing was written" in env["blocked"]["summary"]
+    ok = Gw({"get_active_wars": {"wars": []}, "get_tick_info": {"game_speed": 3}})
+    run(R.session_impl(ok, action="speed", speed=3))
+    assert ok.writes == [("set_speed", {"speed": 3})]
 
 
 def test_experimental_write_disabled_carries_the_operator_file():
@@ -435,7 +451,7 @@ def test_F1_declare_war_with_character_id_0_matches_wars_against_the_resolved_ac
 
 
 def test_F1_the_dispatched_war_carries_the_resolved_actor_not_0():
-    """The other half of F1: the write itself must name the resolved ruler. With
+    """The other half of the bound-ruler rule: the write itself must name the resolved ruler. With
     actor_id=0 on the wire the bridge refused (missing_required_argument /
     actor_id_required), which is what the live control run showed."""
     wars = {"wars": []}
@@ -452,7 +468,8 @@ def test_F1_the_dispatched_war_carries_the_resolved_actor_not_0():
             write_reply=landed)
     env = run(R.declare_war_impl(gw, character_id=0, target_id=555, cb="claim_cb"))
     assert env["verdict"] == "applied" and env["result"]["war_id"] == 9, env
-    assert len(gw.writes) == 1 and gw.writes[0][1]["actor_id"] == 30853, gw.writes
+    sends = [w for w in gw.writes if w[1].get("template") != "activity"]   # The activity read first
+    assert len(sends) == 1 and sends[0][1]["actor_id"] == 30853, gw.writes
 
 
 def test_F1_CONTROL_another_attackers_war_is_not_taken_for_ours():
@@ -564,7 +581,7 @@ def test_discover_error_paths(wired, kw, gate):
 def test_steer_write_the_bridge_did_not_confirm_is_named(wired):
     wired.replies["set_ai_personality"] = {"status": "sent_no_confirmation"}
     env = run(ms.steer(personality={"boldness": 10}))
-    # finding 5: the write envelope; not confirmed and not read back is pending
+    # The write envelope; not confirmed and not read back is pending
     assert env.get("verdict") == "pending" and env["pending"]["drains_when"] == "next_pass", env
 
 
@@ -588,7 +605,7 @@ def test_every_tool_names_a_lost_bridge(monkeypatch):
         assert env["tool"] == name
 
 
-# ── NIT-3: the idempotency CB match is real ─────────────────
+# ── the idempotency CB match is real ─────────────────
 # get_active_wars rows carry cb_type (query_handlers.cpp do_get_active_wars,
 # war_cb_type_name; test_observe_war_truth pins the emitted key).
 
@@ -627,7 +644,7 @@ def test_NIT3_the_readback_does_not_take_a_pre_existing_war_under_another_cb():
     assert env.get("verdict") != "applied" or env["result"]["war_id"] != 77, env
 
 
-# ── m7 (witness): the idempotency keys on the CB title; a failed pre-read refuses ──
+# ── m7: the idempotency keys on the CB title; a failed pre-read refuses ──
 # get_active_wars rows carry target_titles (query_handlers.cpp do_get_active_wars,
 # read_war_target_titles over war_obj::CB_TITLE_ARRAY, the read query_wars makes).
 
@@ -648,7 +665,7 @@ def test_m7_a_war_for_the_same_cb_title_answers_applied_without_a_write():
 
 @pytest.mark.parametrize("titles", [[1300], [], None], ids=["another", "empty", "unread"])
 def test_m7_a_war_for_another_or_an_unread_title_is_not_already_at_war(titles):
-    """RED on 03f19352: a declaration for another title against a target already
+    """RED without the rule: a declaration for another title against a target already
     at war under the same CB answered `applied` with the old war."""
     gw = Gw({"get_active_wars": {"wars": [_titled(titles)]}},
             write_reply={"success": False, "reason": "invalid_cb"})
@@ -661,8 +678,8 @@ def test_m7_a_war_for_another_or_an_unread_title_is_not_already_at_war(titles):
 
 @pytest.mark.parametrize("cb", ["tribal_subjugation_cb", "vassalization_cb", "make_tributary_cb"])
 def test_m7_a_mode0_cb_names_no_title_and_matches_on_the_cb(cb):
-    """Make_tributary_cb is mode 0 too (target_mode 0, live rows
-    target_titles []); RED on 16dd7f14 for it: a nonzero cb_title_id could never
+    """Witness n5: make_tributary_cb is mode 0 too (target_mode 0, live rows
+    target_titles []); RED without the rule for it: a nonzero cb_title_id could never
     match its war, and the declaration was dispatched again."""
     gw = Gw({"get_active_wars": {"wars": [_titled([], cb=cb)]}})
     env = run(R.declare_war_impl(gw, character_id=30853, target_id=555,
@@ -673,12 +690,13 @@ def test_m7_a_mode0_cb_names_no_title_and_matches_on_the_cb(cb):
 def test_n5_a_mode0_cb_is_dispatched_with_no_title():
     """make_tributary_cb is marshalled as mode 0: cb_title_id 0. (The claimant is
     not asserted: tools.resolve_act's steered war fills claimant_id 0 with the
-    actor for every CB, before and after this change.)"""
+    actor for every CB, before and after this code.)"""
     gw = Gw({"get_active_wars": {"wars": []}}, write_reply={"success": False, "reason": "invalid_cb"})
     run(R.declare_war_impl(gw, character_id=30853, target_id=555, cb="make_tributary_cb",
                            cb_title_id=1201, confirm_straddle=True))
     assert gw.writes, "the declaration was dispatched"
-    assert gw.writes[0][1].get("cb_title_id") == 0, gw.writes[0][1]
+    sends = [w for w in gw.writes if w[1].get("template") != "activity"]   # The activity read first
+    assert sends[0][1].get("cb_title_id") == 0, sends[0][1]
 
 
 @pytest.mark.parametrize("reply, gate", [
@@ -689,7 +707,7 @@ def test_n5_a_mode0_cb_is_dispatched_with_no_title():
     ({"action": "get_active_wars", "war_count": 0}, "unmapped_refusal"),
 ], ids=["none", "empty", "timeout", "declined", "no_list"])
 def test_m7_a_failed_pre_read_refuses_and_sends_nothing(reply, gate):
-    """RED on 03f19352: a failed get_active_wars read was "no wars": the war cap
+    """RED without the rule: a failed get_active_wars read was "no wars": the war cap
     and the idempotency check were skipped and the war was dispatched."""
     gw = Gw({"get_active_wars": reply})
     env = run(R.declare_war_impl(gw, character_id=30853, target_id=555, cb="claim_cb",

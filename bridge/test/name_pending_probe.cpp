@@ -1,13 +1,13 @@
-// name_pending_probe.cpp — lane-namekey.
+// name_pending_probe.cpp.
 //
-// THE DEFECT
+// THE HAZARD
 // ----------
 // ad_read_char_name answered a name-cache MISS with the localization KEY
 // stored on CCharacter+0x20 (`E_thelred` for Æthelred). The reader thread
 // cannot localize: it queues the id and the GAME thread resolves it in
 // populate_name_cache() on the next tick. So the first reads of a session —
 // the game paused before any tick — handed every client a key where a name
-// belongs (lane-multi run 3's first snapshot, two campaign notes, whoami
+// belongs (a test run's first snapshot, two campaign notes, whoami
 // before time moved). Every client then had to guess what a name is.
 //
 // THE CONTRACT THIS PROBES
@@ -29,7 +29,7 @@
 //
 // NEGATIVE CONTROL: name_pending_probe_negative_control is this same source
 // with dispatch_router.cpp built -DCK3_NAME_LEGACY_KEY_FALLBACK, which
-// restores the pre-fix reader (the key AS the name). It MUST fail, on the
+// restores the superseded reader (the key AS the name). It MUST fail, on the
 // first-read assertions, by reproducing the live symptom verbatim.
 
 #include "action_dispatch_internal.h"
@@ -304,7 +304,7 @@ void test_bad_pointer_is_silent() {
 
 }  // namespace
 
-// [6] (surface-eval finding 7): a hook buffer row (query_scheme_inits,
+// [6] a hook buffer row (query_scheme_inits,
 // query_war_declarations, query_council_tasks: query(event_log)) recorded ""
 // because the cache missed when the engine acted; the row reads the cache when
 // it is read. Runs after [2], so 13902 is cached.
@@ -324,12 +324,12 @@ void test_hook_row_reads_the_cache() {
 
 int main() {
 #ifdef CK3_NAME_LEGACY_KEY_FALLBACK
-    std::cout << "=== lane-namekey NEGATIVE CONTROL "
+    std::cout << "=== NEGATIVE CONTROL "
                  "(dispatch_router.cpp built with -DCK3_NAME_LEGACY_KEY_FALLBACK) ===\n"
                  "Expect [1] to fail exactly as the live bridge did: the first read\n"
                  "answers `name: \"E_thelred\"` — the localization key as the name.\n\n";
 #else
-    std::cout << "=== lane-namekey: a name-cache miss is PENDING, never the key ===\n\n";
+    std::cout << "=== a name-cache miss is PENDING, never the key ===\n\n";
 #endif
 
     auto chars = build_image({{13902, "E_thelred"},   // resolves to Æthelred on the tick

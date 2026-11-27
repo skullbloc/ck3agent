@@ -2,7 +2,7 @@
 
 HOST ONLY. Pure shape over a reply; no bridge, no game.
 
-MEASURED over d45-d50, 1,983 observations carrying `income_breakdown`:
+MEASURED over the recorded episodes, 1,983 observations carrying `income_breakdown`:
   1,952 (98.4%)  EVERY component zero -- gross_domain, net_domain,
                  total_expenses, net_gold -- while total_monthly carried a real
                  number. A breakdown that breaks nothing down, and four zeros
@@ -13,7 +13,7 @@ MEASURED over d45-d50, 1,983 observations carrying `income_breakdown`:
                  TOTAL_MERIT); the bridge now emits it as `merit`, and the money's
                  monthly_income is income_breakdown.total_monthly.
 
-THE LIMIT THIS BEAD DOES NOT EXCEED. The design asked for "income/expense lines
+THE LIMIT THIS FIX DOES NOT EXCEED. The design asked for "income/expense lines
 that sum". THERE IS NO EXPENSE SIDE: total_expenses is 0 in all 1,983. So the
 reconciliation cannot be computed and is not faked -- `expenses` is None with a
 reason. Deriving an expense line would be a fabricated number on a screen the
@@ -24,13 +24,13 @@ seat is meant to trust.
       never passed through as zeros
   M3  a partially populated breakdown reports the populated keys AND names the
       ones still missing
-  M4: monthly_income is income_breakdown.total_monthly, never the merit;
+  monthly_income is income_breakdown.total_monthly, never the merit;
       there is no second total and no "totals disagree" note
   M5  no breakdown, no income: monthly_income None (unmeasured), never 0 or merit
   M6  `expenses` is None with a reason -- never 0, which would read as a realm
       with no costs
   M7  no fabricated arithmetic: the block contains no derived expense or margin
-  M8  (N4-1): the figures are query_character's (build_char_profile
+  The figures are query_character's (build_char_profile
       writes gold, merit and income_breakdown); query_realm writes none of
       them, and reading it there told every seat "monthly_income null, the bridge
       published no income_breakdown" (l14i geval-p eval_e_names). The doubles below
@@ -50,7 +50,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import redesign as R                                             # noqa: E402
 
-#: The breakdown shape as the bridge actually emits it, from a sealed d49 reply.
+#: The breakdown shape as the bridge actually emits it, from a sealed recorded reply.
 #: This is the 98.4% case: a real total, every component zero.
 REAL_ALL_ZERO = {"total_monthly": 15.47, "gross_domain": 0, "net_domain": 0,
                  "total_expenses": 0, "net_gold": 0}
@@ -129,7 +129,7 @@ class ObserveMoney(unittest.TestCase):
                          ["net_domain", "net_gold", "total_expenses"])
 
     def test_M4_monthly_income_is_total_monthly_never_the_merit(self):
-        """RED on 55a66b0c: money.monthly_income read query_character's
+        """RED without the rule: money.monthly_income read query_character's
         `monthly_income` (the merit stock, now emitted as `merit`), so on this
         emitter-shaped reply (merit 430, total_monthly 5.68) it read None."""
         m = _money({"gold": 10, "merit": 430.0,
@@ -149,7 +149,7 @@ class ObserveMoney(unittest.TestCase):
         self.assertIsNot(m["expenses"], 0)
         self.assertIn("not a statement that spending is zero",
                       m["expenses_absent"],
-                      "the hub required this sentence IN THE REPLY so a seat "
+                      "the review required this sentence IN THE REPLY so a seat "
                       "cannot read the absence as zero spending")
         self.assertIn("unpopulated rather than measured", m["expenses_absent"])
 
@@ -165,7 +165,7 @@ class ObserveMoney(unittest.TestCase):
 class ObserveMoneyIsTheCharacters(unittest.TestCase):
 
     def test_M8_the_money_is_read_off_query_character(self):
-        """RED on 627af763: monthly_income None and breakdown_absent "the bridge
+        """RED without the rule: monthly_income None and breakdown_absent "the bridge
         published no income_breakdown" with both on the query_character reply."""
         m = _money({"gold": 204.0, "merit": 0.0,
                     "income_breakdown": dict(REAL_ALL_ZERO, total_monthly=6.5,

@@ -1,6 +1,6 @@
-""" deploy-51 — no seat-facing advisory names a verb the seat cannot call.
+"""No seat-facing advisory names a verb the seat cannot call.
 
-THIS FILE REPLACES VERSION, AND KEEPS ITS FINDING. was right
+THIS FILE REPLACES the VERSION, AND KEEPS ITS FINDING. The old version was right
 about the bridge and I am not overturning that: `disable_native_ai=false` undoes
 NOTHING, because `do_set_controlled_character` disables under
 `if (disable_ai && ...)` with no else-branch, so passing false merely skips the
@@ -10,7 +10,7 @@ WHAT IT MISSED IS REACHABILITY. Having found that `set_character_ai enabled=true
 is what re-enables the per-character tick, it named that call to the SEAT — as
 `FIX: do(intent='set_character_ai', enabled=True)`. There is no such intent.
 `set_character_ai` is a BRIDGE action the SERVER can issue; it is not one of the
-16 registered tools and not one of `do`'s 20 intents. So replaced one
+registered tools and not one of `do`'s intents. So a later fix replaced one
 remedy that could not work with another that could not work, and the toolchain
 designer counted 26 seat calls to the unknown verb.
 
@@ -65,15 +65,15 @@ def test_set_character_ai_IS_NOT_on_the_seat_surface():
     tools, intents = _uncallable_examples()
     assert "set_character_ai" not in tools
     assert "set_character_ai" not in intents
-    #: the two arm-gated board tools are gone with the
+    # The two arm-gated board tools are gone with the
     # board, so the surface is the same 13 names in every process.
-    # 13 tools. The retired act/game/control/bridge/
+    # The retired act/game/control/bridge/
     # execute_console_command, the intent queue tool and observe_v2 are gone;
     # asserted BY NAME as well as by count, because a count is satisfied by any
     # tool leaving.
     for gone in ("execute_console_command", "act", "intent", "observe_v2"):
         assert gone not in tools, f"{gone} is back on the registered surface"
-    # Scripted_effect and break_alliance went with the
+    # scripted_effect and break_alliance went with the
     # bridge's execute_scripted_effect and break_alliance actions.
     for gone in ("scripted_effect", "break_alliance"):
         assert gone not in intents, f"do intent {gone} is back"
@@ -83,7 +83,7 @@ def test_set_character_ai_IS_NOT_on_the_seat_surface():
 
 
 def test_NO_seat_facing_advisory_tells_the_seat_to_CALL_set_character_ai():
-    """The defect. Not 'never mentions it' — the text may warn ABOUT it — but it
+    """The hazard. Not 'never mentions it' — the text may warn ABOUT it — but it
     must never be offered as something the seat should call."""
     txt = _seat_facing_text()
     for bad in ("do(intent='set_character_ai'",
@@ -102,7 +102,7 @@ def test_the_REMEDIES_the_text_DOES_name_are_all_callable():
 
 def test_ck4b41_BRIDGE_FINDING_IS_KEPT():
     """A reader who remembers the old advice needs it CONTRADICTED by name, not
-    merely omitted — that was own argument and it still holds."""
+    merely omitted — that argument still holds."""
     txt = _seat_facing_text()
     assert "no else-branch" in txt
     assert "does NOT undo it" in txt or "does not undo it" in txt

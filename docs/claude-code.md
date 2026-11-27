@@ -11,7 +11,7 @@ protocol from `CLAUDE.md` in the play directory.
 
 | File | Purpose |
 |------|---------|
-| `.mcp.json` | starts the `ck3` MCP server (`ck3agent serve`), with `"alwaysLoad": true` so Claude Code loads its 13 tool schemas with the session instead of deferring them behind ToolSearch |
+| `.mcp.json` | starts the `ck3` MCP server (`ck3agent serve`), with `"alwaysLoad": true` so Claude Code loads its 13 tool schemas (the default surface) with the session instead of deferring them behind ToolSearch |
 | `CLAUDE.md` | the play protocol. Edit it to add a persona, goal or house rules. `ck3agent setup --force` restores it. |
 | `.claude/settings.json` | the live-state hook, the tool allow-list and the `env` block |
 | `runs/` | output of `ck3agent run` |

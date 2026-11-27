@@ -1,4 +1,4 @@
-// test_clock_rate.cpp —. The meter that converts the covariate's unit
+// test_clock_rate.cpp — The meter that converts the covariate's unit
 // into the unit every question about it is asked in.
 //
 // NO GAME. Wall time is passed IN, so a year of episode runs in a microsecond.
@@ -6,7 +6,7 @@
 // THE CLAIM: the rate is MEASURED, never assumed; it refuses to answer from a
 // window too short to mean anything; it re-anchors rather than averaging across
 // a world reload; and it carries its CONDITION, because a rate without one is
-// what filed this bead.
+// what this code answers.
 
 #include "clock_rate.h"
 #include "tick_bookkeeping.h"
@@ -36,7 +36,7 @@ static void check_near(double actual, double expected, double tol,
 }
 
 int main() {
-    printf("test_clock_rate (ck-ijfa): the measured game-days-per-wall-second, "
+    printf("test_clock_rate: the measured game-days-per-wall-second, "
            "with its condition\n");
 
     // -----------------------------------------------------------------------
@@ -71,7 +71,7 @@ int main() {
     // -----------------------------------------------------------------------
     printf("\n2. THE MEASUREMENT, in both the units the design is written in\n");
     {
-        // The node's free-running null-mode figure, as an arithmetic fixture:
+        // The test host's free-running null-mode figure, as an arithmetic fixture:
         // 1.73 game-days per wall-second over ten wall-minutes.
         ClockRateMeter m;
         const double rate = 1.73;
@@ -84,7 +84,7 @@ int main() {
                    "game-days per wall-second comes back as it went in");
         check_near(s.game_years_per_wall_hour, rate * 3600.0 / 365.0, 0.1,
                    "and the same number in game-years per wall-hour, which is the "
-                   "unit Appendix A.19 and design 2.7 are written in");
+                   "unit the experiment design is written in");
         check_near(s.wall_seconds, 600.0, 0.001, "over the window it names");
 
         // THE CONDITION travels with the number.

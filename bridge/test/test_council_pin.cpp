@@ -1,7 +1,7 @@
-// test_council_pin.cpp —: the per-seat council-task pin
+// test_council_pin.cpp — the per-seat council-task pin
 // (bridge/include/council_pin.h, bridge/src/council_suppress_hook.cpp).
 //
-// Fixture: the 867 dump ck3_20260625_152901_ivar867 (BuildID e61ff264...), read
+// Fixture: the 867 start dump (BuildID e61ff264...), read
 // 2026-11-14 with re/coredump/core_reader.py:
 //   character 14859: CCharacter 0x7f8f0df16210, u32 at +0x18 = 0x3a0b (14859);
 //     its CAIStrategy 0x7f8f2fe041e0 (*(*(char+0x1a8)+0x278)) holds at +0x18
@@ -13,7 +13,7 @@
 // CAIStrategy, and read the id at its +0x18.
 //
 // Built twice. Plain: every row must pass. -DCOUNCIL_PIN_DISPATCHER_ARG_CONTROL:
-// the pre-fix read (the id at the CAIStrategy's +0x18); it exits 0 only when
+// the superseded read (the id at the CAIStrategy's +0x18); it exits 0 only when
 // EXACTLY rows 1 and 7a fail and every other row passes (not WILL_FAIL, which
 // any nonzero exit would satisfy): the lock never matched a ruler, and nothing
 // else about the pin depends on that read.
@@ -53,7 +53,7 @@ int main() {
     put<uint32_t>(pos_b, 0x10, 0x101e); put<uint32_t>(pos_b, 0x3c, 14859);
 
 #ifdef COUNCIL_PIN_DISPATCHER_ARG_CONTROL
-    // The pre-fix read: council_suppress_hook's on_ai_council_tasks took
+    // The superseded read: council_suppress_hook's on_ai_council_tasks took
     // *(u32*)(arg + character::ID) & 0xFFFFFF with arg = the CAIStrategy.
     uint32_t v = 0; std::memcpy(&v, ai_strategy + ck3::character::ID, sizeof v);
     const uint32_t ruler_id = v & 0xFFFFFF;

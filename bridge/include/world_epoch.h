@@ -7,11 +7,11 @@
 // Any bridge cache keyed by a game id therefore has a WORLD lifetime, not a
 // process lifetime — and must be dropped when a new world is loaded.
 //
-// Proven failure (2026-09-10): ids 31808 / 30853 / 29767 were queried on an 871
+// The failure, measured: ids 31808 / 30853 / 29767 were queried on an 871
 // world (Lokpala / Putri / Mila); the same process then loaded a 1066 save where
 // those ids are William the Conqueror / Harold Godwinson / Harald Hardrada, and
 // the bridge kept serving the 871 names byte-identically for the rest of the
-// process, because clear_name_cache() had no caller anywhere.
+// process, when clear_name_cache() has no caller.
 //
 // Mechanism: every world-scoped cache registers a reset callback here once, and
 // world_epoch_sample() (game thread: the top of every drain and of on_tick)
@@ -20,12 +20,12 @@
 //
 // THE FIRST SAMPLE MUST PRECEDE THE FIRST WORLD-SCOPED WRITE. The first
 // loaded sample always reads "game_state_appeared" and fires every reset. It
-// used to be taken only in on_tick, i.e. at the first tick AFTER UNPAUSE — but
+// is not taken only in on_tick, i.e. at the first tick AFTER UNPAUSE — but
 // the drain runs while paused, and the pilot seats' first set_phase landed in a
 // drain at tick 0 (867.01.01, paused). The first tick then quarantined those
 // locks as a "reload" of the world they were written in: 12 of 32 seats' first
 // genome read back `applied` and was gone at the next observe, with no `locked`
-// key (pilots-2026.11 bridge-full.log: every round's only WORLD-RELOAD is
+// key (a recorded pilot's bridge log: every round's only WORLD-RELOAD is
 // "game_state_appeared ... <- gs=(nil)", right after a tick-0 write). Sampling at
 // the top of the drain, before it runs any queued action, makes the first
 // sighting precede every write the drain can make, so the reset it fires finds
@@ -87,7 +87,7 @@ int world_reset_count();
 int world_reset_names(const char** out, int max);
 
 // THE REGISTRATION HOLDER IS A CLASS TYPE, AT PRIORITY 101.
-// Each world-scoped cache registers from a file-scope initializer. That used to
+// Each world-scoped cache registers from a file-scope initializer. That does not
 // be `static const bool x = []{ register_world_reset(...); return true; }();`,
 // and an UNPRIORITIZED dynamic initializer runs AFTER dll_init (bridge_init's
 // constructor attribute) — see include/init_order.h. `bool` cannot carry

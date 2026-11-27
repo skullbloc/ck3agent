@@ -14,11 +14,11 @@
 // entry names a DIFFERENT PERSON, and the bridge rewrites that person's
 // personality several times a second for the rest of the process — silently,
 // permanently, with values belonging to a character from a world that no longer
-// exists. That is, filed P1 off the sibling sweep.
+// exists. That was a P1 defect, found by the world-reset cache sweep.
 //
 // WHY THE FIX IS QUARANTINE AND NOT A PLAIN CLEAR
 // ----------------------------------------------
-// objection to registering this table with the world-reset registry
+// The objection to registering this table with the world-reset registry
 // is correct and still stands: the world fingerprint detects THAT the world
 // changed, not WHICH save was loaded, so it cannot tell "the same save was
 // reloaded" (the resume path, where the agent's steering SHOULD
@@ -31,7 +31,7 @@
 // until a client sets locks against the new world, and nothing the agent asked
 // for has been lost.
 //
-// CLOSED THE OTHER HALF. Quarantined locks are still never
+// THE OTHER HALF IS CLOSED. Quarantined locks are still never
 // AUTO-re-applied — nothing in the tick path restores them. They are restored
 // on exactly one trigger: a harness DECLARING the save identity of the world
 // now loaded (`declare_save_identity`), and only when that declaration proves
@@ -75,7 +75,7 @@ struct PersonalityLock {
 
 // What one axis reads as, for every reader (get_ai_personality, query_character,
 // get_ai_evaluations): a held lock's value, else the engine byte for the nine,
-// else 0 for dominance. Until (F10) query_character and
+// else 0 for dominance. Before one reader, query_character and
 // get_ai_evaluations read a tenth engine byte, past the array: the dominance they
 // reported differed between launches of one save.
 int8_t personality_axis_value(uintptr_t personality_ptr, const PersonalityLock* lock, int axis);
@@ -122,15 +122,15 @@ const char* personality_lock_state_name(PersonalityLockState s);   // "none" / "
 // caller (the write's own unique lock; personality_lock_state would take it
 // again). "live" when the write leaves any axis locked (held_axes = written +
 // retained), else "quarantined" when a world reset set this character's lock
-// aside, else "none".: a write of no axes answered "none" while a
-// quarantined lock existed, and get_ai_personality answered "quarantined".
+// aside, else "none" (a write of no axes answers "quarantined" while a
+// quarantined lock exists, as get_ai_personality does).
 const char* personality_set_reply_lock_state_locked(uint32_t character_id, int held_axes);
 
 // ---------------------------------------------------------------------------
-// The CROSS-PROCESS carrier (personality_persist.cpp) —.
+// The CROSS-PROCESS carrier (personality_persist.cpp).
 // ---------------------------------------------------------------------------
 // /tmp/ck3-personality-locks.json is how agent steering escapes the process. It
-// used to carry a bare id->axes map, which is an identity-free payload: wire
+// does not carry a bare id->axes map, which is an identity-free payload: wire
 // load_personality_locks() anywhere and the previous run's steering lands on
 // whatever world happens to be loaded next — the hazard, promoted from
 // "for the life of the process" to "forever".
@@ -138,7 +138,7 @@ const char* personality_set_reply_lock_state_locked(uint32_t character_id, int h
 // So the file now carries a "world" header (episode_id, save_sha256,
 // start_date_year) written from the identity declared at the time of the save,
 // and the reader takes the SAME judge_same_save() decision the in-process
-// quarantine takes. A headerless file — anything written before this change —
+// quarantine takes. A headerless file — anything written without it —
 // names no save, so it can never match and is never loaded. That is the
 // conservative default and it is what makes the wiring safe.
 //
@@ -157,7 +157,7 @@ const char* personality_set_reply_lock_state_locked(uint32_t character_id, int h
 void set_personality_locks_identity(const WorldIdentity& id);
 
 // Writes the table plus the identity header. Call while holding
-// g_personality_lock_mutex (name kept from the earlier signature).
+// g_personality_lock_mutex (name kept from the superseded signature).
 void save_personality_locks_locked();
 
 // Reads the header only. Returns false when the file is absent or carries no

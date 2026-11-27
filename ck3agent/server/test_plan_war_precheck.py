@@ -1,27 +1,27 @@
-""" B3: plan_war and cbs offer only the wars declare_war's own pre-check passes.
+"""plan_war and cbs offer only the wars declare_war's own pre-check passes.
 
-Set v3-registered-2: all six declare_war refusals in the set followed a plan_war
+A recorded six-seat set (duke N.M: run N's duke M): all six declare_war refusals in the set followed a plan_war
 row (and cbs in three) that read "Independent, declarable per strict-CB inner
 gate" / ready_to_declare true. The transcripts show why for five of them: the
 dukes called plan_war() and cbs() WITHOUT character_id, and the casus-belli reads
 (query_cb_validity_strict, query_cbs_for_target(s)) fall back to the bridge's
 GLOBAL controlled primary (query_handlers.cpp `g_controlled_primary.load` in each
 handler), the king, while declare_war resolves the seat's own ruler first and
-checks as the duke: s1 D1 and D2 make_tributary_cb against 10735 and 12005
-(engine_cb_validity_check_failed), s6 D2 minor_religious_war against 11232
-(faith_gate), s1 D2 claim_cb against 13356 with claimant 12015, the king (the
+checks as the duke: dukes 1.1 and 1.2 make_tributary_cb against 10735 and 12005
+(engine_cb_validity_check_failed), duke 6.2 minor_religious_war against 11232
+(faith_gate), duke 1.2 claim_cb against 13356 with claimant 12015, the king (the
 cbs emitter writes the read's actor as claimant_id; the dispatch refused
-claimant_not_in_court). Besides that, s3 D5 (Hugo 13586, plan_war with his own
+claimant_not_in_court). Besides that, duke 3.5 (Hugo 13586, plan_war with his own
 id) was offered claim_cb on his liege Charles 12015 as its top row.
 
   P1  plan_war() and cbs() with no character_id read every casus belli for the
       bound ruler's id, and a row offered is one declare_war's pre-check passes
-      on the same game state (s1 D1's tributary row)
+      on the same game state (duke 1.1's tributary row)
   P2  the CB a row offers is the CB the pre-check passed: a cbs option the
       pre-check refused is not offered under another CB's verdict
-  P3  a war on the actor's own liege is never offered (s3 D5)
-  P4  a claim whose claimant is not in the actor's court is never offered (s1
-      D2); CONTROL: a claimant whose liege is the actor is
+  P3  a war on the actor's own liege is never offered (duke 3.5)
+  P4  a claim whose claimant is not in the actor's court is never offered (duke
+      1.2); CONTROL: a claimant whose liege is the actor is
   P5  declare_war refuses on the same pre-check: a claim CB the strict read
       marks declarable false is refused before anything is sent
 
@@ -152,7 +152,7 @@ def _base(**over):
 # ── P1 ─────────────────────────────────────────────────────────────────────────
 
 def _s1_d1():
-    """s1 D1: the casus-belli reads answer for whoever they are made for. For the
+    """Duke 1.1: the casus-belli reads answer for whoever they are made for. For the
     king (actor 0 -> the bridge's global primary) make_tributary_cb passes; for the
     duke the engine's check fails."""
     def strict(p):
@@ -168,7 +168,7 @@ def _s1_d1():
 
 
 def test_plan_war_and_cbs_read_the_casus_belli_for_the_bound_ruler():
-    """RED on 8cef520a: plan_war() sent actor_id 0 and cbs() attacker_id 0, so
+    """RED without the rule: plan_war() sent actor_id 0 and cbs() attacker_id 0, so
     both answered for the king and offered make_tributary_cb, which declare_war
     (checking as the duke) refused engine_cb_validity_check_failed."""
     gw = _s1_d1()
@@ -207,8 +207,8 @@ def test_a_cb_read_with_no_actor_resolved_is_refused():
 
 def test_the_cb_offered_is_the_cb_the_precheck_passed():
     """The strict read passes county_conquest_cb and refuses make_tributary_cb; the
-    cbs read (taken separately) lists only make_tributary_cb as valid. RED on
-    8cef520a: plan_war checked the strict read's FIRST declarable CB and then
+    cbs read (taken separately) lists only make_tributary_cb as valid. RED without
+    the rule: plan_war checked the strict read's FIRST declarable CB and then
     offered the widest cbs option, make_tributary_cb, as "declarable per
     strict-CB inner gate"."""
     gw = _base(query_character=_people(DUKE, {DUKE: (KING, KING)}),
@@ -246,8 +246,8 @@ def test_a_row_offered_says_what_the_precheck_covers():
 # ── P3 ─────────────────────────────────────────────────────────────────────────
 
 def test_a_war_on_the_actors_own_liege_is_never_offered():
-    """s3 D5: Hugo 13586 (liege Charles 12015) was offered claim_cb on Charles for
-    c_ile_de_france as plan_war's top row. RED on 8cef520a: offered."""
+    """Duke 3.5: Hugo 13586 (liege Charles 12015) was offered claim_cb on Charles for
+    c_ile_de_france as plan_war's top row. RED without the rule: offered."""
     vt = {"action": "query_valid_war_targets", "actor_id": HUGO, "targets": [
         {"target_char_id": KING, "target_name": "Charles", "title_id": C_IDF,
          "cb_type": "claim", "pressed": True, "implicit": False, "declarable": True}]}
@@ -273,8 +273,8 @@ def _claim_gw(claimant, lieges):
 
 
 def test_a_claimant_outside_the_actors_court_is_never_offered():
-    """s1 D2: the row named the king 12015 (independent: top_liege_id his own id)
-    as claimant; the dispatch refused claimant_not_in_court. RED on 8cef520a:
+    """Duke 1.2: the row named the king 12015 (independent: top_liege_id his own id)
+    as claimant; the dispatch refused claimant_not_in_court. RED without the rule:
     offered."""
     res = _run(R.plan_war_impl(_claim_gw(KING, {DUKE: (KING, KING)}), character_id=DUKE,
                                ally_free_only=False))["result"]
@@ -294,7 +294,7 @@ def test_a_claimant_in_the_actors_court_is_offered():
 
 def test_declare_war_refuses_on_the_same_precheck_before_sending():
     """The strict read marks claim_cb declarable false (claim_not_pressed) with its
-    engine verdicts passing. RED on 8cef520a: declare_war passed it (its rule read
+    engine verdicts passing. RED without the rule: declare_war passed it (its rule read
     outer+inner pass over `declarable`) and sent the war; now cb_precheck refuses
     it, the same answer plan_war gives, and nothing is sent."""
     gw = _base(query_character=_people(DUKE, {DUKE: (KING, KING)}),

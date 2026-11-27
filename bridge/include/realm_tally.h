@@ -1,11 +1,11 @@
 // realm_tally.h — query_realm's `realm_total_counties` for MANY rulers from ONE
-// walk of the character table (wave 19).
+// walk of the character table.
 //
 // count_realm_counties(R) (query_handlers.cpp) is R's own demesne counties plus
 // the demesne counties of every OTHER living, landed, AI-enabled character whose
 // independent top liege is R; a holder whose liege walk cannot be made (top 0)
-// is counted as unresolved. It used to walk the whole character table (~63,000
-// entries, ~0.9 s on the game thread in the re-pilot's trace) for EVERY read, so
+// is counted as unresolved. It does not walk the whole character table (~63,000
+// entries, ~0.9 s on the game thread in a recorded game's trace) for EVERY read, so
 // a king's observe that read his 32 vassals' realms paid 32 walks for one paused
 // world. The walk is now taken
 // once into a Tally and every ruler's count is answered from it; a single read

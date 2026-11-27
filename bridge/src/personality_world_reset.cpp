@@ -51,7 +51,7 @@ void quarantine_personality_locks_on_world_reset() {
         fprintf(g_logfile,
                 "[CK3-Bridge] WORLD-RELOAD: quarantined %zu personality lock(s) at epoch=%llu "
                 "— the live write set is now EMPTY; quarantined locks are NEVER auto-re-applied "
-                "(ck-9fc3 owns the save-identity decision)\n",
+                "(the save-identity check owns that decision)\n",
                 moved, static_cast<unsigned long long>(epoch));
         fflush(g_logfile);
     }
@@ -76,7 +76,7 @@ size_t restore_quarantined_personality_locks() {
         fprintf(g_logfile,
                 "[CK3-Bridge] SAVE-IDENTITY: restored %zu personality lock(s) into the live "
                 "write set — the declared save identity matched the world the locks were set in "
-                "(ck-9fc3)\n",
+                "\n",
                 moved);
         fflush(g_logfile);
     }
